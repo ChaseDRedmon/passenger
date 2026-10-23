@@ -15,7 +15,7 @@ public partial class MainWindow
     {
         actions!.Add(new IdeAction(A.TargetFramework, "Target Framework", "Code", context => ShowTargetFrameworks(context.File!, context.Editor))
         {
-            WhyNot = context => context.File is not { } file ? NoFile
+            WhyNot = context => context.File is not { } file ? Refusals.NoFile
                 : file.ProjectContexts.Count < 2 ? $"{file.Name} is compiled for one target framework only"
                 : null,
         });

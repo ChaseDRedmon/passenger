@@ -29,8 +29,10 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
 
     public void Dispose() => TestFolders.Delete(settings);
 
+    /// <summary>A template turned off stays the word typed and one whose text is edited expands to its new text; a template
+    /// added fills in its variables as their macros say; and every change is there after a restart.</summary>
     [AvaloniaFact]
-    public void A_template_turned_off_stays_the_word_typed_and_one_whose_text_is_edited_expands_to_its_new_text()
+    public void Templates_turned_off_edited_and_added_in_Settings_type_as_changed_and_every_change_is_there_after_a_restart()
     {
         MainWindow window = Open("Sum.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
@@ -39,7 +41,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Assert.True(page.Choose("cw"), "The Live Templates page does not list cw");
         Ui.Settle();
         Assert.Equal("Console.WriteLine($END$);", page.TextBox.Text);
-        Click(dialog, page.EnabledBox("cw")!);
+        Ui.Click(page.EnabledBox("cw")!);
         Assert.False(page.Chosen?.Enabled, "cw's check box did not turn it off");
         Assert.True(page.Choose("thr"), "The Live Templates page does not list thr");
         Type(page.TextBox, "throw new $EXCEPTION$(\"$MESSAGE$\");");
@@ -71,17 +73,11 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Press(window, "TAB");
         Assert.False(editor.IsInSnippet);
         Assert.Contains("        throw new InvalidOperationException(\"Not yet\");\n", Text(editor), StringComparison.Ordinal);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_template_added_fills_in_its_variables_as_their_macros_say_and_every_change_is_there_after_a_restart()
-    {
-        MainWindow window = Open("Sum.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        SettingsDialog dialog = LiveTemplates(window);
-        LiveTemplatesPane page = dialog.Templates;
-        Click(dialog, page.NewButton);
+        // A template added fills in its variables as their macros say, and every change is there after a restart.
+        dialog = LiveTemplates(window);
+        page = dialog.Templates;
+        Ui.Click(page.NewButton);
         Assert.True(page.ShortcutBox.IsFocused, "A template just added does not have its shortcut ready to type");
         Type(page.ShortcutBox, "hello");
         Type(page.DescriptionBox, "Says hello");
@@ -90,23 +86,23 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Assert.True(page.GenerationButton.IsChecked == true, "A template added is not typed by its shortcut");
 
         // Edit variables: TYPE is the containing type's name, not to be typed over; WHO is the constant "world".
-        Click(dialog, page.EditVariablesButton);
+        Ui.Click(page.EditVariablesButton);
         TemplateVariablesDialog variables = DialogButtonsTests.Check(Assert.Single(dialog.OwnedWindows.OfType<TemplateVariablesDialog>()));
         Assert.Equal(["TYPE", "WHO"], variables.Variables.Select(v => v.Name));
         Assert.Equal("No macro selected", variables.MacroText);
         Choose(variables, "Containing type name");
-        Click(variables, variables.EditableBox);
+        Ui.Click(variables.EditableBox);
         Assert.True(variables.Choose("WHO"));
         Choose(variables, "Constant value");
         Type(variables.ParameterBox, "world");
-        Click(variables, variables.DoneButton);
+        Ui.Click(variables.DoneButton);
         Assert.Equal([new TemplateVariable("TYPE", "typeName", string.Empty, Editable: false), new TemplateVariable("WHO", "constant", "world")],
             page.Chosen?.Variables ?? []);
 
         // A built-in one turned off, as the other kinds of change, to be kept with it.
         Assert.True(page.Choose("while"));
         Ui.Settle();
-        Click(dialog, page.EnabledBox("while")!);
+        Ui.Click(page.EnabledBox("while")!);
         dialog.Ok();
         Ui.Settle();
 
@@ -154,8 +150,11 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         window.Close();
     }
 
+    /// <summary>A postfix template that could wrap more than one expression asks which and wraps the one chosen, one that
+    /// fits only one wraps it at once; one turned off in Settings is offered no more, postfix templates kept out of the
+    /// list still expand on Tab, and postfix completion turned off leaves Tab a tab.</summary>
     [AvaloniaFact]
-    public void A_postfix_template_that_could_wrap_more_than_one_expression_asks_which_and_wraps_the_one_chosen()
+    public void A_postfix_template_asks_which_expression_to_wrap_when_more_than_one_fits_and_Settings_turn_one_or_all_off()
     {
         MainWindow window = Open("Pair.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
@@ -185,14 +184,8 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Press(window, "TAB");
         Assert.Empty(window.Assist.Offered);
         Assert.Contains("        !count\n", Text(editor), StringComparison.Ordinal);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_postfix_template_turned_off_is_offered_no_more()
-    {
-        MainWindow window = Open("Pair.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
+        // A postfix template turned off is offered no more.
         NewLine(window, "int count = 2;");
         window.KeyTextInput("count.");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("par"), "the postfix templates after the dot");
@@ -205,7 +198,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Assert.Equal([SettingsDialog.PostfixPage], dialog.Pages);
         Assert.True(dialog.Postfix.Choose("par"), "The Postfix Completion page does not list par");
         Ui.Settle();
-        Click(dialog, dialog.Postfix.EnabledBox("par")!);
+        Ui.Click(dialog.Postfix.EnabledBox("par")!);
         dialog.Ok();
         Ui.Settle();
 
@@ -224,9 +217,10 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
         dialog.Page = SettingsDialog.PostfixPage;
         Ui.Settle();
-        Click(dialog, dialog.Postfix.AutopopupBox);
+        Ui.Click(dialog.Postfix.AutopopupBox);
         dialog.Ok();
         Ui.Settle();
+        int negated = Text(editor).Split("        !count\n").Length;
         NewLine(window, "int count = 2;");
         window.KeyTextInput("count.");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("ToString"), "count's members after the dot");
@@ -235,14 +229,14 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
         Ui.Press(window, "ESCAPE");
         Ui.Press(window, "TAB");
-        Assert.Contains("        !count\n", Text(editor), StringComparison.Ordinal);
+        Assert.True(Text(editor).Split("        !count\n").Length == negated + 1, $"Tab after not, with postfix templates kept out of the list, did not expand it:\n{Text(editor)}");
 
         // Enable postfix completion, off: Tab after a postfix template's name is a tab.
         dialog = window.ShowSettings();
         Ui.Settle();
         dialog.Page = SettingsDialog.PostfixPage;
         Ui.Settle();
-        Click(dialog, dialog.Postfix.EnableBox);
+        Ui.Click(dialog.Postfix.EnableBox);
         dialog.Ok();
         Ui.Settle();
         NewLine(window, "int count = 2;");
@@ -268,10 +262,10 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
     /// <summary>Edit variables' Change macro, choosing a macro by what Choose macro calls it.</summary>
     private static void Choose(TemplateVariablesDialog variables, string macro)
     {
-        Click(variables, variables.ChangeMacroButton);
+        Ui.Click(variables.ChangeMacroButton);
         ChooseMacroDialog macros = DialogButtonsTests.Check(Assert.Single(variables.OwnedWindows.OfType<ChooseMacroDialog>()));
         Assert.True(macros.Choose(macro), $"Choose macro does not offer {macro}");
-        Click(macros, macros.OkButton);
+        Ui.Click(macros.OkButton);
         Assert.Equal(macro, variables.MacroText);
     }
 
@@ -297,30 +291,9 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
     }
 
-    /// <summary>A click at a control's middle, scrolled into view first as a person would, as the pointer gives it.</summary>
-    private static void Click(Window window, Control control)
-    {
-        control.BringIntoView();
-        Ui.Settle();
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>A window that keeps its settings in the test's own folder, on the project with a file open once C# is ready,
     /// on the server the class's last window left running.</summary>
-    private MainWindow Open(string file)
-    {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StateFolder = settings, WarmServer = project.Server };
-        window.Show();
-        window.KeepSettings();
-        window.OpenFolder(project.Folder);
-        window.OpenFile(Path.Combine(project.Folder, file));
-        Ui.Settle();
-        Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-        return window;
-    }
+    private MainWindow Open(string file) => project.Open(Path.Combine(project.Folder, file), state: settings);
 
     /// <summary>A small console project on disk, restored once for every test, and the warm server they share on it; a
     /// window never saves what its test typed.</summary>
@@ -330,7 +303,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
             : base("templates-")
         {
             File.WriteAllText(PathOf("Templates.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int sum = Sum.Of();\n    }\n}\n");
             File.WriteAllText(PathOf("Sum.cs"), "using System;\n\nstatic class Sum\n{\n    public static int Of()\n    {\n        int total = 0;\n        return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Pair.cs"), "class Pair\n{\n    public int First;\n\n    public int Both(Pair other)\n    {\n        int count = 2;\n        return count;\n    }\n}\n");

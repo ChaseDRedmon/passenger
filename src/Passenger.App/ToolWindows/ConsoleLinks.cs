@@ -40,7 +40,7 @@ public sealed partial class ConsoleLinks : IHighlighter
     private const int Kept = 2048;
 
     private readonly Dictionary<string, FoundLink[]> lines = [];
-    private readonly Dictionary<string, string?> files = new(PathNames.Comparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string?> files = new(PathNames.Comparer);
 
     public event EventHandler? Changed;
 
@@ -122,8 +122,8 @@ public sealed partial class ConsoleLinks : IHighlighter
                 Claim(found, new FoundLink(url.Index, url.Length, target));
             }
         }
-        // A Compose log's line starts with its service's container ("web-1  | "), the program's own after it.
-        int skip = ComposePrefix().Match(line) is { Success: true } prefix ? prefix.Length : 0;
+        // Merged logs name the resource before the program's own text: "web-1 | " or "[apiservice] ".
+        int skip = ResourcePrefix().Match(line) is { Success: true } prefix ? prefix.Length : 0;
         if (Frame().Match(line, skip, line.Length - skip) is { Success: true } frame && Resolve(frame.Groups["path"].Value.Trim(), deterministic: true) is { } framed)
         {
             Group path = frame.Groups["path"];
@@ -295,8 +295,8 @@ public sealed partial class ConsoleLinks : IHighlighter
     private static partial Regex Frame();
 
     /// <summary>The container's name and bar <c>docker compose logs</c> puts before each line of a service's.</summary>
-    [GeneratedRegex(@"^[\w.-]+-\d+\s+\| ")]
-    private static partial Regex ComposePrefix();
+    [GeneratedRegex(@"^(?:[\w.-]+-\d+\s+\| |\[[^\]\r\n]+\] )")]
+    private static partial Regex ResourcePrefix();
 
     /// <summary>A compiler's or MSBuild's message, the place first on its line: "File.cs(12,5): error CS1002: ...", "1>"
     /// before it when Visual Studio numbered the projects. The path may hold parentheses of its own ("Shop (copy)").</summary>

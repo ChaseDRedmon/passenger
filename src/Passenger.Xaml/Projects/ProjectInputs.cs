@@ -382,7 +382,7 @@ public sealed record ProjectInputs(
     /// <summary>Whether a C# file is one of the project's own, as <see cref="SourceFiles"/> reads them, there now or not.</summary>
     public bool Compiles(string path)
     {
-        if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || !Paths.IsUnder(path, Folder))
+        if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || !PathNames.Within(path, Folder))
         {
             return false;
         }

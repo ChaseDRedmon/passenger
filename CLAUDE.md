@@ -33,6 +33,9 @@ just themes                # rewrite the generated themes (Theme/Sorbet.axaml an
 just unicode-widths        # rewrite src/Passenger.Terminal/WideCharacters.cs (the terminal's wide characters) from the
                            # Unicode Character Database at the version .NET's CharUnicodeInfo knows, its files in
                            # artifacts/unicode
+just aspire-protocol       # rewrite the checked-in C# of Aspire's resource service protocol (src/Passenger.App/Aspire/
+                           # Protocol) from its .proto, with protoc from a pinned Grpc.Tools fetched into artifacts/,
+                           # so no build runs protoc
 just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails
                            # unless every size's corners are transparent (never write the three files any other way)
 just package-linux [RID]   # artifacts/package/Passenger-linux-x64.tar.gz (or -arm64): one passenger/ folder (app/,
@@ -42,9 +45,10 @@ just package-win [RID]     # artifacts/package/Passenger-windows-x64.exe (or -ar
 just container-tools [RID] [--archive]  # artifacts/container-tools/<rid>/, the container tools self-contained (linux-x64,
                            # linux-arm64, linux-musl-x64, linux-musl-arm64; none: the engine's processor, glibc), where a
                            # dev build finds them; --archive also the release's Passenger-container-tools-<rid>.tar.gz
-just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
-                           # notices miss
-just test [filter]         # every test, or those whose name matches; dotnet test's results in artifacts/test-results
+just notices               # fail naming any package the solution, Roslyn's server, the container tools or a dotnet tool
+                           # carries that the notices miss
+just test [filter] [N]     # every test, or those whose name matches, in N test processes at once then the Alone classes
+                           # in one (tools/test-run.py; N 1 is one dotnet test); results in artifacts/test-results/local
 just test-times RUN [RUN...]  # rewrite TestTimes.json (each test class's seconds on CI, which deals the shards) from
                            # CI runs' results
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
@@ -130,7 +134,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`realpath`, or `GetFinalPathNameByHandle` on Windows), answers `IsUnder` for every "is this inside that folder", and
   `FoldersUnder` is every walk of a project's folders (the XAML core's, and the project host's stamps, which compiles
   PathNames.cs in): each folder once by its canonical path whatever links reach it, none a link goes up to, as MSBuild's
-  globs walk them.
+  globs walk them. `PathNames.Comparer` (with `Comparison` and `Same`) is every path comparison and every collection keyed by
+  paths, the host's and the XAML core's too; `FilesUnder` is every walk of the open folder's files (each linked folder
+  resolved once, never entered twice or outside the walk), and `IsSystemFile` (.DS_Store, Thumbs.db) the one list of the
+  system's own files no walk or listing shows. `AtomicFile.Write(path, bytes, mode?)` is every write of a whole file: a
+  temporary file of its own made new beside it, its Unix mode set from creation, flushed, then renamed over it.
+  `SocketFolders` is where every Unix socket Passenger makes goes (Mcp below), and a socket made catches
+  `ArgumentException`, a path too long for one, as it catches `SocketException`.
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order; a change's `Edits` is a `SortedEdits`, so
   `TextEditing.MapOffset`/`MapRange`/`MapThrough` carry an offset through a key's edits by halving: pass `e.Edits` as
@@ -232,7 +242,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   With's targets) and `CreateFromUsage` (a binding path's property or command, and a missing converter; the MVVM
   Toolkit known by its attributes' full names). `CSharp/CodeAssist.XamlEditing.cs` is the window's side (dialogs in
   `Xaml/XamlRefactoringDialogs.cs`, surround templates in `LiveTemplates.Xaml`), each change's files applied through
-  `ApplyXamlChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
+  `ApplyFileChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
   file, projects read off the UI thread, told each build's AVLN problems, a C# change (typed or on disk) sent to every
   project whose XAML reads it (`XamlService.Reading`: its own and those referencing its project, each builder deciding
@@ -246,7 +256,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose request needs the
   `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address), each path, which the theme's own
   includes give, made canonical and refused outside its version's folder (`LibrarySources.Inside`), each file written
-  whole through a temporary file and a rename (`LibrarySources.WriteWhole`).
+  whole through a temporary file and a rename (`LibrarySources.WriteWhole`, over `AtomicFile`).
   `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
   ChildProcesses over Avalonia.Remote.Protocol, restarted by `BuildRunController.BuildFinished`; frames are bitmaps at
   96 DPI sized by the host's scale, and the host's viewport resize requests go unanswered (answering made it ask again
@@ -259,7 +269,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   so far, all prereleases, starts Visual Studio Telemetry's session even with telemetry off, loading the left-out
   RemoteControl (dotnet/roslyn#86122; moving past it is #234); after lowering it, delete `artifacts/bin/*/debug/roslyn*`, since the copy skips older
   files and leaves a mixed server that won't start. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
-  and makes requests in the editor's offsets. A server that stops, restarts or refuses a request is one exception,
+  and makes requests in the editor's offsets; whether a place is in a server's range is `LspRange.Holds`, and the symbols
+  of an outline that hold a place `DocumentSymbol.PathTo`. A server that stops, restarts or refuses a request is one exception,
   `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project. `RoslynExtension` is
   Passenger's own extension to the server (`src/Passenger.Roslyn.Extension`, compiled against the server package's own
   assemblies through `RoslynServer.targets`, carried under `roslyn-extension/` with none of them): the server loads it
@@ -337,7 +348,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   or dotnet publish names (the final stage's ENTRYPOINT, through the stage it is FROM, comments passed over), a service,
   volume, network, config or secret named to its declaration, `${VAR}` to `.env` (one only an env_file sets is said not
   set for Compose's interpolation; `$$VAR` is no variable), an env_file to its file, an image to its registry's page
-  through `CodeAssist.Browse`), tried before the
+  through `CodeAssist.Browse`; the file an extends names read through `ComposeText`, as `ComposeNames` reads it), tried
+  before the
   server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`; a Dockerfile's FROM image that names no
   stage goes to its page too (`CodeAssist.FromImageAt`). `ComposeNames` is completion of the file's own names, from the
   same outline, where a service names one (the place read by indentation as typed, half a line too, `ComposeSpot`): its
@@ -383,7 +395,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   15 ms to stamp and 8 ms to check a project of 5,000 files in 361 folders, 50 ms and 25 ms for 20,000 in 1,111, within
   the 400 ms typing pause)), and `properties`
   (`Properties.cs`: a few properties of one project evaluated afresh with the global properties given, which is how
-  Publish reads a publish profile, the SDK importing it by PublishProfile). Off Windows a project
+  Publish reads a publish profile, the SDK importing it by PublishProfile, a launch finds its program (`LaunchPlan`) and a
+  test run its assemblies (`TestAssemblies`), each given `ProjectModels.Properties(workspace, project)`: no cold dotnet
+  msbuild but for a target's run). Off Windows a project
   that references a framework the SDK marks Windows-only and leaves EnableWindowsTargeting unset is loaded again with it
   as a global property (`WindowsTargeting.cs`), in evaluate, build and inspect alike; Passenger's builds follow
   (`BuildOutput.WindowsTargeting`, `-p:EnableWindowsTargeting=true`), and Roslyn's server has it in its environment off
@@ -391,7 +405,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`Stamps.cs`), so a reopen redoes only what changed: the files it imported, its folders, and what would change it by
   coming (`Evaluation.LookedFor`: each Directory.Build.props, .targets and Directory.Packages.props MSBuild looks for from
   the project's folder up, as far as the first found, and the restore's `obj/X.csproj.nuget.g.props` and `.targets`,
-  which the window evaluates again for as a restore lands); the caches are read off the UI thread (`StateDocument.ValueAsync`).
+  which the window evaluates again for as a restore lands), evaluate's, build's and inspect's stamped by the same
+  `Evaluation.Inputs` and `Folders`, over the same `Evaluation.Load`; the caches are read off the UI thread (`StateDocument.ValueAsync`).
   The shown file's project and what it references load first (`ProjectSession.ActiveProjectsAsync`).
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
   loads the host's builds (`passenger/loadProjects`, `passenger/projectInfo`, `passenger/projectLoader`), compiled
@@ -400,7 +415,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   editor's target framework switcher (`CodeEditor.ContextLabel`, `MainWindow.TargetFramework.cs`), its requests naming
   the chosen context (`LspDocument.Context`, Roslyn's `_vs_projectContext`).
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
-  folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
+  folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; an open file's diagnostics from any
+  server (C#'s, a web language's, ESLint's) are a `ServerDiagnostics` (one pull at a time after a pause, as background
+  work, what each asks of its server its own; the reports carried with the text), drawn by `DiagnosticMarks`; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
   over the editor; `WorkspaceEdits` applies renames and fixes across files (a code action through `ApplyAsCommand`, one
   command of global undo, which keeps a command that changed a file not open). `UsageHighlighting` asks the server's
@@ -450,8 +467,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   popups the IDE's through `DockHost.WindowOpened`) are its parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
   `DropOverlay` are the one drag and drop zone, which editor tabs share. The layout is kept in the state store as a
   `DockLayout`, with the folder open and as the one a folder without its own opens on; `DockHost.RestoreDefault` puts
-  each window back where `Dock.Add` put it. A new tool window is a view and
-  one `Dock.Add` in `MainWindow.AddToolWindows`.
+  each window back where `Dock.Add` put it. A new tool window is a view and one `Dock.Add` with an id of
+  `ToolWindowIds` (what a kept layout records it by, so a value there never changes, and what every show, hide and
+  `ToolWindow.Id ==` names): the shell's own (Explorer, Structure, Run, Debug, Unit Tests, Build, Problems) in
+  `MainWindow.AddToolWindows`, a feature's in its `Add…` beside the view's wiring (Git and Commit in `AddVcs`, the
+  profiler in `ProfilerCommands`).
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -503,7 +523,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   refused; an advisory's address from a feed is a link only when it is http or https (`Advisory.Link`, `Releases.Web`).
   `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
-  Packages and Sources tabs. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
+  Packages and Sources tabs, and every package change's one path (`InstallAsync`/`RemoveAsync`: one at a time, under
+  `Changing`, answering a `PackageOutcome`), which MCP's `nuget_install` and `nuget_remove` take too. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
   `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
   restore's NuGetAudit does; the window marks vulnerable installed versions and offers the lowest that fixes them.
   `StandInFeed` is the tests' v3 feed on loopback (optional credentials, an advisory resource); tests never reach
@@ -525,6 +546,36 @@ window or takes the focus; it shows everything but the system's own window chrom
   would carry the body there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
   variables filled in to `MostFilledIn`; a row's last outcome is kept by its name, else its method and URL. Tests send
   only to `EndpointsTests`' stand-ins on loopback (its `localhost` name the other host, a second stand-in the other port).
+- A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
+  Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
+  starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot
+  Reload, or unheld), the sessions that reach it from here (`Debugged`, by `SessionName`; `AttachedRunning`) and the one
+  the profiler records (`Profiled`, `EndProfiling`); `EndSessionsAsync` is Stop's order, every session and recording ended
+  before the programs go, which a container run's Stop and an AppHost's (`StopAppAsync`; the window's close and the
+  folder's end in `CloseAsync`) take. What is done to a service is written once over it (`BuildRunController.Services.cs`,
+  each action given its run): the held start's attach (`AttachAllAsync` as a container run comes up, `AttachStartAsync` as
+  DCP starts an Aspire service), Debug, Attach, Run without Debugger, Restart and Profile (`DebugServiceAsync`,
+  `AttachServiceAsync`, `RunServiceAsync`, `RestartServiceAsync`, `ProfileServiceAsync`, under `OnServiceAsync`), the
+  person's choice kept by configuration for the run's restarts and a run that brings it up again (`chosenDebugged`; an
+  AppHost's first start of a service asks it, `AspireController.Chosen`), a restart's attach again and a service held that
+  no debugger reached made anew unheld (`RestartServicesAsync`), and the restart for an edit Hot Reload cannot apply, of
+  only the services whose project holds it, in the run whose sessions the edit names (`RestartServicesForEditAsync`). The
+  window's service rows (the Containers window's and the Aspire window's), the gutter's menus and an agent's `resource` (an
+  Aspire resource, or the container run's compose service, on run, debug_start, debug_attach, profile and stop:
+  `PassengerTools.Services.cs`) all reach those. A kind supplies only what is its own: how its services restart
+  (`RestartAsync`, built between their stop and start where `build` asks it of a kind that builds then), how a hold chosen
+  takes effect at their next start (`HoldsChangedAsync`), where a service's program is for the debugger and the profiler
+  (`ProgramAsync`, a `ServiceProgram`: its id there, the adapter's `AdapterPlace`, the profiler's `ProfilePlace`, its
+  inspected app; `ServiceUnreachedException` saying why not), whether an edit's restart builds here first
+  (`BuildsBeforeRestart`), which failures are its own to say (`Refused`), its sessions' names and group (`SessionName`,
+  `Group`), whether each start of a held service is attached to by the start itself, once, a restart then waiting for that
+  attach rather than attaching again (`AttachesItsStarts`: an Aspire service's, whose start DCP asks for), whether Run
+  without Debugger restarts it unheld rather than letting its session go (`RestartsToRunWithoutDebugger`, Aspire's), and
+  what an attach tells it (`Attached`: an Aspire start keeps its tab and session). Both kinds share too how a run is
+  started (`RunStart`: Run, Debug, Run with Hot Reload, Profile), its certificate (`BuildRunController.Certificate.cs`) and
+  one start at a time of what it starts (`TakeStartAsync`, a `StartUnderWay` in `ProjectSession.Starting`, which the
+  folder's end ends): a start of a container configuration, or of an AppHost a start under way also starts, ends that one
+  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has.
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
@@ -545,7 +596,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
   again), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
-  streamed only while its tab shows), Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
+  streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
+  Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
   as it is chosen and as the window reads the engine again, in framed tables with one column of names: state, restarts and
   last exit, the health check's last outputs, ports as links, Compose's `com.docker.compose.depends_on`, environment,
   mounts, networks) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
@@ -603,7 +655,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a
   run).
-  Its tests (`ContainersTests`, `ContainerDetailsTests`, `McpTests.Containers.cs`, `EngineChecksTests`; not
+  Its tests (`ContainersTests`, `ContainerDetailsTests`, `McpContainersTests`, `EngineChecksTests`; not
   `ContainerConfigurationsTests` nor `ContainerDetailsTests`' test of Inspect's unmasked copies, which need no engine,
   and `EngineChecksTests`' agent's fix, which needs Node.js too) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
@@ -624,8 +676,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   compose file of one service Passenger writes) and the project each service runs (its Dockerfile's ENTRYPOINT assembly
   or dotnet publish, `ComposeDeclarations.Built`, else the configuration's choice, else the .dcproj's), and every command
   takes Passenger's override from the folder's state (`workspaces/…/containers/<config>.override.yaml`, JSON, written
-  after the host's build, the person's alone to read on macOS and Linux, as a single service's compose file is, since it
-  names the certificate's password and the configuration's environment): labels on every service, image build and network;
+  after the host's build, the person's alone to read on macOS and Linux from the moment it is made, as a single service's
+  compose file is (`OwnFiles`), since it names the certificate's password and the configuration's environment): labels on
+  every service, image build and network;
   in fast mode each .NET service it starts its runtime
   stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
   read-only, its static web assets' folders mounted and its manifest rewritten (`ASPNETCORE_STATICWEBASSETS`); in images
@@ -633,12 +686,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   (fast mode's `:passenger-fast`), never the name its files give, which stays the person's; on Linux a .NET service runs as
   the person (`user: uid:gid`), in fast mode always and as deployed where it takes the certificate or user secrets (said
   after the status), since the engine keeps the host's owners and modes and those are the person's alone; the dev certificate (`DevelopmentCertificate`) for a
-  service that serves HTTPS (`ContainerPlan.Https`; `BuildRunController.CertificateAsync` before the override: `dotnet
+  service that serves HTTPS (`ContainerPlan.Https`; `BuildRunController.CertificateAsync`, every HTTPS run's one path, an
+  Aspire AppHost's too, `BuildRunController.Certificate.cs`, before the override: `dotnet
   dev-certs https --check --trust`, and missing or not trusted the person asked once, `CertificateQuestionDialog`, Create
   and Trust running `--trust` or Run over HTTP; a run an agent's call started (`Mcp.AgentCall.Current`) or an agent's own
   IDE (`MainWindow.AgentsOwn`, `--mcp`'s, not `--no-mcp`'s) asks no one and runs over HTTP, saying so in the status bar and
   the call's answer (`ContainerRun.Notes`); a start stopped closes the question; then exported, again once the check names
-  another certificate than the one exported (its thumbprint kept beside it), the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
+  another certificate than the one exported (its thumbprint kept beside it), into a folder only the person enters, made so
+  before dev-certs writes there, its files theirs alone to read (`OwnFiles`), the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
   failure is said in the status bar, a click from the Run window's line of what dev-certs said; the wait for the answer
   holds no `BackgroundWork`; `DotnetWords` is the dotnet it runs through, a test's stand-in by `MainWindow.DevCertificates`)
   and in Development the project's own user secrets (its UserSecretsId's folder alone, mounted at
@@ -667,12 +722,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   and back (a container's path never to a file outside the folder it maps to: a `..`, a `//` or a rooted rest gives
   none), for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
   the debugger takes it at the protocol's edge (`AdapterPlace`, a service's `DotnetService.Paths` in images mode,
-  `ContainerPaths.None` in fast mode). A run is started one of three ways (`ContainerStart`): Run; Debug, its services
+  `ContainerPaths.None` in fast mode). A run is started one of three ways (`RunStart`, every run of services' one enum): Run; Debug, its services
   marked Debug (else every .NET service it starts, `ContainerPlan.Debugged`) held at their runtime's start
   (`ContainerPlans.HeldVariable`, DOTNET_DefaultDiagnosticPortSuspend=1, with DOTNET_MODIFIABLE_ASSEMBLIES=debug, in the
   override); and Run with Hot Reload (Settings' Hot Reload when running, or `run`'s `hotReload`), every .NET service held, since
   dotnet watch would need the SDK in the image. `ContainerRun.UpAsync` runs `up --wait` while each held service is attached
-  to alongside (`BuildRunController.AttachAllAsync`: its container from `compose ps -q` once Compose starts it, the tools
+  to alongside (`BuildRunController.AttachAllAsync`, each program reached through `ContainerRun.ProgramAsync`: its container from `compose ps -q` once Compose starts it, the tools
   copied in for its image's system, never mounted, since the system is known only once the image is and an engine shares
   only some of this machine's folders; its program from the tools' `processes` by its assembly), so a healthcheck or a
   dependent's `service_healthy` is not waited on before the attach lets it go. Debug gives each service a Debug tab named for
@@ -680,45 +735,43 @@ window or takes the focus; it shows everything but the system's own window chrom
   its console the container's `docker logs --follow --since` its start (`AdapterPlace.Output`); Run with Hot Reload attaches
   quietly (`DebugController.AttachForHotReloadAsync`, `DebugSession.Quiet`: no breakpoint sent, no exception stops it, the
   store never told), Apply Hot Reload Changes and a save applying the edits through it (`ApplyRunningAsync`) whatever else
-  is debugged, a session debugged with Hot Reload taking them too (`ApplyAllAndRestartAsync`). An edit Hot
-  Reload cannot apply builds the service's project again (fast mode) and restarts it (`RestartContainerServicesAsync`: only
+  is debugged, a session debugged with Hot Reload taking them too (`ApplyAllAsync`). An edit Hot
+  Reload cannot apply builds the service's project again (fast mode) and restarts it (`RestartServicesForEditAsync`: only
   the services whose project holds a rude edit, since Roslyn names one in another project rude to each session; images mode
   `up --build --no-deps --force-recreate`), its session ended first and attached again, as Rerun's restart of a held service
   does. A Release build (the tools' `optimized`), a runtime with DOTNET_EnableDiagnostics=0 (not held, and not attached: it
   runs on) and an image of another processor than the engine's are said in the status bar after the run comes up. Stop ends
-  the run's sessions (`ContainerRun.Debugged`) before the containers go, since a container taken from under its adapter
+  the run's sessions (`ServiceRun.EndSessionsAsync`) before the containers go, since a container taken from under its adapter
   would end it as a failure. A start stopped (Stop, the window's Kill, an agent giving up on `run` or `debug_start`,
   `PassengerTools.Started`, an agent's `stop`) ends Compose's `up` and waits for its CLI to go before the take-down looks, which waits for it
   (`ContainerRun.upEnded`) and looks again 2 s later, since the engine can finish a container it was making as `up` ended;
   `StopAsync` cancels the run's own token whoever asks, so its `up`, publish and restarts end with it whatever began them;
   an attach whose container was reached after the Stop, or after its folder was left, starts no session (nor does the
-  debugger once disposed). One container start at a time (`ProjectSession.ContainerStarting`, a `StartUnderWay`): a start
+  debugger once disposed). One container start at a time (`ProjectSession.Starting`, a `StartUnderWay`, the model's `TakeStartAsync`): a start
   ends one under way first (Debug pressed as Run comes up) and waits for its end and its run's take-down, a start that fails
   takes down its own run alone (`StopContainersAsync(run)`), and the folder's end ends it, its `up` waited for before the
   folder's containers are taken down (`FolderContainers.EndAsync(upEnded)`); a stop as the certificate is checked, made or
-  exported, or as the person is asked about it (the question closed), is the start stopped too. Profile of a container configuration (`ContainerStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
+  exported, or as the person is asked about it (the question closed), is the start stopped too. Profile of a container configuration (`RunStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
   `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
   at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
   first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for
-  changing; the run's `ContainerProfiler` has the tools' `trace --resume` record it there, which lets it go, and the run is
+  changing; the run's `ServiceProfiler` has the tools' `trace --resume` record it there, which lets it go, and the run is
   handed over only once up (a failed start disposes the recording). Get Snapshot ends the recording and the containers run
-  on; Stop ends it first (`ContainerRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach
+  on; Stop ends it first (`ServiceRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach
   Profiler with a container run up (and nothing debugged) records that service as it runs (`ServiceInContainerAsync`,
-  `ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
-  modifiable)`), and the run keeps what each service is held for (`ContainerRun.HeldFor`, `HoldAsync`) and which containers
+  `ContainerRun.ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
+  modifiable)`), and the run keeps what each service is held for (`ServiceRun.HeldFor`, `HoldAsync`) and which containers
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
   no debugger to let it go; one restarted held that the debugger then cannot reach is made anew unheld, its hold let go and
-  said, rather than waiting at its start for good. A .NET service of the run under way is acted on alone, the run left up (`MainWindow.ContainerServices.cs`,
-  `AppActions.Service*`, on the Containers window's service and container rows and the gutter's icon, whose menu joins a run
-  that reads its compose file, `InRunNow`): Debug (`DebugServiceAsync`: held from now and restarted, attached in a tab, its
-  startup stopping at breakpoints), Attach (`AttachServiceAsync`: as it runs, its startup said to have run;
-  `ContainerRun.AttachedRunning`, attached again after a restart), Run without Debugger (`RunServiceAsync`: detached, not
-  restarted, unheld from its next restart) and Profile (`ProfilerCommands.AttachServiceAsync`, Attach Profiler's path). Debug's
-  and Run without Debugger's choice is kept by configuration (`chosenDebugged`) for the run's restarts and a Rerun that
-  brings it up again. The window's Restart, Stop and Remove of such a service, and an agent's `container_action`, go through
-  the run (`MainWindow.ContainerActAsync`): its session and recording ended first, Restart attaching again as the run's restart
-  does (`RestartServiceAsync`); so do those of the run's own project (`ProjectActionAsync`): Restart ends its sessions,
-  restarts its other services as they are and its .NET ones as the run's restart does, Stop and Remove are the run's Stop.
+  said, rather than waiting at its start for good. A .NET service of the run under way is acted on alone, the run left up,
+  by the model's actions (above), from the Containers window's service and container rows (`MainWindow.ContainerServices.cs`,
+  `AppActions.Service*`) and the gutter's icon, whose menu joins a run that reads its compose file (`InRunNow`); a
+  container's Run without Debugger lets its session go, not restarted, unheld from its next restart, and its Profile is
+  Attach Profiler's path in its container (`ProfilerCommands.AttachServiceAsync`). The window's Restart, Stop and Remove of
+  such a service, and an agent's `container_action`, go through the run (`MainWindow.ContainerActAsync`): its session and
+  recording ended first, Restart attaching again as the run's restart does; so do those of the run's own project
+  (`ProjectActionAsync`): Restart ends its sessions, restarts its other services as they are and its .NET ones as the run's
+  restart does, Stop and Remove are the run's Stop.
   Edit Configurations' Compose page lists the services from Compose's model
   (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
@@ -727,7 +780,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
   which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`; its check answered trusted by a
   stand-in, so it asks nothing), their certificate question's test answers with a shell stand-in for dev-certs that trusts
-  nothing on the machine (`DevCerts`), and their SDK container image (unlabelled, the SDK's) is removed by the test that
+  nothing on the machine (`DevCerts`, which AspireStandInTests' and McpAspireTests' HTTPS AppHost take too), and their SDK container image (unlabelled, the SDK's) is removed by the test that
   made it.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
@@ -747,6 +800,122 @@ window or takes the focus; it shows everything but the system's own window chrom
   on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
+  Podman (#403), on rootless Podman 5.7 in the Ubuntu VM, both ways a person sets it up: Docker's CLI and Compose v2 on
+  Podman's socket (DOCKER_HOST or a context, as Podman Desktop does), and Podman alone, a `docker` that is Podman's own
+  command (podman-docker, or a link ahead on the PATH where it conflicts with Docker's CLI) whose `podman compose` runs
+  Docker's Compose v2 as its provider (Python's podman-compose does not serve: said as no Compose). On Docker's CLI,
+  Compose builds through buildx, whose builder there is a BuildKit container it starts and keeps (buildx_buildkit_default,
+  Compose's and buildx's own doing); Podman's own Compose builds with Buildah through the API. The state knows it
+  (`EngineState.IsPodman`: the server's Podman Engine component, or `PodmanCli`, a client that words its system as
+  OsArch) and whether it is `Rootless` (info). Podman's own command answers in its own JSON, which every reader takes
+  beside Docker's (`ContainerInfo.IdOf`, `First`, `ReadLabels`, `ContainerPort.Read`: ids as Id or id, names and tags as
+  lists, labels and ports as objects; events' Status, ID and Attributes at the top), has no server apart in its version
+  (the client's is the engine's, its OsArch the processor), no -L on cp (it follows a link itself), stats over several
+  lines (asked as a line of Docker's names), its info over many lines (read whole), a start time in Go's words (asked as
+  JSON), and its compose needs the API socket (said when it is not running), names its provider on every command
+  (`PODMAN_COMPOSE_WARNING_LOGS=false`) and adds a line of its own after the provider's error, which every reader of
+  Compose's error passes over (`ContainerEngine.ProviderFailed`).
+  Through Docker's CLI, Podman's list words no health and gives no address on a published port, so Docker's CLI shows
+  none (both read through inspect, `ContainerSnapshot.InspectedAsync`), and its stats cut each name's first letter (each
+  reading named by the id asked). A .NET service run as the person on rootless Podman takes `userns_mode: keep-id`, without
+  which its user is a subordinate id that reads none of what is kept for the person (the build under a 0750 home, the
+  certificate, user secrets: exit code 155, the dotnet host finding no app). Podman has no BuildKit, and Docker's buildx
+  on it would start a BuildKit container of its own: a Dockerfile goes unchecked, said once in the status bar and
+  Problems' Containers tab as one opens with the setting on (`EngineChecks.Limited`, `EngineState.Limit`). A stopped
+  Podman is said as Podman, its socket or machine to start. Compose's `logs --follow`, the run's log, crashes (Compose
+  2.40 and 5.0: a nil State read for a die whose container is gone, as Podman's die comes) when a service is made anew,
+  which ended the run: on Podman `ContainerRun.RestartAsync` stops such a service first while another keeps the log going
+  (a run's only service still ends it; following the log again when it ends with the containers up is the run's own,
+  `ServiceRun`'s, to do). So a compose file or a Dockerfile runs, debugs (two services at once, or one service of a run),
+  Hot Reloads and profiles on Podman as on Docker: the ten container classes pass both ways (but for Ubuntu's own
+  fault below). An AppHost's container resource runs on the same Podman (DCP takes Docker's CLI on its socket, or Podman's
+  own `docker` as Podman), and #397's cleanup reads Podman's bare container names. On Ubuntu 26.04 the pasta AppArmor
+  profile refuses podman's SIGTERM, so a container's removal can fail ("rootless netns: kill network process: permission
+  denied"), Ubuntu's to fix (`signal (receive) peer=podman` in /etc/apparmor.d/usr.bin.pasta). Not handled: SELinux (Fedora, RHEL), whose bind mounts need
+  relabelling (`:z`) or `label=disable`, untested on Ubuntu's AppArmor; rootless Docker, whose user mapping is the same
+  with no keep-id. Docker's CLI 29 `docker run` on Podman 5.7's socket makes a container of one process (pids.max 1;
+  Compose's get Podman's 2048), so the tests' own runs take `Docker.AnyPids`, their own builds `Docker.Load` (buildx's
+  BuildKit container keeps a build in its cache), and they compare an image Passenger tagged by its short name
+  (`Docker.Short`: Podman names one built here docker.io/library/…) and a command without Podman's init
+  (`Docker.WithoutInit`), read a published port however Compose words its address (":port" there), take the
+  container's own log line over Buildah's echo of the CMD it builds, and read the engine's processor from info's
+  Host.Arch where version has no server (`ContainerPrograms.Processor`). Every `docker rm -f` waits Podman's 10 s for a
+  container that ignores SIGTERM, where Docker kills at once.
+- `src/Passenger.App/Aspire` (#338): Aspire's AppHosts run with Passenger as their IDE. `AspireController`
+  (`ProjectSession.Aspire`) owns the folder's AppHosts and the project resources their orchestrator asks the IDE to start,
+  through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
+  bearer token, kept hashed and compared in constant time and checked before anything is admitted, one ordinary request a
+  connection (`AspireExecutionConnection`) with ten seconds for its headers, body and writes, its notifications over
+  WebSockets, and a create given up by its connection cancelled on its own. An AppHost is a project whose evaluation sets
+  `IsAspireHost` (`ProjectModel.IsAspireHost`, carried by the host's `evaluate`; an older `projectModels.json` forgotten), or a
+  single-file `apphost.cs` (a C# file whose head names `Aspire.AppHost.Sdk`, `AspireAppHosts.IsSingleFile`), found among the
+  files of the folder's one walk (`FileIndex.Walked`, `ProjectSession.AspireFiles`; none under a hidden folder), each C#
+  file's head read as a walk first lists it and again only as the watcher says it changed, each a run configuration
+  (`RunConfiguration.Aspire`, `LinkedAppHosts`). An AppHost whose launch profile serves HTTPS on this machine
+  (`AspireController.ServingHttps`) has the development certificate checked once before it starts, through the container
+  runs' path (`BuildRunController.CertificateAsync`, the person asked by `CertificateQuestionDialog`, nobody for an agent;
+  no export, what runs here taking the store's own); over HTTP (`HttpsChoice.OverHttp`, `AspireAppRun.OverHttp`, said in
+  the status bar and `AspireAppRun.Notes`, which an agent's `run` answers with) its own addresses serve HTTP, unsecured
+  transport allowed, and the services it starts are told HTTP as a container's are (`DevelopmentCertificate.OverHttp`).
+  `AspireInteractions` is one
+  authenticated connection to an AppHost's resource service (gRPC, `Protocol/dashboard_service.proto`, its C# checked in beside it): its resources,
+  their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`, closed with their window or the IDE's quit, still answered, so none holds the window and the AppHost open), the display's streams followed only
+  while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
+  dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
+  JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
+  window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`) shows the resources as a tree, their consoles merged with
+  Find, their logs and traces; its buttons are registered actions (`MainWindow.AspireActions.cs`), its links open through
+  `Browse`, and a resource's Details leave out every environment value (`ContainerSecrets` masks the rest). An AppHost the
+  window starts is a run of services (`AspireAppRun`, the model above), its services the IDE runs on this machine as DCP
+  asks (`AspireController.StartResourceAsync`, each start an `AspireResourceRun` under a `ProcessRunner`, its console its
+  own): a service held for the debugger (debugged, or quietly under Run with Hot Reload) starts with its runtime suspended
+  and DOTNET_MODIFIABLE_ASSEMBLIES=debug and is attached to through the model as it starts, before DCP is answered, so a
+  restart's own start is the one attach (a restart waits for it, `AspireAppRun.NextStart`); its session is named by its
+  AppHost and resource (`SessionName`), so a restart takes its ended tab. Its restart is its AppHost's own resource
+  commands (`MainWindow.RestartAspireCommandAsync`: restart, or stop, its project's build here and start for an edit), the
+  service found by its name and project whether its program still runs; Run without Debugger restarts it unheld. Profile
+  of a configuration holds the chosen service at its start until recording begins (`ProfileAspireAsync`,
+  `AspireServiceDialog` when several run). Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
+  `AspireOrchestration`, `AspireOrchestrationDialog`) adds an AppHost and ServiceDefaults from Aspire's templates and
+  references them, each service a local of the AppHost, with the backing services Add > Docker Compose's detection finds
+  for it (`BackingService.Needs`: a server once by its service's name, a database of Postgres, SQL Server or Mongo by
+  each connection string's name, its database kept, Redis and RabbitMQ by the connection string's name, else the server
+  itself), each `WithReference`d and `WaitFor`ed by the services that read it and its hosting integration referenced at
+  the AppHost's own Aspire version (its SDK's, under central package management in Directory.Packages.props), prepared
+  under the state's `aspire-staging/` before any file is written, as one command of global undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
+  reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
+  it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
+  own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
+  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
+  string literal, `AddProject` goes to its project (`AspireProjectDeclaration`) and a resource's name a service reads (a
+  connection string's, by GetConnectionString, a client integration's connectionName or a `ConnectionStrings:` key; a
+  service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one
+  declaration path with MCP's `definition` (`CodeAssist.AspireDeclarationAsync`), Rename on such a name, or on the name
+  where the AppHost declares it, renames the resource there and wherever its AppHost's services read it (`AspireRename`,
+  worked out again as it is made, one command of global undo, MCP's `rename` too; `CodeAssist.RenameResourceAsync`), an
+  AppHost's `AddParameter` with no value of its own and none in its configuration (`Parameters:NAME` in its folder's
+  appsettings*.json or its user secrets, `AspireParameters`, whose values are never read out) is marked on its name in
+  the AppHost's pull (`AspireUnsetParametersAsync`), its fix asking the value (`EditorFix.Asks`, the window's
+  `AskValueAsync` masking a secret as typed and holding no background work while it waits, an agent's
+  `apply_code_action` giving it as `name`) and setting it in the AppHost's user secrets (`Workspace/UserSecrets`, the
+  UserSecretsId's own, `PASSENGER_USER_SECRETS`' in a test run) for a secret, else in its appsettings.json, the file's
+  other characters kept (`JsonText`, launchSettings.json's editor too), one command of global undo, worked out again as
+  it is chosen, and Edit Configurations and the gutter's
+  `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
+  open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
+  key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
+  references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
+  an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings and an AppHost's its
+  parameters' (`CSharpDocument.AspireFindingsAsync`, which an agent's `diagnostics` adds too, and whose pull its
+  `code_actions` and `apply_code_action` make first, `PullNowAsync`), an AppHost's edit pulls its open services' again,
+  and any other file's typing pause, completion, actions and declarations cost Aspire nothing (AspireCodeHelpTests holds a
+  pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
+  `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
+  (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `run_output` with it reads a service's
+  own console, `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
+  ended, or that sends no resources within 30 s, with that as its state and none listed:
+  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation), and `aspire_telemetry` reads
+  their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -799,7 +968,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   DevTools from what it made before Passenger restores; every `dotnet new` goes through `ProjectTemplates.New` or
   `NewCommand`, which add the IDE's `Hive` (`--debug:custom-hive`) when set.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
-  its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
+  its own (off Windows a socket in Passenger's socket folder, `SocketFolders`, as `PID-….profiler`) and streams EventPipe
+  to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
   `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action, which holds its
   folder from its first moment to the hand-over (`launching`), so Profile and Attach Profiler are refused while a start
   waits for its program. Every session
@@ -861,11 +1031,17 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows (Problems' File tab lists markers moved by keys once typing
-  pauses, 250 ms, and fresh markers for the text already shown at once; its solution-wide list asks a refused
+  pauses, 250 ms, and fresh markers for the text already shown at once; its solution-wide list keeps each report by its
+  URI's path, made once off the UI thread as it comes with its problems placed, and lists again only the files a pull
+  changed, an open file's as its own pull lands (`CSharpService.SolutionProblemsChanged` names them,
+  `ProblemsView.ShowSolutionFile` makes or moves only their rows), so a typing pause costs what it changed; it asks a refused
   workspace pull again after a pause, 1 s doubling to 30 s, and `LanguageServer.RefuseNext(method, n)` refuses one for a
   test; Roslyn holds a workspace pull open until the next change, so an answer lost after it was sent waits for another). Every console (Run, Build, Debug, the profiler's) is written
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
-  Rider's 1024 KB, and what is typed into it sent to the program. A run configuration is data (`RunConfiguration`: the
+  Rider's 1024 KB, and what is typed into it sent to the program; a program's output and errors are read into it by its
+  one pump (`ConsoleSink.PumpAsync`: a read at a time, colour-code state of its own, the stream ended there as it ends,
+  a last '\r' let go; a build's, a run's, a container's log and Compose's, the profiler's through its `ProgramPump`).
+  A run configuration is data (`RunConfiguration`: the
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
   cannot launch here saying why: a project whose framework references Microsoft.WindowsDesktop.App runs only on
   Windows (`ProjectModel.WindowsOnly`), so off Windows the Solution view marks it, `RunConfiguration.WhyNotHere` greys
@@ -883,7 +1059,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   a value replaced where it stands, a property added indented as the others, the rest byte for byte) as one command whose
   Part puts the folder's edit back on Undo (`MainWindow.WriteToLaunchProfile`, `RunConfigurations.Rebase`); what the file
   has no place for (the framework, console, building first, a variable its application URL gives) stays the folder's.
-  `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
+  `LaunchPlan.ResolveAsync` works one out once, in one request of the project host, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. While a run of a configuration is up (Run's program or container run, a session Debug launched for it,
   Profile's program: `BuildRunController.IsRunningConfiguration`), the toolbar, its chooser and Edit Configurations' row say
@@ -901,7 +1077,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Rerun, Stop and the debugger's keys stay with the IDE. Console links come from `ToolWindows/ConsoleLinks` (URLs, .NET
   stack frames, compiler messages; in the terminal also paths to any file, hidden until Cmd/Ctrl), drawn by
   `CodeEditor.Links` and `TerminalView.Links`; `MainWindow.Browse` is the only way the IDE opens a browser (recording
-  `Browsed` for tests), and Run and Debug open a plan's `BrowserUrl` once its port answers (`Run/BrowserLaunch`).
+  `Browsed` for tests; the update notice's link too), and Run and Debug open a plan's `BrowserUrl` once its port answers
+  (`Run/BrowserLaunch`). `MainWindow.ShowInFileManager` is the only way it opens the file manager (recording
+  `ShownInFileManager`): `FileManager.Show` opens a folder through the system's launcher and chooses a file with macOS's
+  `open -R` or Explorer's `/select` through ChildProcesses, and the headless platform, which has no launcher, opens nothing.
 - Publish (`Run/Publishing.cs`, `Run/PublishDialog.cs`, `Run/BuildRunController.Publish.cs`, `MainWindow.Publish.cs`): a
   project to a folder through `dotnet publish` with a publish profile, the SDK's own `Properties/PublishProfiles/NAME.pubxml`,
   so `dotnet publish -c CONFIG -p:PublishProfile=NAME` does the same (the CLI takes no configuration from a profile, and
@@ -918,8 +1097,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   what it found, the Build window's Rerun publishing again), its folder resolved by MSBuild before it starts
   (`PublishProfiles.ResolveAsync`: PublishDir; a Visual Studio web profile's PublishUrl, where Visual Studio copies the
   app on with DeployOnBuild and dotnet publish does not, is only said in the dialog), said in the Build window and
-  the status bar, whose word opens it (`MainWindow.ShowInFileManager`, the system's launcher, recorded as `ShownFolders`
-  for tests). Publish Again publishes a project with the profile it last published with (`PublishMemory`, the folder's
+  the status bar, whose word opens it (`MainWindow.ShowInFileManager`, recorded as `ShownInFileManager` for tests). Publish Again publishes a project with the profile it last published with (`PublishMemory`, the folder's
   `publish.json`); an agent's `build` publishes given `publish` (a project) and `profile`, folded into build since a
   tool of its own took the list past McpTests' budget, and answers the folder. Remote targets (Web Deploy, FTP, Azure) come as
   kinds of `PublishProfileFile.Remote`: a page of their own in the dialog and a deploy after the folder's publish, their
@@ -954,7 +1132,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   `changes.log`), fed by `FileText.Wrote` (every IDE write, with the bytes it replaced), the folder watcher (External
   change, or the `VcsController.Activity` name), files opened, `EditorArea.MoveFile` and Explorer deletes, off the UI
   thread; it prunes to Rider's 5 days of activity and a size cap (`HistoryKeeping`), working from the log on disk, since
-  another process over the same state (an agent's `--mcp`) writes to it too. `LocalHistoryView` is the tool
+  another process over the same state (an agent's `--mcp`) writes to it too: each append, each prune (from its read of the
+  log to its last delete) and each reused blob's touch holds `localHistory/changes.lock` against that process (waited for
+  on the history's queue, 10 s at most). `Workspace/FolderWalk`, beside `IgnoredFolders`, is the open folder's one walk
+  (Go to File's index, whose walks the single-file AppHosts are found among, Local History, a folder's projects,
+  `TestFinder`, the XAML class lookup), passing over hidden
+  folders only where it looks for what projects build, as MSBuild's globs do. `LocalHistoryView` is the tool
   window, reusing `DiffView` on the file's document. A test that deletes through the IDE sets `Trash.Folder`.
 - `Explorer/FileNesting` nests a project's files in the Solution view by Rider's rules (its
   `ProjectViewNestingRulesProvider`s, chained as IntelliJ's `FileNestingBuilder` does), the project's `DependentUpon`,
@@ -979,7 +1162,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   beside it and a .dockerignore at the context, the solution's folder; or EnableSdkContainerSupport and
   ContainerRepository) and Add > Docker Compose on the solution (compose.yaml, a Dockerfile for each project chosen
   without one, the backing services its packages call for with healthchecks and connection strings, listed in Solution
-  Items), the text from `Workspace/DockerFiles`, each Add one `Commands.Record` with every file watched before it is
+  Items; `Workspace/BackingServices`, the detection Add > Aspire Orchestration shares), the text from
+  `Workspace/DockerFiles`, each Add one `Commands.Record` with every file watched before it is
   written and an open project or solution file taking its new text inside it (`FollowWritten`), and refused, saying so,
   while a project is still being evaluated. A project's image is aspnet when it or a project it references has the
   ASP.NET Core framework reference as evaluated, or its restore's `project.assets.json` says a package or reference
@@ -991,7 +1175,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`BackingService.Reached`: Host= postgres, Server= or Data Source= SQL Server but a file's, mongodb://, amqp://, a
   Redis host:port; one of another shape, SQLite's, is left as the app has it), its database kept and made by
   POSTGRES_DB (RabbitMQ's virtual host by RABBITMQ_DEFAULT_VHOST), compose.yaml saying in a comment what SQL Server and
-  a second Postgres database leave to the app. `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
+  a second Postgres database leave to the app. The Explorer's row menu is the window's actions run on that row
+  (`ActionContext.ExplorerRow`, as a tab's menu has `ActionContext.Tab`; `MainWindow.ExplorerActions.cs`), its own keys
+  only Enter and the arrows: the keymap's run there on the row chosen, Rider's one key for two actions told apart by where
+  it is pressed, so the editor's Cut, Copy, Paste, Delete (Backspace too), Undo and Redo act on the row (`ExplorerEdits`),
+  Rename renames it (Rider's RenameElement), and Compare Files takes the editor's Duplicate keys in Visual Studio's
+  keymap off macOS (`IdeAction.KeysOf`, which menus show; Cmd+D of its own on macOS). `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
   every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
@@ -999,7 +1188,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   nuget.config or Directory.Packages.props saves that file first if it's open (`MainWindow.SaveBeforeWriting`, or
   SaveAll before `dotnet add package`) and then loads what it wrote (`FollowWritten`); a delete saves the open files
   under it first, and holds off design-time builds under it (`ProjectBuilds.HoldOff`). Every write of a workspace file
-  goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on Windows its
+  goes through `FileText.Save`: a temporary file and rename (`AtomicFile.Write`, the file's own metadata kept on top), through symlinks, permissions kept, on Windows its
   attributes, ACL and streams (ReplaceFile, `FileText.Over`), on macOS its tags, ACL and creation date
   (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
   window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), an open file whose folder another program moved
@@ -1047,7 +1236,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the rest, and a `ToolWindow`'s `Action` for its show action (`IdeAction.Words` are other names Find Action finds
   it by, as Rider's older names). `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
-  through the registry, so one that cannot run says why; editor actions go to the focused editor. The keys are the main
+  through the registry, so one that cannot run says why (a greyed menu item on hover too); editor actions go to the
+  focused editor. A menu, a toolbar's tip and macOS's application menu take an action's title from the registry
+  (`TitleWhere`), never typing it again; a label that asks more before it acts ends in the one ellipsis, "…", as Rider's
+  titles do (UiRulesTests, `DialogButtonsTests.Check`); and what is missing is said in `Refusals`' words (No file is
+  open, No folder is open, No solution is open, `NeedsFile`, `NeedsLines`), the same want worded the same everywhere. The keys are the main
   window's one keymap in every window the IDE opens but a dialog, each taken in by `IdeKeys.Attach` before it shows (the
   main window, an editor window through `EditorArea.WindowOpened`, a floating or windowed tool window through
   `DockHost.WindowOpened`, a diff's or changes window through `MainWindow.ShowOwn`, the merge window, a test's frame
@@ -1102,13 +1295,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
   `LiveTreeController.Watching`; `debug_state` carries `bindingValues`, and with several programs debugged lists them
   (`sessions`): the debug tools and `stop` take `session`, a Debug tab's name, else act on the one paused, else the only
-  one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All);
-  `hot_reload` is Apply Hot Reload Changes
-  (`RestartForAgentAsync` never asks; under dotnet watch, `SaveForWatchAsync`'s last word; a container run with Hot Reload,
-  `MainWindow.HotReloadRunning`, through `ApplyRunningAsync`); the headless `--mcp` IDE
+  one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All,
+  `BuildRunController.StopAllAsync`, the window's own); `hot_reload` is the window's Apply Hot Reload Changes
+  (`MainWindow.ApplyHotReloadAsync`: `DebugController.ApplyAllAsync` under the action's work, given a `HotReloadRestart`, the
+  window's `SettingsRestart`, an agent's `RestartForAgentAsync`, which never asks; under dotnet watch, `SaveForWatchAsync`'s
+  last word); the headless `--mcp` IDE
   starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
-  container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests.Actions`
-  holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
+  container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests`' actions
+  test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
   `find_in_files`/`replace_in_files` are the window's own search in its scopes and masks once `FileIndex.IsWalking` is
@@ -1117,10 +1311,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   console, and `profile` takes `attach` (and `container`, a container's program). The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
-  agent joins, its server answering before the IDE is up and each call waiting for it), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
+  agent joins, its server answering before the IDE is up and each call waiting for it), a window's own socket in the state's socket folder (`McpHost.SocketFolder`, `Core/SocketFolders`, the one
+  folder of every Unix socket Passenger makes, an inspected app's and a profiled program's port too: in the user's own temporary
   folder, macOS's by `confstr` whatever TMPDIR an agent has, else XDG_RUNTIME_DIR or /tmp, named by a hash of the user and
   the state folder, mode 0700 and used only once its mode is the user's to set, so a socket's path stays within macOS's
-  104 bytes whatever PASSENGER_SETTINGS is, and `TestRun` removes the run's) (`AgentSocket`, open from the window's start but for
+  104 bytes whatever TMPDIR or PASSENGER_SETTINGS is, each socket named for its process first and only a window's ending
+  in .sock, and `TestRun` removes the run's) (`AgentSocket`, open from the window's start but for
   `--no-mcp` and a screenshot without `--agent`), and `--mcp-attach [PID] [FOLDER]` (`McpProxy`: the agent's server for
   its whole session, answering initialize and tools/list from `McpHost.ToolMethods` and joining, at a tool call, only a
   window whose folder holds FOLDER or the agent's working folder; with none it asks the running Passenger to open it
@@ -1168,8 +1364,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
   angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
-  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpTests,
-  which the tools added since have all but reached), so it says each thing once: the
+  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpDebuggingTests until
+  Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call), so it says each thing once: the
   element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
   own write in the instructions; lines and columns from 1 never per parameter. `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
@@ -1177,7 +1373,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
   (`AfterLaunch`, which watches 2 s more for a stop in its first layout); each run of a stop's frames outside the
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
-  names its errors (`WithBuildErrors`); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
+  names that build's errors (`WithBuildErrors`, by the `BuildOutcome` of the build it ran, `LaunchBuild`; a refusal for anything
+  else names none); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
   for first. `nuget_install`/`nuget_remove` answer a `PackageChange`: the version installed and the files that changed
   (the project, the nearest Directory.Packages.props). `profile`'s hot spots in the folder's code carry `source`
   (path:line of the method's first sequence point: `Profiler/MethodSources` reads the module's PDB by the trace's
@@ -1221,7 +1418,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
   `Muted` is Mute Breakpoints, which sends none while on. Several programs are debugged at once (#341): the controller
   holds a `DebugTab` per session (the Debug window's header tabs, `DebugView.Sessions`, each with its own console, built
-  lines and Hot Reload), and `DebugController.Session` is the chosen tab's, which the window shows and every action and
+  lines, Hot Reload and inspected app, `DebugTab.App`, #352), and `DebugController.Session` is the chosen tab's, which the window shows and every action and
   `Stop` act on; a stop in any program chooses its tab, and the chosen one's end chooses another still debugged (one
   paused first). Debug or Attach of a program already debugged (a tab's name: its configuration's, or the program's)
   stops it, or lets an attached one go, and takes its tab; with no other program debugged the new tab takes every
@@ -1263,8 +1460,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   read, a finally) stays pending until the thread gets there, after the program has gone on, inside what it waited for:
   the lock was then never let go, after a normal abort as after a rude one (#238). Keeping the thread suspended instead
   cannot help, since the runtime withdraws a func-eval's abort only as the evaluation ends, which a suspended thread
-  never reaches. One never caught so runs on with the program unaborted, to its own end, its end let go. `Extensions.EvaluationTimeout` (5 s, the
-  adapter's `PASSENGER_EVAL_TIMEOUT_MS`) also sets that window (`AbortWait`, 0.4×). Data breakpoints (Variables' Set Data
+  never reaches. One never caught so runs on with the program unaborted, to its own end, its end let go. `Extensions.EvaluationTimeout` (5 s, or
+  `PASSENGER_EVAL_TIMEOUT_MS`: `Dap.AdapterEnvironment` names it and `PASSENGER_ENGINE_LOG` once for the IDE and the
+  adapter, and a malformed value is fatal as Passenger starts, as it is to the adapter) also sets that window (`AbortWait`, 0.4×). Data breakpoints (Variables' Set Data
   Breakpoint, `ManagedDebugger_DataBreakpoints`, `DebugRegisters`): the runtime watches memory only on Windows x64
   (`FEATURE_DATABREAKPOINT`), so elsewhere the item is greyed with the reason; the engine pins the object
   (`ICorDebugHeapValue4`, the runtime's advice over GC notifications) and sets DR0–DR7 on every thread through both the
@@ -1276,7 +1474,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   at the breakpoint's place. `LineBreakpoint.Attribute` is an attribute's breakpoint (F9 on it, `XamlBreakpoints`),
   kept with the folder, sent with its name's column, line and column both as XamlIl counted them (an XML reader's,
   `BuiltLines`). `PropertyBreakpoint` is the Live Visual Tree's Break When Value
-  Changes, for one session: the inspector watches that element's property (protocol v3 `watch`, `PropertyBreaks.cs`)
+  Changes, for one session, the one debugging its element's app (`PropertyBreakpoint.Session`, sent to that session alone,
+  its app's inspector told by `LiveTreeController` as `LiveApp.Watched` keeps): the inspector watches that element's
+  property (protocol v3 `watch`, `PropertyBreaks.cs`)
   and calls `Breaks.Changed`, on which the IDE sets one function breakpoint per property breakpoint (condition
   `breakpoint == Id && (…)`, the hit count kept in the app); the stop says its `change` and, from `setAt`, where the
   style that set it is written at the editor's line. The inspector is never optimized (the debugger reads that
@@ -1306,7 +1506,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   header to 64 KB and a body to 256 MB, `MostHeader` and `MostBody`, past which the conversation ends as at a message that
   does not read, its requests failed) and
   `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`; its flags
-  and loop are `AdapterProgram`). `src/Passenger.ContainerTools` is `passenger-tools`, what runs inside a Linux
+  and loop are `AdapterProgram`, which runs it in the invariant culture, so every value reads as C# writes it whatever the
+  machine's, and setExpression gives a real literal its target's suffix, a float's f or a decimal's m, so a value shown
+  sets back). `src/Passenger.ContainerTools` is `passenger-tools`, what runs inside a Linux
   container: `dap` (`AdapterProgram` and `DebugAdapter.cs` compiled in, the one engine), `processes` (the container's
   .NET programs as JSON, `DotnetProcesses.List` plus those mapping libcoreclr.so with no debugger pipe, each with
   whether it was started for Hot Reload, built optimized, and why it cannot be attached to), the profiler's `trace
@@ -1314,7 +1516,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   packages carried; `ContainerTools.ToolsCommand`) and `version`. Self-contained and InvariantGlobalization, never
   carried by the app (the release's `Passenger-container-tools-<rid>.tar.gz`, or `just container-tools`); a musl
   publish keeps its own libdbgshim.so
-  (`KeepMuslDbgShim`: the glibc package's matches a musl system too, and won). The engine's `SourcePaths.Match` takes a
+  (`KeepMuslDbgShim`: the glibc package's matches a musl system too, and won). They carry `LICENSE.txt` and notices of
+  their own, `THIRD-PARTY-NOTICES.txt`, which their build writes (`WriteToolsNotices`, below).
+  The engine's `SourcePaths.Match` takes a
   PDB document that exists where the adapter runs while the breakpoint's file does not (the IDE's, outside the
   container) by what they share from the end, and compares a Windows path (C:\…, \\server\…) ignoring case on any
   system; the engine gives a Windows document's path back with forward slashes. Before
@@ -1374,12 +1578,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   standing. MCP's nuget_install and nuget_remove have open project files take the disk's text before answering
   (`MainWindow.FollowWritten`).
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
-  net8.0, carried under `inspector/`, never put in the app's build): a startup hook `ProjectSession.Inspected` gives only
-  a Debug launch whose build has Avalonia.Base.dll beside it (`DOTNET_STARTUP_HOOKS`, which it takes back out of the
-  environment). It compiles against Avalonia 12's implementation assemblies (the reference ones leave out [PrivateApi]
+  net8.0, carried under `inspector/`, never put in the app's build): a startup hook `LiveApp.For` gives a launch whose
+  build has Avalonia.Base.dll beside it, Debug's, Run's and Profile's alike (a WPF app gets the WPF counterpart, below),
+  through `DOTNET_STARTUP_HOOKS`, which it takes back out of the environment. It compiles against Avalonia 12's
+  implementation assemblies (the reference ones leave out [PrivateApi]
   value-store diagnostics) and runs in a load context of its own that takes the app's Avalonia whatever its 12.x; it
   never touches `Dispatcher.UIThread` before the app makes it, and answers on the app's UI thread over a Unix socket in
-  the temp folder (macOS allows 104 characters). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
+  Passenger's socket folder (`Core/SocketFolders`, as `PID-N.inspector`; one that cannot be made, a path past a socket's
+  104 bytes included, is logged and the app launched uninspected rather than its launch failed). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
   default 64. Its wire's types are made ready as it connects, before the app's Main
   (`Connection.Configure`): System.Text.Json readies a type on first use under one lock for all of a context's types,
   which a thread the debugger stopped can hold from an evaluation at the stop (the binding values), which then waits on
@@ -1387,8 +1593,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   before any event; an event waits merged with its kind's (a failure's newer count by its id, one `treeChanged`,
   `valuesChanged`, pick, hello, `untold`), and only the inspector's own errors queue unmerged, up to 1024 waiting, the
   rest left out, counted and said in protocol v6 `untold` (`Untold.Messages`, which the IDE logs).
-  `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging; what the app tells unasked is
-  heard on the UI thread a batch at a time); `LiveTreeController`
+  `App/LiveTree/LiveApp` is Passenger's end (held by its Debug tab, `DebugTab.App`, ended with its debugging, so each
+  app debugged at once keeps its own; `ProjectSession.LiveApp` is the chosen tab's, which the Live Visual Tree, binding
+  values and the Debug window's overlays follow; what the app tells unasked is heard on the UI thread a batch at a time); `LiveTreeController`
   and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
   selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools (`app_*`,
   `Mcp/PassengerTools.App.cs`) ask the same inspector: its windows, the tree with each element's box, text and state,
@@ -1399,11 +1606,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process, whose input never
   reaches a question Passenger asks the person for an agent nor Settings (`MainWindow.KeptFromAgents`, given to the
   inspector's `Agent.Guard`, weighed at each event the driver sends); a headless test gets a dispatcher of its own, so
-  one test a run inspects Passenger in the test process (`McpTests.AvaloniaApp`'s person's window). Binding values
+  one test a run inspects Passenger in the test process (`McpAvaloniaAppTests`' person's window). Binding values
   (`BindingValues.cs`, protocol v4 `values`): each element by its XamlSourceInfo place (a root by x:Class), of several
   instances the one nearest the element chosen in the Live Visual Tree, each binding's path walked from Avalonia's
   binding expression nodes. Paused, the IDE evaluates `Wire.ReadValues` on the UI thread (the stop's, else the main
-  thread; the startup hook's copy forwards to the inspector's own), the answer an array whose slots the debugger shows
+  thread, known by the engine's mark in its threads answer, Passenger's own `DapThread.IsMain`, whatever the app named it;
+  the startup hook's copy forwards to the inspector's own), the answer an array whose slots the debugger shows
   as Variables does; running, only for the control chosen, read again on `valuesChanged`.
   `App/LiveTree/BindingValuesController` shows them after the lines (`OpenDocument.LiveValues`,
   `LineAnnotationKind.Failed`) and on hover. The runtime evaluates nothing on a UI thread waiting outside .NET, so a
@@ -1434,14 +1642,23 @@ window or takes the focus; it shows everything but the system's own window chrom
   said with the counts, which Problems' Bindings says under its list, the console once and `app_binding_errors` as a
   last entry of level Untold, so every failure is listed or counted. Run gives an
   Avalonia app the inspector too (`ProjectSession.InspectedRun`, `RunApp`; none under Hot Reload, whose dotnet watch
-  would load it); the Live Visual Tree follows only the debugger's `LiveApp`. `App/LiveTree/BindingErrors` is how a
+  would load it); the Live Visual Tree follows only the chosen Debug tab's `LiveApp`. Problems' Bindings lists Run's app's
+  failures and every Debug tab's, each kept while its tab is (`ProjectSession.InspectedApps`). Agents' app tools take
+  `app`: run, debug (the chosen tab's app while it is debugged, else the only one), a Debug tab's name, or ide
+  (`PassengerTools.DebugApp`, `NamedApp`). `App/LiveTree/BindingErrors` is how a
   failed binding shows: a console line with its place first in a compiler message's shape (so `ConsoleLinks` links it),
   Problems' Bindings tab (`BindingProblem`, by file, each once with its count), and fixes through
   `CodeAssist.EditorFixes`, Passenger's own fixes that Show Context Actions lists before the server's.
 - `tools/Passenger.Notices`: writes the app's `THIRD-PARTY-NOTICES.txt` (beside `LICENSE.txt` in every build and
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
   runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
-  of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build.
+  of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build. Given `for=tools`, it
+  writes the container tools' (`WriteToolsNotices` in `Passenger.ContainerTools.csproj`, straight into their output once
+  their `.deps.json` is written, which a publish then takes) from the packages that `.deps.json` names, their runtime
+  pack and dbgshim for their system included, and only the sections of the debugger's copied source (`section=`);
+  `tools/container-tools.sh` and the release check the archive has them. `tools/check-notices.py` (`just notices`) reads
+  what the tools carry on each of their systems from their restore, so THIRD_PARTY_NOTICES.md's "In the container
+  tools" names it all.
 - `src/Passenger.App/MSBuild`: code help in project, .props and .targets files. `MSBuildService` is the session's
   (`ProjectSession.MSBuild`), one `MSBuildDocument` per open MSBuild file, evaluated through its project (itself, the
   workspace project whose evaluation imports it, a Directory.* file's nearest project, or the one Go to Declaration
@@ -1506,7 +1723,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   one through LaunchServices (`open`, through ChildProcesses). A program a run configuration runs in the terminal is
   started by Porta.Pty and then `ChildProcesses.Adopt`ed: its process group goes on Lifeline's watchdog (macOS, Linux),
   and Porta.Pty's job ends it on Windows. Docker Desktop, which the status bar's link starts, is the person's: `open -a`
-  (through ChildProcesses) on macOS, `StartApart` on Windows.
+  (through ChildProcesses) on macOS, `StartApart` on Windows. So is the file manager a reveal reaches: `open -R` and
+  Explorer's `/select` run through ChildProcesses and hand the file to the Finder or Explorer already running (`FileManager`).
 - **Containers are ended by label**, since no child holds one and Lifeline cannot end it: everything Passenger has an
   engine make carries `ContainerLabels.Arguments` (`net.passenger-ide.state`, a hash of the state folder,
   `net.passenger-ide.machine`, a hash of the machine's name and id, `net.passenger-ide.process`, the process's id and start
@@ -1624,7 +1842,7 @@ a server that was only slow. Nothing changes those variables afterwards; a test 
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
 log, history or Git signing and hooks. Nor does a test start the person's Passenger: the run sets `PASSENGER_START=headless`, so an agent's
 `--mcp-attach` with no window to join starts this build with `--headless` (a person's window on the headless platform,
-ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpTests.Attach.cs`). No test
+ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpAttachTests`). No test
 reaches a registry through a Dockerfile it opens: the run sets `PASSENGER_BUILDKIT_CHECKS=off`, the default of Check
 Dockerfiles with BuildKit (`Containers.BuildKitChecks`), which `EngineChecksTests`' one test of it turns on in its window's
 Settings. Nor does a container run mount the person's user secrets: the run points `PASSENGER_USER_SECRETS` at its own
@@ -1641,13 +1859,25 @@ the stop before waiting for Ended or Paused. A Mac that sleeps during a run fail
 
 What runs beside what is chosen (`Collections.cs`): window tests run one at a time on Avalonia's session thread and, as
 the assembly's one collection, class after class; beside them run only the debug adapter's protocol tests
-(`DebugSession.Collection`). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
+(`DebugSession.Collection`) and `Beside`'s classes, one after another: a class that opens no window, waits on nothing of
+the headless session's, changes nothing the process shares (its PATH, its environment) and holds nothing to a time, so a
+busy machine only lengthens it (`AspireExecutionServerTests`, `McpAspireStandInTests` and `McpLanguagesTests`, whose
+Passengers are processes of their own; not `McpTests`, which holds a git status to ten seconds). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
 window answers, a profile's samples, the debugger's evaluation limit), or that debugs through the window, goes in
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
 written before each test, and a file a test adds goes through `project.Write`, which ends the shared server: a file
-every test opens is the project's from the start (`LongFileAssistTests`' 20,000 lines). A class whose tests each restore
-a fresh folder takes it from `RestoredFolders`; one whose tests mostly leave the project as written shares it and takes a
+every test opens is the project's from the start (`LongFileAssistTests`' 20,000 lines). A file a test only rewrote is put
+back and the server kept once it holds it as written again, which it reads through its own watcher
+(`WarmServer.HoldsAsync`, 10 s at most, else it is ended); a file that came or went, or one the server holds no document of
+(a project file), ends it. A window test that asks nothing of C# opens its window without the language server
+(`Ui.OpenFolder(folder, languageServer: false)`, a shared project's `Open(file, languageServer: false)`,
+`MainWindow.StartsLanguageServer`), so it waits for no server's start, load or restore (nor, for a project whose packages
+the package cache lacks, nuget.org's); an agent's `--mcp` Passenger likewise (`McpRig.Start(…, languageServer: false)`,
+which sets `PASSENGER_MCP_LANGUAGE_SERVER=off`, `McpHost.LanguageServerVariable`, a value other than off or on fatal). A
+shared project none of whose windows starts a server, and none of whose tests reads what a restore writes, is never
+restored (`SharedProject.Prepare(restore: false)`: `FindInFilesScopeTests`, `UiRulesTests`). A class whose tests each restore a fresh folder takes it from `RestoredFolders`, which makes and restores
+as many at once as the class has tests yet to take one, four at most; one whose tests mostly leave the project as written shares it and takes a
 fresh folder only for a test that changes it (`DebuggerTests.Sum` and `Fresh`), since `RestoredFolders.Take` may come in
 the test itself, its batch being no test's own (`TestFolders.Unowned`). A shared project that its first test builds
 makes its bin first (`DebuggerTests.Sum`): bin's making changes the folder's own time, which the next reset takes for a
@@ -1657,12 +1887,28 @@ up-to-date build (`HotReloadEditsTests`); its `Dispose` is virtual for a fixture
 stand-in feed). A rule held under both looks is checked in one window, the look switched in place through the window's
 settings (`UiRulesTests.UnderEachLook`), a failure naming the look. `RestoredFolders` saves nothing for classes whose
 tests change their folder throughout (`ExplorerFilesTests`, `PackagesTests`, `FileNestingTests`): share a
-`SharedProject` where the tests mostly read. CI splits each system's suite into shards, a runner each (#206), so a class
+`SharedProject` where the tests mostly read. `just test` runs the suite on one machine as CI's shards run it on several
+(`tools/test-run.py`), since a process's window tests use little of a machine while they wait on servers, MSBuild and
+programs: each test process keeps to a run folder, state, NuGet home, MSBuild node salt, agent sockets and container
+labels of its own (`TestRun`), so the classes outside `Alone` are dealt to N processes at once (by the most any system's
+runs took for each in TestTimes.json, else its budget; N a quarter of the processors, at most 4 and one per 8 GB, else
+`PASSENGER_TEST_PROCESSES` or the recipe's second argument), those beside the window tests (`DebugSession.Collection`,
+`Beside`) dealt apart, the heaviest of their hands with the lightest hand of window tests, since a process takes about as
+long as the longer of the two, their limits scaled by 1.5 unless PASSENGER_TEST_TIME_SCALE
+says otherwise, the classes that use the container engine together in one (`LANES`), and once every one has ended the
+`Alone` classes run in one process with nothing beside it. A class is Alone by its declaration's `[Collection(Alone.Name)]`
+(or its base class's), which the runner reads from the sources; one it cannot find runs alone. So a class never counts
+on another having run in its process, and what of the machine a class uses beyond its run's folder (a fixed port or name,
+the engine's processors) runs alone or joins a lane. `just test "" 1` is one `dotnet test` in xunit's own order, and
+`--plan` shows the deal and runs nothing; each process's .trx and console log go to artifacts/test-results/local, the last
+run's removed as the next begins, and the failed tests are listed as each process ends and again at the run's end.
+CI splits each system's suite into shards, a runner each (#206), so a class
 never counts on another having run before it: each shard lists the suite (`tools/test-shards.py list`, listed again while a
 listing names no test or says discovery failed: xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo,
 xunit #3576) and `tools/test-shards.py` deals the classes
 by their seconds on that system in `tests/Passenger.Tests/TestTimes.json` (one it lacks by its budget), the same deal in
-every shard, checked before any test runs to put every test in exactly one; inside a shard the collections keep their
+every shard, checked by the first shard before any test runs to put every test in exactly one (a listing of each
+hand, a VSTest discovery each, which the others need not repeat); inside a shard the collections keep their
 order. A shard writes its classes' times into its summary (`tools/test-times.py` over the .trx, budgets in
 `tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 22 minutes fails (the
 whole run was an hour in one job a system; 20 until the MVP's last week grew macOS's classes to 72 minutes, which four
@@ -1687,7 +1933,7 @@ window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protoc
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
 tests' sessions and the IDE's alike (an adapter in a container keeps it there, `DebugSession.ContainerEngineLog`). `Debugging/Helpers/StartHold` holds a launched program's runtime at its start by
 pointing `DOTNET_DiagnosticPorts=…,connect,suspend` at a port of the test's own, which comes before the runtime starts
-its debugger (LaunchTests, DebuggerTests, and McpTests through a launch profile); a window test with a held start waits
+its debugger (LaunchTests, DebuggerTests, and McpDebuggingTests through a launch profile); a window test with a held start waits
 with `Ui.PumpUntil`, since the start holds BackgroundWork. Attach to Process's search matches text, so tests choose a
 program's row by its id (`ChooseById`). LoopingConsoleApp's `waiting` and `waiting first` modes give an async method a builder whose
 `ObjectIdForDebugger` waits on the paused passing thread, `elsewhere` awaits something that goes on on a thread of
@@ -1720,10 +1966,21 @@ its own cache and config (`TestRun`), so Run 'npm install' fails fast without th
 Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with XAML Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on
 what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys` gives an open menu the keys back.
-`UiRulesTests` holds the window-wide rules (menu marks and placement, tool window tabs and rows, popup widths, titles
-and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout and empty texts), and
+`UiRulesTests` holds the window-wide rules (menu marks and placement, tool window tabs, rows and toolbar buttons, popup
+widths, titles and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout and empty texts), and
 `DialogButtonsTests.Check` also holds dialogs to the plain button look, a disabled default, the chrome page, one
 drop-down width per column and Don't ask again's place.
+A click is `Ui.Click`: a real press and release at a control's centre (or a point in it) in the window or popup showing
+it, failing unless the control is shown, enabled and what the pointer finds there (an open menu's light-dismiss layer
+passes it on), then settled unless told not to (a click during work that holds background work); `RightClick`,
+`DoubleClick`, `ClickButton` (by its words), `ClickRow` (an Explorer row, scrolled to by `Ui.Row`) and `ClickLink` (a
+console's link) are its kinds. A menu item is chosen by clicks, through its submenus, by `Ui.Choose` (an open menu),
+`ChooseFromMenu` (the menu key), `ChooseFromRowMenu` (an Explorer row's right click) and `ChooseFromEditorMenu`; a
+raised `Button.ClickEvent` or `MenuItem.ClickEvent` is banned (RS0030), allowed only where no pointer could reach, saying why. A console's input is `Ui.TypeLine`
+(`TypeToRun`, `TypeToDebugged`), a caret's place `Ui.PlaceAfter`, a window on a folder `Ui.OpenFolder`. A project a test
+writes is `TestProjects.Console`, `Library` or `Web` (`.With` for its item groups), every one on `TestProjects.Framework`;
+a file of a test's folder `TestFolders.Write`; a container run's Stop and take-down `Docker.Stopped` (`TakenDown` for the
+wait alone); an MCP answer's words `McpRig.Text`, an agent's going `Gone`.
 A test waits for a Run, Debug, Profile or test run with `Ui.Launched`, and says the status with `Ui.Said`, both naming
 the build's errors (`Ui.BuildErrors`: Problems' rows, else the Build window's last lines) when it failed, so a CI-only
 build failure says why. A test's stand-in that holds a file a target writes leaves it as it found it: a file it creates, newer than the
@@ -1736,18 +1993,21 @@ settle), so a settle between its keys can lose it. Find Usages, Safe Delete and 
 make each URI a path once (`DocumentUris.ToPath` asks the disk), never once per location on the UI thread. A test that opens a dialog holds it to `DialogButtonsTests.Check`
 (centred words, one height and radius, Rider's order). `HotReloadTests` and `HotReloadEditsTests` (Alone) edit debugged
 programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`); `WpfLiveTreeTests` (Alone,
-Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpTests.WpfApp.cs` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
+Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpWpfAppTests` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
 `PublishTests` publish a console app, an ASP.NET Core app and a self-contained app in a folder whose name has spaces,
 the self-contained one at the tests' own target, whose runtime pack for this system the tests' project downloads
 (`Microsoft.NETCore.App.Runtime.$(NETCoreSdkRuntimeIdentifier)` at the SDK's bundled version), so its restore finds it
-in the package cache. `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
-a callback from List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
+in the package cache. `DecompiledSymbolsTests` and `DecompiledSymbolsTimingTests` (Alone: the session's answers during a
+decompile) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in a callback from
+List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
 values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
 (`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
-("rename" typed into its console renames the customer on the UI thread). `AvaloniaFramesTests` (Alone) profile,
+("rename" typed into its console renames the customer on the UI thread, which it names UI). `DebuggedAppsTests` (Alone)
+debug BindingErrorsApp and LiveTreeApp at once (a solution over both), choosing each one's Debug tab in turn, and
+`McpAvaloniaAppTests` has an agent's app tools name one by its tab's name. `AvaloniaFramesTests` (Alone) profile,
 debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `DebugSessionsTests` (Alone) debug two
-programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpTests.Sessions.cs` has an agent name
+programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpSessionsTests` has an agent name
 which; its test of a session elsewhere has the adapter let its program go rather than killing the adapter, since on
 Windows a killed debugger takes its program with it. `ContainerDebuggingTests` (Alone, skipped saying why without a Linux
 engine) attach through Attach to Process to a program in a container they start themselves (`Turns`: a .NET 10 console
@@ -1759,22 +2019,54 @@ into `artifacts/container-tools` (seconds when up to date, a minute or two the f
 images and publishes for both. `ContainerProfilingTests` (Alone, skipped the same way) profile `Spins` (a program that
 spins in `Hot.Spin` and keeps `Keepsake`s, saying how many, made once a run, `Spins.Shared`) in containers they start:
 chosen in Attach Profiler's dialog, debugged there first, held at its start (let go once recording), and memory
-snapshots compared; `McpTests.ContainerProfile.cs` has an agent profile it with `attach` and `container`. `ContainerRunDebuggingTests`
+snapshots compared; `McpContainerProfileTests` has an agent profile it with `attach` and `container`. `ContainerRunDebuggingTests`
 (Alone) debug ContainerRunsTests' Compose solution (`ContainerRunsTests.Shop`, its Program.cs stopping in Main and in a
 request's handler), run it with Hot Reload, and in images mode build its apps here with `-p:PathMap=…=/src/` copied into
 aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is asked again while nothing listens yet,
 since the attach lets the service go a moment before Kestrel listens. `ContainerRunProfilingTests` (Alone) profile that
-solution, web spinning from its start (`Spinning`, which `McpTests.ContainerProfile.cs`' agent profiles too): web's hot
+solution, web spinning from its start (`Spinning`, which `McpContainerProfileTests`' agent profiles too): web's hot
 method leads web's own (a web app's idle threads wait in the runtime's code). `ContainerServicesTests` (Alone) act on one
 service of that solution's run from the Containers window's rows and the gutter, the others never restarted (web published on
 the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
 Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
-dead release feed), which then runs on unheld (`McpTests.ContainerDebugging.cs`' agent restarts and stops one with `container_action`);
+dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
-and `McpTests.ContainerDebugging.cs`' agent is refused a run that would replace the person's own cache, stops a run as it
+and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
 comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
-run up, each leaving no container of the project. `WpfPreviewTests` (Windows only)
+run up, each leaving no container of the project. Aspire's tests (#338): the run gives every `aspire` CLI and AppHost it
+starts a home of its own (`ASPIRE_HOME`), telemetry, version checks and certificate making off (`TestRun`), and since an
+AppHost and the CLI keep their record of running AppHosts in `$HOME/.aspire/cli/bch` whatever `ASPIRE_HOME` says, a HOME
+of the run's own too (`AspireCli.Home`, `/tmp/passenger-aspire-<pid>`, short for macOS's 104-byte socket paths, removed
+with the run): the fixtures' AppHosts' launch profiles name it, and on macOS and Linux the run's PATH starts with a wrapper
+named `aspire` that runs the run's own CLI there (`Aspire.Cli.<rid>`, a PackageDownload where `PassengerAspireRuntime` is
+true, its bundle unpacked beside it in the package cache) or refuses, so neither the IDE nor a test ever runs the person's
+CLI or reaches their ~/.aspire. On Windows an AppHost keeps that record in the person's profile whatever its environment
+says, so there `AspireTests` (Alone) and `McpAspireTests`' tests of a real AppHost skip (`AspireApp.Unavailable`), and
+`AspireExternalDataTests` (`AspireApp.CliUnavailable`), which runs `aspire run` through ChildProcesses, finds its AppHost
+in the window and ends it with its process group, waiting until no service or orchestrator of it is left; `AspireApp` makes two of
+Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
+`AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`), as do `AspireOrchestrationTests`, on a
+solution of the tests' own target, the rest from the package cache: `tests/AspireGraphs` (an AppHost's, ServiceDefaults'
+and the starter's API service's graphs at net10.0, restore-only projects of the solution, built empty) puts them there,
+since the test project's own restore prunes what its frameworks bring (Microsoft.Extensions.*), which a net10.0 AppHost
+asks at versions above its framework's, and an AppHost's project references take no part in its restore;
+Aspire's dashboard and orchestrator (`Aspire.Dashboard.Sdk.<rid>`, `Aspire.Hosting.Orchestration.<rid>`, about 900 MB in
+the package cache), which only running an AppHost needs, are downloaded only where `PassengerAspireRuntime` is true (a
+property, or an environment variable, the person or CI sets; #400): without them `UseFeed` gives the folder a
+Directory.Build.targets that takes them out of its AppHosts' references after the AppHost SDK adds them, and a test that
+runs an AppHost skips saying so (`AspireApp.Unavailable`);
+`AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
+project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
+stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key), so its console, resources and
+prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
+(BannedSymbols);
+`McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
+its execution listener; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
+have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
+applicationUrl) and its resource service's calls ended (`AspireInteractionHost.Drop`); AspireStandInTests' windows run a
+stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`, a shell script, so skipped on Windows); and
+`AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
@@ -1788,13 +2080,21 @@ Microsoft.WindowsDesktop.App.Ref is a `PackageDownload` at Directory.Packages.pr
 the tests check against the version the SDK's KnownFrameworkReference gives the target, failing with the version to
 pin when an SDK changes it; off Windows the app sets EnableWindowsTargeting and MarkupCompile builds it there too.
 
-The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
-project through it, others attach to a window with `--mcp-attach` (its sockets in the folder named for the run's
-`PASSENGER_SETTINGS`) and change what the window shows, once it lets them in and the person answers its questions.
+The MCP server's tests are agents using the SDK's own client, in classes over `McpRig` (`Alone` where one debugs or holds
+what it tests to a time, and those that work in its Sum project given `RestoredFolders`, taken as a test first names it):
+`McpTests` starts `Passenger --mcp` and works a project through it, `McpDebuggingTests` debugs it there (with the tool
+list's size and a long call's progress), `McpWindowTests` and `McpAttachTests` attach to a window with
+`--mcp-attach` (its sockets in the folder named for the run's `PASSENGER_SETTINGS`) and change what the window shows,
+once it lets them in and the person answers its questions (`McpWindowDebuggingTests` where an agent debugs there or
+what it tests is held to a time, as `McpAttachTimingTests` hold the joins and calls given up), and `McpProcessesTests`
+(`McpBuildNodesTests` for the MSBuild nodes a build leaves, which the machine's other builds would sway), `McpIdeTests`
+(`McpIdeProfilingTests` for Attach Profiler's samples), `McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`,
+`McpSessionsTests` and the container classes take the rest by what the tools reach; each checks a tool's answer, leaving
+the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
-client can drop its own when the call's token is cancelled. `McpTests.AvaloniaApp.cs` drive `tests/Debuggees/AgentApp`
-(headless, its popups windows of their own; `AgentAppFolder` writes and restores it once per class from
-`AvaloniaApp.HeadlessProject()`, which LiveTreeApp and BindingErrorsApp also use). The Windows on Arm VM runs a test
+client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
+(headless, its popups windows of their own; `AgentAppFolder` copies and restores it once per class through
+`AvaloniaApp.Debuggee`, its project `AvaloniaApp.HeadlessProject()`, as every headless app of tests/Debuggees is). The Windows on Arm VM runs a test
 filter on a commit with `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (66–120 min for the whole suite, by the Mac's
 load); the VM can't see dot folders, and a batch file in the share runs as `powershell -Command "& cmd.exe /c '…'"`.
 The Ubuntu VM ("Ubuntu 26.04 ARM64", a real GNOME desktop CI lacks) runs one with
@@ -1831,4 +2131,8 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   and New Window fit the screen's working area before they're shown (`MainWindow.FitToScreen`). A dialog's content is
   `DialogFooter.Page(page, DialogFooter.Bar(buttons[, left]))`; a rounded Border takes `Border.kindBadge` or
   `Border.tag` (the badge radius) or `Border.box` (the controls' radius), never a literal radius (UiRulesTests); a
-  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More.
+  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A toolbar's icon button is
+  `ToolButtons.Of` (`Toggle` for one that stays pressed): never focusable, its icon the one size, as UiRulesTests holds
+  every tool window's; words of less weight beside a row's are `MutedText`; a search field's keys over its list (Up,
+  Down, Page Up, Page Down) are `ListKeys.Move`; a path shown to a person is `PathNames.Shown` (from the open folder
+  when inside it, the folder by its name, anywhere else whole); a count with its noun is `Plural.Of`.

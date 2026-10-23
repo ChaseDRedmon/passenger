@@ -28,9 +28,22 @@ public sealed record EditorFix(string Title, string Detail, TextRange Range, str
     /// <summary>Where the caret goes in <see cref="Text"/> once it is made: its end when none is given.</summary>
     public int? Caret { get; init; }
 
+    /// <summary>A fix made in another file than the one shown (an AppHost's WithReference, for its service's warning), in
+    /// place of <see cref="Text"/>'s edit: made as it is chosen, given <see cref="Range"/> as it then stands and an agent's
+    /// call's patience, and saying what it came to.</summary>
+    public Func<TextRange, Patience?, Task<RefactorOutcome>>? Elsewhere { get; init; }
+
+    /// <summary>A fix that asks for a value before it is made (an AppHost parameter's), in place of <see cref="Text"/>'s
+    /// edit: what is asked, whether the answer is a secret (masked as it is typed, never said back), and the fix made from it.</summary>
+    public ValueAsked? Asks { get; init; }
+
     /// <summary>The fix to make on a text now, worked out again where it can be; null when it no longer fits.</summary>
     public EditorFix? On(TextSnapshot text) => Again is null ? this : Again(text);
 }
+
+/// <summary>What a fix asks before it is made: the question, whether the answer is a secret, and the fix made from the
+/// answer, given an agent's call's patience, saying what it came to (never the answer).</summary>
+public sealed record ValueAsked(string Question, bool Secret, Func<string, Patience?, Task<RefactorOutcome>> Make);
 
 /// <summary>What the language server adds to the editor as you work: completion as you type, a card
 /// when the pointer rests (the diagnostics there and the symbol's description), signature help after
@@ -336,9 +349,9 @@ public sealed partial class CodeAssist
         });
         // Rider's Generate: the server's actions that write code for the type (constructors, equality, interface members,
         // overrides).
-        Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
+        Code(AppActions.Generate, "Generate…", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
             new("Code", 0, 2));
-        Code(AppActions.SurroundWith, "Surround With...", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
+        Code(AppActions.SurroundWith, "Surround With…", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
         // A file Prettier formats (Run on 'Reformat Code' action) needs no language server.
         actions.Add(new IdeAction(AppActions.Reformat, "Reformat Code", "Code", context => _ = Reformat())
         {
@@ -348,33 +361,33 @@ public sealed partial class CodeAssist
         AddLintingActions(actions);
         Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1), markup: true);
         Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
-        Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
+        Code(AppActions.RefactorThis, "Refactor This…", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
             new("Refactor", 0, 0), xaml: true);
-        // IntelliJ's RefactoringMenu: Rename and Change Signature, the Extract and Introduce actions, Inline; Move and Safe
-        // Delete; Pull Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
-        Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0), xaml: true);
-        Code(AppActions.ChangeSignature, "Change Signature...", context => _ = ChangeSignature(), new("Refactor", 1, 1));
-        Code(AppActions.ExtractMethod, "Extract Method...", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
+        // IntelliJ's RefactoringMenu: Rename (the window's, Rider's RenameElement, an Explorer row's too: Rename and
+        // WhyNotRename here) and Change Signature, the Extract and Introduce actions, Inline; Move and Safe Delete; Pull
+        // Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
+        Code(AppActions.ChangeSignature, "Change Signature…", context => _ = ChangeSignature(), new("Refactor", 1, 1));
+        Code(AppActions.ExtractMethod, "Extract Method…", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
             new("Refactor", 1, 2));
-        Code(AppActions.IntroduceVariable, "Introduce Variable...",
+        Code(AppActions.IntroduceVariable, "Introduce Variable…",
             context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 3));
-        Code(AppActions.IntroduceField, "Introduce Field...", context => _ = Refactor(IntroduceField), new("Refactor", 1, 4));
-        Code(AppActions.IntroduceParameter, "Introduce Parameter...", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 5));
-        Code(AppActions.ExtractInterface, "Extract Interface...", context => _ = ExtractInterface(), new("Refactor", 1, 6));
-        Code(AppActions.Inline, "Inline...",
+        Code(AppActions.IntroduceField, "Introduce Field…", context => _ = Refactor(IntroduceField), new("Refactor", 1, 4));
+        Code(AppActions.IntroduceParameter, "Introduce Parameter…", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 5));
+        Code(AppActions.ExtractInterface, "Extract Interface…", context => _ = ExtractInterface(), new("Refactor", 1, 6));
+        Code(AppActions.Inline, "Inline…",
             context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 7));
-        Code(AppActions.Move, "Move...", context => _ = Move(), new("Refactor", 2, 0));
-        Code(AppActions.SafeDelete, "Safe Delete...", context => _ = SafeDelete(), new("Refactor", 2, 1));
-        Code(AppActions.PullMembersUp, "Pull Members Up...", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
-        Code(AppActions.PushMembersDown, "Push Members Down...", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
-        Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
+        Code(AppActions.Move, "Move…", context => _ = Move(), new("Refactor", 2, 0));
+        Code(AppActions.SafeDelete, "Safe Delete…", context => _ = SafeDelete(), new("Refactor", 2, 1));
+        Code(AppActions.PullMembersUp, "Pull Members Up…", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
+        Code(AppActions.PushMembersDown, "Push Members Down…", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
+        Code(AppActions.EncapsulateField, "Encapsulate Field…", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
         // Rider's XAML refactorings, which ask their options in a dialog, in their own group.
-        actions.Add(new IdeAction(AppActions.ExtractResource, "Extract Resource...", "Code", context => _ = ExtractResource())
+        actions.Add(new IdeAction(AppActions.ExtractResource, "Extract Resource…", "Code", context => _ = ExtractResource())
         {
             WhyNot = context => WhyNotXaml(context),
             Menus = [new("Refactor", 4, 0)],
         });
-        actions.Add(new IdeAction(AppActions.ExtractStyle, "Extract Style...", "Code", context => _ = ExtractStyle())
+        actions.Add(new IdeAction(AppActions.ExtractStyle, "Extract Style…", "Code", context => _ = ExtractStyle())
         {
             WhyNot = context => WhyNotXaml(context),
             Menus = [new("Refactor", 4, 1)],
@@ -400,6 +413,12 @@ public sealed partial class CodeAssist
 
     private int Caret => Editor.Selections.Primary.Caret;
 
+    /// <summary>Rename at the editor's caret: a C# symbol through the server, a XAML name of its own.</summary>
+    public void Rename() => ShowRename();
+
+    /// <summary>Why Rename cannot run at the editor's caret; null when it can.</summary>
+    public string? WhyNotRename(ActionContext context) => WhyNot(context, server: true, xaml: true);
+
     /// <summary>Quick Documentation: the card for what is at the caret (its problems, a paused program's value, the symbol's
     /// description); pressed again while a value's card shows, the card takes the keys, its rows to open with the arrows.</summary>
     private void QuickDocumentation()
@@ -415,7 +434,7 @@ public sealed partial class CodeAssist
     /// <summary>Why an action of a XAML file's alone cannot run: no file, a file not XAML of a project Passenger reads, or
     /// one that cannot be edited.</summary>
     private string? WhyNotXaml(ActionContext context) =>
-        context.File is null ? "No file is open"
+        context.File is null ? Refusals.NoFile
         : XamlOf(context.File) is not { } markup || (markup.Loaded.IsCompleted && !markup.IsLoaded) ? "The file is not XAML of an Avalonia or WPF project"
         : context.Editor.IsReadOnly ? "The file is read-only"
         : null;
@@ -424,7 +443,7 @@ public sealed partial class CodeAssist
     /// the file's syntax, a file not C# or one that cannot be edited. One that also edits XAML (<paramref name="markup"/>)
     /// takes any XAML file that can be edited; XAML and MSBuild files answer those they say they do.</summary>
     private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
-        context.File is null ? "No file is open"
+        context.File is null ? Refusals.NoFile
         : markup && XamlService.IsXaml(context.File.Path) ? (context.Editor.IsReadOnly ? "The file is read-only" : null)
         : xaml && XamlOf(context.File) is { } markupFile && (markupFile.IsLoaded || !markupFile.Loaded.IsCompleted) ? null
         : msbuild && MSBuildOf(context.File) is not null ? null
@@ -588,10 +607,15 @@ public sealed partial class CodeAssist
         completing?.Cancel();
         CancellationTokenSource cancel = new();
         completing = cancel;
-        int caret = Editor.Selections.Primary.Caret;
-        TextSnapshot asked = Editor.Document.Snapshot;
         try
         {
+            // An AppHost's or a service's resource names where one is typed; any other file's list is the server's alone.
+            if (await StartAspireCompletion(lsp, cancel.Token))
+            {
+                return;
+            }
+            int caret = Editor.Selections.Primary.Caret;
+            TextSnapshot asked = Editor.Document.Snapshot;
             Web.WebDocument? web = WebCurrent;
             // A compose file's own names where one is typed, merged with the server's by label, ahead of them.
             (int Start, IReadOnlyList<CompletionItem> Items)? named = web is not null ? await ComposeCompletionAsync(web, lsp, asked, caret) : null;
@@ -1311,11 +1335,16 @@ public sealed partial class CodeAssist
     /// language server; none by default.</summary>
     public Func<OpenDocument, int, IReadOnlyList<EditorFix>>? EditorFixes { get; set; }
 
+    /// <summary>Asks the person for a value a fix sets (a title, what is asked, whether it is a secret, masked as typed);
+    /// null when they gave none.</summary>
+    public Func<string, string, bool, Task<string?>>? AskValue { get; set; }
+
     internal IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
 
     /// <summary>One of Passenger's own fixes made in the file shown, as one undoable edit: worked out again on its text as it
-    /// stands (<see cref="EditorFix.On"/>), and refused, said in the status bar, when the text no longer has what it fixes.</summary>
-    private void ApplyOwnFix(OpenDocument document, EditorFix fix)
+    /// stands (<see cref="EditorFix.On"/>), and refused, said in the status bar, when the text no longer has what it fixes;
+    /// one made in another file (<see cref="EditorFix.Elsewhere"/>) is that file's command, said as it lands.</summary>
+    private async Task ApplyOwnFix(OpenDocument document, EditorFix fix)
     {
         if (editors.Active != document)
         {
@@ -1326,7 +1355,46 @@ public sealed partial class CodeAssist
             Message?.Invoke(this, $"{fix.Title} was not applied: the file changed, so it no longer fits");
             return;
         }
+        if (now.Elsewhere is { } elsewhere)
+        {
+            RefactorOutcome outcome = await elsewhere(now.Range, null);
+            Message?.Invoke(this, outcome.Problem ?? outcome.Said);
+            return;
+        }
+        if (now.Asks is { } asks)
+        {
+            // Not awaited: the question holds no background work, so a settle waits on the IDE, never on the person.
+            _ = AskAndMakeAsync(now.Title.TrimEnd('…'), asks);
+            return;
+        }
         Editor.ApplyEdits([new TextEdit(now.Range.Start, now.Range.Length, now.Text)], SelectionSet.Single(now.Range.Start + (now.Caret ?? now.Text.Length)));
+    }
+
+    /// <summary>A fix's value asked of the person (<see cref="AskValue"/>), then the fix made from it as background work,
+    /// what it came to said; nothing when they give none.</summary>
+    private async Task AskAndMakeAsync(string title, ValueAsked asks)
+    {
+        try
+        {
+            if (AskValue is null || await AskValue(title, asks.Question, asks.Secret) is not { } value)
+            {
+                return;
+            }
+            BackgroundWork.Begin();
+            try
+            {
+                RefactorOutcome made = await asks.Make(value, null);
+                Message?.Invoke(this, made.Problem ?? made.Said);
+            }
+            finally
+            {
+                BackgroundWork.End();
+            }
+        }
+        catch (Exception error)
+        {
+            IdeErrors.Report(error);
+        }
     }
 
     private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
@@ -1383,8 +1451,7 @@ public sealed partial class CodeAssist
             switch (choice?.Value)
             {
                 case EditorFix fix:
-                    ApplyOwnFix(document, fix);
-                    return Task.CompletedTask;
+                    return ApplyOwnFix(document, fix);
                 case EslintFix fix:
                     return RunLintFix(document, fix);
                 case CodeAction chosen:
@@ -1542,6 +1609,25 @@ public sealed partial class CodeAssist
             ShowWebRename(own, json);
             return;
         }
+        // An Aspire resource's name in a string: the AppHost's declaration and its services' reads, else the server's rename.
+        if (AspireRoleOfShown != Aspire.AspireRole.None && editors.Active is { } aspire && MayNameResource(Editor.Selections.Primary.Caret))
+        {
+            int caret = Editor.Selections.Primary.Caret;
+            _ = Carried("Rename", async () =>
+            {
+                if (!await ShowAspireRename(aspire, caret) && editors.Active == aspire)
+                {
+                    ShowServerRename();
+                }
+            }, closeModal: false);
+            return;
+        }
+        ShowServerRename();
+    }
+
+    /// <summary>Rename through the language server at the editor's caret, a type's files offered with it.</summary>
+    private void ShowServerRename()
+    {
         if (Ask("Rename") is null || editors.Active is not { } document)
         {
             return;
@@ -1666,6 +1752,10 @@ public sealed partial class CodeAssist
         }
         try
         {
+            if (await AspireGoTo(lsp, offset))
+            {
+                return;
+            }
             IReadOnlyList<LspLocation> found = await lsp.DefinitionAsync(offset);
             // A FROM's image that names no stage of the file: its registry's page, as a compose file's image goes.
             if (found.Count == 0 && WebCurrent is { Kind: Passenger.App.Web.WebServerKind.Dockerfile } && FromImageAt(Editor.Document.Snapshot, offset) is { } page)
@@ -1673,7 +1763,7 @@ public sealed partial class CodeAssist
                 Browse?.Invoke(this, page);
                 return;
             }
-            if (NamedElementOf(found, offset) is { } element)
+            if (await NamedElementOfAsync(found, offset) is { } element)
             {
                 await Arrive(element);
                 return;
@@ -1930,7 +2020,7 @@ public sealed partial class CodeAssist
         {
             string path = paths[l.Uri];
             (int line, string code) = preview(path, l.Range.Start);
-            string shown = $"{(root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path))}:{line + 1}";
+            string shown = $"{PathNames.Shown(path, root)}:{line + 1}";
             return names?[i] is { } name
                 ? new Choice(name, shown, l)
                 : new Choice(shown, code, l, DetailIsCode: true);
@@ -2289,7 +2379,7 @@ public sealed partial class CodeAssist
 
     /// <summary>A character of the word a completion list narrows by: an identifier's, and in a Razor file a markup
     /// name's too (<c>@onclick</c>, <c>data-enhance-nav</c>, <c>@bind:after</c>).</summary>
-    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
+    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (open?.ResourceNames == true && c == '-') || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
         || (msbuildOffered.Count > 0 && msbuildWordCharacters.Contains(c))
         || (WebCurrent is { } web && IsWebWordChar(web, c));
 
@@ -2356,6 +2446,8 @@ public sealed partial class CodeAssist
     /// item that names none of its own, and whether the server left items out until more is typed.</summary>
     private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start, IReadOnlyList<string> CommitCharacters, bool IsIncomplete)
     {
+        public bool ResourceNames { get; init; }
+
         /// <summary>The text after the caret a web server's items replace as well (a JSON string's closing quote, the rest
         /// of a CSS name the caret is inside), as it stood when the list was asked for; empty for none.</summary>
         public string Tail { get; init; } = string.Empty;

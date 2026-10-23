@@ -182,10 +182,9 @@ internal sealed class ToolPane : DockPanel
 
     private static Button HeaderButton(string icon, string tip)
     {
-        PathIcon glyph = new() { Classes = { "small" } };
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-        Button button = new() { Classes = { "tool" }, Content = glyph };
-        ToolTip.SetTip(button, tip);
+        Button button = ToolButtons.Of(icon, tip);
+        // A header's own buttons are smaller than its toolbar's, as Rider's tool window title buttons are.
+        ((PathIcon)button.Content!).Classes.Add("small");
         return button;
     }
 }

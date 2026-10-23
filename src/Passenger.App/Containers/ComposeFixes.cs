@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Passenger.App.CSharp;
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App.Containers;
@@ -321,37 +322,18 @@ public static partial class ComposeFixes
     private static int Indent(ComposeText read, string text) =>
         read.Entries.FirstOrDefault(e => e.Path.Count == 2) is { } nested && nested.KeyStart - LineStart(text, nested.KeyStart) is int column and > 0 ? column : 2;
 
-    /// <summary>The names the file declares of the fault's kind that are near its name (an edit or two away, one for a short
-    /// name), nearest first, three at most: never the service itself.</summary>
+    /// <summary>The names the file declares of the fault's kind that are near its name, letter case aside (an edit or two
+    /// away, one for a short name), nearest first, three at most: never the service itself.</summary>
     private static IEnumerable<string> Near(ComposeText read, ComposeFault fault)
     {
         int most = fault.Name.Length <= 3 ? 1 : 2;
         return Children(read, [fault.Key]).Select(e => e.Path[^1])
             .Where(name => name != fault.Name && !(fault.Kind == "service" && name == fault.Service))
-            .Select(name => (Name: name, Distance: Distance(name, fault.Name)))
+            .Select(name => (Name: name, Distance: Spelling.Distance(name.ToLowerInvariant(), fault.Name.ToLowerInvariant())))
             .Where(n => n.Distance <= most)
             .OrderBy(n => n.Distance).ThenBy(n => n.Name, StringComparer.Ordinal)
             .Take(3)
             .Select(n => n.Name);
-    }
-
-    /// <summary>Levenshtein's distance between two names, their case aside.</summary>
-    private static int Distance(string a, string b)
-    {
-        a = a.ToLowerInvariant();
-        b = b.ToLowerInvariant();
-        int[] previous = [.. Enumerable.Range(0, b.Length + 1)];
-        int[] current = new int[b.Length + 1];
-        for (int i = 1; i <= a.Length; i++)
-        {
-            current[0] = i;
-            for (int j = 1; j <= b.Length; j++)
-            {
-                current[j] = Math.Min(Math.Min(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
-            }
-            (previous, current) = (current, previous);
-        }
-        return previous[b.Length];
     }
 
     [GeneratedRegex(@"^service ""(?<service>[^""]+)"" refers to undefined (?<kind>volume|network|secret|config) (?<name>[^\s:]+)")]

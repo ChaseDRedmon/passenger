@@ -20,23 +20,23 @@ public partial class MainWindow
         Editors.ForEachEditor(editor => editor.ZoomRequested += (_, points) => Zoom(settings.EditorFontSize + points));
         actions!.Add(new IdeAction(A.SoftWrap, "Soft-Wrap", "Editor", context => context.File!.SoftWrap = !context.File.SoftWrap)
         {
-            WhyNot = NeedsFile,
+            WhyNot = Refusals.NeedsFile,
             IsChecked = context => context.File?.SoftWrap == true,
             Menus = [new MenuPlace("View/Active Editor", 0, 0)],
         });
         actions.Add(new IdeAction(A.ShowWhitespaces, "Show Whitespaces", "Editor", context => context.File!.ShowWhitespaces = !context.File.ShowWhitespaces)
         {
-            WhyNot = NeedsFile,
+            WhyNot = Refusals.NeedsFile,
             IsChecked = context => context.File?.ShowWhitespaces == true,
             Menus = [new MenuPlace("View/Active Editor", 1, 0)],
         });
         Add(A.IncreaseFontSize, "Increase Font Size", "Editor", _ => Zoom(settings.EditorFontSize + 1),
-            context => NeedsFile(context) ?? (settings.EditorFontSize >= AppSettings.MaxFontSize ? "The editor's font is as large as it goes" : null),
+            context => Refusals.NeedsFile(context) ?? (settings.EditorFontSize >= AppSettings.MaxFontSize ? "The editor's font is as large as it goes" : null),
             ("View/Active Editor", 2, 0));
         Add(A.DecreaseFontSize, "Decrease Font Size", "Editor", _ => Zoom(settings.EditorFontSize - 1),
-            context => NeedsFile(context) ?? (settings.EditorFontSize <= AppSettings.MinFontSize ? "The editor's font is as small as it goes" : null),
+            context => Refusals.NeedsFile(context) ?? (settings.EditorFontSize <= AppSettings.MinFontSize ? "The editor's font is as small as it goes" : null),
             ("View/Active Editor", 2, 1));
-        Add(A.ResetFontSize, "Reset Font Size", "Editor", _ => Zoom(new AppSettings().EditorFontSize), NeedsFile, ("View/Active Editor", 2, 2));
+        Add(A.ResetFontSize, "Reset Font Size", "Editor", _ => Zoom(new AppSettings().EditorFontSize), Refusals.NeedsFile, ("View/Active Editor", 2, 2));
     }
 
     /// <summary>The editors' font at a size, within what Settings allows, kept as Settings keeps it.</summary>

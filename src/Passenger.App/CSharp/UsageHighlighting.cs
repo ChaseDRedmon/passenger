@@ -65,7 +65,7 @@ public sealed class UsageHighlighting
     public void AddActions(ActionRegistry actions) =>
         actions.Add(new IdeAction(AppActions.HighlightUsages, "Highlight Usages in File", "Code", context => _ = HighlightInFile())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : service()?.For(context.File) is not null ? null
                 : service() is null ? "No C# language server runs for this folder"
                 : "The file is not C#",
@@ -149,7 +149,7 @@ public sealed class UsageHighlighting
             }
             editor.SetUsageHighlights(uses, keep: true);
             string name = editor.Document.Snapshot.GetText(uses.First(u => Covers(u.Range, caret)).Range);
-            Message?.Invoke(this, $"{uses.Count} {(uses.Count == 1 ? "usage" : "usages")} of {name} found "
+            Message?.Invoke(this, $"{Core.Plural.Of(uses.Count, "usage")} of {name} found "
                 + $"(press {keys} again to remove the highlighting, Escape to remove all highlighting)");
         }
     }

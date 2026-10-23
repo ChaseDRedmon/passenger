@@ -26,7 +26,7 @@ public sealed class EndpointsTests : IDisposable
     public void The_window_lists_each_request_of_the_folders_http_files_with_its_method_and_name()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the .http file's three requests");
         Assert.Equal(["GET", "POST", "GET"], window.Endpoints.Requests.Select(r => r.Method));
         Assert.Equal(["All items", "Add an item", "{{base}}/missing"], window.Endpoints.Requests.Select(r => r.Title));
@@ -38,11 +38,11 @@ public sealed class EndpointsTests : IDisposable
     public void Test_sends_the_request_as_written_and_holds_its_answer_to_the_files_criteria()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         EndpointRequest all = window.Endpoints.Requests[0];
 
-        Click(window, RowButton(window, all, "endpointTest"));
+        Ui.Click(RowButton(window, all, "endpointTest"));
         Ui.WaitFor(() => window.Endpoints.Response.Response is not null, "the answer");
 
         Assert.True(window.Endpoints.Response.Passed, $"The answer met none of its criteria: {window.Endpoints.Response.Summary}");
@@ -56,7 +56,7 @@ public sealed class EndpointsTests : IDisposable
         Assert.Equal("application/json", received.Header("Accept"));
 
         // A request answered with an error fails, with no criteria of its own.
-        Click(window, RowButton(window, window.Endpoints.Requests[2], "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests[2], "endpointTest"));
         Ui.WaitFor(() => window.Endpoints.Response.Response is not null, "the second answer");
         Assert.False(window.Endpoints.Response.Passed, "A 404 passed a test that expects an answer below 400");
         Assert.False(window.Endpoints.Outcome(window.Endpoints.Requests[2]));
@@ -67,11 +67,11 @@ public sealed class EndpointsTests : IDisposable
     public void Every_test_is_sent_on_a_client_of_its_own_that_is_gone_when_the_test_is_done()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         for (int i = 0; i < 3; i++)
         {
-            Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
+            Ui.Click(RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
             Ui.WaitFor(() => window.Endpoints.Response.Response is not null, "an answer");
             int test = i + 1;
             // Each client closes its connection as it is disposed, before the next test starts.
@@ -85,10 +85,10 @@ public sealed class EndpointsTests : IDisposable
     public void Interactive_test_sends_the_request_as_changed_in_its_dialog_and_checks_the_criteria_given_there()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         EndpointRequest add = window.Endpoints.Requests[1];
-        Click(window, RowButton(window, add, "endpointInteractive"));
+        Ui.Click(RowButton(window, add, "endpointInteractive"));
         InteractiveTestDialog dialog = DialogButtonsTests.Check(window.InteractiveTest ?? throw new Xunit.Sdk.XunitException("Interactive Test opened no dialog"));
         Ui.Settle();
         Assert.Equal("POST", dialog.Method.SelectedItem);
@@ -107,7 +107,7 @@ public sealed class EndpointsTests : IDisposable
         Assert.Equal("Headers (2)", dialog.TabTitles[1]);
         dialog.Body.Text = """{ "name": "Grace" }""";
         dialog.Criteria.Text = "status 2xx\nheader Content-Type contains json\njson $.name equals Grace\ntime < 5000";
-        Click(dialog, dialog.Send);
+        Ui.Click(dialog.Send);
         Ui.WaitFor(() => dialog.Response.Response is not null, "the dialog's answer");
 
         Assert.True(dialog.Response.Passed, $"The changed request's answer failed: {string.Join("; ", dialog.Response.Results.Where(r => !r.Passed).Select(r => $"{r.Expectation} got {r.Actual}"))}");
@@ -118,7 +118,7 @@ public sealed class EndpointsTests : IDisposable
 
         // A criterion the answer misses fails and says what the answer had; the file is never changed.
         dialog.Criteria.Text = "status 200";
-        Click(dialog, dialog.Send);
+        Ui.Click(dialog.Send);
         Ui.WaitFor(() => dialog.Response.Response is not null, "the second answer");
         ExpectationResult failed = Assert.Single(dialog.Response.Results);
         Assert.False(failed.Passed);
@@ -128,7 +128,7 @@ public sealed class EndpointsTests : IDisposable
         // Text that is no criterion is refused before anything is sent.
         int sent = api.Received.Count;
         dialog.Criteria.Text = "colour blue";
-        Click(dialog, dialog.Send);
+        Ui.Click(dialog.Send);
         Assert.Contains("no criterion", dialog.Problem);
         Assert.Equal(sent, api.Received.Count);
         dialog.Close();
@@ -139,9 +139,9 @@ public sealed class EndpointsTests : IDisposable
     public void The_urls_query_and_the_params_table_follow_each_other_and_a_param_turned_off_is_not_sent()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
-        Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointInteractive"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests[0], "endpointInteractive"));
         InteractiveTestDialog dialog = window.InteractiveTest!;
         Ui.Settle();
         Assert.Equal(0, dialog.PageShown);
@@ -172,7 +172,7 @@ public sealed class EndpointsTests : IDisposable
         Ui.Settle();
         Assert.Equal([(true, "limit", "5"), (true, "q", "x"), (false, "page", "2")], dialog.Params.Pairs);
 
-        Click(dialog, dialog.Send);
+        Ui.Click(dialog.Send);
         Ui.WaitFor(() => dialog.Response.Response is not null, "the answer");
         Assert.Equal("GET /items?limit=5&q=x", api.Received[^1].Line);
         dialog.Close();
@@ -185,11 +185,11 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.WriteAllText(Path.Combine(folder, "http-client.env.json"), """{ "prod": { "base": "https://example.invalid" } }""");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3 && window.Endpoints.Environment == "prod", "the requests in prod");
         window.Endpoints.ChooseEnvironment("No environment");
         Ui.Settle();
-        Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
         Assert.Contains("{{base}}", window.Endpoints.Response.Summary);
         Assert.Empty(api.Received);
         window.Close();
@@ -200,7 +200,7 @@ public sealed class EndpointsTests : IDisposable
     {
         string folder = Folder();
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         File.WriteAllText(Path.Combine(folder, "more.rest"), "DELETE {{base}}/items/1\n");
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the new file's request");
@@ -210,7 +210,7 @@ public sealed class EndpointsTests : IDisposable
         window.DockHost.Hide("endpoints");
         Ui.Settle();
         File.WriteAllText(Path.Combine(folder, "later.http"), "PATCH {{base}}/items/1\n");
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the request of the file written while the window was closed");
         window.Close();
     }
@@ -221,9 +221,9 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.WriteAllText(Path.Combine(folder, "huge.http"), "GET {{base}}/huge\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Url.EndsWith("/huge", StringComparison.Ordinal)), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Url.EndsWith("/huge", StringComparison.Ordinal)), "endpointTest"));
         Ui.WaitFor(() => window.Endpoints.Response.Response is not null, "the huge answer");
 
         EndpointResponse answer = window.Endpoints.Response.Response!;
@@ -249,10 +249,10 @@ public sealed class EndpointsTests : IDisposable
         file.Append("@v10 = x\n\nGET {{base}}/items?q={{v0}}\n");
         File.WriteAllText(Path.Combine(folder, "laughs.http"), file.ToString());
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
 
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.File.EndsWith("laughs.http", StringComparison.Ordinal)), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.File.EndsWith("laughs.http", StringComparison.Ordinal)), "endpointTest"));
         Assert.Contains("over and over", window.Endpoints.Response.Summary);
         Assert.Empty(api.Received);
         window.Close();
@@ -262,38 +262,38 @@ public sealed class EndpointsTests : IDisposable
     public void A_request_that_reads_the_persons_environment_asks_first_naming_the_host_and_each_variable_and_sends_nothing_unless_allowed()
     {
         MainWindow window = Open(SecretsFolder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
         EndpointRequest whoami = window.Endpoints.Requests.Single(r => r.Name == "Who am I");
         string set = System.Environment.GetEnvironmentVariable("PASSENGER_SETTINGS")!;
 
         // The env file's token hides a $processEnv the .http file never shows; the question names it, and one not set.
-        Click(window, RowButton(window, whoami, "endpointTest"));
+        Ui.Click(RowButton(window, whoami, "endpointTest"));
         EndpointQuestionDialog question = DialogButtonsTests.Check(window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A request reading the person's environment was sent unasked"));
         Assert.Contains($"127.0.0.1:{api.Port}", question.Title);
         Assert.Equal([new EndpointRead(false, "PASSENGER_ENDPOINTS_UNSET", Missing: true), new EndpointRead(false, "PASSENGER_SETTINGS")], question.Reads);
         Assert.Contains(question.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.Contains("PASSENGER_ENDPOINTS_UNSET, which is not set", StringComparison.Ordinal) == true);
-        Click(question, question.DontAllowButton);
+        Ui.Click(question.DontAllowButton);
         Assert.Null(window.Endpoints.Question);
         Assert.Empty(api.Received);
         Assert.StartsWith("Not sent", window.Endpoints.Response.Summary, StringComparison.Ordinal);
         Assert.Null(window.Endpoints.Outcome(whoami));
 
         // Not allowed is never kept: the next Test asks again, and once allowed, the variables go.
-        Click(window, RowButton(window, whoami, "endpointTest"));
+        Ui.Click(RowButton(window, whoami, "endpointTest"));
         question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A Don't allow was kept, where the next send should ask again");
-        Click(question, question.AllowButton);
+        Ui.Click(question.AllowButton);
         StandInApi.Request received = Assert.Single(api.Received);
         Assert.Equal(set, received.Header("X-Token"));
         Assert.Equal(string.Empty, received.Header("X-Missing"));
 
         // Asked once: the folder allows it while it is open.
-        Click(window, RowButton(window, whoami, "endpointTest"));
+        Ui.Click(RowButton(window, whoami, "endpointTest"));
         Assert.Null(window.Endpoints.Question);
         Assert.Equal(2, api.Received.Count);
 
         // A request that reads none of the person's computer never asks.
-        Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
         Assert.Null(window.Endpoints.Question);
         Assert.Equal(3, api.Received.Count);
         window.Close();
@@ -305,12 +305,12 @@ public sealed class EndpointsTests : IDisposable
         string folder = SecretsFolder();
         string settings = TestFolders.Create("endpoints-settings-");
         MainWindow window = Open(folder, settings);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
         EndpointQuestionDialog question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A request reading the person's environment was sent unasked");
         question.Always.IsChecked = true;
-        Click(question, question.AllowButton);
+        Ui.Click(question.AllowButton);
         Assert.Single(api.Received);
         window.Close();
         Ui.Settle();
@@ -318,9 +318,9 @@ public sealed class EndpointsTests : IDisposable
         Assert.Contains($"127.0.0.1:{api.Port} env PASSENGER_SETTINGS", kept);
 
         MainWindow again = Open(folder, settings);
-        again.ShowToolWindow("endpoints");
+        again.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => again.Endpoints.Requests.Count == 4, "the requests in the next window");
-        Click(again, RowButton(again, again.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
+        Ui.Click(RowButton(again, again.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
         Assert.True(again.Endpoints.Question is null, "Always for this folder was not kept: the next window asked again");
         Assert.Equal(2, api.Received.Count);
 
@@ -328,10 +328,10 @@ public sealed class EndpointsTests : IDisposable
         // The env files are read as a request is sent.
         File.WriteAllText(Path.Combine(folder, "http-client.env.json"),
             $$$"""{ "dev": { "base": "{{{api.Root}}}", "token": "{{$processEnv PASSENGER_SETTINGS}}{{$env.PASSENGER_ENDPOINTS_OTHER}}" } }""");
-        Click(again, RowButton(again, again.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
+        Ui.Click(RowButton(again, again.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
         question = again.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A variable the folder never allowed was sent unasked");
         Assert.Contains(question.Reads, r => r.Name == "PASSENGER_ENDPOINTS_OTHER");
-        Click(question, question.DontAllowButton);
+        Ui.Click(question.DontAllowButton);
         Assert.Equal(2, api.Received.Count);
         again.Close();
     }
@@ -368,26 +368,26 @@ public sealed class EndpointsTests : IDisposable
             < ./linked.json
             """);
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 6, "the requests");
 
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Inside"), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Inside"), "endpointTest"));
         Assert.Null(window.Endpoints.Question);
         Assert.Equal("""{ "name": "Inside" }""", Assert.Single(api.Received).Body);
 
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Outside"), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Outside"), "endpointTest"));
         EndpointQuestionDialog question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A body from outside the folder was sent unasked");
         Assert.Equal([new EndpointRead(true, Passenger.Core.PathNames.Canonical(outside))], question.Reads);
-        Click(question, question.DontAllowButton);
+        Ui.Click(question.DontAllowButton);
         Assert.Single(api.Received);
 
         if (links)
         {
             // A link inside the folder to a file outside it is that file.
-            Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Linked"), "endpointTest"));
+            Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Linked"), "endpointTest"));
             question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A link to a file outside the folder was sent unasked");
             Assert.Equal([new EndpointRead(true, Passenger.Core.PathNames.Canonical(outside))], question.Reads);
-            Click(question, question.AllowButton);
+            Ui.Click(question.AllowButton);
             Assert.Equal("""{ "secret": true }""", api.Received[^1].Body);
         }
         window.Close();
@@ -399,16 +399,16 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Slow\nGET {{base}}/slow\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
         Button slow = RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Slow"), "endpointTest");
         Button other = RowButton(window, window.Endpoints.Requests[0], "endpointTest");
         WorkingRing ring = window.FindControl<WorkingRing>("StatusWorking")!;
 
-        Press(window, slow);
+        Ui.Click(slow, settle: false);
         Ui.PumpUntil(() => window.Status?.StartsWith($"Sending GET {api.Root}/slow", StringComparison.Ordinal) == true, "the status bar to say the test's stage");
         Assert.True(ring.IsVisible, "The status bar should turn its ring while a test waits for its answer");
-        Press(window, other);
+        Ui.Click(other, settle: false);
         Ui.PumpUntil(() => window.Status?.StartsWith("Already under way: ", StringComparison.Ordinal) == true, "a second test to be refused while one is under way");
 
         Ui.Run(window, AppActions.Stop);
@@ -426,15 +426,15 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Moved\nGET {{base}}/moved\nX-Trace: {{trace}}\n\n### Elsewhere\nGET {{base}}/elsewhere\nX-Trace: {{trace}}\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the requests");
 
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Moved"), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Moved"), "endpointTest"));
         Assert.Equal(["GET /moved", "GET /items"], api.Received.Select(r => r.Line));
         Assert.Equal("t-42", api.Received[^1].Header("X-Trace"));
         Assert.Empty(window.Endpoints.Response.Response!.Notes);
 
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Elsewhere"), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Elsewhere"), "endpointTest"));
         Assert.Equal(["GET /moved", "GET /items", "GET /elsewhere", "GET /items"], api.Received.Select(r => r.Line));
         Assert.StartsWith("localhost:", api.Received[^1].Header("Host"), StringComparison.Ordinal);
         Assert.Null(api.Received[^1].Header("X-Trace"));
@@ -455,12 +455,12 @@ public sealed class EndpointsTests : IDisposable
         File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Other port\nGET {{base}}/other-port\nX-Secret: {{$env.PASSENGER_SETTINGS}}\n"
             + "\n### Posted to another port\nPOST {{base}}/other-port\nContent-Type: application/json\n\n{\"secret\":\"posted\"}\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the requests");
 
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
         EndpointQuestionDialog question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A request reading the person's environment was sent unasked");
-        Click(question, question.AllowButton);
+        Ui.Click(question.AllowButton);
         Assert.Equal(System.Environment.GetEnvironmentVariable("PASSENGER_SETTINGS"), Assert.Single(api.Received).Header("X-Secret"));
         StandInApi.Request redirected = Assert.Single(other.Received);
         Assert.Equal("GET /items", redirected.Line);
@@ -468,7 +468,7 @@ public sealed class EndpointsTests : IDisposable
         Assert.Equal(200, window.Endpoints.Response.Response!.Status);
         Assert.Equal([$"Redirected to {other.Root}, another origin, without the request's headers"], window.Endpoints.Response.Response.Notes);
 
-        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Posted to another port"), "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Posted to another port"), "endpointTest"));
         Assert.Equal("POST /other-port", api.Received[^1].Line);
         Assert.Contains("posted", api.Received[^1].Body, StringComparison.Ordinal);
         Assert.True(other.Received.Count == 1, "A 307 carried the request's body to another port of the host");
@@ -478,14 +478,64 @@ public sealed class EndpointsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_redirect_to_another_port_does_not_forward_an_allowed_environment_header()
+    {
+        using StandInApi other = new();
+        api.RedirectRoot = other.Root;
+        string folder = Folder();
+        File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Other port\nGET {{base}}/other-port\nX-Secret: {{$env.PASSENGER_SETTINGS}}\n");
+        MainWindow window = Open(folder);
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Endpoints);
+            Ui.WaitFor(() => window.Endpoints.Requests.Any(r => r.Name == "Other port"), "the redirect request");
+            Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
+            EndpointQuestionDialog question = Assert.IsType<EndpointQuestionDialog>(window.Endpoints.Question);
+            Ui.Click(question.AllowButton);
+            Assert.Equal(Environment.GetEnvironmentVariable("PASSENGER_SETTINGS"), Assert.Single(api.Received).Header("X-Secret"));
+            Assert.Null(Assert.Single(other.Received).Header("X-Secret"));
+            Assert.Equal(200, window.Endpoints.Response.Response!.Status);
+            Assert.Equal([$"Redirected to {other.Root}, another origin, without the request's headers"], window.Endpoints.Response.Response.Notes);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_307_redirect_to_another_port_does_not_send_the_requests_body_there()
+    {
+        using StandInApi other = new();
+        api.RedirectRoot = other.Root;
+        string folder = Folder();
+        File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Other port\nPOST {{base}}/other-port\nContent-Type: application/json\n\n{\"secret\":\"synthetic\"}\n");
+        MainWindow window = Open(folder);
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Endpoints);
+            Ui.WaitFor(() => window.Endpoints.Requests.Any(r => r.Name == "Other port"), "the redirect request");
+            Ui.Click(RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
+            Assert.Contains("synthetic", Assert.Single(api.Received).Body, StringComparison.Ordinal);
+            Assert.Empty(other.Received);
+            Assert.Equal(307, window.Endpoints.Response.Response!.Status);
+            Assert.Equal([$"Not followed to {other.Root}: a 307 would send the request's body there"], window.Endpoints.Response.Response.Notes);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_requests_last_outcome_stays_with_it_as_lines_move()
     {
         string folder = Folder();
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
-        Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
-        Click(window, RowButton(window, window.Endpoints.Requests[2], "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
+        Ui.Click(RowButton(window, window.Endpoints.Requests[2], "endpointTest"));
         int line = window.Endpoints.Requests[0].Line;
 
         File.WriteAllText(Path.Combine(folder, "api.http"), "# Read first.\n\n" + File.ReadAllText(Path.Combine(folder, "api.http")));
@@ -557,14 +607,6 @@ public sealed class EndpointsTests : IDisposable
         return window;
     }
 
-    /// <summary>A click that leaves the window to go on, for one whose work holds the IDE busy until it is stopped.</summary>
-    private static void Press(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-    }
-
     private static Button RowButton(MainWindow window, EndpointRequest request, string name)
     {
         Button? found = null;
@@ -573,14 +615,6 @@ public sealed class EndpointsTests : IDisposable
         return found!;
 
         static IEnumerable<Visual> Ancestors(Visual visual) => visual.GetVisualAncestors();
-    }
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
     }
 
     /// <summary>A small JSON API on a loopback port: GET /items lists one item, POST and PUT /items answer 201 with the

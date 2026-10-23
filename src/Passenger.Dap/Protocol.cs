@@ -230,7 +230,12 @@ public static class ExceptionScenarioNames
 
 public sealed record ThreadsResponse(IReadOnlyList<DapThread> Threads);
 
-public sealed record DapThread(int Id, string Name);
+public sealed record DapThread(int Id, string Name)
+{
+    /// <summary>Passenger's own: true for the thread that runs Main (the first the runtime told of, or on a launch on Windows
+    /// the one the program was started on), whatever the program named it; a desktop app's UI thread.</summary>
+    public bool? IsMain { get; init; }
+}
 
 public sealed record StackTraceArguments(int ThreadId, int? StartFrame = null, int? Levels = null);
 
@@ -397,7 +402,7 @@ public sealed record DapEmpty;
 public sealed record StoppedEvent
 {
     /// <summary>step, breakpoint, exception, pause, entry, goto, function breakpoint, data breakpoint.</summary>
-    public string Reason { get; init; } = "unknown";
+    public string Reason { get; init; } = StopReasons.Unknown;
     public string? Description { get; init; }
 
     /// <summary>More on the stop: at a data breakpoint, the value it watches before and after the write.</summary>
@@ -412,8 +417,6 @@ public sealed record StoppedEvent
     public int? Line { get; init; }
     public int? Column { get; init; }
 }
-
-public sealed record ContinuedEvent(int ThreadId, bool? AllThreadsContinued = null);
 
 public sealed record ExitedEvent(int ExitCode);
 

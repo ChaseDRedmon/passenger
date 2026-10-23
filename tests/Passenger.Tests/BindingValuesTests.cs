@@ -15,7 +15,8 @@ namespace Passenger.Tests;
 /// <summary>A debugged Avalonia app's binding values in its .axaml file, after each binding and on hover:
 /// tests/Debuggees/BindingValuesApp, written into a folder of its own with a project file on the tests' own Avalonia,
 /// headless, "rename" typed into the Debug window's console having its code-behind change the customer's name on the UI
-/// thread. Debugged through the window, so run alone.</summary>
+/// thread, which it names UI, as an app may (the debugger marks Main's thread whatever its name). Debugged through the
+/// window, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDisposable
 {
@@ -23,16 +24,7 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
 
     public BindingValuesTests(RestoredFolders folders)
     {
-        folder = PathNames.Canonical(folders.Take("bindingvalues-", made =>
-        {
-            foreach (string file in Directory.GetFiles(Debuggees.Source("BindingValuesApp")))
-            {
-                File.Copy(file, Path.Combine(made, Path.GetFileName(file)));
-            }
-            string project = Path.Combine(made, "BindingValuesApp.csproj");
-            File.WriteAllText(project, AvaloniaApp.HeadlessProject());
-            return project;
-        }));
+        folder = PathNames.Canonical(folders.Take("bindingvalues-", made => AvaloniaApp.Debuggee(made, "BindingValuesApp")));
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -44,7 +36,7 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
     [AvaloniaFact]
     public void A_debugged_apps_view_shows_its_bindings_values_after_them_and_on_hover_paused_and_running_with_a_control_chosen()
     {
-        MainWindow window = new() { Width = 1400, Height = 900 };
+        MainWindow window = new() { Width = 1400, Height = 900, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
@@ -55,7 +47,7 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
         Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Customer"),
             $"the Live Visual Tree to show the app's window ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
-        Say(window, "rename");
+        Ui.TypeToDebugged(window, "rename");
         Stopped(window, "the stop after rename");
 
         // Paused, the debugger reads each binding's value on the window the file made, as C#'s inline values are shown.
@@ -105,14 +97,14 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
             $"the running app's values ({Value(editor, customer)}, {Value(editor, row)})", TimeSpan.FromMinutes(1));
         window.Debugger.Breakpoints.Toggle(CodeBehind, Line(CodeBehind, "Console.WriteLine"));
         Ui.Settle();
-        Say(window, "rename");
+        Ui.TypeToDebugged(window, "rename");
         Ui.WaitFor(() => Value(editor, customer) == "Text: \"Ada Lovelace\"", $"the renamed customer's name, not {Value(editor, customer)}", TimeSpan.FromMinutes(1));
 
         // A stop on another thread, while the UI thread waits where the runtime evaluates nothing: the file says so, and why.
         string program = Path.Combine(folder, "Program.cs");
         window.Debugger.Breakpoints.Toggle(program, Line(program, "if (line.Trim() != \"rename\")"));
         Ui.Settle();
-        Say(window, "rename");
+        Ui.TypeToDebugged(window, "rename");
         Stopped(window, "the stop on the input thread");
         Assert.Null(window.OpenFile(Xaml));
         Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Text == "binding values: shown at a stop on the app's UI thread, not this one"),
@@ -158,20 +150,6 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
         session.StateChanged += (_, _) => resumed |= session.State != DebugState.Paused;
         Ui.Run(window, AppActions.Resume);
         Ui.WaitFor(() => resumed, "the program to go on");
-    }
-
-    /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
-    private static void Say(MainWindow window, string line)
-    {
-        window.ShowToolWindow("debug");
-        window.BottomPanel.Debug.ShowTab(console: true);
-        Ui.Settle();
-        Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, MouseButton.Left);
-        window.MouseUp(inside, MouseButton.Left);
-        window.KeyTextInput(line);
-        Ui.Press(window, "ENTER");
     }
 
     /// <summary>The line (from zero) of a file holding some text, so a test names what it means rather than a number.</summary>

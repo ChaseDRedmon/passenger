@@ -27,7 +27,7 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
         {
             Write(root, "Shapes.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Lib/Lib.csproj\" />\n</Solution>\n");
             Write(root, "Lib/Lib.csproj",
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>\n  </PropertyGroup>\n</Project>\n");
+                $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFrameworks>{TestProjects.Framework};net11.0</TargetFrameworks>\n  </PropertyGroup>\n</Project>\n");
             Write(root, "Lib/Greeter.cs", """
                 namespace Lib;
 
@@ -116,17 +116,17 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
         CodeEditor editor = window.EditorArea.CodeEditor;
         Ui.WaitFor(() => window.CSharpService?.IsReady == true && document.ProjectContexts.Count == 2,
             "the server to say Greeter.cs is compiled for both of Lib's target frameworks", TimeSpan.FromMinutes(2));
-        Assert.Equal(["Lib (net10.0)", "Lib (net11.0)"], document.ProjectContexts.Order(StringComparer.Ordinal));
+        Assert.Equal([$"Lib ({TestProjects.Framework})", "Lib (net11.0)"], document.ProjectContexts.Order(StringComparer.Ordinal));
         Assert.Equal(document.ProjectContext![5..^1], editor.ContextLabel);
 
         // Only net11.0 compiles the member that names what does not exist.
         Choose(window, editor, "Lib (net11.0)");
         Assert.Equal("net11.0", editor.ContextLabel);
         Ui.WaitFor(() => Missing(window, document), "the error on Missing, which only net11.0 compiles");
-        Choose(window, editor, "Lib (net10.0)");
-        Assert.Equal("net10.0", editor.ContextLabel);
+        Choose(window, editor, $"Lib ({TestProjects.Framework})");
+        Assert.Equal(TestProjects.Framework, editor.ContextLabel);
         Ui.WaitFor(() => !Missing(window, document) && window.CSharpService!.For(document)!.Diagnostics.Count == 0,
-            "the error on Missing to go, net10.0 compiling none of it");
+            $"the error on Missing to go, {TestProjects.Framework} compiling none of it");
         window.Close();
     }
 
@@ -135,15 +135,8 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
     {
         Rect bounds = editor.ContextSwitcherBounds;
         Assert.True(bounds.Width > 0, "The editor shows no target framework switcher for a file compiled for two");
-        Point at = editor.TranslatePoint(bounds.Center, window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-        ContextMenu menu = Assert.IsType<ContextMenu>(window.OpenContextMenu);
-        MenuItem item = menu.Items.OfType<MenuItem>().Single(i => (string?)i.Header == context);
-        item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
+        Ui.Click(editor, bounds.Center);
+        Ui.Choose(Assert.IsType<ContextMenu>(window.OpenContextMenu), context);
     }
 
     [AvaloniaFact]

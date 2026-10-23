@@ -28,15 +28,13 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "every container to be taken down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "every container to be taken down");
         }
         window.Close();
     }
 
-    /// <summary>Debug pressed while Run is still bringing the configuration up (its cache slow to answer its health check, which
-    /// up waits on) takes Run's place: Run's up ends and says it was stopped, and Debug's run comes up whole, one container
+    /// <summary>Debug pressed while Run is still bringing the configuration up (its cache not answering its health check, which
+    /// up waits on, until the test lets it) takes Run's place: Run's up ends and says it was stopped, and Debug's run comes up whole, one container
     /// a service, its sessions left as they are once Run's start has ended.</summary>
     [AvaloniaFact]
     public void Debug_while_Run_comes_up_takes_its_place_leaving_one_run_and_its_sessions()
@@ -49,10 +47,13 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         {
             Task<string?> running = window.RunAsync();
             Ui.PumpUntil(() => running.IsCompleted || window.Actions.Work.Of(AppActions.RunProgram)?.Stage.StartsWith("Bringing", StringComparison.Ordinal) == true
-                && Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length > 0, "Run to begin bringing the services up", TimeSpan.FromMinutes(5));
+                && Docker.Said("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}") is { Length: > 0 }, "Run to begin bringing the services up", TimeSpan.FromMinutes(5));
             Assert.False(running.IsCompleted, $"Run ended before its services came up: {(running.IsCompleted ? running.Result : null)}");
             Task<string?> debugging = window.DebugAsync();
-            Assert.Equal("Compose: compose.yaml was stopped as it started", Ui.Await(running, "Run's start to end as Debug takes its place", TimeSpan.FromMinutes(2)));
+            // Debug's start holds the window's work until the gate opens, so the wait runs the window's loop without waiting it out.
+            Ui.PumpUntil(() => running.IsCompleted, "Run's start to end as Debug takes its place", TimeSpan.FromMinutes(2));
+            Assert.Equal("Compose: compose.yaml was stopped as it started", running.Result);
+            Open(folder);
             string? refused = Ui.Await(debugging, "Debug's run to come up", TimeSpan.FromMinutes(5));
             Assert.True(refused is null, $"{refused}{Ui.BuildErrors(window)}\n{ContainerRunsTests.Run(window)}");
             DebugTab web = ContainerRunDebuggingTests.Tab(window, "web");
@@ -68,9 +69,7 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "every container to be taken down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "every container to be taken down");
         }
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the sessions to end with Stop");
         window.Close();
@@ -91,13 +90,12 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         {
             Task<string?> debugging = window.DebugAsync();
             Ui.PumpUntil(() => debugging.IsCompleted || window.Actions.Work.Of(AppActions.Debug)?.Stage.StartsWith("Attaching the debugger", StringComparison.Ordinal) == true
-                && Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length > 0, "Debug to bring the services up and attach", TimeSpan.FromMinutes(5));
+                && Docker.Said("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}") is { Length: > 0 }, "Debug to bring the services up and attach", TimeSpan.FromMinutes(5));
             Assert.False(debugging.IsCompleted, $"Debug ended before its services came up: {(debugging.IsCompleted ? debugging.Result : null)}");
             Task opening = window.OpenFolder(other);
             Ui.WaitFor(() => opening.IsCompleted, "the next folder to open", TimeSpan.FromMinutes(1));
             Assert.Equal("The solution was closed", Ui.Await(debugging, "Debug's start to end with its folder", TimeSpan.FromMinutes(2)));
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "the left folder's containers to be taken down", TimeSpan.FromMinutes(2));
+            Docker.TakenDown(project, "the left folder's containers to be taken down");
             Ui.Hold(TimeSpan.FromSeconds(3), "a late session of the left folder's to show");
             Assert.Empty(window.Debugger.Tabs.Select(t => t.Name));
             Assert.False(window.Debugger.IsDebugging, "A session of the left folder's is debugging in the next one");
@@ -113,15 +111,21 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         window.Close();
     }
 
-    /// <summary>ContainerRunsTests' Compose solution, its cache answering its health check only after 25 s, so up (and web,
-    /// which needs it healthy) waits on it.</summary>
+    /// <summary>ContainerRunsTests' Compose solution, its cache answering its health check only once the test opens its gate
+    /// (<see cref="Open"/>), so up (and web, which needs it healthy) waits on it for as long as the test needs.</summary>
     private static (string Folder, string Project) Slow(string name)
     {
         (string folder, string project) = ContainerRunsTests.Shop(name);
+        Directory.CreateDirectory(Path.Combine(folder, "gate"));
         string compose = Path.Combine(folder, "compose.yaml");
-        File.WriteAllText(compose, File.ReadAllText(compose).Replace("\"mkdir -p /www", "\"sleep 25 && mkdir -p /www", StringComparison.Ordinal));
+        File.WriteAllText(compose, File.ReadAllText(compose)
+            .Replace("\"mkdir -p /www", "\"until [ -f /gate/open ]; do sleep 0.2; done && mkdir -p /www", StringComparison.Ordinal)
+            .Replace("interval: 1s, retries: 30 }", "interval: 1s, retries: 600 }\n    volumes: [\"./gate:/gate:ro\"]", StringComparison.Ordinal));
         return (folder, project);
     }
+
+    /// <summary>Opens the gate a slow folder's cache waits at, which every cache of its project sees.</summary>
+    private static void Open(string folder) => File.WriteAllText(Path.Combine(folder, "gate", "open"), string.Empty);
 
     /// <summary>Debugs the configuration, presses Stop once Debug's stage says <paramref name="stage"/>, and checks what is left.</summary>
     private static void StoppedAt(MainWindow window, string project, string stage, string what)
@@ -134,8 +138,7 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
         string? said = Ui.Await(debugging, $"Debug to end once stopped during {what}", TimeSpan.FromMinutes(2));
         Assert.Equal("Compose: compose.yaml was stopped as it started", said);
-        Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-            $"no container to be left after Stop during {what}", TimeSpan.FromMinutes(2));
+        Docker.TakenDown(project, $"no container to be left after Stop during {what}");
         Ui.WaitFor(() => !window.Debugger.Tabs.Any(t => t.IsLive), $"no Debug tab to be left live after Stop during {what}");
         Ui.WaitFor(() => !Adapters(containers).Any(), $"no debugger's docker exec to be left after Stop during {what}: {string.Join("; ", Adapters(containers))}");
         Assert.False(window.IsRunning, $"The run's log is still followed after Stop during {what}");

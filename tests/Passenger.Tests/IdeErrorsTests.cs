@@ -322,23 +322,36 @@ public sealed class IdeErrorsTests : IDisposable
             }
         };
         Passenger.Core.ChildProcesses.Started += started;
+        string folder = window.Folder!;
+        string? missed = null;
         try
         {
-            // The next start's projects handed over, the window's thread is held until that start has come back and its server is gone.
+            // Its projects handed over, the window's thread is held until the log says the start came back and its server ended.
             Assert.NotNull(csharp.Feed);
             csharp.Feed = new EndingOnce(csharp.Feed, () =>
             {
-                Ui.Stall(TimeSpan.FromMilliseconds(500), "the server's start to come back to the held window");
-                using Process server = Process.GetProcessById(Volatile.Read(ref next));
-                server.Kill();
-                server.WaitForExit();
-                Ui.Stall(TimeSpan.FromMilliseconds(500), "the connection to the ended server to be closed");
+                int server = Volatile.Read(ref next);
+                if (!Waiting.Until(() => Said($"C# language server (process {server}) started for {folder}") > 0, TimeSpan.FromMinutes(2), every: TimeSpan.FromMilliseconds(50)))
+                {
+                    missed = $"the start of the server (process {server}) never came back";
+                    return;
+                }
+                int endedBefore = Said($"The C# language server (process {server}) ended");
+                using (Process ending = Process.GetProcessById(server))
+                {
+                    ending.Kill();
+                    ending.WaitForExit();
+                }
+                if (!Waiting.Until(() => Said($"The C# language server (process {server}) ended") > endedBefore, TimeSpan.FromMinutes(1), every: TimeSpan.FromMilliseconds(50)))
+                {
+                    missed = $"the end of the server (process {server}) was never heard";
+                }
             });
             Process.GetProcessById(first).Kill();
             Ui.WaitFor(() => next != 0 && !Running(next), "the server started again to be ended as its start came back");
+            Assert.True(missed is null, $"The window's thread was let go before its server's start and end had both come: {missed}");
             Ui.WaitFor(() => csharp.Session is { IsLoaded: true } session && session.Server.ProcessId != first && session.Server.ProcessId != next,
                 $"the language server ended as it started to be started again ({csharp.State})");
-            Assert.Contains($"process {next}) ended", Ui.IdeLog());
         }
         finally
         {
@@ -346,6 +359,9 @@ public sealed class IdeErrorsTests : IDisposable
         }
         TypeAnErrorAndSeeItReported(window);
         window.Close();
+
+        // How many of the IDE's log lines say it.
+        static int Said(string text) => Ui.IdeLog().Split('\n').Count(l => l.Contains(text, StringComparison.Ordinal));
     }
 
     /// <summary>The window's projects, the first time asked, then once on the window's thread what ends its server.</summary>
@@ -366,36 +382,19 @@ public sealed class IdeErrorsTests : IDisposable
         public Task<Passenger.Roslyn.Extension.ProjectInfoResult> InfoAsync(string path, CancellationToken cancel) => feed.InfoAsync(path, cancel);
     }
 
+    /// <summary>Call Hierarchy asked of a server that stops before it answers says so, and asked while the next one starts
+    /// says it needs the server; once it is back, the Hierarchy window shown before it ended still opens a row, its callers
+    /// asked of the server running now, and Call Hierarchy works again.</summary>
     [AvaloniaFact]
-    public void The_hierarchy_window_shown_before_the_language_server_started_again_still_opens_a_row_after_it()
+    public void Call_hierarchy_asked_while_the_language_server_starts_again_says_why_and_the_window_shown_before_still_opens_a_row_after_it()
     {
         MainWindow window = OpenProgram(Calls);
-        Place(window, "static void Ot");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "static void Ot");
         Task<string?> shown = window.ShowCallHierarchyAsync();
         Ui.WaitFor(() => shown.IsCompleted, "the call hierarchy");
         Assert.Null(shown.Result);
         HierarchyRow caller = Assert.Single(window.Hierarchy.Rows, r => r.Depth == 1);
         Assert.Contains("Helper", caller.Node.Item.Name, StringComparison.Ordinal);
-
-        int server = window.CSharpService!.Session!.Server.ProcessId;
-        Process.GetProcessById(server).Kill();
-        Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != server,
-            $"the language server to be started again ({window.CSharpService.State})");
-
-        // Its callers are asked of the server running now: the one the window was shown with is gone.
-        Task opening = window.Hierarchy.ExpandAsync(caller);
-        Ui.WaitFor(() => opening.IsCompleted, "the caller's row to open");
-        Assert.True(opening.IsCompletedSuccessfully, $"Opening a row of the Hierarchy window after the language server started again failed: {opening.Exception?.InnerException}");
-        Assert.True(caller.IsExpanded, "The caller's row did not open");
-        Assert.All(caller.Children!, c => Assert.Contains("Main", c.Item.Name, StringComparison.Ordinal));
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Call_hierarchy_asked_while_the_language_server_starts_again_says_why_it_cannot_and_works_once_it_is_back()
-    {
-        MainWindow window = OpenProgram(Calls);
-        Place(window, "static void Ot");
         int first = window.CSharpService!.Session!.Server.ProcessId;
 
         // Asked of a server that stops before it answers, as one that crashes or is ended for hanging does.
@@ -420,8 +419,15 @@ public sealed class IdeErrorsTests : IDisposable
         Assert.True(starting.IsCompleted, "Call Hierarchy waited for a server that is not there");
         Assert.StartsWith("Call Hierarchy needs the C# language server: ", starting.Result, StringComparison.Ordinal);
         Assert.Equal(starting.Result, window.Status);
-
         Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true }, $"the language server to be started again ({window.CSharpService.State})");
+
+        // The row shown before: its callers are asked of the server running now, the one the window was shown with gone.
+        Task opening = window.Hierarchy.ExpandAsync(caller);
+        Ui.WaitFor(() => opening.IsCompleted, "the caller's row to open");
+        Assert.True(opening.IsCompletedSuccessfully, $"Opening a row of the Hierarchy window after the language server started again failed: {opening.Exception?.InnerException}");
+        Assert.True(caller.IsExpanded, "The caller's row did not open");
+        Assert.All(caller.Children!, c => Assert.Contains("Main", c.Item.Name, StringComparison.Ordinal));
+
         Task<string?> again = window.ShowCallHierarchyAsync();
         Ui.WaitFor(() => again.IsCompleted, "the call hierarchy from the new server");
         Assert.Null(again.Result);
@@ -436,7 +442,7 @@ public sealed class IdeErrorsTests : IDisposable
         Directory.CreateDirectory(library);
         File.WriteAllText(Path.Combine(library, "Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
         MainWindow window = OpenProgram("class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
-        Place(window, "Helper.Tw");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "Helper.Tw");
         using (Unwritable(Path.Combine(library, "Helper.cs")))
         {
             Ui.Run(window, AppActions.Rename);
@@ -452,14 +458,6 @@ public sealed class IdeErrorsTests : IDisposable
 
     /// <summary>Three methods, each calling the next.</summary>
     private const string Calls = "class Program\n{\n    static void Main()\n    {\n        Helper();\n    }\n\n    static void Helper()\n    {\n        Other();\n    }\n\n    static void Other()\n    {\n    }\n}\n";
-
-    /// <summary>Puts the caret just after some text of the file shown.</summary>
-    private static void Place(MainWindow window, string after)
-    {
-        int at = window.EditorArea.CodeEditor.Document.Snapshot.ToString().IndexOf(after, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{after}' is not in the file");
-        window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single(at + after.Length);
-    }
 
     /// <summary>A file no save can replace while this is held: its folder made read-only on macOS and Linux, and on Windows
     /// the file held open for reading only, which refuses both the move over it and a write in place.</summary>
@@ -503,7 +501,7 @@ public sealed class IdeErrorsTests : IDisposable
     private static void WriteProgram(string at, string? program = null)
     {
         File.WriteAllText(Path.Combine(at, "Sample.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console());
         File.WriteAllText(Path.Combine(at, "Program.cs"), program ?? "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
         Restore.Run(at);
     }

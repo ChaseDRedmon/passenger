@@ -9,7 +9,13 @@ namespace Passenger.Lsp;
 
 public sealed record LspPosition(int Line, int Character);
 
-public sealed record LspRange(LspPosition Start, LspPosition End);
+public sealed record LspRange(LspPosition Start, LspPosition End)
+{
+    /// <summary>Whether a place is in the range, either end included.</summary>
+    public bool Holds(LspPosition at) =>
+        (Start.Line < at.Line || (Start.Line == at.Line && Start.Character <= at.Character))
+        && (at.Line < End.Line || (at.Line == End.Line && at.Character <= End.Character));
+}
 
 public sealed record LspLocation(string Uri, LspRange Range);
 
@@ -34,8 +40,6 @@ public sealed record IncomingCall(HierarchyItem From, IReadOnlyList<LspRange> Fr
 /// <summary>A callee and where in the caller the calls to it are.</summary>
 public sealed record OutgoingCall(HierarchyItem To, IReadOnlyList<LspRange> FromRanges);
 
-public sealed record LspLocationLink(LspRange? OriginSelectionRange, string TargetUri, LspRange TargetRange, LspRange TargetSelectionRange);
-
 /// <summary>A document, and the project the server is to answer for it in (Visual Studio's <c>_vs_projectContext</c>, a
 /// target framework of a multi-targeted project) when not the one it would choose.</summary>
 public sealed record TextDocumentIdentifier(string Uri, [property: JsonPropertyName("_vs_projectContext")] ProjectContext? ProjectContext = null);
@@ -57,8 +61,6 @@ public sealed record DidSaveTextDocumentParams(TextDocumentIdentifier TextDocume
 public sealed record TextDocumentPositionParams(TextDocumentIdentifier TextDocument, LspPosition Position);
 
 public sealed record LspTextEdit(LspRange Range, string NewText);
-
-public sealed record MarkupContent(string Kind, string Value);
 
 public sealed record WorkspaceFolder(string Uri, string Name);
 
@@ -106,11 +108,10 @@ public sealed class CompletionList
     public CompletionItemDefaults? ItemDefaults { get; init; }
 }
 
+/// <summary>The commit characters alone: the one item default the client's capabilities say it reads.</summary>
 public sealed class CompletionItemDefaults
 {
-    public JsonElement? EditRange { get; init; }
     public List<string>? CommitCharacters { get; init; }
-    public JsonElement? Data { get; init; }
 }
 
 public sealed class CompletionItem
@@ -206,8 +207,6 @@ public sealed record FormattingOptions(int TabSize, bool InsertSpaces);
 
 public sealed record DocumentFormattingParams(TextDocumentIdentifier TextDocument, FormattingOptions Options);
 
-public sealed record DocumentRangeFormattingParams(TextDocumentIdentifier TextDocument, LspRange Range, FormattingOptions Options);
-
 // Symbols
 
 public sealed record WorkspaceSymbolParams(string Query);
@@ -221,10 +220,30 @@ public sealed record SymbolInformation(string Name, int Kind, LspLocation Locati
 
 /// <summary>A symbol in a document's outline, its members as children. Range is the whole
 /// declaration; SelectionRange is its name.</summary>
-public sealed record DocumentSymbol(string Name, string? Detail, int Kind, LspRange Range, LspRange SelectionRange, IReadOnlyList<DocumentSymbol>? Children = null);
+public sealed record DocumentSymbol(string Name, string? Detail, int Kind, LspRange Range, LspRange SelectionRange, IReadOnlyList<DocumentSymbol>? Children = null)
+{
+    /// <summary>An outline's symbols from the top to the deepest holding a place, outermost first: of siblings that both
+    /// hold it (one ends where the next begins), the later.</summary>
+    public static List<DocumentSymbol> PathTo(IReadOnlyList<DocumentSymbol> outline, LspPosition at)
+    {
+        List<DocumentSymbol> path = [];
+        IReadOnlyList<DocumentSymbol>? level = outline;
+        while (level?.LastOrDefault(s => s.Range.Holds(at)) is { } inside)
+        {
+            path.Add(inside);
+            level = inside.Children;
+        }
+        return path;
+    }
+}
 
+/// <summary>LSP's symbol kinds: the numbers code decides by, and each kind's name as an agent reads it.</summary>
 public static class SymbolKinds
 {
+    public const int Namespace = 3;
+
+    public const int Class = 5;
+
     private static readonly string[] Names =
     [
         "file", "module", "namespace", "package", "class", "method", "property", "field", "constructor", "enum", "interface",

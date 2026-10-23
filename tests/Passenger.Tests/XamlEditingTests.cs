@@ -38,13 +38,50 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
     private const string Untidy = "<StackPanel   Margin=\"12\">\n<!-- the\n     greeting -->\n      <TextBlock Text='Fish &amp; chips' />\n"
         + "<Button Grid.Row=\"1\" Content=\"Go\"\n  x:Name=\"Pay\"\n     HorizontalAlignment=\"Center\"/>\n\n\n\n  <Border></Border>\n</StackPanel >";
 
+    /// <summary>Every tool in one window on the dialect's app, which its language server loads once, the main file put back
+    /// as written before each: Surround With, Extract Resource and Extract Style, the fixes that create what a binding
+    /// lacks, in Avalonia's XAML a partial property and the places below line breaks only Roslyn counts, and Reformat Code
+    /// last, since its settings' change would lay out what the others write.</summary>
     [AvaloniaTheory]
     [InlineData("Avalonia")]
     [InlineData("WPF")]
-    public void Reformat_code_lays_xaml_out_by_riders_code_style_and_the_editorconfig_changing_nothing_but_whitespace(string dialect)
+    public void Each_xaml_editing_tool_makes_its_edit_in_one_window_on_the_apps_files(string dialect)
     {
         SharedProject app = App(dialect);
         MainWindow window = app.Open(app.PathOf(MainFile(dialect)));
+        string written = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
+        SurroundWith(window, dialect);
+        PutBack(window, app, dialect, written);
+        ExtractResourceAndStyle(window, app, dialect);
+        PutBack(window, app, dialect, written);
+        CreateWhatABindingLacks(window, app, dialect);
+        if (dialect == "Avalonia")
+        {
+            CreatePropertyAfterPartialProperties(window);
+            PutBack(window, app, dialect, written);
+            PlacesBelowLineBreaksOnlyRoslynCounts(window);
+        }
+        PutBack(window, app, dialect, written);
+        Reformat(window, app, dialect);
+        window.Close();
+    }
+
+    /// <summary>The main file shown again with its text as written, in one edit, and the keys in it.</summary>
+    private static void PutBack(MainWindow window, SharedProject app, string dialect, string written)
+    {
+        window.OpenFile(app.PathOf(MainFile(dialect)));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, written)]);
+        editor.Selections = SelectionSet.Single(0);
+        editor.Focus();
+        Ui.Settle();
+        Assert.Equal(written, editor.Document.Snapshot.ToString());
+    }
+
+    /// <summary>Reformat Code lays XAML out by Rider's code style and the file's .editorconfig, changing nothing but whitespace.</summary>
+    private static void Reformat(MainWindow window, SharedProject app, string dialect)
+    {
         CodeEditor editor = window.EditorArea.CodeEditor;
         Ui.Run(window, AppActions.Reformat);
         Ui.Settle();
@@ -111,29 +148,25 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Ui.Settle();
         Assert.Contains("\n        <Button Grid.Row=\"1\"\n                Content=\"Go\"\n                x:Name=\"Pay\"\n                HorizontalAlignment=\"Center\" />\n",
             editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
     }
 
-    [AvaloniaTheory]
-    [InlineData("Avalonia")]
-    [InlineData("WPF")]
-    public void Extract_resource_moves_a_value_into_this_files_or_the_applications_resources_and_extract_style_its_properties_into_a_style(string dialect)
+    /// <summary>Extract Resource moves a value into this file's or the application's resources, and Extract Style a
+    /// button's properties into a style.</summary>
+    private static void ExtractResourceAndStyle(MainWindow window, SharedProject app, string dialect)
     {
-        SharedProject app = App(dialect);
         bool avaloniaXaml = dialect == "Avalonia";
         string main = MainFile(dialect);
         string appFile = avaloniaXaml ? "App.axaml" : "App.xaml";
-        MainWindow window = app.Open(app.PathOf(main));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         List<string> asked = Answer(window);
         string button = avaloniaXaml ? "<Button Name=\"Go\" Content=\"Go\"" : "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"";
         Insert(editor, button, " Margin=\"12\"");
 
-        PlaceAfter(editor, "<StackPanel Margin=\"1");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"1");
         Ui.Run(window, AppActions.RefactorThis);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Refactor This's list on the panel's margin");
-        Assert.Equal(["Extract Resource...", "Extract Style..."], window.Assist.Offered);
+        Assert.Equal(["Extract Resource…", "Extract Style…"], window.Assist.Offered);
         Ui.Press(window, "ESCAPE");
         Assert.True(window.RunFromMenu(AppActions.ExtractResource), window.Status);
         ExtractResourceDialog resource = Shown<ExtractResourceDialog>(window, "Extract Resource");
@@ -162,7 +195,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         // A brush to the application's resources: two files, one command, Undo asking first.
         string appText = File.ReadAllText(app.PathOf(appFile));
         Insert(editor, avaloniaXaml ? "<TextBlock Name=\"Title\"" : "<TextBlock Style=\"{StaticResource Heading}\"", " Foreground=\"#E2A33F\"");
-        PlaceAfter(editor, "Foreground=\"#E2");
+        Ui.PlaceAfter(editor, "Foreground=\"#E2");
         Assert.True(window.RunFromMenu(AppActions.ExtractResource), window.Status);
         resource = Shown<ExtractResourceDialog>(window, "Extract Resource");
         Assert.Equal("ForegroundBrush", resource.NameBox.Text);
@@ -181,7 +214,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Assert.DoesNotContain("ForegroundBrush", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
 
         // The button's margin and background to a style: WPF's keyed one it names, Avalonia's selecting a class it takes.
-        PlaceAfter(editor, "<Butt");
+        Ui.PlaceAfter(editor, "<Butt");
         Assert.True(window.RunFromMenu(AppActions.ExtractStyle), window.Status);
         ExtractStyleDialog style = Shown<ExtractStyleDialog>(window, "Extract Style");
         Assert.Equal(avaloniaXaml ? "buttonStyle" : "ButtonStyle", style.NameBox.Text);
@@ -193,7 +226,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Ui.Settle();
         Assert.Equal("At least one property must be selected", style.Problem);
         style.Properties[1].IsChecked = true;
-        Click(style, style.Properties[2]);
+        Ui.Click(style.Properties[2]);
         Next(style);
         text = editor.Document.Snapshot.ToString();
         if (avaloniaXaml)
@@ -209,17 +242,13 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
             Assert.Contains("<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\" Style=\"{StaticResource ButtonStyle}\" />", text, StringComparison.Ordinal);
         }
         Ui.WaitFor(() => document.Markers.Count == 0, "the style and the button that takes it marked with nothing");
-        window.Close();
     }
 
-    [AvaloniaTheory]
-    [InlineData("Avalonia")]
-    [InlineData("WPF")]
-    public void A_binding_path_and_a_converter_nothing_has_offer_to_create_them_in_the_view_model_and_a_converter_class(string dialect)
+    /// <summary>A binding path and a converter nothing has offer to create them: a property or command in the view model,
+    /// the MVVM Toolkit's way where the project has it, and a converter's class and resource.</summary>
+    private static void CreateWhatABindingLacks(MainWindow window, SharedProject app, string dialect)
     {
-        SharedProject app = App(dialect);
         bool avaloniaXaml = dialect == "Avalonia";
-        MainWindow window = app.Open(app.PathOf(MainFile(dialect)));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         List<string> asked = Answer(window);
@@ -229,7 +258,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         // A property the view model lacks, typed as the TextBlock's Text reads it.
         Replace(editor, "{Binding Greeting}", "{Binding Subtitle}");
         Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'Subtitle'", StringComparison.Ordinal)), "the binding path the view model lacks marked");
-        PlaceAfter(editor, "{Binding Subt");
+        Ui.PlaceAfter(editor, "{Binding Subt");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
         Assert.Equal("Create property 'Subtitle'", window.Assist.Offered[0]);
@@ -241,7 +270,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         // A command for a button's Command: an ICommand property, its using added.
         Insert(editor, avaloniaXaml ? "<Button Name=\"Go\" Content=\"Go\"" : "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"", " Command=\"{Binding SaveCommand}\"");
         Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'SaveCommand'", StringComparison.Ordinal)), "the command the view model lacks marked");
-        PlaceAfter(editor, "{Binding Save");
+        Ui.PlaceAfter(editor, "{Binding Save");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the command's line");
         Assert.Equal("Create property 'SaveCommand'", window.Assist.Offered[0]);
@@ -256,7 +285,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Insert(editor, avaloniaXaml ? "<TextBlock Text=\"{Binding #Go.Content}\" />" : "<TextBlock Text=\"{Binding Content, ElementName=Go}\" />",
             "\n        <TextBlock Text=\"{Binding Greeting, Converter={StaticResource ShoutConverter}}\" />");
         Ui.WaitFor(() => document.Markers.Any(m => m.Message == "Resource 'ShoutConverter' is not found"), "the converter nothing defines marked");
-        PlaceAfter(editor, "{StaticResource Shout");
+        Ui.PlaceAfter(editor, "{StaticResource Shout");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the converter's line");
         Assert.Equal("Create converter 'ShoutConverter'", window.Assist.Offered[0]);
@@ -288,13 +317,13 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         OpenDocument shopView = window.EditorArea.Active!;
         Insert(shop, "<TextBlock Text=\"{Binding Name}\" />", "\n        <TextBlock Text=\"{Binding Title}\" />\n        <Button Command=\"{Binding BuyCommand}\" />");
         Ui.WaitFor(() => shopView.Markers.Count == 2, "the property and the command the shop's view model lacks marked");
-        PlaceAfter(shop, "{Binding Tit");
+        Ui.PlaceAfter(shop, "{Binding Tit");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the property's line");
         Assert.Equal("Create property 'Title'", window.Assist.Offered[0]);
         Ui.Press(window, "ENTER");
         Ui.Settle();
-        PlaceAfter(shop, "{Binding Buy");
+        Ui.PlaceAfter(shop, "{Binding Buy");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the command's line");
         Assert.Equal("Create property 'BuyCommand'", window.Assist.Offered[0]);
@@ -304,22 +333,40 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
             + "    [ObservableProperty]\n    private string? _name;\n\n    [ObservableProperty]\n    private string? _title;\n\n    [RelayCommand]\n    private void Buy()\n    {\n    }\n}\n",
             File.ReadAllText(app.PathOf("ViewModels/ShopViewModel.cs")).ReplaceLineEndings("\n"));
         Ui.WaitFor(() => shopView.Markers.Count == 0, "the generated property and command resolved");
-        window.Close();
     }
 
-    [AvaloniaTheory]
-    [InlineData("Avalonia")]
-    [InlineData("WPF")]
-    public void Surround_with_wraps_the_element_at_the_caret_or_the_elements_chosen_in_a_layout_element(string dialect)
+    /// <summary>In a view model written as Avalonia's MVVM template writes it, in toolkit 8.4's partial properties (which
+    /// flags a field marked [ObservableProperty], MVVMTK0042), the property a binding lacks is made another partial property
+    /// after the view model's own.</summary>
+    private void CreatePropertyAfterPartialProperties(MainWindow window)
     {
-        SharedProject app = App(dialect);
+        window.OpenFile(avalonia.PathOf("TillView.axaml"));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Insert(editor, "<TextBlock Text=\"{Binding Name}\" />", "\n        <TextBlock Text=\"{Binding Price}\" />");
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'Price'", StringComparison.Ordinal)), "the binding path the view model lacks marked");
+        Ui.PlaceAfter(editor, "{Binding Pri");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
+        Assert.Equal("Create property 'Price'", window.Assist.Offered[0]);
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        string made = File.ReadAllText(avalonia.PathOf("ViewModels/TillViewModel.cs")).ReplaceLineEndings("\n");
+        Assert.True(made.Contains("    [ObservableProperty]\n    public partial string Name { get; set; } = \"Tea\";\n\n    [ObservableProperty]\n    public partial string? Price { get; set; }\n\n    public void Clear()", StringComparison.Ordinal),
+            $"Create property did not make a partial property after the view model's own, as its others are written:\n{made}");
+        Ui.WaitFor(() => document.Markers.Count == 0, "the binding resolved once the property is there");
+    }
+
+    /// <summary>Surround With wraps the element at the caret, or the elements chosen, in a layout element.</summary>
+    private static void SurroundWith(MainWindow window, string dialect)
+    {
         bool avaloniaXaml = dialect == "Avalonia";
-        MainWindow window = app.Open(app.PathOf(MainFile(dialect)));
         CodeEditor editor = window.EditorArea.CodeEditor;
         string button = avaloniaXaml ? "<Button Name=\"Go\" Content=\"Go\" Background=\"{StaticResource Accent}\" />"
             : "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\" Background=\"{StaticResource Accent}\" />";
         string title = avaloniaXaml ? "<TextBlock Name=\"Title\" Text=\"{Binding Greeting}\" />" : "<TextBlock Style=\"{StaticResource Heading}\" Text=\"{Binding Greeting}\" />";
-        PlaceAfter(editor, "<Butt");
+        Ui.PlaceAfter(editor, "<Butt");
         Ui.Run(window, AppActions.SurroundWith);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Surround With's templates");
         Assert.Equal(avaloniaXaml ? ["tag", "Grid", "StackPanel", "Border", "ScrollViewer", "DockPanel", "WrapPanel", "Canvas", "Viewbox", "Panel"]
@@ -346,20 +393,17 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         window.KeyTextInput("DockPanel");
         Ui.Settle();
         Assert.Contains($"        <DockPanel>\n            {title}\n            {button}\n        </DockPanel>\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
     }
 
     /// <summary>A lone '\r', U+0085, U+2028 and U+2029 end a line for Roslyn and the language servers, not for the editor:
     /// XAML's usages, a binding's declaration in its view model and Extract Resource's edits are read and made in each
     /// file's own lines, never a line away for each such break above them.</summary>
-    [AvaloniaFact]
-    public void Usages_declarations_and_extract_resource_land_where_asked_below_line_breaks_only_roslyn_counts()
+    private void PlacesBelowLineBreaksOnlyRoslynCounts(MainWindow window)
     {
         string pasted = $"<!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd -->";
-        MainWindow window = avalonia.Open(avalonia.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         Insert(editor, "Title=\"Gallery\">", $"\n    {pasted}");
-        PlaceAfter(editor, "<Button Name=\"G");
+        Ui.PlaceAfter(editor, "<Button Name=\"G");
         Ui.Run(window, AppActions.FindUsages);
         Ui.WaitFor(() => window.Find.Rows.Any(r => r.Usage is not null), "the usages in the Find window");
         List<Usage> found = [.. window.Find.Rows.Select(r => r.Usage).OfType<Usage>().Where(u => u.Path.EndsWith("MainWindow.axaml", StringComparison.Ordinal))];
@@ -375,7 +419,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Ui.Settle();
         window.OpenFile(avalonia.PathOf("MainWindow.axaml"));
         Ui.Settle();
-        PlaceAfter(editor, "{Binding Gree");
+        Ui.PlaceAfter(editor, "{Binding Gree");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainViewModel.cs", window.EditorArea.Active?.Name);
@@ -383,7 +427,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
         window.OpenFile(avalonia.PathOf("MainWindow.axaml"));
         Ui.Settle();
-        PlaceAfter(editor, "<StackPanel Margin=\"1");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"1");
         Assert.True(window.RunFromMenu(AppActions.ExtractResource), window.Status);
         ExtractResourceDialog resource = Shown<ExtractResourceDialog>(window, "Extract Resource");
         resource.NameBox.Text = "PanelMargin";
@@ -391,7 +435,6 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Next(resource);
         Assert.Contains($"Title=\"Gallery\">\n    <Window.Resources>\n        <Thickness x:Key=\"PanelMargin\">12</Thickness>\n    </Window.Resources>\n    {pasted}\n"
             + "    <StackPanel Margin=\"{StaticResource PanelMargin}\" Spacing=\"8\">\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
     }
 
     private SharedProject App(string dialect) => dialect == "Avalonia" ? avalonia : wpf;
@@ -417,19 +460,9 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
     private static void Next(RefactoringDialog dialog)
     {
         Assert.True(dialog.NextButton.IsEnabled, $"Next is disabled: {dialog.Problem}");
-        Click(dialog, dialog.NextButton);
+        Ui.Click(dialog.NextButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem.Length > 0, "the refactoring to be made");
         Assert.False(dialog.IsVisible, $"The dialog stayed open: {dialog.Problem}");
-    }
-
-    private static void Click(Window window, Control control)
-    {
-        Ui.Settle();
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not in the dialog");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
     }
 
     /// <summary>Agrees to every question the window asks, keeping each one's text in order.</summary>
@@ -452,7 +485,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
         namespace CommunityToolkit.Mvvm.ComponentModel
         {
-            [System.AttributeUsage(System.AttributeTargets.Field)]
+            [System.AttributeUsage(System.AttributeTargets.Field | System.AttributeTargets.Property)]
             public sealed class ObservablePropertyAttribute : System.Attribute
             {
             }
@@ -493,7 +526,27 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
         """;
 
-    /// <summary>The Avalonia app of <see cref="XamlTests"/>, with a shop view whose view model uses the MVVM Toolkit.</summary>
+    /// <summary>A view model written as Avalonia's MVVM template writes it, in toolkit 8.4's partial properties.</summary>
+    private const string TillViewModel = """
+        using CommunityToolkit.Mvvm.ComponentModel;
+
+        namespace Gallery.ViewModels;
+
+        public partial class TillViewModel : ObservableObject
+        {
+            [ObservableProperty]
+            public partial string Name { get; set; } = "Tea";
+
+            public void Clear()
+            {
+            }
+        }
+
+        """;
+
+    /// <summary><see cref="XamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit's fields and a
+    /// till view whose view model uses its partial properties: never built, since without the toolkit's generators
+    /// Avalonia's compiler finds none of the properties they make, so XamlTests' own gallery, which it builds, has neither.</summary>
     public sealed class AvaloniaGallery : SharedProject
     {
         public AvaloniaGallery()
@@ -501,17 +554,23 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         {
             TestFolders.Prepare(() =>
             {
-                AvaloniaApp.Create(Folder, "Gallery");
-                Directory.CreateDirectory(PathOf("ViewModels"));
-                Directory.CreateDirectory(PathOf("Styles"));
-                Directory.CreateDirectory(PathOf("Assets"));
-                File.WriteAllText(PathOf("ViewModels/MainViewModel.cs"), XamlTests.Gallery.MainViewModel);
+                XamlTests.Gallery.Make(Folder);
                 File.WriteAllText(PathOf("ViewModels/ShopViewModel.cs"), ShopViewModel);
+                File.WriteAllText(PathOf("ViewModels/TillViewModel.cs"), TillViewModel);
                 File.WriteAllText(PathOf("Mvvm.cs"), Mvvm);
-                File.WriteAllText(PathOf("Styles/Palette.axaml"), XamlTests.Gallery.Palette);
-                File.WriteAllText(PathOf("App.axaml"), XamlTests.Gallery.AppXaml);
-                File.WriteAllText(PathOf("MainWindow.axaml"), XamlTests.Gallery.Window);
-                File.WriteAllText(PathOf("MainWindow.axaml.cs"), XamlTests.Gallery.CodeBehind);
+                File.WriteAllText(PathOf("TillView.axaml"), """
+                    <UserControl xmlns="https://github.com/avaloniaui"
+                                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                                 xmlns:vm="using:Gallery.ViewModels"
+                                 x:Class="Gallery.TillView"
+                                 x:DataType="vm:TillViewModel">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Name}" />
+                        </StackPanel>
+                    </UserControl>
+
+                    """);
+                File.WriteAllText(PathOf("TillView.axaml.cs"), "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class TillView : UserControl\n{\n}\n");
                 File.WriteAllText(PathOf("ShopView.axaml"), """
                     <UserControl xmlns="https://github.com/avaloniaui"
                                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -530,7 +589,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         }
     }
 
-    /// <summary>The WPF app of <see cref="WpfXamlTests"/>, with a shop view whose view model uses the MVVM Toolkit.</summary>
+    /// <summary><see cref="WpfXamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit.</summary>
     public sealed class WpfGallery : SharedProject
     {
         public WpfGallery()
@@ -538,16 +597,9 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         {
             TestFolders.Prepare(() =>
             {
-                WpfApp.Create(Folder, "Gallery");
-                Directory.CreateDirectory(PathOf("ViewModels"));
-                Directory.CreateDirectory(PathOf("Themes"));
-                File.WriteAllText(PathOf("ViewModels/MainViewModel.cs"), WpfXamlTests.Gallery.MainViewModel);
+                WpfXamlTests.Gallery.Make(Folder);
                 File.WriteAllText(PathOf("ViewModels/ShopViewModel.cs"), ShopViewModel);
                 File.WriteAllText(PathOf("Mvvm.cs"), Mvvm);
-                File.WriteAllText(PathOf("Themes/Brushes.xaml"), WpfXamlTests.Gallery.Brushes);
-                File.WriteAllText(PathOf("App.xaml"), WpfXamlTests.Gallery.AppXaml);
-                File.WriteAllText(PathOf("MainWindow.xaml"), WpfXamlTests.Gallery.Window);
-                File.WriteAllText(PathOf("MainWindow.xaml.cs"), WpfXamlTests.Gallery.CodeBehind);
                 File.WriteAllText(PathOf("ShopView.xaml"), """
                     <UserControl x:Class="Gallery.ShopView"
                                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Passenger.App.Debugging;
+using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
 
@@ -32,7 +33,7 @@ public partial class MainWindow
             // A container run's services take the edits through the debugger attached to each, whatever else is debugged.
             if (session.Debug.HotReload is not null || session.Debug.Running.Count > 0)
             {
-                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyAllAndRestartAsync);
+                _ = ApplyHotReloadAsync(session.Debug.SettingsRestart);
             }
             else
             {
@@ -85,7 +86,7 @@ public partial class MainWindow
                 if (text.Contains(words, StringComparison.Ordinal))
                 {
                     // dotnet watch writes the compiler's errors in the Run window.
-                    Say(meaning, result == HotReloadResult.Errors ? StatusPlace.Window(Dock, "run") : null);
+                    Say(meaning, result == HotReloadResult.Errors ? StatusPlace.Window(Dock, ToolWindowIds.Run) : null);
                     last = new HotReloadOutcome(result, meaning);
                     said.TrySetResult();
                     return;
@@ -112,20 +113,61 @@ public partial class MainWindow
     /// <summary>Whether Apply Hot Reload Changes goes to dotnet watch: what Run runs with Hot Reload, nothing being debugged.</summary>
     internal bool HotReloadWatched => session.Debug.HotReload is null && !session.Debug.IsDebugging && session.Debug.Running.Count == 0 && buildRun.WatchesHotReload;
 
-    /// <summary>Whether Apply Hot Reload Changes goes to the services of a container run with Hot Reload, through the
-    /// debugger attached quietly to each: whenever they have edits to take, or nothing debugged would take them, whatever
-    /// else is debugged (<see cref="DebugController.ApplyAllAndRestartAsync"/>).</summary>
-    internal bool HotReloadRunning => session.Debug.Running.Count > 0
-        && (session.Debug.HotReload is null || session.Debug.WhyNotApply() is not null || session.Debug.Running.Any(r => r.Reload.Changed));
+    /// <summary>Apply Hot Reload Changes to what is debugged or run with Hot Reload through the debugger, under the action's
+    /// work, as the window's action and an agent's hot_reload run it (<see cref="DebugController.ApplyAllAsync"/>), each
+    /// restart made as <paramref name="restart"/> says; null when one is under way already.</summary>
+    internal async Task<HotReloadApplied?> ApplyHotReloadAsync(HotReloadRestart restart)
+    {
+        if (work.Begin(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", stoppable: false) is not { } working)
+        {
+            return null;
+        }
+        using (working)
+        {
+            ProjectSession current = session;
+            return await current.Debug.ApplyAllAsync((outcome, running) => session == current && !current.IsEnded
+                ? restart(outcome, running) : Task.FromResult(false));
+        }
+    }
 
     /// <summary>Why Apply Hot Reload Changes cannot run, as the action says it, or null.</summary>
     internal string? WhyNoHotReload() => actions!.WhyNot(AppActions.ApplyHotReloadChanges, actions.Context());
 
     /// <summary>The restart for edits Hot Reload could not apply, as an agent asks it: never the question, which is the
     /// person's; <paramref name="running"/> for the services of a container run with Hot Reload, else the program debugged.</summary>
-    internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome, bool running) => running
-        ? buildRun.RestartContainerServicesAsync(outcome, outcome.Restart)
-        : RestartForEditAsync(session, outcome, ask: false);
+        internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome, bool running) => running
+        ? RestartOwnedServicesAsync(session, outcome, outcome.Restart)
+        : RestartForAgentAsync(outcome, session.Debug.Chosen, session.Debug.Session);
+    /// <summary>The restart for edits Hot Reload could not apply, as an agent asks it: never the question, which is the person's.</summary>
+    internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome) =>
+        RestartForAgentAsync(outcome, session.Debug.Running.Count > 0 ? null : session.Debug.Chosen, session.Debug.Running.Count > 0 ? null : session.Debug.Session);
+
+    internal async Task<bool> RestartForAgentAsync(HotReloadOutcome outcome, DebugTab? tab, DebugSession? debugged,
+        CancellationToken cancel = default)
+    {
+        ProjectSession next = session;
+        DebugController debugger = next.Debug;
+        if (cancel.IsCancellationRequested || next.IsEnded)
+        {
+            return false;
+        }
+        if (tab is null && debugged is null && debugger.Running.Count > 0)
+        {
+            bool restarted = await RestartOwnedServicesAsync(next, outcome, outcome.Restart);
+            return restarted && session == next && !next.IsEnded && !cancel.IsCancellationRequested;
+        }
+        if (tab is null || debugged is null || !tab.IsLive || tab.Session != debugged || debugger.TabOf(debugged) != tab)
+        {
+            return false;
+        }
+        if (tab.RestartFor is { } restart)
+        {
+            bool restarted = await restart(outcome);
+            return restarted && session == next && !next.IsEnded && !cancel.IsCancellationRequested;
+        }
+        return debugger.Chosen == tab && await RestartForEditAsync(next, outcome, ask: false)
+            && !cancel.IsCancellationRequested;
+    }
 
     /// <summary>Apply Hot Reload Changes on the toolbar, and in the Debug and Run windows, while a program runs with Hot
     /// Reload: debugged with it, or run under dotnet watch.</summary>
@@ -144,12 +186,12 @@ public partial class MainWindow
         DebugController debugger = next.Debug;
         debugger.Applied += (_, outcome) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 Bottom.Problems.ShowHotReload(outcome.Said, outcome.Problems);
                 if (outcome.Problems.Any(p => p.Severity == Run.ProblemSeverity.Error))
                 {
-                    Dock.Show("problems");
+                    Dock.Show(ToolWindowIds.Problems);
                 }
                 // The debugger has said it; its edits that could not apply, or warned, are where to see more.
                 if (outcome.Problems.Count > 0)
@@ -158,11 +200,35 @@ public partial class MainWindow
                 }
             }
         };
-        debugger.RestartFor = outcome => session == next ? RestartForEditAsync(next, outcome) : Task.FromResult(false);
+        debugger.RestartFor = outcome => session == next && !next.IsEnded
+            ? RestartForEditAsync(next, outcome) : Task.FromResult(false);
         // A container run's services, under Run with Hot Reload: built again and restarted, as dotnet watch restarts its program.
-        debugger.RestartRunningFor = outcome => session == next && settings.RestartOnRudeEdit
-            ? buildRun.RestartContainerServicesAsync(outcome, outcome.Restart)
+        debugger.RestartRunningFor = outcome => session == next && !next.IsEnded && settings.RestartOnRudeEdit
+            ? RestartOwnedServicesAsync(next, outcome, outcome.Restart)
             : Task.FromResult(false);
+    }
+
+    private async Task<bool> RestartOwnedServicesAsync(ProjectSession current, HotReloadOutcome outcome, IReadOnlyList<string> names)
+    {
+        if (session != current || current.IsEnded)
+        {
+            return false;
+        }
+        // Each run of services restarts its own, a container run's and an Aspire AppHost's the same way.
+        bool restarted = names.Count > 0;
+        foreach (ServiceRun run in buildRun.ServiceRuns.ToList())
+        {
+            string[] its = [.. names.Where(name => run.Services.Any(service => run.SessionName(service) == name))];
+            if (its.Length > 0)
+            {
+                restarted &= await buildRun.RestartServicesForEditAsync(outcome, its);
+            }
+            if (session != current || current.IsEnded)
+            {
+                return false;
+            }
+        }
+        return restarted;
     }
 
     /// <summary>Restarts the program Debug launched so the edits Hot Reload could not apply run: stopped, built and launched
@@ -170,12 +236,21 @@ public partial class MainWindow
     /// True once the new session is open.</summary>
     private async Task<bool> RestartForEditAsync(ProjectSession next, HotReloadOutcome outcome, bool ask = true)
     {
-        // A container run's services are built again and restarted, each attached to again as it starts held.
-        if (next.Debug.Chosen is { Group: not null } service && next.Debug.Session is { Attached: true })
+        DebugController debugger = next.Debug;
+        DebugTab? tab = debugger.Chosen;
+        DebugSession? debugged = tab?.Session;
+        if (session != next || next.IsEnded || tab is null || !tab.IsLive || debugged is null)
         {
-            return (!ask || settings.RestartOnRudeEdit) && await buildRun.RestartContainerServicesAsync(outcome, outcome.Restart.Count > 0 ? outcome.Restart : [service.Name]);
+            return false;
         }
-        if (next.Debug.Session is not { Attached: false } debugged)
+        // A container run's services are built again and restarted, each attached to again as it starts held.
+        if (tab.RestartFor is null && tab.Group is not null && debugged.Attached)
+        {
+            bool restarted = (!ask || settings.RestartOnRudeEdit)
+                && await buildRun.RestartServicesForEditAsync(outcome, outcome.Restart.Count > 0 ? outcome.Restart : [tab.Name]);
+            return restarted && session == next && !next.IsEnded;
+        }
+        if (debugged.Attached)
         {
             return false;
         }
@@ -186,6 +261,10 @@ public partial class MainWindow
                 return false;
             }
             string? answer = await new ChoiceDialog("Hot Reload", $"{outcome.Said}\n\n{RestartQuestion}", RestartAnswers, "Yes").ShowDialog<string?>(this);
+            if (session != next || next.IsEnded || debugger.Chosen != tab || tab.Session != debugged || !tab.IsLive)
+            {
+                return false;
+            }
             switch (answer)
             {
                 case "Always":
@@ -199,15 +278,24 @@ public partial class MainWindow
                 default:
                     return false;
             }
-            if (session != next)
+            if (session != next || next.IsEnded || debugger.Chosen != tab || tab.Session != debugged || !tab.IsLive)
             {
                 return false;
             }
         }
         status.Text = "Restarting application to apply changes ...";
-        Bottom.Debug.Console.Append("Hot Reload: Restarting application to apply changes ...\n");
+        tab.Console.Append("Hot Reload: Restarting application to apply changes ...\n");
+        if (tab.RestartFor is { } restart)
+        {
+            bool restarted = await restart(outcome);
+            return restarted && session == next && !next.IsEnded;
+        }
         Stopwatch took = Stopwatch.StartNew();
-        string? refused = await buildRun.RestartDebugAsync(next.Debug.Chosen!.Name);
+        string? refused = await buildRun.RestartDebugAsync(tab.Name);
+        if (session != next || next.IsEnded)
+        {
+            return false;
+        }
         LastHotReloadRestart = took.Elapsed;
         if (refused is not null)
         {
@@ -218,12 +306,12 @@ public partial class MainWindow
         Bottom.Problems.Shown = ProblemsTab.HotReload;
         string said = $"Restarted in {took.Elapsed.TotalSeconds:0.0} s to apply changes: {outcome.Said}";
         IdeLog.Write(IdeLog.Debugger, said);
-        Bottom.Debug.Console.Append($"Hot Reload: {said}\n");
+        tab.Console.Append($"Hot Reload: {said}\n");
         // Each edit that needed it, in a compiler message's shape, at the compiler's line, which the console links to its line.
         foreach (Run.Problem rude in outcome.Problems.Where(p => p.Path is not null))
         {
             Lsp.LspPosition at = CSharp.ServerPlaces.ServerPositionOf(CSharp.ServerPlaces.TextOf(Editors, rude.Path!), rude.Position);
-            Bottom.Debug.Console.Append($"{rude.Path}({at.Line + 1},{at.Character + 1}): {(rude.Severity == Run.ProblemSeverity.Error ? "error" : "warning")} {rude.Code}: {rude.Message}\n");
+            tab.Console.Append($"{rude.Path}({at.Line + 1},{at.Character + 1}): {(rude.Severity == Run.ProblemSeverity.Error ? "error" : "warning")} {rude.Code}: {rude.Message}\n");
         }
         Say(said, outcome.Problems.Count > 0 ? HotReloadPlace : null);
         return true;

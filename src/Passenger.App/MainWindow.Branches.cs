@@ -96,7 +96,7 @@ public partial class MainWindow
     {
         string current = session.Vcs.Branch ?? "HEAD";
         string currentRef = session.Vcs.Branch is { } name ? $"refs/heads/{name}" : "HEAD";
-        ShowToolWindow("git");
+        ShowToolWindow(ToolWindowIds.Git);
         return GitWindow.ShowCompare(new LogRange(currentRef, current, branch.Ref.FullName, branch.Name), new LogRange(branch.Ref.FullName, branch.Name, currentRef, current));
     }
 

@@ -29,7 +29,7 @@ public sealed record FileIndent(IndentOptions Options, IndentSource Source, stri
     }
 
     /// <summary>Rider's widget's words for the indentation: "Tab", "4 spaces".</summary>
-    public string Name => Options.UseTabs ? "Tab" : Options.Size == 1 ? "1 space" : $"{Options.Size} spaces";
+    public string Name => Options.UseTabs ? "Tab" : Core.Plural.Of(Options.Size, "space");
 
     /// <summary>The widget's text: the indentation and where it comes from.</summary>
     public string Shown => Source switch

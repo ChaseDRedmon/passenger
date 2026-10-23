@@ -4,6 +4,7 @@ using Passenger.App.Web;
 using Passenger.App.Workspace;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Core;
 
 namespace Passenger.App.CSharp;
 
@@ -110,8 +111,8 @@ public sealed partial class CodeAssist
             return (null, NoDeclaration);
         }
         LspPosition at = lsp.PositionOf(offset);
-        List<DocumentSymbol> path = JsonPath(outline, at);
-        if (path is [{ Name: "dependencies" or "devDependencies" or "peerDependencies" or "optionalDependencies" }, { } dependency] && Within(dependency.SelectionRange, at))
+        List<DocumentSymbol> path = DocumentSymbol.PathTo(outline, at);
+        if (path is [{ Name: "dependencies" or "devDependencies" or "peerDependencies" or "optionalDependencies" }, { } dependency] && dependency.SelectionRange.Holds(at))
         {
             return Installed(document.Path, dependency.Name) is { } installed
                 ? ((installed, new TextPosition(0, 0)), $"{dependency.Name}'s package.json")
@@ -170,7 +171,7 @@ public sealed partial class CodeAssist
                     }
                     Editor.ApplyEdits(placed);
                     int runs = placed.Count - 1;
-                    Message?.Invoke(this, runs == 0 ? "Renamed" : $"Renamed, and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it");
+                    Message?.Invoke(this, runs == 0 ? "Renamed" : $"Renamed, and in {Plural.Of(runs, "script")} that run{(runs == 1 ? "s" : "")} it");
                     return Task.CompletedTask;
                 });
                 // Let go as the box closes, however it closes; what was typed until then is still carried.
@@ -191,8 +192,8 @@ public sealed partial class CodeAssist
     internal static (List<DocumentSymbol> Path, TextRange Key)? JsonPropertyAt(IReadOnlyList<DocumentSymbol> outline, ServerLines lines, int offset)
     {
         LspPosition at = lines.PositionOf(Math.Min(offset, lines.Text.Length));
-        List<DocumentSymbol> path = JsonPath(outline, at);
-        if (path.Count == 0 || !Within(path[^1].SelectionRange, at))
+        List<DocumentSymbol> path = DocumentSymbol.PathTo(outline, at);
+        if (path.Count == 0 || !path[^1].SelectionRange.Holds(at))
         {
             return null;
         }
@@ -252,27 +253,6 @@ public sealed partial class CodeAssist
     }
 
     internal static bool IsPackageJson(OpenDocument document) => Path.GetFileName(document.Path).Equals("package.json", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>The properties from the document's top to the one whose name or value holds a place, outermost first.</summary>
-    private static List<DocumentSymbol> JsonPath(IReadOnlyList<DocumentSymbol> symbols, LspPosition at)
-    {
-        List<DocumentSymbol> path = [];
-        IReadOnlyList<DocumentSymbol>? level = symbols;
-        while (level?.FirstOrDefault(s => Within(s.Range, at)) is { } inside)
-        {
-            path.Add(inside);
-            if (Within(inside.SelectionRange, at))
-            {
-                break;
-            }
-            level = inside.Children;
-        }
-        return path;
-    }
-
-    private static bool Within(LspRange range, LspPosition at) =>
-        (range.Start.Line < at.Line || (range.Start.Line == at.Line && range.Start.Character <= at.Character))
-        && (at.Line < range.End.Line || (at.Line == range.End.Line && at.Character <= range.End.Character));
 
     /// <summary>The installed package's package.json, found as Node.js resolves a package: node_modules beside the
     /// package.json, then in each folder above it.</summary>

@@ -496,6 +496,12 @@ public partial class MainWindow
         }
         IdeAction action = actions![entry.Action!]!;
         MenuItem actionItem = new() { Header = action.TitleWhere(context), IsEnabled = action.CanRun(context) };
+        if (action.WhyNot(context) is { } why)
+        {
+            // Greyed, it says why on hover, as running it would (a library's Publish..., a project's tests).
+            ToolTip.SetTip(actionItem, why);
+            ToolTip.SetShowOnDisabled(actionItem, true);
+        }
         actions.ShowKeys(actionItem, action.Id);
         if (action.IsChecked is { } isChecked)
         {

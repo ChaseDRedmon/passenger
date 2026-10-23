@@ -19,22 +19,10 @@ namespace Passenger.Tests;
 /// Explorer, language server, builds and runs and layout; Open asks This Window or New Window (or follows Settings' Open
 /// project in); the Window menu lists the windows and Next and Previous Solution Window step between them; quitting closes
 /// them all and a start reopens each, while one closed alone stays closed; and the settings are the process's, a change in
-/// one window followed by every other and kept whole in settings.json, another Passenger's too. One debugs through the
-/// window, so the class runs alone.</summary>
-[Collection(Alone.Name)]
-public sealed class ProjectWindowsTests : IDisposable
+/// one window followed by every other and kept whole in settings.json, another Passenger's too. What another folder opened
+/// in a window ends of the first's is ProjectWindowDebuggingTests', which debugs and so runs alone.</summary>
+public sealed class ProjectWindowsTests : ProjectWindowsFolders
 {
-    private readonly string settings = TestFolders.Create("windows-state-");
-    private readonly string alpha = TestFolders.Create("alpha-");
-    private readonly string beta = TestFolders.Create("beta-");
-
-    public void Dispose()
-    {
-        TestFolders.Delete(settings);
-        TestFolders.Delete(alpha);
-        TestFolders.Delete(beta);
-    }
-
     [AvaloniaFact]
     public void Two_solutions_open_in_windows_of_their_own_each_with_its_explorer_language_server_colours_diagnostics_build_and_run()
     {
@@ -83,64 +71,6 @@ public sealed class ProjectWindowsTests : IDisposable
         first.Close();
     }
 
-    /// <summary>A folder's program running, another of its programs paused at a breakpoint, its build's warning in
-    /// Problems; another folder opened in the same window: both programs are gone, the Run, Debug and Problems windows show
-    /// nothing of the first folder, and Run runs the second folder's own configuration rather than saying one runs.</summary>
-    [AvaloniaFact]
-    public void Opening_another_folder_in_this_window_ends_what_the_first_ran_and_Run_runs_the_seconds_own()
-    {
-        File.WriteAllText(Path.Combine(alpha, "Alpha.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n"
-            + "  <Target Name=\"Warn\" BeforeTargets=\"Build\">\n    <Warning Code=\"ALPHA1\" Text=\"alpha warns at every build\" />\n  </Target>\n</Project>\n");
-        string program = Path.Combine(alpha, "Program.cs");
-        File.WriteAllText(program, "string name = System.Diagnostics.Debugger.IsAttached ? \"debugged.pid\" : \"run.pid\";\n"
-            + $"File.WriteAllText(Path.Combine(@\"{alpha}\", name), Environment.ProcessId.ToString());\n"
-            + "Console.WriteLine(\"alpha runs\");\n"
-            + "Thread.Sleep(Timeout.Infinite);\n");
-        Project(beta, "Beta");
-        Restore.Run(alpha);
-        Restore.Run(beta);
-        MainWindow window = Started(LaunchOptions.Empty with { Folder = alpha });
-        int running = 0;
-        int debugged = 0;
-        try
-        {
-            Assert.True(window.Perform(AppActions.RunProgram), "Run could not run in the first folder");
-            running = Processes.WrittenId(Path.Combine(alpha, "run.pid"), "the first folder's program to run");
-            Ui.WaitFor(() => window.BottomPanel.Problems.Problems.Any(p => p.Message.Contains("alpha warns", StringComparison.Ordinal)), "the first folder's build warning in Problems");
-            Ui.WaitFor(() => Output(window).Contains("alpha runs", StringComparison.Ordinal), "the first folder's program's output in the Run window");
-            window.Debugger.Breakpoints.Toggle(PathNames.Canonical(program), 3);
-            Assert.True(window.Perform(AppActions.Debug), "Debug could not run in the first folder");
-            debugged = Processes.WrittenId(Path.Combine(alpha, "debugged.pid"), "the first folder's program to start under the debugger");
-            Ui.WaitFor(() => window.Debugger.Session is { State: Passenger.App.Debugging.DebugState.Paused } && window.BottomPanel.Debug.Frames.Count > 0,
-                "the debugged program to stop at its breakpoint", TimeSpan.FromMinutes(2));
-
-            // This Window: the first folder's session ends before the second's begins.
-            Assert.Null(window.Open(beta));
-            Press(Asked(window), OpenProjectDialog.ThisWindow);
-            Ui.WaitFor(() => window.Folder == PathNames.Canonical(beta), "the second folder to open in the window");
-            Assert.True(Processes.Gone(running), "The first folder's program still runs after the second folder opened in its window");
-            Assert.True(Processes.Gone(debugged), "The first folder's debugged program still runs after the second folder opened in its window");
-            Assert.False(window.Runner.IsRunning || window.Debugger.IsDebugging, "The window still runs or debugs the first folder's program");
-            Assert.Equal(string.Empty, Output(window));
-            Assert.Equal(string.Empty, window.BottomPanel.Debug.Console.Document.Snapshot.ToString());
-            Assert.Empty(window.BottomPanel.Debug.Frames);
-            Assert.Empty(window.BottomPanel.Problems.Problems);
-
-            // Run is the second folder's, which runs at once rather than saying the first's still does.
-            Assert.Equal("Beta", window.Configuration?.Name);
-            Assert.True(window.Perform(AppActions.RunProgram), "Run could not run in the second folder");
-            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the second folder's program to run", TimeSpan.FromMinutes(3));
-            Assert.True(Output(window).Contains("beta runs 6", StringComparison.Ordinal), $"Run ran something other than the second folder's program:\n{Output(window)}");
-        }
-        finally
-        {
-            Processes.Kill(running);
-            Processes.Kill(debugged);
-            window.Close();
-        }
-    }
-
     [AvaloniaFact]
     public void Open_asks_This_Window_or_New_Window_and_Dont_ask_again_makes_the_answer_the_setting_every_window_follows()
     {
@@ -155,18 +85,18 @@ public sealed class ProjectWindowsTests : IDisposable
         string[] order = [OpenProjectDialog.ThisWindow, OpenProjectDialog.NewWindow, "Cancel"];
         Assert.Equal(OperatingSystem.IsMacOS() ? order.Reverse() : order, Buttons(asked).Select(b => (string?)b.Content));
         Assert.Equal(OpenProjectDialog.ThisWindow, (string?)Assert.Single(Buttons(asked), b => b.IsDefault).Content);
-        Press(asked, "Cancel");
+        Ui.ClickButton(asked, "Cancel");
         Assert.True(window.Folder == PathNames.Canonical(alpha) && PassengerApp.Windows.Count == 1, "Cancel opened the folder anyway");
 
         // This Window: the folder takes this one's place.
         window.Open(beta);
-        Press(Asked(window), OpenProjectDialog.ThisWindow);
+        Ui.ClickButton(Asked(window), OpenProjectDialog.ThisWindow);
         Assert.Equal(PathNames.Canonical(beta), window.Folder);
         Assert.Equal([window], PassengerApp.Windows);
 
         // New Window: the folder in a window of its own, in front, this one keeping its own.
         window.Open(alpha);
-        Press(Asked(window), OpenProjectDialog.NewWindow);
+        Ui.ClickButton(Asked(window), OpenProjectDialog.NewWindow);
         MainWindow other = Assert.Single(PassengerApp.Windows, w => w != window);
         Assert.Equal((PathNames.Canonical(beta), PathNames.Canonical(alpha)), (window.Folder, other.Folder));
         Assert.Equal(other, PassengerApp.Front);
@@ -182,7 +112,7 @@ public sealed class ProjectWindowsTests : IDisposable
         window.Open(gamma);
         OpenProjectDialog again = Asked(window);
         again.GetVisualDescendants().OfType<CheckBox>().Single(c => (string?)c.Content == "Don't ask again").IsChecked = true;
-        Press(again, OpenProjectDialog.ThisWindow);
+        Ui.ClickButton(again, OpenProjectDialog.ThisWindow);
         Assert.Equal(PathNames.Canonical(gamma), window.Folder);
         Assert.Equal((OpenProjectIn.CurrentWindow, OpenProjectIn.CurrentWindow), (window.Settings.OpenProjectIn, other.Settings.OpenProjectIn));
         Assert.Null(other.Open(beta));
@@ -268,9 +198,9 @@ public sealed class ProjectWindowsTests : IDisposable
         MainWindow first = Started(LaunchOptions.Empty with { Folder = alpha });
         MainWindow second = InNewWindow(first, beta);
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
-        first.DockHost.Show("tests");
+        first.DockHost.Show(ToolWindowIds.Tests);
         second.DockHost.Hide("explorer");
-        second.DockHost.Show("build");
+        second.DockHost.Show(ToolWindowIds.Build);
         Ui.Settle();
 
         // File, Exit (the application menu's Quit on macOS) closes them all.
@@ -283,9 +213,9 @@ public sealed class ProjectWindowsTests : IDisposable
         MainWindow again = Started(LaunchOptions.Empty);
         MainWindow other = Assert.Single(PassengerApp.Windows, w => w != again);
         Assert.Equal((PathNames.Canonical(alpha), PathNames.Canonical(beta)), (again.Folder, other.Folder));
-        Assert.True(again.DockHost["tests"]!.Anchor == ToolAnchor.RightBottom && again.DockHost.IsShown("tests") && again.DockHost.IsShown("explorer"),
+        Assert.True(again.DockHost["tests"]!.Anchor == ToolAnchor.RightBottom && again.DockHost.IsShown(ToolWindowIds.Tests) && again.DockHost.IsShown(ToolWindowIds.Explorer),
             "The first window's layout did not come back with its folder");
-        Assert.True(other.DockHost["tests"]!.Anchor != ToolAnchor.RightBottom && !other.DockHost.IsShown("explorer") && other.DockHost.IsShown("build"),
+        Assert.True(other.DockHost["tests"]!.Anchor != ToolAnchor.RightBottom && !other.DockHost.IsShown(ToolWindowIds.Explorer) && other.DockHost.IsShown(ToolWindowIds.Build),
             "The second window's layout did not come back with its folder, or took the first's");
         Assert.Equal(other, PassengerApp.Front);
 
@@ -305,7 +235,7 @@ public sealed class ProjectWindowsTests : IDisposable
 
         // Handed one while it runs, the window in front asks where, as Open does.
         PassengerApp.OpenFromSystem([alpha]);
-        Press(Asked(handed), OpenProjectDialog.NewWindow);
+        Ui.ClickButton(Asked(handed), OpenProjectDialog.NewWindow);
         Assert.Equal(PathNames.Canonical(alpha), PassengerApp.Front?.Folder);
         Assert.Equal(2, PassengerApp.Windows.Count);
         PassengerApp.Quit();
@@ -346,10 +276,10 @@ public sealed class ProjectWindowsTests : IDisposable
 
             // File, Exit closes the last opened first, which asks; kept open, the quit is given up and both stay.
             Assert.True(first.Perform(AppActions.Exit));
-            Press(Unsaved(second), "Cancel");
+            Ui.ClickButton(Unsaved(second), "Cancel");
             Assert.True(first.IsVisible && second.IsVisible, "Cancel kept the window with the read-only file open, but not every other");
             Assert.True(first.Perform(AppActions.Exit));
-            Press(Unsaved(second), "Close Without Saving");
+            Ui.ClickButton(Unsaved(second), "Close Without Saving");
             Ui.WaitFor(() => !first.IsVisible && !second.IsVisible, "Exit to close every window once the read-only file's question was answered");
             Assert.Empty(PassengerApp.Windows);
             Assert.Equal("class Locked { }\n", File.ReadAllText(locked));
@@ -363,7 +293,7 @@ public sealed class ProjectWindowsTests : IDisposable
             {
                 close.Invoke(window, [WindowCloseReason.ApplicationShutdown, false, false]);
             }
-            Press(Unsaved(other), "Close Without Saving");
+            Ui.ClickButton(Unsaved(other), "Close Without Saving");
             Ui.WaitFor(() => !again.IsVisible && !other.IsVisible, "the system's quit to close every window once the read-only file's question was answered");
             Assert.Empty(PassengerApp.Windows);
             Reopened();
@@ -427,7 +357,7 @@ public sealed class ProjectWindowsTests : IDisposable
             Ui.Press(second, "ESCAPE");
 
             // Written whole: both changes in settings.json.
-            Ui.WaitFor(() => File.Exists(file) && Read(file) is { } kept && (double?)kept["editorFontSize"] == 17 && (string?)kept["theme"] == "Light",
+            Ui.WaitFor(() => ReadNow(file) is { } kept && (double?)kept["editorFontSize"] == 17 && (string?)kept["theme"] == "Light",
                 "both changes in settings.json", TimeSpan.FromSeconds(10));
 
             // Another Passenger's change to the file is followed by every window here.
@@ -450,12 +380,92 @@ public sealed class ProjectWindowsTests : IDisposable
         Assert.True((double?)final["editorFontSize"] == 17 && (string?)final["theme"] == "Light" && (double?)final["terminalFontSize"] == 21,
             $"settings.json lost a change: {final.ToJsonString()}");
     }
+}
+
+/// <summary>Another folder opened in a window over one that runs and debugs its program: both programs end, the Run, Debug
+/// and Problems windows are emptied, and Run is the second folder's. Debugs through the window, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class ProjectWindowDebuggingTests : ProjectWindowsFolders
+{
+    /// <summary>A folder's program running, another of its programs paused at a breakpoint, its build's warning in
+    /// Problems; another folder opened in the same window: both programs are gone, the Run, Debug and Problems windows show
+    /// nothing of the first folder, and Run runs the second folder's own configuration rather than saying one runs.</summary>
+    [AvaloniaFact]
+    public void Opening_another_folder_in_this_window_ends_what_the_first_ran_and_Run_runs_the_seconds_own()
+    {
+        File.WriteAllText(Path.Combine(alpha, "Alpha.csproj"),
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n"
+            + "  <Target Name=\"Warn\" BeforeTargets=\"Build\">\n    <Warning Code=\"ALPHA1\" Text=\"alpha warns at every build\" />\n  </Target>\n</Project>\n");
+        string program = Path.Combine(alpha, "Program.cs");
+        File.WriteAllText(program, "string name = System.Diagnostics.Debugger.IsAttached ? \"debugged.pid\" : \"run.pid\";\n"
+            + $"File.WriteAllText(Path.Combine(@\"{alpha}\", name), Environment.ProcessId.ToString());\n"
+            + "Console.WriteLine(\"alpha runs\");\n"
+            + "Thread.Sleep(Timeout.Infinite);\n");
+        Project(beta, "Beta");
+        Restore.Run(alpha);
+        Restore.Run(beta);
+        MainWindow window = Started(LaunchOptions.Empty with { Folder = alpha }, languageServer: false);
+        int running = 0;
+        int debugged = 0;
+        try
+        {
+            Assert.True(window.Perform(AppActions.RunProgram), "Run could not run in the first folder");
+            running = Processes.WrittenId(Path.Combine(alpha, "run.pid"), "the first folder's program to run");
+            Ui.WaitFor(() => window.BottomPanel.Problems.Problems.Any(p => p.Message.Contains("alpha warns", StringComparison.Ordinal)), "the first folder's build warning in Problems");
+            Ui.WaitFor(() => Output(window).Contains("alpha runs", StringComparison.Ordinal), "the first folder's program's output in the Run window");
+            window.Debugger.Breakpoints.Toggle(PathNames.Canonical(program), 3);
+            Assert.True(window.Perform(AppActions.Debug), "Debug could not run in the first folder");
+            debugged = Processes.WrittenId(Path.Combine(alpha, "debugged.pid"), "the first folder's program to start under the debugger");
+            Ui.WaitFor(() => window.Debugger.Session is { State: Passenger.App.Debugging.DebugState.Paused } && window.BottomPanel.Debug.Frames.Count > 0,
+                "the debugged program to stop at its breakpoint", TimeSpan.FromMinutes(2));
+
+            // This Window: the first folder's session ends before the second's begins.
+            Assert.Null(window.Open(beta));
+            Ui.ClickButton(Asked(window), OpenProjectDialog.ThisWindow);
+            Ui.WaitFor(() => window.Folder == PathNames.Canonical(beta), "the second folder to open in the window");
+            Assert.True(Processes.Gone(running), "The first folder's program still runs after the second folder opened in its window");
+            Assert.True(Processes.Gone(debugged), "The first folder's debugged program still runs after the second folder opened in its window");
+            Assert.False(window.Runner.IsRunning || window.Debugger.IsDebugging, "The window still runs or debugs the first folder's program");
+            Assert.Equal(string.Empty, Output(window));
+            Assert.Equal(string.Empty, window.BottomPanel.Debug.Console.Document.Snapshot.ToString());
+            Assert.Empty(window.BottomPanel.Debug.Frames);
+            Assert.Empty(window.BottomPanel.Problems.Problems);
+
+            // Run is the second folder's, which runs at once rather than saying the first's still does.
+            Assert.Equal("Beta", window.Configuration?.Name);
+            Assert.True(window.Perform(AppActions.RunProgram), "Run could not run in the second folder");
+            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the second folder's program to run", TimeSpan.FromMinutes(3));
+            Assert.True(Output(window).Contains("beta runs 6", StringComparison.Ordinal), $"Run ran something other than the second folder's program:\n{Output(window)}");
+        }
+        finally
+        {
+            Processes.Kill(running);
+            Processes.Kill(debugged);
+            window.Close();
+        }
+    }
+}
+
+/// <summary>The state folder and two folders a test of several windows opens, and the helpers that start and ask them.</summary>
+public abstract class ProjectWindowsFolders : IDisposable
+{
+    protected readonly string settings = TestFolders.Create("windows-state-");
+    protected readonly string alpha = TestFolders.Create("alpha-");
+    protected readonly string beta = TestFolders.Create("beta-");
+
+    public void Dispose()
+    {
+        TestFolders.Delete(settings);
+        TestFolders.Delete(alpha);
+        TestFolders.Delete(beta);
+    }
 
     /// <summary>The window a person starts, as the app makes it: its layout and settings kept in the test's state folder,
-    /// then the command line taken.</summary>
-    private MainWindow Started(LaunchOptions options)
+    /// then the command line taken; with no C# language server for a test that asks nothing of C#
+    /// (<paramref name="languageServer"/>), in whatever folder the window opens.</summary>
+    protected MainWindow Started(LaunchOptions options, bool languageServer = true)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = languageServer };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
@@ -465,21 +475,21 @@ public sealed class ProjectWindowsTests : IDisposable
     }
 
     /// <summary>A folder opened from a window over another, answered New Window: the window it opened in.</summary>
-    private static MainWindow InNewWindow(MainWindow from, string folder)
+    protected static MainWindow InNewWindow(MainWindow from, string folder)
     {
         Assert.Null(from.Open(folder));
-        Press(Asked(from), OpenProjectDialog.NewWindow);
+        Ui.ClickButton(Asked(from), OpenProjectDialog.NewWindow);
         return PassengerApp.Windows.Single(w => w.Folder == PathNames.Canonical(folder));
     }
 
-    private static OpenProjectDialog Asked(MainWindow window)
+    protected static OpenProjectDialog Asked(MainWindow window)
     {
         Ui.Settle();
         return window.Asking ?? throw new InvalidOperationException($"Opening a folder over {window.Folder} did not ask where");
     }
 
     /// <summary>The question a window closed with a read-only file's changes asks, held to the dialogs' rules.</summary>
-    private static ChoiceDialog Unsaved(MainWindow window)
+    protected static ChoiceDialog Unsaved(MainWindow window)
     {
         Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), $"the window over {window.Folder} to ask about the changes it cannot save");
         ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
@@ -487,27 +497,21 @@ public sealed class ProjectWindowsTests : IDisposable
         return asked;
     }
 
-    private static Button[] Buttons(Window dialog) => [.. dialog.GetVisualDescendants().OfType<Button>().Where(b => b is not Avalonia.Controls.Primitives.ToggleButton)];
-
-    private static void Press(Window dialog, string button)
-    {
-        Buttons(dialog).First(b => (string?)b.Content == button).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
-    }
+    protected static Button[] Buttons(Window dialog) => [.. dialog.GetVisualDescendants().OfType<Button>().Where(b => b is not Avalonia.Controls.Primitives.ToggleButton)];
 
     /// <summary>A console project whose Program.cs prints its name with a total, has a local it never uses (a warning) and
     /// a local only the language server colours as one.</summary>
-    private static void Project(string folder, string name)
+    protected static void Project(string folder, string name)
     {
         File.WriteAllText(Path.Combine(folder, $"{name}.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
         string lower = name.ToLowerInvariant();
         File.WriteAllText(Path.Combine(folder, "Program.cs"),
             $"int {lower}Total = 2 * 3;\nint {lower}Unused = 1;\nConsole.WriteLine($\"{lower} runs {{{lower}Total}}\");\n");
     }
 
     /// <summary>Waits for the server's colour on the local's use in the window's file.</summary>
-    private static void Coloured(MainWindow window, string local)
+    protected static void Coloured(MainWindow window, string local)
     {
         OpenDocument document = window.EditorArea.Active!;
         int use = document.Text.Snapshot.ToString().IndexOf("{" + local, StringComparison.Ordinal) + 1;
@@ -515,14 +519,28 @@ public sealed class ProjectWindowsTests : IDisposable
             $"the language server's colour on {local} in {window.Folder}");
     }
 
-    private static bool Marked(MainWindow window, string local) =>
+    protected static bool Marked(MainWindow window, string local) =>
         window.EditorArea.Active!.Markers.Any(m => m.Message.Contains($"'{local}'", StringComparison.Ordinal));
 
-    private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
+    protected static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
 
-    private static JsonObject Read(string file) => (JsonObject)JsonNode.Parse(File.ReadAllText(file))!;
+    protected static JsonObject Read(string file) => (JsonObject)JsonNode.Parse(File.ReadAllText(file))!;
 
-    private static IDisposable TestsTheme() => new ThemeBack(Avalonia.Application.Current!.RequestedThemeVariant);
+    /// <summary>The file as a wait looks at it: null while it is not there, or not yet whole, or being replaced (Windows
+    /// refuses a reader as the store renames its temporary file over it).</summary>
+    protected static JsonObject? ReadNow(string file)
+    {
+        try
+        {
+            return JsonNode.Parse(Ui.Shared(file)) as JsonObject;
+        }
+        catch (Exception unread) when (unread is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    protected static IDisposable TestsTheme() => new ThemeBack(Avalonia.Application.Current!.RequestedThemeVariant);
 
     private sealed class ThemeBack(Avalonia.Styling.ThemeVariant? theme) : IDisposable
     {

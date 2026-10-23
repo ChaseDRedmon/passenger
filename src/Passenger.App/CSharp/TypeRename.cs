@@ -95,7 +95,7 @@ public static class TypeRename
     {
         foreach ((string from, string to) in moves)
         {
-            if ((File.Exists(to) || Directory.Exists(to)) && !string.Equals(from, to, StringComparison.OrdinalIgnoreCase))
+            if ((File.Exists(to) || Directory.Exists(to)) && !PathNames.Same(from, to))
             {
                 throw new WorkspaceEditFailed($"{Path.GetFileName(to)} is already there");
             }

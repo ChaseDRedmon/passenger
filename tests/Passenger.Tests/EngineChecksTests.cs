@@ -57,13 +57,20 @@ public sealed class EngineChecksTests
                 && t.Text?.Contains("reads each base image's metadata from its registry", StringComparison.Ordinal) == true
                 && t.Text.Contains("never one a # syntax= line names, which is neither pulled nor run", StringComparison.Ordinal));
             CheckBox on = ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == BuildKitSetting).Parent!).GetVisualDescendants().OfType<CheckBox>().First();
-            Point at = on.TranslatePoint(new Point(on.Bounds.Width / 2, on.Bounds.Height / 2), dialog)!.Value;
-            dialog.MouseDown(at, MouseButton.Left);
-            dialog.MouseUp(at, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(on);
             dialog.Ok();
             Ui.Settle();
             Assert.True(window.Settings.BuildKitChecks, "Ticking Check Dockerfiles with BuildKit left it off");
+
+            // Podman has no BuildKit: the status bar and Problems say the Dockerfile goes unchecked, and nothing is marked.
+            EngineState engine = Task.Run(() => ContainerEngine.Shared.StateAsync()).GetAwaiter().GetResult();
+            if (engine.IsPodman)
+            {
+                Ui.WaitFor(() => window.Status == engine.Limit, $"the status bar to say Podman has no BuildKit, not \"{window.Status}\"");
+                Assert.Contains(window.BottomPanel.Problems.ContainerProblems, p => p.Message == engine.Limit);
+                Assert.DoesNotContain(document.Markers, m => m.Message.StartsWith("BuildKit:", StringComparison.Ordinal));
+                return;
+            }
 
             Ui.WaitFor(() => document.Markers.Any(m => m.Message.EndsWith("(FromAsCasing)", StringComparison.Ordinal)), $"BuildKit's FromAsCasing on the first line ({window.Status})");
             Marker casing = document.Markers.Single(m => m.Message.EndsWith("(FromAsCasing)", StringComparison.Ordinal));
@@ -499,7 +506,7 @@ public sealed class EngineChecksTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         EngineState state = Task.Run(() => ContainerEngine.Shared.StateAsync()).GetAwaiter().GetResult();
-        Assert.SkipWhen(state.BuildxVersion is null, "docker buildx, whose build checks a Dockerfile's are, is not installed here");
+        Assert.SkipWhen(state.BuildxVersion is null && !state.IsPodman, "docker buildx, whose build checks a Dockerfile's are, is not installed here");
     }
 
     /// <summary>A folder of the test's own holding the files given.</summary>

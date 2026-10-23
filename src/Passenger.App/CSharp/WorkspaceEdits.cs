@@ -29,7 +29,7 @@ public static class WorkspaceEdits
 
     /// <summary>How long after a file changes on disk the language server may still hold it as it was: it reads a file
     /// not open again only once its own watcher hears of the change.</summary>
-    internal static readonly TimeSpan Catching = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan Catching = TimeSpan.FromSeconds(2);
 
     /// <summary>Why an edit the language server worked out must not be applied to the files not open it changes, found
     /// before any is written: one written on disk since the request was sent (<paramref name="since"/>) or a moment before
@@ -250,8 +250,8 @@ public static class WorkspaceEdits
         {
             bool overwrite = resource.Option("overwrite");
             bool ignored = !overwrite && resource.Option("ignoreIfExists");
-            // A new name differing only in case is the same file on macOS and Windows, not one already there.
-            bool taken = resource.To is { } to && Exists(to) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase);
+            // A new name differing only in case is the same file on macOS and Windows, not one already there; on Linux it is another.
+            bool taken = resource.To is { } to && Exists(to) && !PathNames.Same(to, resource.Path);
             switch (resource.Kind)
             {
                 case "create" when overwrite && FileText.IsReadOnly(resource.Path):
@@ -299,7 +299,7 @@ public static class WorkspaceEdits
                 break;
             }
             case "rename" when resource.To is { } to:
-                if ((File.Exists(to) || Directory.Exists(to)) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase))
+                if ((File.Exists(to) || Directory.Exists(to)) && !PathNames.Same(to, resource.Path))
                 {
                     // Ignored, as its options ask: the refusal stopped every other rename onto something there.
                     if (!resource.Option("overwrite") || Directory.Exists(to))

@@ -110,7 +110,7 @@ public sealed class ActionsTests : IDisposable
             Ui.WaitFor(() => window.OpenContextMenu is not null, "the branch menu");
             Ui.Settle();
             // The keys stand in the item's own column, as every menu's do, written as the keymap writes them.
-            MenuItem commitItem = window.OpenContextMenu!.Items.OfType<MenuItem>().Single(i => i.Header as string == "Commit...");
+            MenuItem commitItem = window.OpenContextMenu!.Items.OfType<MenuItem>().Single(i => i.Header as string == "Commit…");
             string[] shown = [.. commitItem.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
             window.OpenContextMenu.Close();
             Assert.True(shown.Contains(commit),
@@ -118,7 +118,7 @@ public sealed class ActionsTests : IDisposable
 
             // The keys it shows run Commit here.
             Ui.Press(window, platforms.ShortcutsFor(AppActions.Commit)[0].First.Notation());
-            Assert.True(window.DockHost.IsShown("commit"), $"{commit}, which the branch menu shows for Commit, did not commit in this window");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Commit), $"{commit}, which the branch menu shows for Commit, did not commit in this window");
 
             Passenger.App.Debugging.LineBreakpoint breakpoint = Toggled(window);
             window.ShowBreakpointPopup(breakpoint);

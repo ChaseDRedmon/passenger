@@ -316,7 +316,7 @@ public sealed partial class PassengerTools
     {
         if (Session.Folder is null)
         {
-            throw new InvalidOperationException("No folder is open");
+            throw new InvalidOperationException(Refusals.NoFolder);
         }
         SearchQuery query = new(text ?? string.Empty, matchCase, wholeWords, regex);
         if (query.IsEmpty)
@@ -420,7 +420,7 @@ public sealed partial class PassengerTools
     {
         if (Session.LocalHistory is not { } history || Session.Folder is not { } folder)
         {
-            throw new InvalidOperationException("No folder is open");
+            throw new InvalidOperationException(Refusals.NoFolder);
         }
         string full = path is null ? folder : Resolve(path);
         return PathNames.Within(full, folder) ? (history, full) : throw new ArgumentException($"{full} is not in the open folder, whose Local History this is");

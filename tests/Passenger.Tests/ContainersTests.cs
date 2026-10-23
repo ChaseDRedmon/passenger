@@ -14,7 +14,7 @@ using Passenger.Core;
 namespace Passenger.Tests;
 
 /// <summary>The engine a test runs containers on: the person's docker, used only where its server runs Linux containers
-/// (Docker Desktop, Docker Engine, Colima, OrbStack), each object a test makes carrying the run's label, which the run's
+/// (Docker Desktop, Docker Engine, Colima, OrbStack, Podman), each object a test makes carrying the run's label, which the run's
 /// end removes (<see cref="RemoveEverything"/>), and which a later run removes once the run's process is gone, should it
 /// end without its own end (<see cref="RemoveDeadRuns"/>). Tiny public images only: busybox.</summary>
 internal static class Docker
@@ -27,19 +27,47 @@ internal static class Docker
 
     public const string Image = "busybox:1.37";
 
+    /// <summary>What every test's <c>docker run</c> takes: Docker's CLI on Podman's socket otherwise makes a container that
+    /// holds one process (pids.max 1, Podman 5.7's reading of what the CLI sends; Compose's are Podman's 2048), where no
+    /// exec, shell or .NET program could start a thread. Unlimited, as Docker's own default is.</summary>
+    public static readonly string[] AnyPids = ["--pids-limit", "-1"];
+
+    /// <summary>Set to <c>never</c> where the images the tests run on are pulled before the run (CI's test.yml): no test
+    /// pulls one there, and a missing one skips every container test, saying which. Unset, a test pulls what it needs.</summary>
+    public const string PullVariable = "PASSENGER_TEST_PULL";
+
+    /// <summary>Every image the container tests run on, Image's and .NET's, as ContainerImages.txt lists them for CI to pull.</summary>
+    public static IReadOnlyList<string> Images { get; } =
+        [.. File.ReadAllLines(Path.Combine(Debugging.Helpers.Debuggees.Root, "tests", "Passenger.Tests", "ContainerImages.txt")).Select(l => l.Trim()).Where(l => l.Length > 0)];
+
     private static readonly Lazy<string?> Unusable = new(() =>
     {
         if (ContainerEngine.Shared.Cli is null)
         {
             return "No docker command is installed here, so no container can run";
         }
+        bool mayPull = Environment.GetEnvironmentVariable(PullVariable) switch
+        {
+            null or "" => true,
+            "never" => false,
+            string other => throw new InvalidOperationException($"{PullVariable} is \"{other}\": unset, or never where the run's images were pulled before it"),
+        };
         TimeSpan limit = TimeSpan.FromSeconds(30).Scaled();
         try
         {
             ChildResult info = Ask(["info", "--format", "{{.OSType}}"], limit);
+            if (!info.Succeeded && Ask(["info", "--format", "{{.Host.OS}}"], limit) is { Succeeded: true } podman)
+            {
+                // A docker that is Podman's own command words its system there.
+                info = podman;
+            }
             string os = info.Output.Trim();
             string? why = !info.Succeeded ? $"The container engine is not running here: {ContainerEngine.Said(info)}"
                 : os != "linux" ? $"The container engine here runs {os} containers, and these tests run Linux ones" : null;
+            if (why is null && !mayPull && Images.Where(i => !Ask(["image", "inspect", i], limit).Succeeded).ToArray() is { Length: > 0 } missing)
+            {
+                why = $"The engine lacks {string.Join(" and ", missing)}, which no test pulls here ({PullVariable}=never): pull them before the run";
+            }
             if (why is null)
             {
                 RemoveDeadRuns();
@@ -112,6 +140,22 @@ internal static class Docker
         return result.Output.Length > 0 ? result.Output : result.Error;
     }
 
+    /// <summary>What a test's docker build takes so its image lands in the engine: Docker's buildx on a builder of its own
+    /// (on Podman's socket, a BuildKit container it starts) keeps what it built in that builder's cache unless told to load it.
+    /// Podman's own build has no --load, and lands its images.</summary>
+    public static string[] Load =>
+        Task.Run(() => ContainerEngine.Shared.StateAsync()).GetAwaiter().GetResult() is { PodmanCli: false, BuildxVersion: not null } ? ["--load"] : [];
+
+    /// <summary>An image's name as Docker words it: Podman names an image built or loaded here in full (docker.io/library/…,
+    /// localhost/…).</summary>
+    public static string Short(string image) =>
+        image.StartsWith("docker.io/library/", StringComparison.Ordinal) ? image["docker.io/library/".Length..]
+        : image.StartsWith("localhost/", StringComparison.Ordinal) ? image["localhost/".Length..] : image;
+
+    /// <summary>A container's command as Docker's inspect words it: Podman's puts its own init (Compose's init: true) first.</summary>
+    public static string WithoutInit(string command) =>
+        command.StartsWith("/run/podman-init -- ", StringComparison.Ordinal) ? command["/run/podman-init -- ".Length..] : command;
+
     /// <summary>Why no container can run here (no CLI, no engine, Windows containers), or null when one can.</summary>
     public static string? WhyNot => Unusable.Value;
 
@@ -121,6 +165,39 @@ internal static class Docker
         ChildResult result = Ask(arguments, TimeSpan.FromMinutes(3).Scaled());
         Assert.True(result.Succeeded, $"docker {string.Join(' ', arguments)} failed: {ContainerEngine.Said(result)}");
         return result.Output.Trim();
+    }
+
+    /// <summary>What docker answers, trimmed, or null while it cannot say (it failed, or took a minute): for a wait's
+    /// condition, which looks again rather than failing the test.</summary>
+    public static string? Said(params string[] arguments)
+    {
+        try
+        {
+            ChildResult result = Ask(arguments, TimeSpan.FromMinutes(1).Scaled());
+            return result.Succeeded ? result.Output.Trim() : null;
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Whether a Compose project has no container left (of those carrying each label given too), as a wait looks:
+    /// false while docker cannot say.</summary>
+    public static bool NoneLeft(string project, params string[] labels) =>
+        Said(["ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", .. labels.SelectMany(l => (string[])["--filter", $"label={l}"])]) is "";
+
+    /// <summary>Waits, the window running, until a Compose project has no container left (of those carrying each label given
+    /// too), failing with what was to take them down.</summary>
+    public static void TakenDown(string project, string what, params string[] labels) =>
+        Ui.WaitFor(() => NoneLeft(project, labels), what, TimeSpan.FromMinutes(2));
+
+    /// <summary>The window's Stop of its container run, and the wait until its project has no container left (as
+    /// <see cref="TakenDown"/>).</summary>
+    public static void Stopped(MainWindow window, string project, string what, params string[] labels)
+    {
+        window.Perform(AppActions.Stop);
+        TakenDown(project, what, labels);
     }
 
     /// <summary>A folder of the test's own holding a Compose file whose services and network carry the run's label, brought
@@ -139,7 +216,7 @@ internal static class Docker
     public static string Container(string name, string command, params string[] labels)
     {
         string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}{name}";
-        List<string> words = ["run", "-d", "--name", named, "--label", RunLabel];
+        List<string> words = ["run", "-d", .. AnyPids, "--name", named, "--label", RunLabel];
         foreach (string label in labels)
         {
             words.AddRange(["--label", label]);
@@ -226,12 +303,15 @@ public sealed class ContainersTests
             labels: { $LABEL }
         """;
 
+    /// <summary>A Compose project the test brought up: listed with its services, ports and health, the port a link the browser
+    /// opens; a container's log streaming into its console with links; and the project's log merging its services, each a
+    /// toggle, which Find searches by a regular expression.</summary>
     [AvaloniaFact]
-    public void The_window_lists_a_compose_project_the_test_brought_up_with_its_services_ports_and_health()
+    public void A_compose_project_is_listed_with_its_services_ports_and_health_and_its_logs_stream_with_links_and_merge_its_services()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         (string folder, string project) = Docker.ComposeUp("list", Shop);
-        MainWindow window = Open(folder);
+        MainWindow window = Ui.OpenFolder(folder);
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Rows.Any(r => r.Kind == ContainerRowKind.Project && r.Label == project), $"{project} listed under Compose");
 
@@ -240,29 +320,17 @@ public sealed class ContainersTests
         Assert.True(web.Container.IsRunning, $"web is {web.Container.State}");
         ContainerPort port = Assert.Single(web.Container.Ports);
         Assert.Equal("8080", port.Inside);
-        Assert.Equal(Docker.Image, Service(view, project, "worker").Container!.Image);
+        Assert.Equal(Docker.Image, Docker.Short(Service(view, project, "worker").Container!.Image));
         // The port is a link the browser opens, on web's row scrolled into view: an engine holding many projects lists it
         // below the rows the list makes.
         Button? link = null;
         Ui.WaitFor(() => view.Choose(r => r.Key == web.Key)
             && (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort" && Equals(b.Content, port.ToString()))) is not null,
             "web's port link");
-        Point at = link!.TranslatePoint(new Point(link!.Bounds.Width / 2, link!.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(link!);
         Assert.Contains(new Uri($"http://localhost:{port.HostPort}/"), window.Browsed);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_containers_log_streams_into_its_console_with_links_and_a_projects_log_merges_its_services()
-    {
-        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        (string folder, string project) = Docker.ComposeUp("log", Shop);
-        MainWindow window = Open(folder);
-        ContainersView view = Shown(window);
-        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == "web"), "web's row");
+        // Web's row chosen, its log streams into the console, its address a link.
         OutputView console = view.Log.Console;
         Ui.WaitFor(() => Text(console).Contains("web listening on http://localhost:8080/", StringComparison.Ordinal), "web's first line in its log");
         string line = Text(console).Split('\n').First(l => l.Contains("web listening", StringComparison.Ordinal));
@@ -289,14 +357,37 @@ public sealed class ContainersTests
         static int Ticks(OutputView console) => Text(console).Split('\n').Count(l => l.Contains("worker tick", StringComparison.Ordinal));
     }
 
+    /// <summary>One busy container chosen in the window: its Stats show the engine's numbers while that tab shows, and nothing
+    /// streams once it is hidden; its Files tab opens a file of its read-only; and Stop, Start, Restart and Remove act on it,
+    /// asking nothing.</summary>
     [AvaloniaFact]
-    public void Stop_start_restart_and_remove_act_on_the_chosen_container()
+    public void A_containers_stats_show_its_numbers_its_files_open_read_only_and_stop_start_restart_and_remove_act_on_it()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string name = Docker.Container("solo", "trap 'exit 0' TERM; while true; do sleep 1; done");
-        MainWindow window = Open(TestFolders.Create("ctr-solo-"));
+        string name = Docker.Container("solo", "trap 'exit 0' TERM; echo 'from inside' > /tmp/note.txt; while true; do :; done");
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-solo-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+
+        view.ShowTab("Stats");
+        Ui.WaitFor(() => view.Stats.Latest.Count == 1 && view.Stats.Latest[0].Memory.Length > 0 && view.Stats.Latest[0].Cpu > 0, "the engine's numbers for the busy container");
+        ContainerStatsSample sample = view.Stats.Latest[0];
+        Assert.Equal(name, sample.Name);
+        Assert.Contains("/", sample.Memory, StringComparison.Ordinal);
+        // Hidden, nothing streams.
+        view.ShowTab("Log");
+        Ui.Settle();
+        Assert.Empty(view.Stats.Latest);
+
+        view.ShowTab("Files");
+        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp" && f.IsFolder), "the container's root listed");
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp"));
+        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp/note.txt"), "/tmp's files listed under it");
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp/note.txt"));
+        Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith("note.txt", StringComparison.Ordinal) == true, "note.txt open in the editor");
+        Passenger.App.Workspace.OpenDocument note = window.EditorArea.Active!;
+        Assert.True(note.IsReadOnly, "A container's file opened editable");
+        Assert.Equal("from inside\n", note.Text.Snapshot.ToString());
 
         Assert.True(window.Perform(AppActions.ContainerStop), "Stop did not run");
         Ui.WaitFor(() => Docker.State(name) == "exited" && Row(view, name)?.Container?.State == "exited", $"{name} stopped, and shown so");
@@ -304,7 +395,7 @@ public sealed class ContainersTests
         Ui.WaitFor(() => Docker.State(name) == "running" && Row(view, name)?.Container?.IsRunning == true, $"{name} started again");
         string started = Docker.Run("inspect", "-f", "{{.State.StartedAt}}", name);
         Assert.True(window.Perform(AppActions.ContainerRestart), "Restart did not run");
-        Ui.WaitFor(() => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", name) != started, $"{name} restarted");
+        Ui.WaitFor(() => Docker.Said("inspect", "-f", "{{.State.StartedAt}}", name) is { } now && now != started, $"{name} restarted");
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
         Ui.WaitFor(() => Docker.State(name) is null && Row(view, name) is null, $"{name} removed, and gone from the window");
         Assert.Null(window.Asked);
@@ -316,7 +407,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string folder = TestFolders.Create("ctr-project-");
-        MainWindow window = Open(folder);
+        MainWindow window = Ui.OpenFolder(folder);
         string project = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}ours";
         // web as Passenger's own up makes it, with the folder's labels; db as the person started it, with none of Passenger's.
         string ours = string.Join(", ", window.Session.Containers.Labels.Where(w => w != "--label").Append(Docker.RunLabel).Select(l => l.Split('=', 2)).Select(l => $"\"{l[0]}\": \"{l[1]}\""));
@@ -341,7 +432,7 @@ public sealed class ContainersTests
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string volume = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}data";
         Docker.Run("volume", "create", "--label", Docker.RunLabel, volume);
-        MainWindow window = Open(TestFolders.Create("ctr-volume-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-volume-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Rows.Any(r => r.Key == "group:Volumes"), "the Volumes heading");
         view.Toggle(view.Rows.First(r => r.Key == "group:Volumes"));
@@ -351,12 +442,12 @@ public sealed class ContainersTests
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
         ConfirmDialog asked = DialogButtonsTests.Check(Asked(window));
         Assert.Contains(Texts(asked), t => t.StartsWith($"Remove the volume {volume} and the data it holds?", StringComparison.Ordinal));
-        Press(asked, "Cancel");
+        Ui.ClickButton(asked, "Cancel");
         Assert.True(Docker.VolumeExists(volume), "The volume was removed though the question was cancelled");
 
         // Allowed, it goes.
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
-        Press(Asked(window), "Remove");
+        Ui.ClickButton(Asked(window), "Remove");
         Ui.WaitFor(() => !Docker.VolumeExists(volume) && !view.Rows.Any(r => r.Label == volume),
             $"{volume} removed, and gone from the window");
         window.Close();
@@ -368,53 +459,41 @@ public sealed class ContainersTests
         }
 
         static string[] Texts(Window dialog) => [.. dialog.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
-
-        static void Press(Window dialog, string button)
-        {
-            dialog.GetVisualDescendants().OfType<Button>().First(b => (string?)b.Content == button)
-                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            Ui.Settle();
-        }
     }
 
+    /// <summary>A container's stats come though its CLI says much on its standard error first, more than a pipe holds unread,
+    /// and once the stream ends the pane says why, in the CLI's own words, where the numbers were.</summary>
     [AvaloniaFact]
-    public void Stats_show_a_running_containers_numbers()
+    public void Stats_come_though_the_cli_says_much_on_its_errors_and_say_why_the_stream_ended()
     {
-        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string name = Docker.Container("busy", "while true; do :; done");
-        MainWindow window = Open(TestFolders.Create("ctr-stats-"));
-        ContainersView view = Shown(window);
-        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
-        view.ShowTab("Stats");
-        Ui.WaitFor(() => view.Stats.Latest.Count == 1 && view.Stats.Latest[0].Memory.Length > 0 && view.Stats.Latest[0].Cpu > 0, "the engine's numbers for the busy container");
-        ContainerStatsSample sample = view.Stats.Latest[0];
-        Assert.Equal(name, sample.Name);
-        Assert.Contains("/", sample.Memory, StringComparison.Ordinal);
-        // Hidden, nothing streams.
-        view.ShowTab("Log");
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        string folder = TestFolders.Create("ctr-stats-errors-");
+        string end = Path.Combine(folder, "end-stats");
+        const string Reading = "{\"Name\":\"shop-web-1\",\"CPUPerc\":\"1.50%\",\"MemPerc\":\"2.00%\",\"MemUsage\":\"10MiB / 1GiB\",\"NetIO\":\"1kB / 2kB\",\"BlockIO\":\"0B / 0B\",\"PIDs\":\"3\"}";
+        (string cli, _) = StandInEngine(folder, up: true, stats: "head -c 300000 /dev/zero | tr '\\0' w >&2; echo >&2; "
+            + $"while [ ! -f '{end}' ]; do echo '{Reading}'; sleep 0.2; done; echo 'Error response from daemon: the engine went away' >&2; exit 1");
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: cli) };
+        window.Show();
+        window.OpenFolder(TestFolders.Create("ctr-stats-errors-window-"));
         Ui.Settle();
-        Assert.Empty(view.Stats.Latest);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_containers_file_opens_read_only_from_its_files_tab()
-    {
-        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string name = Docker.Container("files", "echo 'from inside' > /tmp/note.txt; sleep 600");
-        MainWindow window = Open(TestFolders.Create("ctr-files-"));
-        ContainersView view = Shown(window);
-        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
-        view.ShowTab("Files");
-        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp" && f.IsFolder), "the container's root listed");
-        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp"));
-        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp/note.txt"), "/tmp's files listed under it");
-        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp/note.txt"));
-        Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith("note.txt", StringComparison.Ordinal) == true, "note.txt open in the editor");
-        Passenger.App.Workspace.OpenDocument note = window.EditorArea.Active!;
-        Assert.True(note.IsReadOnly, "A container's file opened editable");
-        Assert.Equal("from inside\n", note.Text.Snapshot.ToString());
-        window.Close();
+        try
+        {
+            ContainersView view = Shown(window);
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Service == "web"), "web's row");
+            view.ShowTab("Stats");
+            Ui.WaitFor(() => view.Stats.Latest.Count == 1, $"web's numbers, which come after what the CLI said on its errors (the pane says \"{view.Stats.Said}\")",
+                TimeSpan.FromSeconds(20));
+            Assert.Equal(1.5, view.Stats.Latest[0].Cpu);
+            Assert.Null(view.Stats.Said);
+            File.WriteAllText(end, string.Empty);
+            Ui.WaitFor(() => view.Stats.Said == "docker stats ended: Error response from daemon: the engine went away",
+                $"the pane to say why its stream ended, not \"{view.Stats.Said}\"");
+            Assert.Empty(view.Stats.Latest);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
@@ -431,7 +510,7 @@ public sealed class ContainersTests
         string name = Docker.Container("escape",
             $"echo first > /note.txt; dd if=/dev/zero of=/big bs=1048576 count=20 2>/dev/null; mkdir -p '/{outside.TrimStart('/')}'; " +
             $"echo inside > '/{outside.TrimStart('/')}/escaped.txt'; rm /bin/ls; printf '%s\\n' {ls} > /bin/ls; chmod +x /bin/ls; sleep 600");
-        MainWindow window = Open(TestFolders.Create("ctr-escape-window-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-escape-window-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
         view.ShowTab("Files");
@@ -480,7 +559,7 @@ public sealed class ContainersTests
         string name = Docker.Container("heap", "sleep 600");
         Docker.Run("cp", Path.Combine(tools, "."), $"{name}:{ContainerTools.Copied}");
         Docker.Run("cp", Path.Combine(frames, "."), $"{name}:/tmp/frames");
-        MainWindow window = Open(TestFolders.Create("ctr-heap-window-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-heap-window-"));
         try
         {
             DotnetProcess program = new(7, "Spins", "dotnet /app/Spins.dll", "root", true) { Container = name };
@@ -649,7 +728,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("shell", "sleep 600");
-        MainWindow window = Open(TestFolders.Create("ctr-shell-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-shell-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
         Assert.True(window.Perform(AppActions.ContainerShell), "Open Shell did not run");
@@ -742,10 +821,7 @@ public sealed class ContainersTests
             ContainersView view = Shown(window);
             Button? link = null;
             Ui.WaitFor(() => (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort")) is not null, "web's port link");
-            Point at = link!.TranslatePoint(new Point(link!.Bounds.Width / 2, link!.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(at, MouseButton.Left);
-            window.MouseUp(at, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(link!);
             Assert.Contains(new Uri("http://engine.example:8080/"), window.Browsed);
         }
         finally
@@ -760,7 +836,7 @@ public sealed class ContainersTests
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("stopped", "for i in 1 2 3 4 5; do echo \"stopped line $i\"; done");
         Ui.WaitFor(() => Docker.State(name) == "exited", $"{name} to end");
-        MainWindow window = Open(TestFolders.Create("ctr-stopped-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-stopped-"));
         try
         {
             ContainersView view = Shown(window);
@@ -826,9 +902,10 @@ public sealed class ContainersTests
     /// <summary>A docker of the test's own whose engine is running or not as its <c>state</c> file says ("up" or "down"):
     /// a Linux server at <paramref name="host"/> with no Compose v2 and no buildx, holding a container of a Compose project
     /// "shop" (service web, port 8080) and a stopped one of its own whose id begins as web's, whose events go on while it is
-    /// up, and whose logs are what <paramref name="logs"/> (a shell command) writes. The CLI and the state file.</summary>
+    /// up, whose logs are what <paramref name="logs"/> (a shell command) writes, and whose stats what
+    /// <paramref name="stats"/> does. The CLI and the state file.</summary>
     internal static (string Cli, string State) StandInEngine(string folder, bool up, string host = "unix:///nowhere/docker.sock",
-        string logs = "echo 'hello from the stand-in web'")
+        string logs = "echo 'hello from the stand-in web'", string stats = "exit 1")
     {
         string state = Path.Combine(folder, "state");
         File.WriteAllText(state, up ? "up" : "down");
@@ -850,6 +927,7 @@ public sealed class ContainersTests
             "    echo '{\"ID\":\"5a5d0c0ffee2\",\"Names\":\"solo\",\"Image\":\"busybox:1.37\",\"State\":\"exited\",\"Status\":\"Exited (0) 2 minutes ago\",\"Ports\":\"\",\"Labels\":\"\"}' ;;",
             "  images|volume|network) ;;",
             $"  logs) {logs} ;;",
+            $"  stats) {stats} ;;",
             "  events) while [ \"$(cat \"$here/state\")\" = up ]; do sleep 0.2; done ;;",
             "  *) exit 1 ;;",
             "esac",
@@ -878,18 +956,9 @@ public sealed class ContainersTests
         return sh;
     }
 
-    private static MainWindow Open(string folder)
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
-
     private static ContainersView Shown(MainWindow window)
     {
-        window.ShowToolWindow("containers");
+        window.ShowToolWindow(ToolWindowIds.Containers);
         Ui.Settle();
         return window.ContainersWindow;
     }

@@ -253,6 +253,9 @@ public sealed record ProjectModel(
     public bool IsRunnable => (string.Equals(OutputType, "Exe", StringComparison.OrdinalIgnoreCase)
         || string.Equals(OutputType, "WinExe", StringComparison.OrdinalIgnoreCase)) && !IsTestProject;
 
+    /// <summary>Whether Aspire's evaluated SDK identifies this project as an AppHost.</summary>
+    public bool IsAspireHost => Evaluated?.IsAspireHost == true;
+
     /// <summary>Whether the project host evaluates and builds it with EnableWindowsTargeting (off Windows, for a framework
     /// the SDK marks Windows-only that the project does not enable itself), which Passenger's own builds of it give too.</summary>
     public bool WindowsTargeting => Evaluated?.Dependencies.Any(d => d.WindowsTargeting) == true;
@@ -316,12 +319,21 @@ public sealed record ProjectModel(
     public static ProjectModel? Owning(IEnumerable<ProjectModel> projects, string path) =>
         projects.Where(p => PathNames.Within(path, p.Folder)).MaxBy(p => p.Folder.Length);
 
-    /// <summary>The file a file of the project depends on, as its evaluated DependentUpon says (relative to the file's own
-    /// folder, as MSBuild has it); null when none does, or before the project is evaluated.</summary>
-    public string? DependentUponOf(string file) =>
-        Evaluated?.Items.FirstOrDefault(i => i.DependentUpon is not null && string.Equals(i.Path, file, PathNames.Comparison)) is { DependentUpon: { } parent }
-            ? System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(file)!, parent.Replace('\\', '/')))
-            : null;
+    /// <summary>The files of the project that depend on another, as its evaluated DependentUpon says (relative to the
+    /// file's own folder, as MSBuild has it), each with that file's path; none before the project is evaluated. Made on
+    /// each call from every item, so a folder's nesting asks once for all its files.</summary>
+    public Dictionary<string, string> DependentUpon()
+    {
+        Dictionary<string, string> found = new(PathNames.Comparer);
+        foreach (EvaluatedItem item in Evaluated?.Items ?? [])
+        {
+            if (item.DependentUpon is { } parent && !found.ContainsKey(item.Path))
+            {
+                found[item.Path] = System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(item.Path)!, parent.Replace('\\', '/')));
+            }
+        }
+        return found;
+    }
 
     /// <summary>A project not yet evaluated: its path as the file system names it, and its name.</summary>
     public static ProjectModel Unevaluated(string path)
@@ -349,7 +361,8 @@ public sealed record ProjectModel(
             .Select(PathNames.Canonical)
             .Distinct(StringComparer.Ordinal)];
         return new ProjectModel(path, name, evaluated.OutputType, evaluated.TargetFrameworks, packages, references,
-            evaluated.Problem is null || File.Exists(path), evaluated.IsTestProject) { Evaluated = evaluated };
+            evaluated.Problem is null || File.Exists(path), evaluated.IsTestProject)
+        { Evaluated = evaluated };
     }
 }
 

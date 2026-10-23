@@ -1,6 +1,7 @@
 using Passenger.App.ToolWindows;
 using Passenger.Editor;
 using Passenger.Inspector;
+using Passenger.Core;
 
 namespace Passenger.App.LiveTree;
 
@@ -116,7 +117,7 @@ public sealed class OverlaysCommands
             using IDisposable held = BackgroundWork.Scope();
             IReadOnlyList<AppWindow> windows = await app.SetOverlaysAsync(overlays);
             string titles = string.Join(", ", OverlaysButton.All.Where(o => overlays.Contains(o.Name)).Select(o => o.Title));
-            parts.Say(overlays.Count == 0 ? $"{app.Name} shows no debug overlays" : $"{app.Name} shows {titles} on {windows.Count(w => w.Owner is null)} window{(windows.Count(w => w.Owner is null) == 1 ? "" : "s")}");
+            parts.Say(overlays.Count == 0 ? $"{app.Name} shows no debug overlays" : $"{app.Name} shows {titles} on {Plural.Of(windows.Count(w => w.Owner is null), "window")}");
             return null;
         }
         catch (LiveAppException failed)

@@ -19,7 +19,7 @@ namespace Passenger.Tests;
 /// moved in the Explorer takes its dependents with it, renamed with it, its project's DependentUpon following.</summary>
 public sealed class FileNestingTests : IDisposable
 {
-    private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n\n"
+    private const string Project = $"<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n\n"
         + "  <ItemGroup>\n    <Compile Update=\"Shapes.Circle.cs\">\n      <DependentUpon>Shapes.cs</DependentUpon>\n    </Compile>\n  </ItemGroup>\n</Project>\n";
 
     private readonly string folder = PathNames.Canonical(TestFolders.Create("nesting-"));
@@ -86,9 +86,9 @@ public sealed class FileNestingTests : IDisposable
         // File Nesting's check box cleared, the rules' dependents stand beside their parents; the project's stay nested.
         FileNestingDialog dialog = OpenFileNesting(window);
         Assert.True(dialog.NestBox.IsChecked, "File Nesting's Show files with the same names as nested is off at first");
-        Click(dialog, dialog.NestBox);
+        Ui.Click(dialog.NestBox);
         Assert.False(dialog.Rules.IsEnabled, "The rules are not greyed with the check box cleared");
-        Click(dialog, dialog.OkButton);
+        Ui.Click(dialog.OkButton);
         Ui.WaitFor(() => !dialog.IsVisible, "the File Nesting dialog to close");
         foreach ((string child, string parent) in byRule)
         {
@@ -101,8 +101,8 @@ public sealed class FileNestingTests : IDisposable
 
         // Checked again, they nest again.
         dialog = OpenFileNesting(window);
-        Click(dialog, dialog.NestBox);
-        Click(dialog, dialog.OkButton);
+        Ui.Click(dialog.NestBox);
+        Ui.Click(dialog.OkButton);
         Ui.WaitFor(() => !dialog.IsVisible, "the File Nesting dialog to close");
         Assert.Equal(At("Components/Counter.razor"), Holder(window, At("Components/Counter.razor.cs")).Path);
         window.Close();
@@ -114,9 +114,9 @@ public sealed class FileNestingTests : IDisposable
         MainWindow window = Open();
         List<string> asked = Answer(window);
 
-        // F2 on a Razor component: its code-behind and its styles take its new name.
+        // Rename's keys on a Razor component: its code-behind and its styles take its new name.
         Choose(window, At("Components/Counter.razor"));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
         window.KeyTextInput("Clicker.razor");
@@ -127,7 +127,7 @@ public sealed class FileNestingTests : IDisposable
 
         // A file the project says depends on another goes with it, the project naming it and its parent by their new names.
         Choose(window, At("Shapes.cs"));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
         window.KeyTextInput("Figures.cs");
@@ -160,27 +160,17 @@ public sealed class FileNestingTests : IDisposable
         window.Close();
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    /// <summary>A window on the folder, with no C# language server: nesting, renames and moves ask nothing of C#, and the
+    /// project is never restored for one.</summary>
+    private MainWindow Open() => Ui.OpenFolder(folder, languageServer: false);
 
     /// <summary>File Nesting... from the Explorer's options in its header, as a person opens it.</summary>
     private static FileNestingDialog OpenFileNesting(MainWindow window)
     {
         Control pane = window.ExplorerView.GetVisualAncestors().OfType<Control>().First(a => a.GetType().Name == "ToolPane");
         Button options = pane.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) as string == "Options");
-        Click(window, options);
-        MenuFlyout menu = window.DockHost.OpenOptions ?? throw new Xunit.Sdk.XunitException("The Explorer's options did not open");
-        MenuItem appearance = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == "Appearance")
-            ?? throw new Xunit.Sdk.XunitException($"The Explorer's options have no Appearance: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem nesting = appearance.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "File Nesting...");
-        nesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Hide();
+        Ui.Click(options);
+        Ui.Choose(window.DockHost.OpenOptions, "Appearance", "File Nesting…");
         Ui.WaitFor(() => window.Frontmost is FileNestingDialog, "the File Nesting dialog");
         return DialogButtonsTests.Check((FileNestingDialog)window.Frontmost);
     }
@@ -226,27 +216,11 @@ public sealed class FileNestingTests : IDisposable
         return [.. rows.Skip(rows.IndexOf(row) + 1).TakeWhile(r => r.Depth > row.Depth).Where(r => r.Depth == row.Depth + 1)];
     }
 
-    private static void Click(TopLevel window, Control control)
-    {
-        Ui.Settle();
-        TopLevel top = TopLevel.GetTopLevel(control) ?? window;
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), top)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not shown");
-        top.MouseDown(at, MouseButton.Left);
-        top.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>Clicks a row of the Explorer, opened down to it, as a person chooses one before a key.</summary>
     private static void Choose(MainWindow window, string path)
     {
         ExplorerNode row = Show(window, path);
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = rows.ContainerFromItem(row) ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {row.Name}");
-        Click(window, item);
-        Assert.Equal([row], window.ExplorerView.SelectedNodes);
+        Ui.ClickRow(window, row);
     }
 
     /// <summary>Agrees to every question the window asks, keeping their titles.</summary>

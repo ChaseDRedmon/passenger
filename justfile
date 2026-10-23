@@ -12,9 +12,12 @@ export AVALONIA_TELEMETRY_OPTOUT := "1"
 build:
     dotnet build
 
-# Every test: the IDE driven whole, headless. A filter narrows them: just test Editing
-test filter="":
-    dotnet test tests/Passenger.Tests {{ if filter == "" { "" } else { "--filter " + quote(filter) } }}
+# Every test: the IDE driven whole, headless, the suite dealt to several test processes at once, then the classes that run
+# alone in one (tools/test-run.py; results in artifacts/test-results/local). A filter narrows them: just test Editing. How
+# many processes run at once comes after it (just test "" 1 is one dotnet test, xunit's own order), else
+# PASSENGER_TEST_PROCESSES, else a quarter of the processors, at most 4; --plan shows the deal and runs nothing.
+test filter="" processes="" *args:
+    python3 -I tools/test-run.py {{ quote(filter) }} {{ if processes == "" { "" } else { "--processes " + processes } }} {{args}}
 
 # Each test class's seconds on CI's runners, by which CI deals each system's tests to its shards (TestTimes.json),
 # rewritten from CI runs' results, which gh downloads, for committing: just test-times RUN [RUN...]
@@ -92,6 +95,11 @@ icons:
 # Rewrite Theme/FileIconSet.axaml, the File Icons set's shapes, from the list in tools/file-icons.py.
 file-icons:
     python3 -I tools/file-icons.py
+
+# Rewrite the C# of Aspire's resource service protocol (src/Passenger.App/Aspire/Protocol) from its .proto, with protoc
+# from a pinned Grpc.Tools fetched into artifacts/aspire-protocol (tools/aspire-protocol.py).
+aspire-protocol:
+    python3 -I tools/aspire-protocol.py
 
 # Fail naming any package the solution restores, Roslyn's server carries or dotnet-tools.json pins that the notices miss.
 notices:

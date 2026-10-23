@@ -7,9 +7,21 @@ namespace Passenger.Tests;
 /// <summary>What runs beside nothing: a class with a test that holds what it tests to a time (a key's, a frame's, a diff's,
 /// how soon the window answered, a profile's samples, how long the debugger gives an evaluation) or that debugs a program
 /// through the window, its debuggee waiting on timings a busy machine stretches. These run after the rest, one class at a
-/// time. Beside the window tests runs only the debug adapter's protocol tests (DebugSession.Collection).</summary>
+/// time. Beside the window tests run only the debug adapter's protocol tests (DebugSession.Collection) and <see
+/// cref="Beside"/>'s classes.</summary>
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class Alone
 {
     public const string Name = "Alone";
+}
+
+/// <summary>What runs beside the window tests, one class after another, as the debug adapter's protocol tests do: a class
+/// that opens no window and waits on nothing of the headless session's, changes nothing the process shares (its PATH, its
+/// environment, a setting), and holds nothing to a time, so a machine busy with the window tests only lengthens it; its
+/// time then hides beside theirs. Not a class that changes the process's PATH, nor one that holds
+/// a call to a time (McpTests' second status within ten seconds).</summary>
+[CollectionDefinition(Name)]
+public sealed class Beside
+{
+    public const string Name = "Beside";
 }

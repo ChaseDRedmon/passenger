@@ -268,7 +268,7 @@ public sealed class BreakpointsWindow : UserControl
     private readonly TextBlock title = new() { Classes = { "popupTitle" } };
     private readonly Button remove = new() { Content = "Remove" };
     private readonly Button goTo = new() { Content = "Go to Source" };
-    private readonly Button removeTool = Tool("Icon.Minimize", "Remove");
+    private readonly Button removeTool = ToolButtons.Of("Icon.Minimize", "Remove");
     private readonly StackPanel chosenPane;
     private readonly StackPanel addPane;
     private readonly TextBox typed = new() { Classes = { "search" }, PlaceholderText = "An exception type: InvalidOperationException" };
@@ -279,7 +279,7 @@ public sealed class BreakpointsWindow : UserControl
     {
         this.store = store;
         this.exceptionTypes = exceptionTypes;
-        Button add = Tool("Icon.Add", "Add CLR Exception Breakpoints");
+        Button add = ToolButtons.Of("Icon.Add", "Add CLR Exception Breakpoints");
         Button done = new() { Content = "Done", Classes = { "primary" } };
         add.Click += (_, _) => ShowAdd();
         removeTool.Click += (_, _) => RemoveChosen();
@@ -471,14 +471,7 @@ public sealed class BreakpointsWindow : UserControl
                 list.Focus();
                 e.Handled = true;
                 break;
-            case Key.Down when found.Items.Count > 0:
-                found.SelectedIndex = Math.Min(found.Items.Count - 1, found.SelectedIndex + 1);
-                found.ScrollIntoView(found.SelectedIndex);
-                e.Handled = true;
-                break;
-            case Key.Up when found.Items.Count > 0:
-                found.SelectedIndex = Math.Max(0, found.SelectedIndex - 1);
-                found.ScrollIntoView(found.SelectedIndex);
+            case Key.Up or Key.Down or Key.PageUp or Key.PageDown when ListKeys.Move(found, e):
                 e.Handled = true;
                 break;
         }
@@ -624,14 +617,6 @@ public sealed class BreakpointsWindow : UserControl
             RemoveChosen();
             e.Handled = true;
         }
-    }
-
-    private static Button Tool(string icon, string tip)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        return button;
     }
 
     private static Border Framed(Control content)

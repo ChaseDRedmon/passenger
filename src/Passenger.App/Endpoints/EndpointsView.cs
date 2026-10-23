@@ -88,7 +88,7 @@ public sealed class EndpointsView : DockPanel
         environments = new ComboBox { MinWidth = 140, VerticalAlignment = VerticalAlignment.Center };
         environments.SelectionChanged += (_, _) => EnvironmentChanged?.Invoke(this, EventArgs.Empty);
         ToolTip.SetTip(environments, $"The environment of {HttpVariables.PublicFile} whose variables the requests use");
-        Button refresh = Tool("Icon.Rerun", "Read the .http files again", () => Reload(root));
+        Button refresh = ToolButtons.Of("Icon.Rerun", "Read the .http files again", () => Reload(root));
         TextBlock label = new() { Text = "Environment", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
         StackPanel bar = new() { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 4), Spacing = 4, Children = { label, environments, refresh } };
         DockPanel.SetDock(bar, Dock.Top);
@@ -207,7 +207,7 @@ public sealed class EndpointsView : DockPanel
         List<object> rows = [];
         foreach (HttpFile file in files.Where(f => f.Requests.Count > 0))
         {
-            rows.Add(new FileRow(file.Path, root is null ? Path.GetFileName(file.Path) : Path.GetRelativePath(root, file.Path)));
+            rows.Add(new FileRow(file.Path, Core.PathNames.Shown(file.Path, root)));
             rows.AddRange(file.Requests);
         }
         list.ItemsSource = rows;
@@ -356,8 +356,8 @@ public sealed class EndpointsView : DockPanel
 
     private Control Row(EndpointRequest request)
     {
-        Button test = Tool("Icon.Run", "Test", () => _ = TestAsync(request));
-        Button interactive = Tool("Icon.Edit", "Interactive Test…", () => InteractiveRequested?.Invoke(this, request));
+        Button test = ToolButtons.Of("Icon.Run", "Test", () => _ = TestAsync(request));
+        Button interactive = ToolButtons.Of("Icon.Edit", "Interactive Test…", () => InteractiveRequested?.Invoke(this, request));
         test.Name = "endpointTest";
         ((PathIcon)test.Content!).Bind(PathIcon.ForegroundProperty, test.GetResourceObservable("Passenger.Run"));
         interactive.Name = "endpointInteractive";
@@ -411,13 +411,4 @@ public sealed class EndpointsView : DockPanel
         "DELETE" => "Passenger.Error",
         _ => "Passenger.TextMuted",
     };
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
-    }
 }

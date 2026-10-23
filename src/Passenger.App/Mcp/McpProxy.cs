@@ -268,7 +268,7 @@ public sealed class McpProxy
     {
         try
         {
-            using FileStream file = new(Path.Combine(State.StateStore.DefaultRoot, "settings.json"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using FileStream file = new(Path.Combine(State.StateStore.DefaultRoot, State.StateStore.SettingsFile), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             using JsonDocument settings = JsonDocument.Parse(file);
             return settings.RootElement.ValueKind == JsonValueKind.Object
                 && settings.RootElement.TryGetProperty("traceProtocols", out JsonElement on) && on.ValueKind == JsonValueKind.True;

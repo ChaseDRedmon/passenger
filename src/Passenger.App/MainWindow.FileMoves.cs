@@ -18,6 +18,8 @@ public partial class MainWindow
     /// clipboard still holds that text, so text copied since is never taken for them.</summary>
     private (IReadOnlyList<string> Paths, bool Cut, string Text)? held;
 
+    private const string NothingHeld = "Nothing to paste: no files or folders were cut or copied";
+
     /// <summary>Cut or Copy on a row: it, or every file and folder chosen with it, but those inside another of them.</summary>
     private async Task HoldAsync(ExplorerNode node, bool cut)
     {
@@ -50,7 +52,7 @@ public partial class MainWindow
         if (held is not { } what || text != what.Text)
         {
             Forget();
-            status.Text = "Nothing to paste: no files or folders were cut or copied";
+            status.Text = NothingHeld;
             return;
         }
         if (what.Cut)
@@ -290,23 +292,47 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Whether the editor's Cut, Copy, Paste, Undo or Redo is the Explorer's here: its rows have the keys (the
-    /// Edit menu of the Mac's menu bar runs them where the keys are, as Rider's does).</summary>
-    private static bool ExplorerEdits(string action, ActionContext context) =>
-        action is E.Cut or E.Copy or E.Paste or E.Undo or E.Redo && context.ToolWindow?.Id == "explorer" && context.Focused is not Avalonia.Controls.TextBox;
+    /// <summary>Whether the editor's Cut, Copy, Paste, Delete (Backspace too), Undo or Redo is the Explorer's here, as
+    /// Rider's $Cut, $Delete and the rest are its Project view's: its row's menu asked, or its rows have the keys (the Edit
+    /// menu of the Mac's menu bar runs them where the keys are, as Rider's does).</summary>
+    private bool ExplorerEdits(string action, ActionContext context) =>
+        action is E.Undo or E.Redo ? ExplorerHasKeys(context)
+        : action is E.Cut or E.Copy or E.Paste or E.Delete or E.Backspace && RowOf(context) is not null;
 
-    /// <summary>The editor's Cut, Copy or Paste run on the Explorer's chosen row; its Undo and Redo on the last command
+    /// <summary>Why one of the editor's actions cannot run on the Explorer's row; null when it can.</summary>
+    private string? WhyNotOnRow(string action, ActionContext context) => RowOf(context) is not { } row ? null : action switch
+    {
+        E.Cut or E.Copy when !row.IsMovable => $"{row.Name} cannot be moved",
+        E.Paste when row.Into is null => $"Nothing can be pasted into {row.Name}",
+        E.Paste when held is null => NothingHeld,
+        E.Delete or E.Backspace when !row.CanRemove => $"{row.Name} cannot be deleted",
+        _ => null,
+    };
+
+    /// <summary>The editor's Delete as the Explorer's menu names it: Remove for what only leaves the solution, as Rider's.</summary>
+    private string? DeleteTitle(ActionContext context) =>
+        ExplorerEdits(E.Delete, context) && RowOf(context) is { } row ? row.LeavesFilesBehind ? "Remove…" : "Delete…" : null;
+
+    /// <summary>The editor's Cut, Copy, Paste or Delete run on the Explorer's row; its Undo and Redo on the last command
     /// that renamed or moved files.</summary>
-    private void ExplorerEdit(string action)
+    private void ExplorerEdit(string action, ActionContext context)
     {
         if (action is E.Undo or E.Redo)
         {
             UndoCommand(action == E.Redo, null);
+            return;
         }
-        else if (Explorer.Selected is { } row)
+        if (RowOf(context) is not { } row)
         {
-            _ = ExplorerActionAsync(action switch { E.Cut => ExplorerAction.Cut, E.Copy => ExplorerAction.Copy, _ => ExplorerAction.Paste }, row);
+            return;
         }
+        _ = action switch
+        {
+            E.Cut => HoldAsync(row, cut: true),
+            E.Copy => HoldAsync(row, cut: false),
+            E.Paste => PasteAsync(row),
+            _ => DeleteRowAsync(row),
+        };
     }
 
     /// <summary>Undo or Redo that reaches a command of several files or of a file moved (a rename) takes all of it back

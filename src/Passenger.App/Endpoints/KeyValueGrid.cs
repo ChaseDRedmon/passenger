@@ -85,10 +85,10 @@ public sealed class KeyValueGrid : Border
         CheckBox check = new() { IsChecked = on, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MinWidth = 0 };
         TextBox keyBox = new() { Classes = { "cell" }, Text = key, FontFamily = CSharp.Fonts.Mono, FontSize = 12 };
         TextBox valueBox = new() { Classes = { "cell" }, Text = value, FontFamily = CSharp.Fonts.Mono, FontSize = 12 };
-        PathIcon glyph = new() { Classes = { "small" } };
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable("Icon.Close"));
-        Button remove = new() { Classes = { "tool" }, Content = glyph, Focusable = false, VerticalAlignment = VerticalAlignment.Center };
-        ToolTip.SetTip(remove, "Remove");
+        Button remove = ToolButtons.Of("Icon.Close", "Remove");
+        remove.VerticalAlignment = VerticalAlignment.Center;
+        // A row's own ×, small as an editor tab's, not a toolbar's button.
+        ((PathIcon)remove.Content!).Classes.Add("small");
         Grid cells = new() { ColumnDefinitions = new ColumnDefinitions(Columns) };
         Control[] parts = [check, keyBox, valueBox, remove];
         for (int i = 0; i < parts.Length; i++)

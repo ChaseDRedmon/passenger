@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Passenger.App.Containers;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Lsp;
@@ -46,7 +47,7 @@ public static partial class ComposeDeclarations
     {
         ServerLines lines = ServerLines.Of(text);
         LspPosition at = lines.PositionOf(Math.Clamp(offset, 0, text.Length));
-        List<DocumentSymbol> chain = Chain(outline, at);
+        List<DocumentSymbol> chain = DocumentSymbol.PathTo(outline, at);
         string folder = Path.GetDirectoryName(path)!;
         int line = text.GetLineFromOffset(Math.Clamp(offset, 0, text.Length));
         int column = Math.Clamp(offset, 0, text.Length) - text.GetLineStart(line);
@@ -62,8 +63,8 @@ public static partial class ComposeDeclarations
         }
         string key = names[2];
         // An entry under the key: a list's item, or a mapping's key (depends_on's db:) with the caret on its name.
-        bool entry = chain.Count == 4 && (IsIndex(names[3]) || Within(chain[3].SelectionRange, at));
-        string? value = chain.Count > 3 && !IsIndex(names[3]) && Within(chain[3].SelectionRange, at) ? names[3]
+        bool entry = chain.Count == 4 && (IsIndex(names[3]) || chain[3].SelectionRange.Holds(at));
+        string? value = chain.Count > 3 && !IsIndex(names[3]) && chain[3].SelectionRange.Holds(at) ? names[3]
             : WordAt(written, column).Word is { Length: > 0 } word ? word : null;
         // A long entry's source (a volume's, a secret's, a config's), which names what is declared.
         bool source = chain.Count == 5 && IsIndex(names[3]) && names[4] == "source";
@@ -85,24 +86,6 @@ public static partial class ComposeDeclarations
     }
 
     public const string NoDeclaration = "Cannot find a declaration to go to";
-
-    /// <summary>The outline's symbols from the top to the deepest holding a place, outermost first: of siblings that both
-    /// hold it (one ends where the next begins), the later.</summary>
-    private static List<DocumentSymbol> Chain(IReadOnlyList<DocumentSymbol> symbols, LspPosition at)
-    {
-        List<DocumentSymbol> chain = [];
-        IReadOnlyList<DocumentSymbol>? level = symbols;
-        while (level?.LastOrDefault(s => Within(s.Range, at)) is { } inside)
-        {
-            chain.Add(inside);
-            level = inside.Children;
-        }
-        return chain;
-    }
-
-    private static bool Within(LspRange range, LspPosition at) =>
-        (range.Start.Line < at.Line || (range.Start.Line == at.Line && range.Start.Character <= at.Character))
-        && (at.Line < range.End.Line || (at.Line == range.End.Line && at.Character <= range.End.Character));
 
     /// <summary>A list item's name in the server's outline: its index.</summary>
     private static bool IsIndex(string name) => name.Length > 0 && name.All(char.IsAsciiDigit);
@@ -297,43 +280,10 @@ public static partial class ComposeDeclarations
             : ComposeAnswer.None($"There is no service {service} in {file}");
     }
 
-    /// <summary>A service's name in another compose file, read as its keys are indented: the first key under the top's
-    /// services with that name.</summary>
-    private static TextPosition? ServiceIn(TextSnapshot text, string? name)
-    {
-        if (name is null)
-        {
-            return null;
-        }
-        bool inServices = false;
-        int? indent = null;
-        for (int i = 0; i < text.LineCount; i++)
-        {
-            string line = text.GetLineText(i);
-            if (line.Trim().Length == 0 || line.TrimStart().StartsWith('#'))
-            {
-                continue;
-            }
-            int depth = line.Length - line.TrimStart().Length;
-            if (depth == 0)
-            {
-                inServices = line.TrimEnd().StartsWith("services:", StringComparison.Ordinal);
-                indent = null;
-                continue;
-            }
-            if (!inServices)
-            {
-                continue;
-            }
-            indent ??= depth;
-            string key = line.Trim();
-            if (depth == indent && (key == name + ":" || key.StartsWith(name + ": ", StringComparison.Ordinal) || key.StartsWith($"\"{name}\":", StringComparison.Ordinal)))
-            {
-                return new TextPosition(i, depth);
-            }
-        }
-        return null;
-    }
+    /// <summary>A service's name in another compose file, read as the file is written (<see cref="ComposeText"/>): the first
+    /// key under the top's services with that name.</summary>
+    private static TextPosition? ServiceIn(TextSnapshot text, string? name) =>
+        name is not null && ComposeText.Of(text.ToString()).At(["services", name]) is { } service ? text.GetPosition(service.KeyStart) : null;
 
     /// <summary>A service's build: its Dockerfile (the context's own, or the one it names), and the project the Dockerfile
     /// builds when it is one of the solution's.</summary>
@@ -370,7 +320,7 @@ public static partial class ComposeDeclarations
     public static string? Built(TextSnapshot dockerfile, string context, IReadOnlyList<ProjectModel> projects)
     {
         string text = dockerfile.ToString();
-        Containers.DockerfileStages stages = Containers.DockerfileStages.Read(text);
+        DockerfileStages stages = DockerfileStages.Read(text);
         if (stages.Final is { } final && stages.Lineage(final).Select(s => s.EntryAssembly).FirstOrDefault(a => a is not null) is { } assembly
             && projects.FirstOrDefault(p => string.Equals(p.Evaluated?.AssemblyName ?? p.Name, assembly, StringComparison.OrdinalIgnoreCase)) is { } running)
         {

@@ -146,7 +146,7 @@ public sealed class TestFinder
                 if (timed && latest.Count > 0)
                 {
                     int tests = latest.Sum(p => told.TryGetValue(p.Path, out var was) ? was.Tests.Tests.Count : 0);
-                    IdeErrors.Write($"Unit tests: {tests} found in the code of {latest.Count} test project{(latest.Count == 1 ? "" : "s")} in {Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s");
+                    IdeErrors.Write($"Unit tests: {tests} found in the code of {Core.Plural.Of(latest.Count, "test project")} in {Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s");
                 }
             }
             catch (Exception error)
@@ -165,25 +165,8 @@ public sealed class TestFinder
         List<string> all = [];
         foreach (ProjectModel project in projects)
         {
-            List<string> files = [];
-            Stack<DirectoryInfo> folders = new([new DirectoryInfo(project.Folder)]);
-            while (folders.TryPop(out DirectoryInfo? at))
-            {
-                try
-                {
-                    files.AddRange(at.EnumerateFiles("*.cs").Select(f => f.FullName));
-                    foreach (DirectoryInfo child in at.EnumerateDirectories())
-                    {
-                        if (!child.Name.StartsWith('.') && !IgnoredFolders.Contains(child.Name) && child.LinkTarget is null && !projectFolders.Contains(child.FullName))
-                        {
-                            folders.Push(child);
-                        }
-                    }
-                }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                {
-                }
-            }
+            List<string> files = [.. FolderWalk.Files(project.Folder, built: true, enters: folder => !projectFolders.Contains(folder))
+                .Where(file => file.EndsWith(".cs", PathNames.Comparison))];
             found[project.Path] = files;
             all.AddRange(files);
         }

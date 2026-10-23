@@ -63,7 +63,7 @@ public partial class MainWindow
 
     private void AddUpdates()
     {
-        actions!.Add(new IdeAction(AppActions.CheckForUpdates, "Check for Updates...", "Help",
+        actions!.Add(new IdeAction(AppActions.CheckForUpdates, "Check for Updates…", "Help",
             context => _ = CheckForUpdatesAsync(asked: true))
         {
             Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 0)],
@@ -169,7 +169,7 @@ public partial class MainWindow
     {
         if (asked)
         {
-            status.Text = "Checking for updates...";
+            status.Text = "Checking for updates…";
         }
         ReleaseFeed feed = Releases;
         CancellationToken end = updatesEnd.Token;
@@ -363,7 +363,7 @@ public partial class MainWindow
         }
         else
         {
-            Say($"Passenger {installing} did not install: Help, Show Log says why", StatusPlace.Log);
+            Say($"Passenger {installing} did not install: Help, Show Log says why", LogPlace);
             IdeErrors.Write($"Updates: Passenger {installing} was to install as the last session ended, but this is {Product.Version}");
         }
     }
@@ -397,7 +397,7 @@ public partial class MainWindow
     {
         UpdateShown = release;
         Notice(UpdateNotice.Downloading, "Icon.ArrowDown", "Passenger.Link",
-            percent < 100 ? $"Downloading Passenger {release.Version}: {percent}%" : $"Checking Passenger {release.Version}...",
+            percent < 100 ? $"Downloading Passenger {release.Version}: {percent}%" : $"Checking Passenger {release.Version}…",
             $"Passenger {release.Version} is downloading from GitHub, to be checked and installed when Passenger restarts.\nClick to open its release page.");
     }
 
@@ -439,7 +439,7 @@ public partial class MainWindow
         }
         else if (UpdateShown is { } shown)
         {
-            _ = Launcher.LaunchUriAsync(notice == UpdateNotice.Downloading ? shown.Page : shown.Link);
+            Browse(notice == UpdateNotice.Downloading ? shown.Page : shown.Link);
         }
     }
 

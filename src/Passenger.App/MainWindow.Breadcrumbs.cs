@@ -1,8 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Threading;
 using Passenger.Core;
+using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Text;
 
@@ -16,7 +16,7 @@ public partial class MainWindow
     private readonly StackPanel breadcrumbs = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Avalonia.Thickness(0, 0, 18, 0) };
     private IReadOnlyList<DocumentSymbol> outline = [];
     private string? outlined;
-    private DispatcherTimer? outlineAgain;
+    private Debounce? outlineAgain;
     private int outlining;
 
     /// <summary>What the path shows, so a caret that moves within the same member leaves its buttons as they are.</summary>
@@ -28,27 +28,20 @@ public partial class MainWindow
     private void AddBreadcrumbs()
     {
         BreadcrumbHost.Children.Add(breadcrumbs);
-        outlineAgain = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-        outlineAgain.Tick += (_, _) =>
-        {
-            outlineAgain.Stop();
-            _ = OutlineAsync();
-        };
+        outlineAgain = new Debounce(TimeSpan.FromMilliseconds(400), OutlineAsync);
         Editors.ActiveChanged += (_, _) =>
         {
             outline = [];
             outlined = null;
             ShowBreadcrumbs();
-            outlineAgain.Stop();
-            outlineAgain.Start();
+            outlineAgain.Restart();
         };
         Editors.CaretMoved += (_, _) => ShowBreadcrumbs();
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) =>
         {
             if (Editors.Active == document)
             {
-                outlineAgain.Stop();
-                outlineAgain.Start();
+                outlineAgain.Restart();
             }
         };
     }
@@ -110,7 +103,7 @@ public partial class MainWindow
                 while (level.FirstOrDefault(s => s.Range.Start.Line <= line && line <= s.Range.End.Line) is { } symbol)
                 {
                     // The namespace is the file's own context; the path names what is in it.
-                    if (symbol.Kind != 3)
+                    if (symbol.Kind != SymbolKinds.Namespace)
                     {
                         wanted.Add(new Crumb(symbol.Name.Split(" : ")[0], document.Path, lines.Text.GetPosition(lines.OffsetOf(symbol.SelectionRange.Start)), Muted: false));
                     }

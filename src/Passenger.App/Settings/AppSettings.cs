@@ -359,7 +359,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             PrettierFiles = string.IsNullOrWhiteSpace(PrettierFiles) ? defaults.PrettierFiles : PrettierFiles.Trim(),
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
             XamlFormat = (XamlFormat ?? defaults.XamlFormat).Clamped(),
-            AgentFolders = [.. (AgentFolders ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.FromComparison(Passenger.Core.PathNames.Comparison))],
+            AgentFolders = [.. (AgentFolders ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(Passenger.Core.PathNames.Comparer)],
         };
 
         static Dictionary<string, string[]> Readable(Dictionary<string, string[]>? shortcuts) =>

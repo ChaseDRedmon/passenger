@@ -26,86 +26,31 @@ public static partial class McpHost
     /// the platform is: <c>--mcp</c> runs on the headless one alone.</summary>
     public static bool IsHeadless { get; private set; }
 
-    /// <summary>Where windows listen, one socket each, beside the process's <c>PID.open</c>: the state folder's (<see
-    /// cref="SocketFolderFor"/>).</summary>
-    public static string SocketFolder => SocketFolderFor(StateStore.DefaultRoot);
+    /// <summary>The variable a test sets for an <c>--mcp</c> Passenger whose agent asks nothing of C#: <c>off</c> starts no C#
+    /// language server (<see cref="MainWindow.StartsLanguageServer"/>), so the test pays no server's start, load or restore.</summary>
+    public const string LanguageServerVariable = "PASSENGER_MCP_LANGUAGE_SERVER";
 
-    /// <summary>A state folder's agent sockets' folder: in the user's own temporary folder, named by a short hash of the
-    /// user and the state folder, so a socket's path stays within the 104 bytes macOS allows (the state folder's own grew
-    /// past them under a long PASSENGER_SETTINGS, and an agent waited 2 minutes for a window that could not listen) and
-    /// each state, a test run's or the person's, has its own.</summary>
-    public static string SocketFolderFor(string state)
+    /// <summary>Whether <c>--mcp</c>'s IDE starts the C# language server: always, unless <see cref="LanguageServerVariable"/>
+    /// says <c>off</c>; a value other than <c>off</c> or <c>on</c> is fatal as Passenger starts, as a malformed flag is.</summary>
+    public static bool StartsLanguageServer => Environment.GetEnvironmentVariable(LanguageServerVariable) switch
     {
-        string key = $"{Environment.UserName}\n{Path.TrimEndingDirectorySeparator(PathNames.Canonical(state))}";
-        string hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))[..10];
-        return Path.Combine(UserTemp(), $"passenger-{hash}");
-    }
+        null or "" or "on" => true,
+        "off" => false,
+        string other => throw new FormatException($"{LanguageServerVariable} takes off or on, not '{other}'"),
+    };
 
-    /// <summary>The socket folder made the user's alone, or why not: a link, or one another user made first (on Linux's
-    /// shared /tmp), whose mode only its owner may set, is never listened or connected in.</summary>
-    internal static string OwnSocketFolder()
-    {
-        string folder = SocketFolder;
-        if (OperatingSystem.IsWindows())
-        {
-            // The user's temporary folder, under their profile, is theirs alone already.
-            Directory.CreateDirectory(folder);
-            return folder;
-        }
-        const UnixFileMode Owner = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        Directory.CreateDirectory(folder, Owner);
-        if (new DirectoryInfo(folder).LinkTarget is not null)
-        {
-            throw new IOException($"{folder} is a link, not a folder of the user's own");
-        }
-        File.SetUnixFileMode(folder, Owner);
-        return folder;
-    }
+    /// <summary>Where windows listen, one socket each, beside the process's <c>PID.open</c>: the state folder's socket folder
+    /// (<see cref="SocketFolders"/>), where Passenger's other sockets are too.</summary>
+    public static string SocketFolder => SocketFolders.For(StateStore.DefaultRoot);
+
+    /// <summary>A state folder's agent sockets' folder (<see cref="SocketFolders.For"/>).</summary>
+    public static string SocketFolderFor(string state) => SocketFolders.For(state);
+
+    /// <summary>The socket folder made the user's alone, or why not (<see cref="SocketFolders.Own"/>).</summary>
+    internal static string OwnSocketFolder() => SocketFolders.Own(StateStore.DefaultRoot);
 
     /// <summary>The socket folder when it is there and the user's own, else null: the windows an agent may join.</summary>
-    internal static string? FoundSocketFolder()
-    {
-        if (!Directory.Exists(SocketFolder))
-        {
-            return null;
-        }
-        try
-        {
-            return OwnSocketFolder();
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>The user's own temporary folder: macOS's per-user one as the system names it (an agent's environment may
-    /// point TMPDIR elsewhere, where the person's windows would not be found), Linux's XDG_RUNTIME_DIR, else /tmp.</summary>
-    private static string UserTemp()
-    {
-        if (OperatingSystem.IsMacOS() && DarwinUserTemp() is { } own)
-        {
-            return own;
-        }
-        if (OperatingSystem.IsLinux())
-        {
-            return Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is { Length: > 0 } runtime && Path.IsPathFullyQualified(runtime) && Directory.Exists(runtime)
-                ? runtime
-                : "/tmp";
-        }
-        return Path.GetTempPath();
-    }
-
-    private static unsafe string? DarwinUserTemp()
-    {
-        const int DarwinUserTempDir = 65537;
-        byte* buffer = stackalloc byte[1024];
-        nuint length = Confstr(DarwinUserTempDir, buffer, 1024);
-        return length is > 1 and <= 1024 ? System.Text.Encoding.UTF8.GetString(buffer, (int)length - 1) : null;
-    }
-
-    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "confstr")]
-    private static unsafe partial nuint Confstr(int name, byte* buffer, nuint length);
+    internal static string? FoundSocketFolder() => SocketFolders.Found(StateStore.DefaultRoot);
 
     /// <summary>What an agent is told as it connects: how to begin and find its way, and what a person's window asks.</summary>
     internal const string Instructions =
@@ -301,7 +246,7 @@ public static partial class McpHost
             .SetupWithoutStarting();
 
         // The agent's own IDE, which no other agent joins.
-        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false, AgentsOwn = true };
+        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false, AgentsOwn = true, StartsLanguageServer = StartsLanguageServer };
         window.SetRenderScaling(2);
         window.Show();
         window.Start(launch);

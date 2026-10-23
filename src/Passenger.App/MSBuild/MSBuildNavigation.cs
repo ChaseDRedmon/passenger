@@ -226,7 +226,7 @@ public static class MSBuildNavigation
             }
         }
         InsightItemType? known = insight?.ItemType(type);
-        card.AppendLine(known is null ? "MSBuild item" : $"MSBuild item, {known.Count} {type} item{(known.Count == 1 ? "" : "s")} in the project");
+        card.AppendLine(known is null ? "MSBuild item" : $"MSBuild item, {Core.Plural.Of(known.Count, $"{type} item")} in the project");
         AppendDocumentation(card, context.Schema.Items.GetValueOrDefault(type)?.Documentation);
     }
 

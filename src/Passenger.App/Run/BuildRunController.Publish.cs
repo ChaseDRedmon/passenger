@@ -102,8 +102,7 @@ public sealed partial class BuildRunController
         {
             session.Publishing.Published(publish.Project, profile);
         }
-        string where = folder is null ? string.Empty
-            : session.Folder is { } open && PathNames.IsUnder(folder, open) ? $" to {Path.GetRelativePath(open, folder)}" : $" to {folder}";
+        string where = folder is null ? string.Empty : $" to {PathNames.Shown(folder, session.Folder)}";
         return new BuildOutcome(BuildStatus.Succeeded, $"Published {publish.Shown}{where}{warned}") { Published = folder };
     }
 

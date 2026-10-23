@@ -40,12 +40,12 @@ public sealed class TablesTests : IDisposable
             "A number quoted for its thousands' commas should be drawn against the cell's right edge as an unquoted one is, as Excel reads both");
         Assert.False(table.IsNumber(1, 1), "Text that happens to be quoted should stay text");
 
-        Click(window, Named(window, "ShowText"));
+        Ui.Click(Named(window, "ShowText"));
         Assert.Null(window.EditorArea.ActiveGroup.Table);
         Assert.True(window.EditorArea.CodeEditor.IsFocused, "Text should give the editor the focus, so typing edits the file");
         Ui.Type(window, "Z", "Z");
 
-        Click(window, Named(window, "ShowTable"));
+        Ui.Click(Named(window, "ShowTable"));
         Ui.WaitFor(() => Grid(window).Table?.Header(0) == "ZName", "the Table to show the header the Text was given");
         Assert.True(Grid(window).IsFocused, "The Table should take the focus back, so the keys move among its cells");
         window.Close();
@@ -74,7 +74,7 @@ public sealed class TablesTests : IDisposable
 
         ToggleButton other = window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>().First(b => (string?)b.Content == "Other");
         Assert.DoesNotContain(window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>(), b => (string?)b.Content == "Hidden");
-        Click(window, other);
+        Ui.Click(other);
         Ui.WaitFor(() => Grid(window).Table is { RowCount: 2 } table && table.Cell(1, 1) == "42", "the Other sheet's cells");
 
         window.Perform(AppActions.SaveAll);
@@ -116,10 +116,10 @@ public sealed class TablesTests : IDisposable
         TaskCompletionSource west = new(TaskCreationOptions.RunContinuationsAsynchronously);
         TableFile.For(window.EditorArea.Active!)!.HoldNext(south.Task, Task.CompletedTask, west.Task);
 
-        Click(window, Sheet(window, "South"));
-        Click(window, Sheet(window, "East"));
+        Ui.Click(Sheet(window, "South"));
+        Ui.Click(Sheet(window, "East"));
         Assert.True(Grid(window).Table?.Cell(0, 0) == "3", $"East's read did not land while South's was held: the table shows {Grid(window).Table?.Cell(0, 0)}");
-        Click(window, Sheet(window, "West"));
+        Ui.Click(Sheet(window, "West"));
         south.SetResult();
         Ui.Settle();
         west.SetResult();
@@ -152,10 +152,7 @@ public sealed class TablesTests : IDisposable
         File.WriteAllText(path, "a\tb\tc\n1\t2\t3\n4\t5\t6\n");
         MainWindow window = Open(path);
         CellGrid grid = Grid(window);
-        Point first = grid.TranslatePoint(new Point(60, ListRow.Height * 1.5), window)!.Value;
-        window.MouseDown(first, MouseButton.Left);
-        window.MouseUp(first, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(grid, new Point(60, ListRow.Height * 1.5));
         Assert.Equal((0, 0), grid.Caret);
 
         Ui.Press(window, "shift DOWN");
@@ -233,15 +230,6 @@ public sealed class TablesTests : IDisposable
         {
             Part($"xl/worksheets/sheet{i + 1}.xml", $"<worksheet {Ns}><sheetData><row r=\"1\"><c r=\"A1\"><v>{i + 1}</v></c></row></sheetData></worksheet>");
         }
-    }
-
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
     }
 
     /// <summary>A workbook as Excel writes one: shared strings, a currency, a date and a percent style, an empty row, a

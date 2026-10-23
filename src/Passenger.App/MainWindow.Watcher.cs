@@ -55,6 +55,8 @@ public partial class MainWindow
             // A restore writes the props and targets a project imports beside its assets.
             session.Evaluate();
         }
+        // A C# file written may have gained or lost the AppHost SDK's line; one come or gone is the index's walk's to find.
+        session.AspireFiles.Changed(changes.Paths, every: changes.Lost);
         if (changes.Structure)
         {
             session.Index.Build(folder);
@@ -140,7 +142,7 @@ public partial class MainWindow
     /// afterwards which of the two to keep, losing the other. Null once saved, else why not, and nothing is to be written.</summary>
     private string? SaveBeforeWriting(IEnumerable<string> paths)
     {
-        HashSet<string> writing = new(paths.Select(PathNames.Canonical), StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> writing = new(paths.Select(PathNames.Canonical), PathNames.Comparer);
         foreach (OpenDocument document in Editors.Documents.Where(d => d.IsModified && writing.Contains(d.Path)).ToList())
         {
             if (!Editors.Save(document))

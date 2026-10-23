@@ -22,9 +22,9 @@ namespace Passenger.Tests;
 /// install from the run's own feed and make an Avalonia app, free of Accelerate's tools, that builds and runs.</summary>
 public sealed class NewSolutionTests : IDisposable
 {
-    private const string Library = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+    private static readonly string Library = TestProjects.Library();
 
-    private const string Executable = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+    private static readonly string Executable = TestProjects.Console();
 
     /// <summary>As Visual Studio writes a .sln: a byte order mark, CRLF, a solution folder src holding Shop.Core.</summary>
     private const string Sln = "﻿\r\nMicrosoft Visual Studio Solution File, Format Version 12.00\r\n# Visual Studio Version 17\r\nVisualStudioVersion = 17.10.35013.160\r\nMinimumVisualStudioVersion = 10.0.40219.1\r\n"
@@ -53,24 +53,54 @@ public sealed class NewSolutionTests : IDisposable
         TestFolders.Delete(place);
     }
 
+    /// <summary>New Solution from the Welcome screen lists what dotnet new list reports, refuses a name already taken or a
+    /// directory not empty with why before anything is made, and makes a console app with the option chosen, opens it
+    /// built and runs it.</summary>
     [AvaloniaFact]
     public void New_Solution_from_the_Welcome_screen_makes_a_console_app_with_the_option_chosen_opens_it_built_and_runs_it()
     {
         using IDisposable theme = TestsTheme();
+        Write("Taken/notes.txt", "kept\n");
         MainWindow window = Started();
-        Click(window, window.Welcome.NewSolutionButton);
+        Ui.Click(window.Welcome.NewSolutionButton);
         NewProjectDialog dialog = Templates(window);
+        TemplatesListedAsDotnetNewLists(dialog);
+
+        // A name already taken, or a directory not empty, is refused with why before anything is made.
+        dialog.Folder = place;
+        Type(dialog, "Taken");
+        Ui.Click(dialog.CreateButton);
+        string taken = Path.Combine(place, "Taken");
+        Assert.Equal($"Solution Taken already exists in this location: {taken} is not empty", dialog.Problem);
+        Assert.True(dialog.IsVisible, "The dialog closed on a solution it refused, taking the name to correct with it");
+        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
+        Assert.Equal(["notes.txt"], Directory.EnumerateFileSystemEntries(taken).Select(Path.GetFileName));
+        dialog.SolutionName = string.Empty;
+        Ui.Click(dialog.CreateButton);
+        Assert.Equal("Solution name cannot be empty", dialog.Problem);
+        dialog.SolutionName = "Bad:Name";
+        Ui.Click(dialog.CreateButton);
+        Assert.Equal("Solution name contains invalid characters", dialog.Problem);
+        // Escape is Cancel; the dialog it closes takes no key's release.
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.None, null);
+        Ui.Settle();
+        Assert.False(dialog.IsVisible, "Escape left the dialog open");
+        Assert.Null(window.Folder);
+        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
+
+        Ui.Click(window.Welcome.NewSolutionButton);
+        dialog = Templates(window);
         Assert.Equal("Console App", dialog.Chosen?.Name);
         dialog.Folder = place;
         // The solution's name has the keys as the dialog opens, and the project's follows it.
         Type(dialog, "Greeter");
         Assert.Equal("Greeter", dialog.SolutionName);
         Assert.Equal("Greeter", dialog.ProjectName);
-        Click(dialog, dialog.OptionEditor("Do not use top-level statements")
+        Ui.Click(dialog.OptionEditor("Do not use top-level statements")
             ?? throw new InvalidOperationException($"The console template shows no top-level statements option: [{string.Join(", ", dialog.OptionLabels)}]"));
         Assert.Contains("--use-program-main true", dialog.Command, StringComparison.Ordinal);
         string framework = dialog.Framework ?? throw new InvalidOperationException("The console template offers no target framework");
-        Click(dialog, dialog.CreateButton);
+        Ui.Click(dialog.CreateButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem is not null, "dotnet new to make the solution", TimeSpan.FromMinutes(5));
         Assert.True(dialog.Problem is null, $"The solution was not made: {dialog.Problem}");
 
@@ -115,19 +145,19 @@ public sealed class NewSolutionTests : IDisposable
         dialog.Folder = place;
         Type(dialog, "Fresh");
         string framework = dialog.Framework ?? throw new InvalidOperationException("The console template offers no target framework");
-        Click(dialog, dialog.CreateButton);
+        Ui.Click(dialog.CreateButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem is not null, "dotnet new to make the solution", TimeSpan.FromMinutes(5));
         Assert.True(dialog.Problem is null, $"The solution was not made: {dialog.Problem}");
         string folder = PathNames.Canonical(Path.Combine(place, "Fresh"));
         string solution = Path.Combine(folder, $"Fresh.{dialog.SolutionFormat}");
-        string oldBuilt = Path.Combine(old, "bin", "Debug", "net10.0", "Old.dll");
+        string oldBuilt = Path.Combine(old, "bin", "Debug", TestProjects.Framework, "Old.dll");
 
         MainWindow opened = window;
         if (openIn == OpenProjectIn.Ask)
         {
             OpenProjectDialog asked = window.Asking ?? throw new InvalidOperationException($"New Solution over {old} did not ask where to open it");
             Assert.False(window.IsBuilding || File.Exists(oldBuilt), "The solution open built while Open Solution asked where the new one goes");
-            Click(asked, asked.GetVisualDescendants().OfType<Button>().Single(b => (string?)b.Content == OpenProjectDialog.ThisWindow));
+            Ui.Click(asked.GetVisualDescendants().OfType<Button>().Single(b => (string?)b.Content == OpenProjectDialog.ThisWindow));
         }
         else if (openIn == OpenProjectIn.NewWindow)
         {
@@ -156,7 +186,7 @@ public sealed class NewSolutionTests : IDisposable
         AvaloniaApp.UseFeed(place);
         RunsHeadless("Gallery");
         MainWindow window = Started();
-        Click(window, window.Welcome.NewSolutionButton);
+        Ui.Click(window.Welcome.NewSolutionButton);
         NewProjectDialog dialog = Templates(window);
 
         // Avalonia's kinds are listed though dotnet new has none, as one family not installed; so are Rider's offers.
@@ -173,14 +203,14 @@ public sealed class NewSolutionTests : IDisposable
 
         // Chosen, it offers to install its package, and nothing can be created from it until then.
         dialog.Folder = place;
-        Click(dialog, row);
+        Ui.Click(row);
         Assert.Equal("Avalonia .NET App", dialog.Chosen?.Name);
         Assert.Equal(["App", "MVVM App", "Cross Platform Application"], dialog.TypeNames);
         Assert.Contains("dotnet new install Avalonia.Templates", dialog.Offer, StringComparison.Ordinal);
         Assert.False(dialog.CreateButton.IsEnabled, "Create was offered for a template not installed");
 
         // Install runs dotnet new install, its output shown, and goes on to the installed template and its options.
-        Click(dialog, dialog.InstallButton);
+        Ui.Click(dialog.InstallButton);
         Ui.WaitFor(() => !dialog.IsInstalling, "dotnet new install Avalonia.Templates", TimeSpan.FromMinutes(3));
         Assert.True(dialog.Problem is null, $"Avalonia's templates did not install: {dialog.Problem}\n{dialog.InstallOutput}");
         Assert.Contains($"Success: Avalonia.Templates@{AvaloniaApp.TemplatesVersion} installed", dialog.InstallOutput, StringComparison.Ordinal);
@@ -188,7 +218,7 @@ public sealed class NewSolutionTests : IDisposable
         Assert.True(dialog.Family is { Name: "Avalonia", NotInstalled: false }, $"Once installed, the dialog's family is {dialog.Family?.Name}, not installed: {dialog.Family?.NotInstalled}");
         Assert.Null(dialog.Offer);
         Assert.True(dialog.CreateButton.IsEnabled, "Create stayed off once the template was installed");
-        Assert.Contains("net10.0", dialog.Chosen!.Frameworks("C#"));
+        Assert.Contains(TestProjects.Framework, dialog.Chosen!.Frameworks("C#"));
         Assert.DoesNotContain(dialog.Templates, t => t.Pack?.Id == "Avalonia.Templates");
 
         // The cross-platform one makes a whole solution, its projects named after it.
@@ -203,7 +233,7 @@ public sealed class NewSolutionTests : IDisposable
         Assert.True(dialog.AsksProjectName, "A project template asked for no project name");
 
         dialog.SolutionName = "Gallery";
-        Click(dialog, dialog.CreateButton);
+        Ui.Click(dialog.CreateButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem is not null, "dotnet new to make the Avalonia app", TimeSpan.FromMinutes(5));
         Assert.True(dialog.Problem is null, $"The Avalonia app was not made: {dialog.Problem}");
 
@@ -217,7 +247,7 @@ public sealed class NewSolutionTests : IDisposable
 
         // It builds as it opens, and runs: its window comes up.
         Ui.WaitFor(() => !window.IsBuilding, "the Avalonia app's build", TimeSpan.FromMinutes(4));
-        Assert.True(File.Exists(Path.Combine(folder, "Gallery", "bin", "Debug", "net10.0", "Gallery.dll")),
+        Assert.True(File.Exists(Path.Combine(folder, "Gallery", "bin", "Debug", TestProjects.Framework, "Gallery.dll")),
             $"The Avalonia app was not built: {Ui.Said(window)}\n{window.BottomPanel.Build.Document.Snapshot}");
         Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
         Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the Avalonia app to run", TimeSpan.FromMinutes(3));
@@ -232,22 +262,41 @@ public sealed class NewSolutionTests : IDisposable
     public void Add_New_Project_puts_a_class_library_in_the_solution_folder_and_the_solution_file_gains_only_its_lines(string format)
     {
         string solution = WriteShop(format);
+        Write("Docs/readme.md", "# Docs\n");
         byte[] before = File.ReadAllBytes(solution);
+        string[] folders = [.. Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal)];
         MainWindow window = Open();
         object? server = window.CSharpService;
-        RightClick(window, Row(window, NodeKind.SolutionFolder, "src"));
-        ChooseFromMenu(window, "Add", "New Project...");
+
+        // By its keys, with the name of a project the solution has and then into a folder that has files: refused with why.
+        Ui.Run(window, AppActions.NewProject);
+        NewProjectDialog adding = Templates(window);
+        Assert.Equal(PathNames.Canonical(place), adding.Folder);
+        Type(adding, "Shop.Core");
+        Ui.Click(adding.CreateButton);
+        Assert.Equal("Project Shop.Core already exists in the solution", adding.Problem);
+        adding.ProjectName = "Docs";
+        Ui.Click(adding.CreateButton);
+        Assert.Equal($"Project Docs already exists in this location: {Path.Combine(PathNames.Canonical(place), "Docs")} is not empty", adding.Problem);
+        adding.Cancel();
+        Ui.Settle();
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(solution)), "A project refused changed the solution file");
+        Assert.Equal(folders, Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal));
+        Assert.Equal(["readme.md"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "Docs")).Select(Path.GetFileName));
+        Assert.Equal(["Shop.Core"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "src")).Select(Path.GetFileName));
+
+        Ui.ChooseFromRowMenu(window, Row(window, NodeKind.SolutionFolder, "src"), "Add", "New Project…");
         NewProjectDialog dialog = Templates(window);
         // The solution folder src is named after the folder on disk the new project goes in.
         Assert.Equal(PathNames.Canonical(Path.Combine(place, "src")), dialog.Folder);
         Type(dialog, "Shop.Data");
         // New Project lists no solution template: its families have project templates alone.
         Assert.DoesNotContain(dialog.Templates, t => t.IsSolution);
-        Click(dialog, dialog.FamilyRow("Class Library")
+        Ui.Click(dialog.FamilyRow("Class Library")
             ?? throw new InvalidOperationException($"New Project lists no Class Library: [{string.Join(", ", dialog.Families.Select(f => f.Name))}]"));
         Assert.Equal("Class Library", dialog.Chosen?.Name);
         Assert.Equal("Shop.Data", dialog.ProjectName);
-        Click(dialog, dialog.CreateButton);
+        Ui.Click(dialog.CreateButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem is not null, "dotnet new to make the class library", TimeSpan.FromMinutes(5));
         Assert.True(dialog.Problem is null, $"The class library was not made: {dialog.Problem}");
         Assert.True(File.Exists(Path.Combine(place, "src", "Shop.Data", "Shop.Data.csproj")), "The class library was not made in the solution folder's folder on disk");
@@ -279,72 +328,12 @@ public sealed class NewSolutionTests : IDisposable
         Assert.Contains("Shop.Data", window.WorkspaceModel!.Projects.Select(p => p.Name));
         Assert.False(ReferenceEquals(server, window.CSharpService), "The language server was not started again with the new project");
         Assert.Equal(solution, window.CSharpService?.Session?.Solution);
-        Builds(solution);
-        Assert.True(File.Exists(Path.Combine(place, "src", "Shop.Data", "bin", "Debug", dialog.Framework!, "Shop.Data.dll")), "The new project was not built with the solution");
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void A_name_already_taken_or_a_directory_not_empty_is_refused_with_why_before_anything_is_made()
+    /// <summary>That the templates the dialog lists are those dotnet new list reports, Console App first.</summary>
+    private static void TemplatesListedAsDotnetNewLists(NewProjectDialog dialog)
     {
-        using IDisposable theme = TestsTheme();
-        Write("Taken/notes.txt", "kept\n");
-        MainWindow window = Started();
-        Assert.True(window.Perform(AppActions.NewSolution));
-        NewProjectDialog dialog = Templates(window);
-        dialog.Folder = place;
-        Type(dialog, "Taken");
-        Click(dialog, dialog.CreateButton);
-        string taken = Path.Combine(place, "Taken");
-        Assert.Equal($"Solution Taken already exists in this location: {taken} is not empty", dialog.Problem);
-        Assert.True(dialog.IsVisible, "The dialog closed on a solution it refused, taking the name to correct with it");
-        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
-        Assert.Equal(["notes.txt"], Directory.EnumerateFileSystemEntries(taken).Select(Path.GetFileName));
-        dialog.SolutionName = string.Empty;
-        Click(dialog, dialog.CreateButton);
-        Assert.Equal("Solution name cannot be empty", dialog.Problem);
-        dialog.SolutionName = "Bad:Name";
-        Click(dialog, dialog.CreateButton);
-        Assert.Equal("Solution name contains invalid characters", dialog.Problem);
-        // Escape is Cancel; the dialog it closes takes no key's release.
-        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.None, null);
-        Ui.Settle();
-        Assert.False(dialog.IsVisible, "Escape left the dialog open");
-        Assert.Null(window.Folder);
-        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
-        window.Close();
-
-        // Add, New Project by its keys, with the name of a project the solution has and then into a folder that has files.
-        string solution = WriteShop("slnx");
-        Write("Docs/readme.md", "# Docs\n");
-        byte[] before = File.ReadAllBytes(solution);
-        string[] folders = [.. Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal)];
-        MainWindow shop = Open();
-        Ui.Run(shop, AppActions.NewProject);
-        NewProjectDialog adding = Templates(shop);
-        Assert.Equal(PathNames.Canonical(place), adding.Folder);
-        Type(adding, "Shop.Core");
-        Click(adding, adding.CreateButton);
-        Assert.Equal("Project Shop.Core already exists in the solution", adding.Problem);
-        adding.ProjectName = "Docs";
-        Click(adding, adding.CreateButton);
-        Assert.Equal($"Project Docs already exists in this location: {Path.Combine(PathNames.Canonical(place), "Docs")} is not empty", adding.Problem);
-        adding.Cancel();
-        Ui.Settle();
-        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(solution)), "A project refused changed the solution file");
-        Assert.Equal(folders, Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal));
-        Assert.Equal(["readme.md"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "Docs")).Select(Path.GetFileName));
-        Assert.Equal(["Shop.Core"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "src")).Select(Path.GetFileName));
-        shop.Close();
-    }
-
-    [AvaloniaFact]
-    public void The_templates_listed_are_those_dotnet_new_list_reports()
-    {
-        using IDisposable theme = TestsTheme();
-        MainWindow window = Started();
-        Assert.True(window.Perform(AppActions.NewSolution));
-        NewProjectDialog dialog = Templates(window);
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         List<Listed> expected = [];
         string said = string.Empty;
@@ -379,8 +368,6 @@ public sealed class NewSolutionTests : IDisposable
             $"The dialog does not list what dotnet new list reports. Not listed: [{string.Join("; ", missing)}]. Listed but not reported: "
             + $"[{string.Join("; ", unmatched.Select(t => $"{t.Name} ({string.Join(',', t.ShortNames)}; {string.Join(',', t.Languages)})"))}]\n{said}");
         Assert.Equal("Console App", dialog.Templates[0].Name);
-        dialog.Cancel();
-        window.Close();
     }
 
     /// <summary>One row of dotnet new list's table: its name (cut short with "..." when long), short names, languages
@@ -462,10 +449,12 @@ public sealed class NewSolutionTests : IDisposable
             """);
     }
 
-    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen or the folder given.</summary>
+    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen or the folder given;
+    /// without the C# language server, which nothing its tests check asks of (the builds and runs are dotnet's), as are the
+    /// windows a new solution opens in.</summary>
     private MainWindow Started(string? folder = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
@@ -474,14 +463,7 @@ public sealed class NewSolutionTests : IDisposable
         return window;
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(place);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(place);
 
     /// <summary>Shop: Shop.Web at the solution's top, and Shop.Core in the solution folder src, each in its folder on disk.</summary>
     private string WriteShop(string format)
@@ -522,57 +504,16 @@ public sealed class NewSolutionTests : IDisposable
         static List<string> Lines(string text) => [.. Regex.Matches(text, "[^\n]*\n|[^\n]+$").Select(m => m.Value)];
     }
 
-    /// <summary>dotnet build of the solution as it is on disk now.</summary>
-    private static void Builds(string solution)
-    {
-        ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", solution]), limit: Restore.Limit)).GetAwaiter().GetResult();
-        Assert.True(built.Succeeded, $"With the new project in it, dotnet build no longer builds the solution:\n{built.Output}{built.Error}");
-    }
-
     private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
 
     private static ExplorerNode Row(MainWindow window, NodeKind kind, string name) =>
         window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Kind == kind && r.Name == name)
         ?? throw new InvalidOperationException($"The Explorer shows no {kind} {name}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
 
-    private static void RightClick(MainWindow window, ExplorerNode row)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
-    }
-
-    /// <summary>Chooses an item of a submenu of the Explorer's open menu, as clicks on them would.</summary>
-    private static void ChooseFromMenu(MainWindow window, string submenu, string item)
-    {
-        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException("No menu opened on the row");
-        MenuItem parent = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == submenu)
-            ?? throw new InvalidOperationException($"The row's menu has no {submenu}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem chosen = parent.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"{submenu} has no {item}: [{string.Join(", ", parent.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
-
     /// <summary>Text typed where the keys are.</summary>
     private static void Type(TopLevel window, string text)
     {
         window.KeyTextInput(text);
-        Ui.Settle();
-    }
-
-    private static void Click(TopLevel window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(Math.Min(12, control.Bounds.Width / 2), control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
         Ui.Settle();
     }
 

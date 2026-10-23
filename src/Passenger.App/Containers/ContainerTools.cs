@@ -235,6 +235,11 @@ public static class ContainerTools
     /// <summary>The engine's own processor, docker's name for it (amd64, arm64).</summary>
     public static async Task<string> EngineArchitectureAsync(ContainerEngine engine, CancellationToken cancel)
     {
+        // Podman's own docker has no server apart, nor Arch: the state reads its system from what it has.
+        if ((await engine.StateAsync(cancel: cancel).ConfigureAwait(false)) is { PodmanCli: true, ServerArch: { } arch })
+        {
+            return arch;
+        }
         ChildResult result = await engine.RunAsync(["version", "--format", "{{.Server.Arch}}"], cancel: cancel).ConfigureAwait(false);
         return result.Succeeded ? result.Output.Trim() : throw new ContainerToolsException($"The container engine did not say its processor: {ContainerEngine.Said(result)}");
     }
@@ -433,19 +438,17 @@ public static class ContainerTools
     /// program: the tools' own runtime would hold at its start too, waiting for a debugger never coming, or load the
     /// program's startup hooks. Cleared for every command of theirs.</summary>
     private static readonly string[] Unheld =
-        ["-e", "DOTNET_DefaultDiagnosticPortSuspend=0", "-e", "DOTNET_DiagnosticPorts=", "-e", "DOTNET_STARTUP_HOOKS=", "-e", "DOTNET_MODIFIABLE_ASSEMBLIES="];
-
-    /// <summary>The adapter's variable for how long an evaluation may run (Passenger.Debugger's).</summary>
-    private const string EvaluationLimit = "PASSENGER_EVAL_TIMEOUT_MS";
+        ["-e", $"{RuntimeVariables.DefaultDiagnosticPortSuspend}=0", "-e", $"{RuntimeVariables.DiagnosticPorts}=", "-e", $"{RuntimeVariables.StartupHooks}=",
+            "-e", $"{RuntimeVariables.ModifiableAssemblies}="];
 
     /// <summary>The adapter's command in a container, over docker exec's standard input and output: the IDE's evaluation
     /// limit given it as the IDE's own adapter has it.</summary>
     public static IReadOnlyList<string> AdapterCommand(string container, string executable, IReadOnlyList<string> adapterArguments)
     {
         List<string> words = ["exec", "-i", .. Unheld];
-        if (Environment.GetEnvironmentVariable(EvaluationLimit) is { Length: > 0 } limit)
+        if (Environment.GetEnvironmentVariable(Dap.AdapterEnvironment.EvaluationTimeoutVariable) is { Length: > 0 } limit)
         {
-            words.AddRange(["-e", $"{EvaluationLimit}={limit}"]);
+            words.AddRange(["-e", $"{Dap.AdapterEnvironment.EvaluationTimeoutVariable}={limit}"]);
         }
         return [.. words, container, executable, "dap", .. adapterArguments];
     }

@@ -6,6 +6,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Passenger.Editor;
 using Passenger.Text;
 using Xunit.v3;
@@ -112,6 +113,7 @@ public sealed class TestRun : IDisposable
         // and zsh takes its startup files, and from them its history, from ZDOTDIR.
         Environment.SetEnvironmentVariable("HISTFILE", Path.Combine(Root, "history"));
         Environment.SetEnvironmentVariable("ZDOTDIR", Directory.CreateDirectory(Path.Combine(Root, "zsh")).FullName);
+        File.WriteAllText(Path.Combine(Root, "zsh", ".zshrc"), string.Empty);
         NuGetHome();
         // No test reaches GitHub: a window or a Passenger started that checks for updates without a stand-in of its own
         // asks a loopback port nothing listens on.
@@ -145,12 +147,22 @@ public sealed class TestRun : IDisposable
         // Nor the person's application data: a Testing Platform test app the IDE runs writes its first-run notice's
         // sentinel there (Microsoft/TestingPlatform) unless telemetry is opted out.
         Environment.SetEnvironmentVariable("TESTINGPLATFORM_TELEMETRY_OPTOUT", "1");
+        // Nor Aspire's: an aspire CLI or AppHost the run starts keeps its settings, logs and first-run sentinel in the run's
+        // own home (ASPIRE_HOME), sends no telemetry and looks for no newer version of itself or of Aspire.
+        Environment.SetEnvironmentVariable("ASPIRE_HOME", Path.Combine(Root, "aspire-home"));
+        Environment.SetEnvironmentVariable("ASPIRE_CLI_TELEMETRY_OPTOUT", "1");
+        Environment.SetEnvironmentVariable("features__updateNotificationsEnabled", "false");
+        Environment.SetEnvironmentVariable("ASPIRE_VERSION_CHECK_DISABLED", "true");
+        // Nor the person's aspire CLI, nor their ~/.aspire: the run's own CLI, with a home of the run's own, is the only aspire
+        // on the run's PATH (AspireCli), and it makes no development certificate where it would only check one.
+        Environment.SetEnvironmentVariable("ASPIRE_CLI_GENERATE_HTTPS_CERTIFICATE", "false");
+        AspireCli.Begin(Root);
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
-        // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Debugger's Extensions.EvaluationTimeoutVariable;
+        // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Dap's AdapterEnvironment.EvaluationTimeoutVariable;
         // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it
         // made of a save are followed for 3 s, not 10, and an agent's call that takes a while tells it so every second, not
         // every 10 s.
-        Environment.SetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS", "3000");
+        Environment.SetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "3000");
         Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
         Environment.SetEnvironmentVariable(Passenger.App.Mcp.AgentCall.EveryVariable, "1000");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
@@ -212,7 +224,7 @@ public sealed class TestRun : IDisposable
         // No child holds a container: what the run's tests made, and what they had the IDE make, goes by its labels.
         Docker.RemoveEverything();
         // The windows' agent sockets are in a folder named for the run's state, outside it.
-        foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder])
+        foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder, AspireCli.Home])
         {
             try
             {
@@ -535,6 +547,14 @@ public static class TestFolders
         }
     }
 
+    /// <summary>A file of a test's folder written, the folders it is in made first.</summary>
+    public static void Write(string folder, string relative, string text)
+    {
+        string path = Path.Combine(folder, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+
     public static void Begin(string test) => Made[test] = [];
 
     public static void End(string test)
@@ -851,6 +871,13 @@ public static class Ui
         return task.GetAwaiter().GetResult();
     }
 
+    /// <inheritdoc cref="Await{T}(Task{T}, string, TimeSpan?)"/>
+    public static void Await(Task task, string what, TimeSpan? limit = null)
+    {
+        WaitFor(() => task.IsCompleted, what, limit);
+        task.GetAwaiter().GetResult();
+    }
+
     /// <summary>Waits for a launch the window started (Run, Debug, Profile, a test run) as <see cref="Await"/> does, and
     /// fails unless it started, with its refusal and the build's own errors (<see cref="BuildErrors"/>).</summary>
     public static void Launched(Passenger.App.MainWindow window, Task<string?> launch, string what, TimeSpan? limit = null)
@@ -943,21 +970,257 @@ public static class Ui
     /// the IDE does while its window falls behind.</summary>
     public static void Stall(TimeSpan time, string why) => Waiting.For(time, why);
 
-    /// <summary>Opens a control's right-click menu for what it has chosen, as the menu key does, and chooses an item,
-    /// failing if it is not there or cannot run.</summary>
-    public static void ChooseFromMenu(Control owner, string item)
+    /// <summary>A click as a person's mouse makes it, pressed and let go at the control's centre (or a point in it) in the
+    /// window or popup showing it, once that is drawn; fails unless the control is shown, enabled and what the pointer finds
+    /// there, since a click it would miss does nothing for a person. Then lets what it ran land, unless told not to (a
+    /// click during work that holds background work, which the test pumps through itself).</summary>
+    public static void Click(Control control, Point? at = null, RawInputModifiers modifiers = RawInputModifiers.None, bool settle = true) =>
+        Click(control, at, MouseButton.Left, modifiers, settle);
+
+    /// <summary>A right click as <see cref="Click(Control, Point?, RawInputModifiers, bool)"/> makes a click, which opens
+    /// the menu of what is there.</summary>
+    public static void RightClick(Control control, Point? at = null) => Click(control, at, MouseButton.Right, RawInputModifiers.None, settle: true);
+
+    /// <summary>Two clicks in quick succession at the same place, as a person opens what a row holds.</summary>
+    public static void DoubleClick(Control control, Point? at = null)
+    {
+        (TopLevel top, Point point) = Aim(control, at);
+        for (int i = 0; i < 2; i++)
+        {
+            top.MouseDown(point, MouseButton.Left);
+            top.MouseUp(point, MouseButton.Left);
+        }
+        Settle();
+    }
+
+    private static void Click(Control control, Point? at, MouseButton button, RawInputModifiers modifiers, bool settle)
+    {
+        (TopLevel top, Point point) = Aim(control, at);
+        top.MouseDown(point, button, modifiers);
+        top.MouseUp(point, button, modifiers);
+        if (settle)
+        {
+            Settle();
+        }
+    }
+
+    /// <summary>Where a click on a control lands, in the window or popup showing it, scrolled into view and drawn (hit testing
+    /// reads the last frame drawn); fails unless the control is shown, enabled and inside it, and the pointer finds it there.</summary>
+    private static (TopLevel Top, Point Point) Aim(Control control, Point? at)
+    {
+        // A person scrolls to what they click; one already in view stays where it is.
+        control.BringIntoView();
+        Draw();
+        string name = Named(control);
+        TopLevel top = TopLevel.GetTopLevel(control) ?? throw new Xunit.Sdk.XunitException($"{name} is in no window, so a click cannot reach it");
+        Assert.True(control.IsEffectivelyVisible, $"{name} is hidden, so a click cannot reach it");
+        Assert.True(control.IsEffectivelyEnabled, $"{name} is disabled, so a click on it does nothing");
+        Point point = control.TranslatePoint(at ?? new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), top)
+            ?? throw new Xunit.Sdk.XunitException($"{name} is not laid out in its window");
+        Assert.True(new Rect(top.ClientSize).Contains(point), $"{name} is outside its window ({point} in {top.ClientSize}), so a click cannot reach it");
+        IInputElement? found = top.InputHitTest(point);
+        if (found?.GetType().Name == "LightDismissOverlayLayer")
+        {
+            // An open menu's layer takes the click to close it, then passes it on to what is under it.
+            found = top.InputHitTest(point, v => v.GetType().Name != "LightDismissOverlayLayer");
+        }
+        Assert.True(found is Visual visual && (visual == control || control.IsVisualAncestorOf(visual)),
+            $"A click on {name} lands on {(found is Control other ? Named(other) : found?.ToString() ?? "nothing")} instead, which covers it there");
+        return (top, point);
+    }
+
+    /// <summary>A person's window shown on a folder, once the folder's opening work has landed; without the C# language
+    /// server for a test that asks nothing of C# (<see cref="Passenger.App.MainWindow.StartsLanguageServer"/>), which then
+    /// waits for no server's start, load or restore.</summary>
+    public static Passenger.App.MainWindow OpenFolder(string folder, double width = 1200, double height = 800, bool languageServer = true)
+    {
+        Passenger.App.MainWindow window = new() { Width = width, Height = height, StartsLanguageServer = languageServer };
+        window.Show();
+        window.OpenFolder(folder);
+        Settle();
+        return window;
+    }
+
+    /// <summary>The caret put just after the first place some text is in an editor, failing when the text is not there.</summary>
+    public static void PlaceAfter(CodeEditor editor, string text)
+    {
+        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"'{text}' is not in the file");
+        editor.Selections = SelectionSet.Single(at + text.Length);
+    }
+
+    /// <summary>A line typed into a console (Run's, Debug's) as a person types it there, a click in it first taking the keys:
+    /// the console sends it to its program's input.</summary>
+    public static void TypeLine(Passenger.App.ToolWindows.OutputView console, string line)
+    {
+        Click(console.Editor, settle: false);
+        TopLevel top = TopLevel.GetTopLevel(console)!;
+        top.KeyTextInput(line);
+        Press(top, "ENTER");
+    }
+
+    /// <summary>Clicks the button (or toggle) showing these words among a control's descendants, failing naming the words
+    /// the buttons there show when none shows them.</summary>
+    public static void ClickButton(Visual within, string words)
+    {
+        Button[] buttons = [.. within.GetVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible)];
+        Click(buttons.FirstOrDefault(b => b.Content as string == words)
+            ?? throw new Xunit.Sdk.XunitException($"No button says {words}: [{string.Join(", ", buttons.Select(b => b.Content).OfType<string>())}]"));
+    }
+
+    /// <summary>A click on a console line's link to a file, at its first character, as a person clicks it: the pointer
+    /// rested there first, failing unless that underlines the link.</summary>
+    public static void ClickLink(Passenger.App.ToolWindows.OutputView console, string line)
+    {
+        CodeEditor editor = console.Editor;
+        Passenger.App.ToolWindows.FoundLink link = console.Links.In(line).Single(l => l.Target is Passenger.App.ToolWindows.FileLink);
+        int offset = editor.Document.Snapshot.ToString().IndexOf(line, StringComparison.Ordinal) + link.Start;
+        editor.GoTo(editor.Document.Snapshot.GetPosition(offset));
+        Settle();
+        Point within = editor.PointOf(offset) + new Vector(2, editor.LineHeight / 2);
+        TopLevel top = TopLevel.GetTopLevel(editor)!;
+        top.MouseMove(editor.TranslatePoint(within, top)!.Value);
+        Settle();
+        Assert.True(editor.HoveredLink is { Target: Passenger.App.ToolWindows.FileLink }, $"The pointer rests on the line's place but nothing is underlined:\n{line}");
+        Click(editor, within);
+    }
+
+    /// <summary>A line of the program Run started, typed into the Run window's console.</summary>
+    public static void TypeToRun(Passenger.App.MainWindow window, string line)
+    {
+        window.ShowToolWindow(Passenger.App.ToolWindowIds.Run);
+        Settle();
+        TypeLine(window.BottomPanel.Run, line);
+    }
+
+    /// <summary>A line of the debugged program's input, typed into the Debug window's console.</summary>
+    public static void TypeToDebugged(Passenger.App.MainWindow window, string line)
+    {
+        window.ShowToolWindow(Passenger.App.ToolWindowIds.Debug);
+        window.BottomPanel.Debug.ShowTab(console: true);
+        Settle();
+        TypeLine(window.BottomPanel.Debug.Console, line);
+    }
+
+    /// <summary>A control as a failure message names it: by its name, words or tip.</summary>
+    public static string Named(Control control) => control switch
+    {
+        { Name.Length: > 0 } => $"{control.GetType().Name} {control.Name}",
+        Avalonia.Controls.Primitives.HeaderedSelectingItemsControl { Header: string header } => $"{control.GetType().Name} '{header}'",
+        ContentControl { Content: string words } => $"{control.GetType().Name} '{words}'",
+        _ when ToolTip.GetTip(control) is string tip => $"{control.GetType().Name} '{tip}'",
+        _ => control.GetType().Name,
+    };
+
+    /// <summary>Opens a control's right-click menu for what it has chosen, as the menu key does, and chooses an item as
+    /// <see cref="Choose"/> does.</summary>
+    public static void ChooseFromMenu(Control owner, params string[] path)
     {
         ContextMenu menu = owner.ContextMenu ?? throw new InvalidOperationException($"{owner.GetType().Name} has no menu");
         owner.RaiseEvent(new ContextRequestedEventArgs());
         Settle();
-        MenuItem? chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item);
-        if (chosen is null || !chosen.IsEnabled)
-        {
-            throw new InvalidOperationException($"The menu has no {item} to choose: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => $"{i.Header}{(i.IsEnabled ? "" : " (disabled)")}"))}]");
-        }
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
+        Choose(menu, path);
+    }
+
+    /// <summary>Opens the shown editor's menu at its caret, as the menu key does, and chooses an item as
+    /// <see cref="Choose"/> does.</summary>
+    public static void ChooseFromEditorMenu(Passenger.App.MainWindow window, params string[] path)
+    {
+        window.EditorArea.CodeEditor.RequestContextMenu();
         Settle();
+        Choose(window.OpenContextMenu ?? throw new Xunit.Sdk.XunitException("The editor's menu did not open"), path);
+    }
+
+    /// <summary>Right-clicks a row of the Explorer and chooses an item of the menu it opens as <see cref="Choose"/> does,
+    /// failing unless the right click chose that row, so the menu is the row's own.</summary>
+    public static void ChooseFromRowMenu(Passenger.App.MainWindow window, Passenger.App.Explorer.ExplorerNode row, params string[] path)
+    {
+        RightClick(Row(window.ExplorerView, row));
+        Assert.True(window.ExplorerView.SelectedNodes.Contains(row),
+            $"A right-click on {row.Name} left [{string.Join(", ", window.ExplorerView.SelectedNodes.Select(n => n.Name))}] chosen, so its menu is another row's");
+        Choose(window.ExplorerView.OpenMenu ?? throw new Xunit.Sdk.XunitException($"A right-click on {row.Name} opened no menu"), path);
+    }
+
+    /// <summary>Clicks a row of the Explorer, as a person chooses one before pressing a key or dragging it, failing unless
+    /// that row alone is then chosen.</summary>
+    public static void ClickRow(Passenger.App.MainWindow window, Passenger.App.Explorer.ExplorerNode row)
+    {
+        Click(Row(window.ExplorerView, row));
+        Assert.True(window.ExplorerView.SelectedNodes.SequenceEqual([row]),
+            $"A click on {row.Name} left [{string.Join(", ", window.ExplorerView.SelectedNodes.Select(n => n.Name))}] chosen");
+    }
+
+    /// <summary>The centre of a control, in another's coordinates (its window's, for a drag's points).</summary>
+    public static Point Centre(Control control, Visual within) =>
+        control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), within)
+        ?? throw new Xunit.Sdk.XunitException($"{Named(control)} is not laid out in {within.GetType().Name}");
+
+    /// <summary>A row of the Explorer as it shows it, scrolled into view.</summary>
+    public static Control Row(Passenger.App.Explorer.ExplorerView explorer, Passenger.App.Explorer.ExplorerNode row)
+    {
+        ListBox rows = explorer.Rows();
+        rows.ScrollIntoView(row);
+        Settle();
+        return rows.ContainerFromItem(row) ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {row.Name}");
+    }
+
+    /// <summary>A row of a list as it shows it, scrolled into view.</summary>
+    public static Control Row(ListBox list, object row)
+    {
+        list.ScrollIntoView(row);
+        Settle();
+        return list.ContainerFromItem(row) ?? throw new Xunit.Sdk.XunitException($"The list does not show {row}");
+    }
+
+    /// <summary>Chooses an item of an open menu, through the submenus named before it ("Add", "Docker Support"), refusing
+    /// (InvalidOperationException) naming what the menu has when it lacks one or has it disabled. The item is clicked as a person's is; then the menu
+    /// is closed, should the item have left it open, and what it ran is let land.</summary>
+    public static void Choose(ContextMenu? menu, params string[] path)
+    {
+        ChooseIn(menu?.Items, path);
+        menu!.Close();
+        Settle();
+    }
+
+    /// <inheritdoc cref="Choose(ContextMenu?, string[])"/>
+    public static void Choose(MenuFlyout? menu, params string[] path)
+    {
+        ChooseIn(menu?.Items, path);
+        menu!.Hide();
+        Settle();
+    }
+
+    private static void ChooseIn(System.Collections.IEnumerable? shown, string[] path)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(path.Length);
+        if (shown is null)
+        {
+            throw new Xunit.Sdk.XunitException($"No menu is open to choose {string.Join(" > ", path)} from");
+        }
+        IEnumerable<MenuItem> items = shown.OfType<MenuItem>();
+        string where = "The menu";
+        for (int i = 0; i < path.Length; i++)
+        {
+            string step = path[i];
+            MenuItem item = items.FirstOrDefault(m => (string?)m.Header == step)
+                ?? throw new InvalidOperationException($"{where} has no {step}: [{string.Join(", ", items.Select(m => $"{m.Header}{(m.IsEnabled ? "" : " (disabled)")}"))}]");
+            if (!item.IsEffectivelyEnabled)
+            {
+                throw new InvalidOperationException($"{where} has {step} disabled: {ToolTip.GetTip(item)}");
+            }
+            if (i == path.Length - 1)
+            {
+                Click(item);
+                break;
+            }
+            if (!item.IsSubMenuOpen)
+            {
+                Click(item);
+            }
+            Assert.True(item.IsSubMenuOpen, $"A click on {step} left its submenu closed");
+            items = item.Items.OfType<MenuItem>();
+            where = step;
+        }
     }
 
     /// <summary>A submenu of the menu bar as the platform opens it: asked to bring its items up to date first.</summary>
@@ -970,15 +1233,8 @@ public static class Ui
     }
 
     /// <summary>The clipboard's text, read as a paste would read it.</summary>
-    public static string? Clipboard(TopLevel window)
-    {
-        Task<string?> text = Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!);
-        while (!text.IsCompleted)
-        {
-            Settle();
-        }
-        return text.Result;
-    }
+    public static string? Clipboard(TopLevel window) =>
+        Await(Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!), "the clipboard's text");
 
     /// <summary>Files dragged from the system's file manager onto the middle of a control and dropped there, as the
     /// platform delivers such a drag (an enter, a move, the drop).</summary>
@@ -1138,6 +1394,37 @@ public static class Ui
         }
         return raw;
     }
+}
+
+/// <summary>The project files tests write, as short as dotnet new's: each targets <see cref="Framework"/>, so moving the tests
+/// to the next .NET changes one line.</summary>
+public static class TestProjects
+{
+    /// <summary>The framework every project a test writes targets, the newest SDK's runtime that the tests' machines have.</summary>
+    public const string Framework = "net10.0";
+
+    /// <summary>A class library, with the properties given ("&lt;Nullable&gt;enable&lt;/Nullable&gt;") after its framework.</summary>
+    public static string Library(params string[] properties) => Project("Microsoft.NET.Sdk", exe: false, properties);
+
+    /// <summary>A console app, with the properties given after its framework.</summary>
+    public static string Console(params string[] properties) => Project("Microsoft.NET.Sdk", exe: true, properties);
+
+    /// <summary>An ASP.NET Core app, with the properties given after its framework.</summary>
+    public static string Web(params string[] properties) => Project("Microsoft.NET.Sdk.Web", exe: false, properties);
+
+    /// <summary>A project file with more after its properties (item groups, targets), before its end.</summary>
+    public static string With(this string project, string after) => project[..project.LastIndexOf("</Project>", StringComparison.Ordinal)] + after + "</Project>\n";
+
+    private static string Project(string sdk, bool exe, string[] properties) =>
+        $"<Project Sdk=\"{sdk}\">\n  <PropertyGroup>\n{(exe ? "    <OutputType>Exe</OutputType>\n" : "")}    <TargetFramework>{Framework}</TargetFramework>\n"
+        + string.Concat(properties.Select(p => $"    {p}\n")) + "  </PropertyGroup>\n</Project>\n";
+}
+
+public static class ExplorerRows
+{
+    /// <summary>The Explorer's list of rows.</summary>
+    public static ListBox Rows(this Passenger.App.Explorer.ExplorerView explorer) =>
+        explorer.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, explorer.Tree.Rows));
 }
 
 /// <summary>The one place a test lets time pass (Thread.Sleep and Task.Delay are banned elsewhere, BannedSymbols.txt): a wait
@@ -1310,23 +1597,32 @@ public static class Restore
 /// fixture).</summary>
 public sealed class RestoredFolders : IDisposable
 {
-    /// <summary>How many are made and restored at once.</summary>
+    /// <summary>The most made and restored at once.</summary>
     private const int Batch = 4;
 
     private readonly Queue<string> ready = new();
 
+    /// <summary>The tests that have taken a folder, by id.</summary>
+    private readonly HashSet<string> takers = new(StringComparer.Ordinal);
+
     /// <summary>A folder whose name starts with <paramref name="name"/>, written by <paramref name="write"/> (which gives what
     /// to restore in it) and restored; from a test class's constructor or its test, since those made with it for later
-    /// tests are none of this test's own (<see cref="TestFolders.Unowned"/>).</summary>
+    /// tests are none of this test's own (<see cref="TestFolders.Unowned"/>). A batch is as many as the class has tests yet
+    /// to take one (<see cref="StillToTake"/>), four at most, so a class of three tests restores three.</summary>
     public string Take(string name, Func<string, string> write)
     {
+        int left = StillToTake();
+        if (TestContext.Current.Test?.UniqueID is { } test)
+        {
+            takers.Add(test);
+        }
         if (ready.Count == 0)
         {
             List<string> made = [];
             try
             {
                 List<string> targets = [];
-                for (int i = 0; i < Batch; i++)
+                for (int i = 0; i < Math.Min(Batch, left); i++)
                 {
                     string folder = TestFolders.Unowned(name);
                     made.Add(folder);
@@ -1345,6 +1641,22 @@ public sealed class RestoredFolders : IDisposable
             made.ForEach(ready.Enqueue);
         }
         return ready.Dequeue();
+    }
+
+    /// <summary>How many of the class's tests have yet to take a folder, this one among them: its tests (a theory's inline
+    /// rows each, its other data a batch's worth) less those that took one. At least one; an overcount restores a folder
+    /// no test takes, an undercount (a test taking two) only restores again later.</summary>
+    private int StillToTake()
+    {
+        if (TestContext.Current.TestClass is not Xunit.v3.IXunitTestClass { Class: { } type })
+        {
+            return Batch;
+        }
+        int tests = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(method => method.GetCustomAttributes().Any(attribute => attribute is Xunit.v3.IFactAttribute))
+            .Sum(method => method.GetCustomAttributes().OfType<Xunit.v3.IDataAttribute>().Sum(data => data is InlineDataAttribute ? 1 : Batch) is var rows and > 0 ? rows : 1);
+        string? test = TestContext.Current.Test?.UniqueID;
+        return Math.Max(1, tests - takers.Count(taker => taker != test));
     }
 
     public void Dispose()
@@ -1749,4 +2061,54 @@ public static partial class NativeStacks
     // "    +   881 main  (in ReadsInputConsoleApp) + 184  [0x1024fa124]"
     [System.Text.RegularExpressions.GeneratedRegex(@"^[\s+!:|]*\d+\s+(.+?)\s+\(in ([^)]+)\)")]
     private static partial System.Text.RegularExpressions.Regex FrameLine();
+}
+
+/// <summary>A port of the system's choosing, kept from every other program until a program of the test's own is about to
+/// listen there: bound but not listening, so a connection to it is refused as to a port nothing holds. The program waits
+/// at a gate file before it binds, which <see cref="LetGo"/> opens just after freeing the port; <see cref="Hold"/> takes
+/// the port back for a next run once that program has ended.</summary>
+public sealed class HeldPort : IDisposable
+{
+    private System.Net.Sockets.Socket? held;
+
+    public HeldPort()
+    {
+        held = Bound(0);
+        Port = ((System.Net.IPEndPoint)held.LocalEndPoint!).Port;
+    }
+
+    public int Port { get; }
+
+    /// <summary>Frees the port and opens the gate the program that listens there waits at.</summary>
+    public void LetGo(string gate)
+    {
+        held?.Dispose();
+        held = null;
+        File.WriteAllText(gate, string.Empty);
+    }
+
+    /// <summary>Closes the gate and takes the port back, the program that listened there having ended.</summary>
+    public void Hold(string gate)
+    {
+        File.Delete(gate);
+        held ??= Bound(Port);
+    }
+
+    public void Dispose()
+    {
+        held?.Dispose();
+        held = null;
+    }
+
+    private static System.Net.Sockets.Socket Bound(int port)
+    {
+        System.Net.Sockets.Socket socket = new(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        if (port != 0 && !OperatingSystem.IsWindows())
+        {
+            // Taken back: a connection the last program there closed may linger on it (TIME_WAIT), which holds no one's port.
+            socket.SetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket, System.Net.Sockets.SocketOptionName.ReuseAddress, true);
+        }
+        socket.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
+        return socket;
+    }
 }

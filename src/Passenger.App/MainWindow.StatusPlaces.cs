@@ -37,6 +37,9 @@ public partial class MainWindow
     private StatusPlace ErrorsPlace => new("see it in IDE Internal Errors", () => ShowErrors());
 
     /// <summary>A state file set aside, chosen in the file manager.</summary>
-    private static StatusPlace SetAsidePlace(string kept) =>
-        new($"show {Path.GetFileName(kept)} in {ChildProcesses.FileManager}", () => ChildProcesses.Reveal(kept));
+    private StatusPlace SetAsidePlace(string kept) =>
+        new($"show {Path.GetFileName(kept)} in {FileManager.Name}", () => ShowInFileManager(kept));
+
+    /// <summary>Help, Show Log: the log chosen in the file manager.</summary>
+    private StatusPlace LogPlace => new($"show the log in {FileManager.Name}", ShowLog);
 }

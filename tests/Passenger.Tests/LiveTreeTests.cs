@@ -26,26 +26,17 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
 
     public LiveTreeTests(RestoredFolders folders)
     {
-        folder = PathNames.Canonical(folders.Take("livetree-", made =>
-        {
-            foreach (string file in Directory.GetFiles(Debuggees.Source("LiveTreeApp")))
-            {
-                File.Copy(file, Path.Combine(made, Path.GetFileName(file)));
-            }
-            string project = Path.Combine(made, "LiveTreeApp.csproj");
-            File.WriteAllText(project, AvaloniaApp.HeadlessProject());
-            return project;
-        }));
+        folder = PathNames.Canonical(folders.Take("livetree-", made => AvaloniaApp.Debuggee(made, "LiveTreeApp")));
     }
 
     public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
-    public void A_debugged_avalonia_app_shows_its_controls_and_where_each_value_and_style_comes_from()
+    public void A_debugged_avalonia_app_shows_its_controls_where_each_value_and_style_comes_from_and_the_control_clicked_in_it()
     {
         MainWindow window = Debugged();
         LiveTreeView tree = window.LiveTree;
-        Assert.True(window.DockHost.IsShown("liveTree"), "The Live Visual Tree did not open as the app's windows came up");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.LiveTree), "The Live Visual Tree did not open as the app's windows came up");
         Assert.Equal("MainWindow", tree.Rows[0].Element.Type);
         Assert.Contains(tree.Rows, r => r.Element is { Type: "StackPanel", Name: "Panel" });
         Assert.Contains(tree.Rows, r => r.Element is { Type: "TextBlock", Name: "Greeting" } && r.Element.Classes.Contains("title"));
@@ -82,7 +73,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
 
         // Go to source lands on the element in its XAML.
         Choose(window, "Delete");
-        Click(tree.GoToSource!);
+        Ui.Click(tree.GoToSource!);
         string xaml = Path.Combine(folder, "MainWindow.axaml");
         int deleteLine = Line("MainWindow.axaml", "x:Name=\"Delete\"") - 1;
         Assert.Equal(xaml, window.EditorArea.Active?.Path);
@@ -93,7 +84,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         tree.ShowPage(LiveTreePage.Styles);
         Ui.Settle();
         Control block = tree.StyleBlocks.First(b => b.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Button.danger"));
-        Click(block.GetLogicalDescendants().OfType<Button>().First());
+        Ui.Click(block.GetLogicalDescendants().OfType<Button>().First());
         Assert.Equal(xaml, window.EditorArea.Active?.Path);
         Assert.Equal(Line("MainWindow.axaml", "Selector=\"Button.danger\"") - 1, window.EditorArea.CodeEditor.CaretPosition.Line);
 
@@ -105,6 +96,18 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Contains(tree.Rows, r => r.Element.Name == "Delete");
         Ui.Run(window, AppActions.Resume);
         Ui.WaitFor(() => tree.BannerText is null, "the tree to be live again once the app runs");
+
+        // Select Element chooses the control clicked in the app.
+        Box saved = Choose(window, "Save").Layout.InWindow!;
+        Choose(window, "Greeting");
+        Ui.Click(tree.SelectElement);
+        Assert.True(tree.SelectElement.IsChecked, "Select Element did not stay on");
+        // Inside Save's border, short of its text: the button's own presenter, a part of its template.
+        Ui.TypeToDebugged(window, $"click {saved.X + 3},{saved.Y + 3}");
+        Ui.WaitFor(() => tree.SelectElement.IsChecked == false && tree.Details?.TemplatedParent == "Button#Save",
+            "the control clicked in the app to be chosen in the tree", TimeSpan.FromSeconds(30));
+        Assert.Equal("ContentPresenter", tree.Details!.Type);
+        Assert.Contains(tree.Details.Styles, s => s.Kind == StyleKinds.TemplatedParentTheme && s.Selector.StartsWith("Button:pointerover", StringComparison.Ordinal));
 
         Stop(window);
         Assert.Empty(tree.Rows);
@@ -138,7 +141,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal($"MainWindow.axaml:{delete + 1}", (tree.GoToSource?.Content as TextBlock)?.Text);
         Assert.Equal(danger + 1, details.Styles.Single(s => s.Selector == "Button.danger").Place?.Line);
 
-        Click(tree.GoToSource!);
+        Ui.Click(tree.GoToSource!);
         Assert.Equal(xaml, window.EditorArea.Active?.Path);
         Assert.Equal(new TextPosition(delete, button), window.EditorArea.CodeEditor.CaretPosition);
         tree.ShowPage(LiveTreePage.Styles);
@@ -149,29 +152,8 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         // The button's theme's Foreground, which the danger style overrides, names that style where the editor has it.
         Assert.Contains(tree.StyleBlocks.SelectMany(b => b.GetLogicalDescendants().OfType<TextBlock>()),
             t => t.Text == $"overridden by Button.danger (MainWindow.axaml:{danger + 1})");
-        Click(link);
+        Ui.Click(link);
         Assert.Equal(danger, window.EditorArea.CodeEditor.CaretPosition.Line);
-
-        Stop(window);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Select_element_chooses_the_control_clicked_in_the_app()
-    {
-        MainWindow window = Debugged();
-        LiveTreeView tree = window.LiveTree;
-        Box save = Choose(window, "Save").Layout.InWindow!;
-        Choose(window, "Greeting");
-
-        ClickOn(window, tree.SelectElement);
-        Assert.True(tree.SelectElement.IsChecked, "Select Element did not stay on");
-        // Inside Save's border, short of its text: the button's own presenter, a part of its template.
-        Pointer(window, $"click {save.X + 3},{save.Y + 3}");
-        Ui.WaitFor(() => tree.SelectElement.IsChecked == false && tree.Details?.TemplatedParent == "Button#Save",
-            "the control clicked in the app to be chosen in the tree", TimeSpan.FromSeconds(30));
-        Assert.Equal("ContentPresenter", tree.Details!.Type);
-        Assert.Contains(tree.Details.Styles, s => s.Kind == StyleKinds.TemplatedParentTheme && s.Selector.StartsWith("Button:pointerover", StringComparison.Ordinal));
 
         Stop(window);
         window.Close();
@@ -180,7 +162,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
     /// <summary>The folder opened in a window and its app launched by Debug, its tree shown.</summary>
     private MainWindow Debugged()
     {
-        MainWindow window = new() { Width = 1400, Height = 900 };
+        MainWindow window = new() { Width = 1400, Height = 900, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
@@ -197,35 +179,6 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         tree.Tree.SelectedItem = tree.Rows.First(r => r.Element.Name == name);
         Ui.WaitFor(() => tree.Details?.Name == name, $"{name}'s details");
         return tree.Details!;
-    }
-
-    private static void Click(Button button)
-    {
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
-    }
-
-    /// <summary>A click on a control of the window, where it is drawn.</summary>
-    private static void ClickOn(MainWindow window, Control control)
-    {
-        Point centre = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(centre, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(centre, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
-    }
-
-    /// <summary>What the person's pointer does in the app, sent as a line of its input from the Debug window's console.</summary>
-    private static void Pointer(MainWindow window, string line)
-    {
-        window.ShowToolWindow("debug");
-        window.BottomPanel.Debug.ShowTab(console: true);
-        Ui.Settle();
-        Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(inside, Avalonia.Input.MouseButton.Left);
-        window.KeyTextInput(line);
-        Ui.Press(window, "ENTER");
     }
 
     private static void Stop(MainWindow window)

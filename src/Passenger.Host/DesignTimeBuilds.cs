@@ -1,12 +1,12 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Build.Definition;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Evaluation.Context;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
+using Passenger.Core;
 
 namespace Passenger.Host;
 
@@ -33,10 +33,6 @@ internal static class DesignTimeBuilds
         ["UseAppHost"] = "false",
     };
 
-    private const ProjectLoadSettings Settings = ProjectLoadSettings.IgnoreMissingImports | ProjectLoadSettings.IgnoreEmptyImports
-        | ProjectLoadSettings.IgnoreInvalidImports | ProjectLoadSettings.RejectCircularImports
-        | ProjectLoadSettings.DoNotEvaluateElementsWithFalseCondition | ProjectLoadSettings.FailOnUnresolvedSdk;
-
     /// <summary>As Roslyn's build host writes ProjectFileInfo: camelCase, nulls left out.</summary>
     private static readonly JsonSerializerOptions Written = new()
     {
@@ -62,10 +58,6 @@ internal static class DesignTimeBuilds
     private static int holds;
     private static TaskCompletionSource unheld = Completed();
     private static TaskCompletionSource idle = Completed();
-
-    private static StringComparer PathComparer => OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
-
-    private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     /// <summary>Builds the projects asked, handing each over as it is built. Cancelled, it starts no other project and
     /// cancels the builds running, so the session ends at once for the next request's.</summary>
@@ -209,18 +201,18 @@ internal static class DesignTimeBuilds
         List<Project> loaded = [];
         try
         {
-            Project outer = Load(path, collection, context, global, null);
+            Project outer = Evaluation.Load(path, collection, context, global, null);
             loaded.Add(outer);
             // As the evaluation found them, not as the builds leave obj/.
             List<Stamp> looked = [.. Evaluation.LookedFor(path, outer)];
             string single = outer.GetPropertyValue("TargetFramework");
             string[] frameworks = outer.GetPropertyValue("TargetFrameworks").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            List<Project> each = single.Length > 0 || frameworks.Length == 0 ? [outer] : [.. frameworks.Distinct(StringComparer.OrdinalIgnoreCase).Select(f => Load(path, collection, context, global, f))];
+            List<Project> each = single.Length > 0 || frameworks.Length == 0 ? [outer] : [.. frameworks.Distinct(StringComparer.OrdinalIgnoreCase).Select(f => Evaluation.Load(path, collection, context, global, f))];
             loaded.AddRange(each.Where(p => p != outer));
             FileGlobs[] globs = [.. outer.GetAllGlobs().Select(g => new FileGlobs([.. g.IncludeGlobs.Select(Full)], [.. g.Excludes.Select(Full)], [.. g.Removes.Select(Full)]))];
             List<RoslynProjectFileInfo> infos = [];
             List<BuildDiagnostic> said = [];
-            HashSet<string> assets = new(PathComparer);
+            HashSet<string> assets = new(PathNames.Comparer);
             foreach (Project project in each)
             {
                 (ProjectInstance instance, IReadOnlyList<BuildDiagnostic> logged) = await BuildAsync(project, diagnostics, cancel).ConfigureAwait(false);
@@ -236,23 +228,8 @@ internal static class DesignTimeBuilds
                     assets.Add(asset);
                 }
             }
-            HashSet<string> outside = Evaluation.OutsideRoots(outer);
-            List<Stamp> inputs = [file, .. loaded
-                .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
-                .Distinct(PathComparer)
-                .Where(i => !outside.Any(root => i.StartsWith(root, PathComparison)))
-                .Select(Stamps.File)
-                .Concat(assets.Select(Stamps.File))
-                .Concat(looked)
-                .DistinctBy(s => s.Path, PathComparer)];
-            string own = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
-            List<Stamp> walked = [.. folders, .. infos
-                .SelectMany(i => i.Documents.Concat(i.AdditionalDocuments))
-                .Select(d => Path.GetDirectoryName(d.FilePath)!)
-                .Where(d => !d.StartsWith(own, PathComparison))
-                .Distinct(PathComparer)
-                .Where(d => !folders.Any(f => PathComparer.Equals(f.Path, d)) && Directory.Exists(d))
-                .Select(Stamps.Folder)];
+            IReadOnlyList<Stamp> inputs = Evaluation.Inputs(file, loaded, Evaluation.OutsideRoots(outer), [.. assets.Select(Stamps.File), .. looked]);
+            IReadOnlyList<Stamp> walked = Evaluation.Folders(path, folders, infos.SelectMany(i => i.Documents.Concat(i.AdditionalDocuments)).Select(d => d.FilePath));
             return new BuiltProject(path, JsonSerializer.Serialize(infos, Written), [.. inputs, .. walked], null, said);
         }
         catch (Exception error) when (error is InvalidProjectFileException or IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
@@ -266,22 +243,6 @@ internal static class DesignTimeBuilds
                 collection.UnloadProject(project);
             }
         }
-    }
-
-    private static Project Load(string path, ProjectCollection collection, EvaluationContext context, Dictionary<string, string> global, string? framework)
-    {
-        Dictionary<string, string> properties = new(global, StringComparer.OrdinalIgnoreCase);
-        if (framework is not null)
-        {
-            properties["TargetFramework"] = framework;
-        }
-        return WindowsTargeting.Load(given => Project.FromFile(path, new ProjectOptions
-        {
-            GlobalProperties = given,
-            ProjectCollection = collection,
-            EvaluationContext = context,
-            LoadSettings = Settings,
-        }), properties, collection);
     }
 
     /// <summary>Compile and CoreCompile, and XAML's markup compilation where a project has it, as Roslyn's build host runs,

@@ -156,8 +156,9 @@ public sealed class TestFramesStrip : Border
 
     private static TextBlock Muted(string text)
     {
-        TextBlock muted = new() { Text = text, FontSize = 11 };
-        muted.Bind(TextBlock.ForegroundProperty, muted.GetResourceObservable("Passenger.TextMuted"));
+        // A caption under a picture, smaller than the page's words.
+        TextBlock muted = MutedText.Of(text);
+        muted.FontSize = 11;
         return muted;
     }
 }

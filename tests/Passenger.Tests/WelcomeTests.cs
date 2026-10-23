@@ -110,7 +110,7 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         MainWindow window = Started(LaunchOptions.Empty);
         MainWindow other = Started(LaunchOptions.Empty);
         RecentRow removed = window.Welcome.Rows.Single(r => r.Name == Name(alpha));
-        Click(window, window.Welcome.RowControl(removed)!);
+        Ui.Click(window.Welcome.RowControl(removed)!, new Point(12, 12));
         Ui.Press(window, "DELETE");
         Assert.Equal([Name(beta)], window.Welcome.Rows.Select(r => r.Name));
         window.Close();
@@ -296,7 +296,7 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         Assert.True(dialog.FocusManager?.GetFocusedElement() is TextBox { Text: { } typed } && typed == dialog.Folder,
             $"Tab from the URL went to {dialog.FocusManager?.GetFocusedElement()?.GetType().Name ?? "nothing"} rather than the directory to clone into");
         Ui.Press(dialog, "Tab");
-        Assert.True(dialog.FocusManager?.GetFocusedElement() is Button { Content: "Browse..." }, "Tab from the directory did not go on to Browse...");
+        Assert.True(dialog.FocusManager?.GetFocusedElement() is Button { Content: "Browse…" }, "Tab from the directory did not go on to Browse…");
         dialog.Close();
         window.Close();
     }
@@ -382,11 +382,11 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         // A step of the build that would run for ten minutes, writing its process's id.
         string app = Path.Combine(alpha, "App");
         Directory.CreateDirectory(app);
-        File.WriteAllText(Path.Combine(app, "App.csproj"), """
+        File.WriteAllText(Path.Combine(app, "App.csproj"), $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>{TestProjects.Framework}</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
               </PropertyGroup>
               <Target Name="Linger" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
@@ -468,9 +468,7 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
     private static void InThisWindow(MainWindow window)
     {
         OpenProjectDialog asked = window.Asking ?? throw new InvalidOperationException("Opening another folder over one open did not ask where");
-        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(asked).OfType<Button>().First(b => (string?)b.Content == OpenProjectDialog.ThisWindow)
-            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(asked).OfType<Button>().First(b => (string?)b.Content == OpenProjectDialog.ThisWindow));
     }
 
     /// <summary>The class's folder named A holding A.sln (AppA), B.slnx (AppB) and, beside them, the project Tool.csproj.</summary>
@@ -484,7 +482,7 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
             : base("solutions-")
         {
             string folder = PathOf("A");
-            string project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+            string project = TestProjects.Library();
             Directory.CreateDirectory(Path.Combine(folder, "AppA"));
             Directory.CreateDirectory(Path.Combine(folder, "AppB"));
             File.WriteAllText(Path.Combine(folder, "AppA", "AppA.csproj"), project);
@@ -528,14 +526,6 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
     private static void Type(TopLevel window, string text)
     {
         window.KeyTextInput(text);
-        Ui.Settle();
-    }
-
-    private static void Click(TopLevel window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(12, 12), window) ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
         Ui.Settle();
     }
 

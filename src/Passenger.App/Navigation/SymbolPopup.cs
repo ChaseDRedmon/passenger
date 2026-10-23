@@ -41,7 +41,7 @@ public sealed class SymbolPopup : UserControl
     private readonly TextBox query;
     private readonly ListBox results;
     private readonly TextBlock empty;
-    private readonly DispatcherTimer typing;
+    private readonly Debounce typing;
     private readonly CheckBox? option;
     private CancellationTokenSource? asking;
 
@@ -59,17 +59,8 @@ public sealed class SymbolPopup : UserControl
         };
         empty = new TextBlock { Classes = { "muted" }, Margin = new Thickness(12, 0, 12, 12), IsVisible = false };
         results.DoubleTapped += (_, _) => Choose();
-        typing = new DispatcherTimer { Interval = Pause };
-        typing.Tick += (_, _) =>
-        {
-            typing.Stop();
-            _ = Refresh();
-        };
-        query.TextChanged += (_, _) =>
-        {
-            typing.Stop();
-            typing.Start();
-        };
+        typing = new Debounce(Pause, Refresh);
+        query.TextChanged += (_, _) => typing.Restart();
         query.AddHandler(KeyDownEvent, OnQueryKeyDown, RoutingStrategies.Tunnel);
         DockPanel body = new();
         DockPanel heading = new();
@@ -172,18 +163,13 @@ public sealed class SymbolPopup : UserControl
 
     private void OnQueryKeyDown(object? sender, KeyEventArgs e)
     {
+        if (ListKeys.Move(results, e))
+        {
+            e.Handled = true;
+            return;
+        }
         switch (e.Key)
         {
-            case Key.Down:
-                results.SelectedIndex = Math.Min(results.SelectedIndex + 1, results.ItemCount - 1);
-                results.ScrollIntoView(results.SelectedIndex);
-                e.Handled = true;
-                break;
-            case Key.Up:
-                results.SelectedIndex = Math.Max(results.SelectedIndex - 1, 0);
-                results.ScrollIntoView(results.SelectedIndex);
-                e.Handled = true;
-                break;
             case Key.Enter:
                 Choose();
                 e.Handled = true;

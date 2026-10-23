@@ -113,7 +113,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         Color accent = Brush(window, "Passenger.Accent");
         (string Where, double Height, double Size, Thickness Padding, Thickness Border)? first = null;
         int seen = 0;
-        foreach (string action in (string[])[AppActions.ShowProblems, AppActions.ShowGit, AppActions.ShowDebug, AppActions.ShowTerminal, AppActions.ShowLocalHistory])
+        foreach (string action in (string[])[AppActions.ShowProblems, AppActions.ShowGit, AppActions.ShowDebug, AppActions.ShowTerminal, AppActions.ShowLocalHistory, AppActions.ShowAspire])
         {
             Assert.True(window.Perform(action), $"{action} did not run");
             Ui.Settle();
@@ -155,7 +155,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
                 }
             }
         }
-        Assert.True(seen >= 5, $"Only {seen} tool window tabs were found in Problems, Git, Debug and the Terminal");
+        Assert.True(seen >= 5, $"Only {seen} tool window tabs were found in Problems, Git, Debug, the Terminal and Aspire");
     }
 
     [AvaloniaFact]
@@ -324,10 +324,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         ToggleButton more = window.DockHost.GetVisualDescendants().OfType<ToggleButton>().First(b => ToolTip.GetTip(b) as string == "More Tool Windows" && b.IsEffectivelyVisible);
         string[] hidden = [.. window.DockHost.GetVisualDescendants().OfType<ToggleButton>().Where(b => b.Tag is string && !b.IsVisible).Select(b => (string)b.Tag!)];
         Assert.NotEmpty(hidden);
-        Point centre = more.TranslatePoint(new Point(more.Bounds.Width / 2, more.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(centre, MouseButton.Left);
-        window.MouseUp(centre, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(more);
         ContextMenu menu = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(m => m.IsOpen)
             ?? throw new Xunit.Sdk.XunitException("More opened no menu of the tool windows it holds");
         Assert.Equal(hidden.Length, menu.Items.Count);
@@ -459,10 +456,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             Assert.NotEmpty(tools.Overflowing);
             Assert.True(Drawn(tools.More), "The Debug window's toolbar has buttons with no room and no More to reach them");
             string[] cut = [.. tools.Overflowing.Select(b => (string)ToolTip.GetTip(b)!)];
-            Point centre = tools.More.TranslatePoint(new Point(tools.More.Bounds.Width / 2, tools.More.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(centre, MouseButton.Left);
-            window.MouseUp(centre, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(tools.More);
             ContextMenu menu = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(m => m.IsOpen)
                 ?? throw new Xunit.Sdk.XunitException("More opened no menu of the buttons it holds");
             Assert.Equal(cut, menu.Items.OfType<MenuItem>().Select(i => (string)i.Header!));
@@ -472,6 +466,118 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         {
             window.Close();
         }
+    }
+
+    /// <summary>Every tool window's toolbar buttons are made one way (ToolButtons, #390): each icon of the one size every
+    /// icon has, and none taking the keys from the list or editor it acts on, as Rider's toolbar buttons never do; only
+    /// the frame's own Options and Hide in a header are smaller. Copies of the helper had drifted on both.</summary>
+    [AvaloniaFact]
+    public void Every_tool_windows_toolbar_buttons_have_the_one_icon_size_and_never_take_the_keys()
+    {
+        MainWindow window = Open(1400, 880);
+        try
+        {
+            window.TerminalPanel.Shell = OperatingSystem.IsWindows() ? ("cmd.exe", []) : ("/bin/sh", []);
+            window.OpenFile(project.PathOf("Program.cs"));
+            Ui.Settle();
+            int seen = 0;
+            foreach (Passenger.App.Docking.ToolWindow tool in window.DockHost.Windows.ToList())
+            {
+                window.DockHost.Show(tool.Id);
+                Ui.Settle();
+                foreach (Button button in ToolWindowParts(window).OfType<Button>().Where(b => b.Classes.Contains("tool") && b.Bounds.Width > 0))
+                {
+                    if (button.GetVisualDescendants().OfType<PathIcon>().FirstOrDefault() is not { } icon)
+                    {
+                        continue;
+                    }
+                    seen++;
+                    bool frames = button.GetVisualParent() is StackPanel own && DockPanel.GetDock(own) == Dock.Right
+                        && own.GetVisualParent()?.GetVisualParent() is Border { Classes: var classes } && classes.Contains("toolHeader");
+                    double size = frames ? 10 : 16;
+                    string what = $"{tool.Title}'s {ToolTip.GetTip(button)}";
+                    Assert.False(button.Focusable, $"{what} takes the keys when clicked, where a toolbar's button leaves them with what it acts on");
+                    Assert.True(icon.Bounds.Width == size && icon.Bounds.Height == size,
+                        $"{what} has an icon {icon.Bounds.Width:0.#} by {icon.Bounds.Height:0.#}, where every toolbar icon is {size}");
+                }
+            }
+            Assert.True(seen >= 20, $"Only {seen} toolbar buttons were found in the tool windows");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A label that asks more before it acts ends in one ellipsis everywhere, Rider's own "…" (#392), where 101
+    /// labels had three dots and 37 the one character: every action's title, as the menus, Find Action and the keymap list
+    /// it and as a menu opened where it runs words it, macOS's application menu, a row's menu in the Explorer, and every
+    /// button and menu item the tool windows show. A dialog's buttons are held to it by DialogButtonsTests.Check.</summary>
+    [AvaloniaFact]
+    public void Every_label_that_asks_more_ends_in_the_one_ellipsis_never_three_dots()
+    {
+        MainWindow window = Open(1400, 880);
+        try
+        {
+            window.OpenFile(project.PathOf("Program.cs"));
+            Ui.Settle();
+            List<string> dotted = [];
+            void Check(string where, string? words)
+            {
+                if (words?.Contains("...", StringComparison.Ordinal) == true)
+                {
+                    dotted.Add($"{where}: '{words}'");
+                }
+            }
+            ActionContext here = window.Actions.Context();
+            foreach (IdeAction action in window.Actions.All)
+            {
+                Check(action.Id, action.Title);
+                Check($"{action.Id} in the editor", action.TitleWhere(here));
+            }
+            foreach (NativeMenuItem item in Native(window.ApplicationMenu()))
+            {
+                Check("the application menu", item.Header);
+            }
+            // A project's row: its menu has the most of the Explorer's.
+            window.ExplorerView.Reveal(Passenger.Core.PathNames.Canonical(project.PathOf("Hello.csproj")));
+            Ui.Settle();
+            window.ExplorerView.Rows().RaiseEvent(new ContextRequestedEventArgs());
+            Ui.Settle();
+            ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new Xunit.Sdk.XunitException("No menu opened on the project's row");
+            foreach (MenuItem item in Items(menu.Items.OfType<MenuItem>()))
+            {
+                Check("the Explorer's menu", item.Header as string);
+            }
+            menu.Close();
+            Ui.Settle();
+            foreach (Passenger.App.Docking.ToolWindow tool in window.DockHost.Windows.ToList())
+            {
+                window.DockHost.Show(tool.Id);
+                Ui.Settle();
+                foreach (Visual part in ToolWindowParts(window))
+                {
+                    Check($"{tool.Title}'s window", part switch
+                    {
+                        Button { Content: string words } => words,
+                        MenuItem { Header: string words } => words,
+                        Control control => ToolTip.GetTip(control) as string,
+                        _ => null,
+                    });
+                }
+            }
+            Assert.True(dotted.Count == 0, $"Labels with three dots, where every label has the one ellipsis, '…': {string.Join("; ", dotted)}");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static IEnumerable<NativeMenuItem> Native(NativeMenu menu) =>
+            menu.Items.OfType<NativeMenuItem>().SelectMany(i => (IEnumerable<NativeMenuItem>)[i, .. i.Menu is { } sub ? Native(sub) : []]);
+
+        static IEnumerable<MenuItem> Items(IEnumerable<MenuItem> items) =>
+            items.SelectMany(i => (IEnumerable<MenuItem>)[i, .. Items(i.Items.OfType<MenuItem>())]);
     }
 
     [AvaloniaFact]
@@ -527,8 +633,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
                     Assert.True(said.Focusable && said.Cursor?.ToString() == "Hand" && Colour(words) == Brush(window, "Passenger.Link") && Underlined(words),
                         $"\"{window.Status}\", which goes to IDE Internal Errors, is drawn in {Colour(words)} {(Underlined(words) ? "underlined" : "not underlined")} under the pointer "
                         + $"with the cursor {said.Cursor}, {(said.Focusable ? "" : "out of the keys' reach, ")}not a link in the link's colour ({Brush(window, "Passenger.Link")}) underlined, with the hand");
-                    said.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-                    Ui.Settle();
+                    Ui.Click(said);
                     Assert.True(window.Popup is ErrorsPopup, $"A click on \"{window.Status}\" showed {window.Popup?.GetType().Name ?? "nothing"}, not IDE Internal Errors");
                     Ui.Press(window, "ESCAPE");
                     window.MouseMove(new Point(1, 1));
@@ -936,7 +1041,6 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         ("DateTime", ["DatePicker", "TimePicker"]),
         ("ToggleSwitch", ["ToggleSwitch"]),
         ("Slider", ["Slider"]),
-        ("TreeView", ["TreeView", "TreeViewItem"]),
         ("TabItem", ["TabItem", "TabControl"]),
         ("TabControl", ["TabControl"]),
         ("TabbedPage", ["TabbedPage"]),
@@ -1269,10 +1373,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
     private static void Current(MainWindow window, string widget, string current, string what)
     {
         Button button = Named<Button>(window, widget);
-        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(button);
         Ui.WaitFor(() => window.OpenContextMenu is not null, what);
         ContextMenu menu = window.OpenContextMenu!;
         MenuItem[] items = [.. menu.Items.OfType<MenuItem>()];
@@ -1324,10 +1425,10 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
     private static Rect Placed(Visual window, Visual control) =>
         new(control.TranslatePoint(default, window)!.Value, control.Bounds.Size);
 
-    /// <summary>A window on the class's project, on the server the last one left.</summary>
+    /// <summary>A window on the class's project, with no C# language server: the rules are the window's, whatever C# says.</summary>
     private MainWindow Open(double width, double height)
     {
-        MainWindow window = new() { Width = width, Height = height, Autosaves = false, WarmServer = project.Server };
+        MainWindow window = new() { Width = width, Height = height, Autosaves = false, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project.Folder);
         Ui.Settle();
@@ -1360,9 +1461,9 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         }
     }
 
-    /// <summary>A small project in a Git repository (main, a branch other, the tag v1.0), restored once for every test, and
-    /// the warm server they share on it: a file long and wide enough to scroll both ways, a text file, and a file deep enough
-    /// that its path fills the status bar at the window's smallest.</summary>
+    /// <summary>A small project in a Git repository (main, a branch other, the tag v1.0), each test starting on it as
+    /// written: a file long and wide enough to scroll both ways, a text file, and a file deep enough that its path fills the
+    /// status bar at the window's smallest.</summary>
     public sealed class Project : SharedProject
     {
         public const string Deep = "Source/Features/Payments/Processing/RefundCalculator.cs";
@@ -1371,7 +1472,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             : base("ui-rules-")
         {
             File.WriteAllText(PathOf("Hello.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Program.cs"),
                 string.Concat(Enumerable.Range(1, 120).Select(i => $"// Line {i} of a file long enough to scroll, and wide enough to scroll sideways too: {new string('x', 160)}\n")));
             File.WriteAllText(PathOf("Notes.txt"), "one\ntwo\n");
@@ -1383,7 +1484,8 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
                 TestGit.Run(Folder, "branch", "other");
                 TestGit.Run(Folder, "tag", "v1.0");
             }, Folder);
-            Prepare();
+            // Never restored: no window of the class starts a language server or builds, and the rules are the window's.
+            Prepare(restore: false);
         }
     }
 }

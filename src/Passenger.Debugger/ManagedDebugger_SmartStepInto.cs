@@ -6,6 +6,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using Passenger.Dap;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger;
@@ -544,11 +545,11 @@ public partial class ManagedDebugger
         EndStepForStop();
         if (GetSourceInfoAtFrame(thread.ActiveFrame, _justMyCode is false) is { } source)
         {
-            ReportStop(thread.Id, "step", source.FilePath, source.StartLine, source.StartColumn);
+            ReportStop(thread.Id, StopReasons.Step, source.FilePath, source.StartLine, source.StartColumn);
         }
         else
         {
-            ReportStop(thread.Id, "step");
+            ReportStop(thread.Id, StopReasons.Step);
         }
     }
 

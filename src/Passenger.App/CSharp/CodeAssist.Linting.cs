@@ -5,6 +5,7 @@ using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Core;
 
 namespace Passenger.App.CSharp;
 
@@ -25,15 +26,15 @@ public sealed partial class CodeAssist
     {
         actions.Add(new IdeAction(AppActions.ReformatWithPrettier, "Reformat with Prettier", "Code", context => _ = ReformatWithPrettier())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : context.Editor.IsReadOnly ? "The file is read-only"
-                : Web?.Invoke() is not { } web ? "No folder is open"
+                : Web?.Invoke() is not { } web ? Refusals.NoFolder
                 : web.Prettier.PackageFor(context.File.Path) is null ? $"No prettier package formats {context.File.Name}: install it in the project, or name one in {PrettierService.Place}"
                 : null,
         });
         actions.Add(new IdeAction(AppActions.FixEslintProblems, "Fix ESLint Problems", "Code", context => _ = FixEslintProblems())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : context.Editor.IsReadOnly ? "The file is read-only"
                 : LintOf(context.File) is null ? $"ESLint does not check {context.File.Name}: it needs the project's eslint package and a file Settings' Run for files covers"
                 : null,
@@ -245,7 +246,7 @@ public sealed partial class CodeAssist
             document.Text.Edit(edits, document.Selections, carried);
             document.Text.BreakUndoGroup();
         }
-        return (Prettified.Formatted, $"Prettier: formatted {lines} line{(lines == 1 ? string.Empty : "s")}");
+        return (Prettified.Formatted, $"Prettier: formatted {Plural.Of(lines, "line")}");
     }
 
     /// <summary>Prettier's text in the file's own line breaks (its endOfLine is LF unless a configuration says otherwise,

@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.Xaml.Dialects;
 using Passenger.Xaml.Metadata;
 using Passenger.Xaml.Syntax;
@@ -64,7 +65,7 @@ public sealed class XamlProjectBuilder
 
     /// <summary>Whether a file is one of the project's XAML files.</summary>
     public bool Owns(string path) =>
-        Dialect.Extensions.Contains(Path.GetExtension(path).ToLowerInvariant()) && Passenger.Xaml.Projects.Paths.IsUnder(path, Folder) && !InBuildOutput(path);
+        Dialect.Extensions.Contains(Path.GetExtension(path).ToLowerInvariant()) && PathNames.Within(path, Folder) && !InBuildOutput(path);
 
     /// <summary>Reads everything: the assemblies, every C# and XAML file (an open file's text from <paramref name="open"/>
     /// rather than disk), the assets.</summary>
@@ -294,19 +295,5 @@ public sealed class XamlProjectBuilder
         {
             return string.Empty;
         }
-    }
-}
-
-/// <summary>Path comparisons as the file system makes them.</summary>
-public static class Paths
-{
-    public static StringComparison Comparison { get; } = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
-    /// <summary>Whether a path is inside a folder (or is it).</summary>
-    public static bool IsUnder(string path, string folder)
-    {
-        string trimmed = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return path.Equals(trimmed, Comparison) || path.StartsWith(trimmed + Path.DirectorySeparatorChar, Comparison)
-            || path.StartsWith(trimmed + Path.AltDirectorySeparatorChar, Comparison);
     }
 }

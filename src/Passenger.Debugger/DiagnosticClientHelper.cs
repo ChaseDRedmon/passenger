@@ -1,12 +1,12 @@
 using System.Diagnostics;
 using Microsoft.Diagnostics.NETCore.Client;
+using Passenger.Core;
 
 namespace Passenger.Debugger;
 
 public static class DiagnosticClientHelper
 {
     /// <summary>What holds a program at its start until a diagnostics client lets it go.</summary>
-    private const string HoldVariable = "DOTNET_DefaultDiagnosticPortSuspend";
 
     /// <summary>Lets go a process held at its start by its diagnostic port, as an attach does once the debugger is registered
     /// for its runtime; one already running is let be, its runtime's answer (<paramref name="answered"/>) ending the wait
@@ -74,7 +74,7 @@ public static class DiagnosticClientHelper
     {
         try
         {
-            client.SetEnvironmentVariable(HoldVariable, string.Empty);
+            client.SetEnvironmentVariable(RuntimeVariables.DefaultDiagnosticPortSuspend, string.Empty);
         }
         catch (ServerErrorException)
         {

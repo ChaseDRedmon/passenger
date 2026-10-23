@@ -41,7 +41,7 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     }
 
     private const string Project =
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
+        $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
         + "    <ImplicitUsings>enable</ImplicitUsings>\n    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n  </PropertyGroup>\n</Project>\n";
 
     // Garbage before the neighbour, so the compacting collection moves it; the counter, watched, is held where it is. A
@@ -149,7 +149,7 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal(["Program.cs:7", watched.Location, ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
         Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Data Breakpoints");
-        Click(window, Row(breakpoints, watched.Location));
+        Ui.Click(Row(breakpoints, watched.Location));
         Assert.Same(watched, breakpoints.Chosen);
         Ui.Press(window, "Delete");
         Assert.Equal(["Program.cs:7", ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
@@ -179,10 +179,10 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
 
         Ui.Run(window, AppActions.ViewBreakpoints);
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        Click(window, Row(breakpoints, watched.Location));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, watched.Location));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
         window.KeyTextInput("value == 3");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("value == 3", watched.Condition);
 
         Ui.Run(window, AppActions.Resume);
@@ -270,18 +270,10 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     private static ListBoxItem Row(BreakpointsWindow breakpoints, string location) =>
         breakpoints.GetVisualDescendants().OfType<ListBoxItem>().First(i => (i.Tag as Breakpoint)?.Location == location);
 
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
+    /// <summary>A window on the program with its file open, with no C# language server, which debugging asks nothing of.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(program);

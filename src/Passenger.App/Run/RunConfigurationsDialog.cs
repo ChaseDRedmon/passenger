@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.App.Workspace;
+using Passenger.Roslyn.Extension;
 
 namespace Passenger.App.Run;
 
@@ -21,8 +22,16 @@ public sealed class RunConfigurationsDialog : Window
     private readonly List<Entry> mine;
     private readonly IReadOnlyList<ProjectModel> projects;
     private readonly Action<IReadOnlyList<RunConfiguration>, IReadOnlyList<RunConfiguration>, string?> apply;
+    private readonly IReadOnlyList<string> singleFileAppHosts;
     private readonly ListBox list = new() { Classes = { "tree" } };
     private readonly StackPanel variables = new() { Spacing = 4 };
+    private readonly StackPanel linkedAppHosts = new() { Spacing = 4 };
+    private readonly Control linkedRow;
+    private readonly StackPanel aspireServices = new() { Spacing = 4 };
+    private readonly Control aspireRow;
+    private readonly CancellationTokenSource aspireLifetime = new();
+    private int aspireReading;
+    private bool aspireClosed;
     private readonly TextBlock note = new() { TextWrapping = TextWrapping.Wrap, Classes = { "muted" } };
     private readonly TextBlock problem = new() { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
     private readonly Control form;
@@ -43,6 +52,7 @@ public sealed class RunConfigurationsDialog : Window
     /// <summary>Set while the fields show a configuration, so what they hold then is no edit of it, and while the list is
     /// made again under the fields, which show its chosen row already.</summary>
     private bool showing;
+    private HashSet<string> runningAppHosts = new(StringComparer.FromComparison(Core.PathNames.Comparison));
 
     public RunConfigurationsDialog(IReadOnlyList<RunConfiguration> generated, IReadOnlyList<RunConfiguration> own,
         IReadOnlyList<ProjectModel> projects, string? chosen, Action<IReadOnlyList<RunConfiguration>, IReadOnlyList<RunConfiguration>, string?> apply,
@@ -52,6 +62,8 @@ public sealed class RunConfigurationsDialog : Window
         this.generated = [.. generated.Select(c => new Entry(c with { Source = null }, c.Source ?? c with { Source = null }))];
         mine = [.. own.Select(c => new Entry(c))];
         this.projects = projects;
+        singleFileAppHosts = [.. generated.Concat(own).Where(c => c.Aspire && Path.GetExtension(c.Project).Equals(".cs", StringComparison.OrdinalIgnoreCase))
+            .Select(c => c.Project).Distinct(StringComparer.Ordinal)];
         this.apply = apply;
         Title = "Run/Debug Configurations";
         Width = 980;
@@ -60,14 +72,16 @@ public sealed class RunConfigurationsDialog : Window
         MinHeight = 440;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        AddButton = Tool("Icon.Add", "Add New Configuration");
-        CopyButton = Tool("Icon.Copy", "Copy Configuration");
-        RemoveButton = Tool("Icon.Minimize", "Remove Configuration");
+        AddButton = ToolButtons.Of("Icon.Add", "Add New Configuration");
+        CopyButton = ToolButtons.Of("Icon.Copy", "Copy Configuration");
+        RemoveButton = ToolButtons.Of("Icon.Minimize", "Remove Configuration");
         AddButton.Click += (_, _) => ChooseKind();
         CopyButton.Click += (_, _) => Copy();
         RemoveButton.Click += (_, _) => Remove();
         list.ItemTemplate = new FuncDataTemplate<Entry>((row, _) => RowView(row?.Configuration, row?.Configuration.WhyNotHere(projects),
-            row is not null && IsRunning(row.Configuration.Name), row?.IsChanged == true));
+            row is null ? 0 : Math.Max(IsRunning(row.Configuration.Name) ? 1 : 0,
+                runningAppHosts.Count(path => Core.PathNames.Same(path, row.Configuration.Project)
+                    || row.Configuration.LinkedAppHosts.Any(linked => Core.PathNames.Same(linked, path)))), row?.IsChanged == true));
         list.SelectionChanged += (_, _) =>
         {
             if (!showing)
@@ -100,7 +114,12 @@ public sealed class RunConfigurationsDialog : Window
             Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { Glyph("Icon.Add"), new TextBlock { Text = "Add variable" } } },
         };
         NameBox.TextChanged += (_, _) => Edit(c => c with { Name = NameBox.Text?.Trim() ?? string.Empty });
-        ProjectBox.SelectionChanged += (_, _) => Edit(c => ProjectBox.SelectedItem is ProjectModel project ? c with { Project = project.Path, Framework = string.Empty, LaunchProfile = string.Empty } : c, reshow: true);
+        ProjectBox.SelectionChanged += (_, _) => Edit(c => ProjectBox.SelectedItem switch
+        {
+            ProjectModel project => c with { Project = project.Path, Aspire = c.Kind == RunKind.Project && project.IsAspireHost, LinkedAppHosts = [], Framework = string.Empty, LaunchProfile = string.Empty },
+            string file when singleFileAppHosts.Contains(file) => c with { Project = file, Aspire = true, LinkedAppHosts = [], Framework = string.Empty, LaunchProfile = string.Empty },
+            _ => c,
+        }, reshow: true);
         FrameworkBox.SelectionChanged += (_, _) => Edit(c => c with { Framework = FrameworkBox.SelectedIndex <= 0 ? string.Empty : FrameworkBox.SelectedItem as string ?? string.Empty });
         ProfileBox.SelectionChanged += (_, _) => Edit(FromProfile, reshow: true);
         ProgramBox.TextChanged += (_, _) => Edit(c => c with { Program = ProgramBox.Text?.Trim() ?? string.Empty });
@@ -167,9 +186,14 @@ public sealed class RunConfigurationsDialog : Window
         // Each kind's page is the rows it takes: a project's as before, a Compose application's files and services, a
         // Dockerfile's build, an SDK container's run; the name, environment and browser every kind's. Each row names the
         // fields it shows, which a change from a generated configuration's source marks.
+        Control projectRow = Row("Project", ProjectBox);
+        linkedRow = Row("Linked Aspire apps", linkedAppHosts, top: true, fields: ["linkedAppHosts"]);
+        aspireRow = Row("Aspire resources", aspireServices, top: true, fields: ["serviceActions", "serviceProjects"]);
         pages =
         [
-            (Row("Project", ProjectBox), [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (projectRow, [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (linkedRow, [RunKind.Project]),
+            (aspireRow, [RunKind.Project]),
             (Row("Target framework", FrameworkBox, fields: ["framework"]), [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row("Launch profile", ProfileBox), [RunKind.Project]),
             (Row("Exe path", ProgramBox, fields: ["program"]), [RunKind.Project]),
@@ -221,6 +245,12 @@ public sealed class RunConfigurationsDialog : Window
         root.Children.Add(leftPane);
         root.Children.Add(editorPane);
         Content = root;
+        Closed += (_, _) =>
+        {
+            aspireClosed = true;
+            aspireLifetime.Cancel();
+            aspireLifetime.Dispose();
+        };
 
         List();
         list.SelectedItem = Entries.FirstOrDefault(e => e.Configuration.Name == chosen) ?? Entries.FirstOrDefault();
@@ -258,6 +288,95 @@ public sealed class RunConfigurationsDialog : Window
     public TextBox NameBox { get; }
 
     public ComboBox ProjectBox { get; }
+
+    /// <summary>Other AppHosts that start and stop with the chosen configuration.</summary>
+    public IReadOnlyList<CheckBox> LinkedAppHostBoxes => [.. linkedAppHosts.Children.OfType<CheckBox>()];
+
+    private Func<RunConfiguration, CancellationToken, Task<IReadOnlyList<AspireRunResource>>>? readAspireServices;
+    public Func<RunConfiguration, CancellationToken, Task<IReadOnlyList<AspireRunResource>>>? ReadAspireServices
+    {
+        get => readAspireServices;
+        init
+        {
+            readAspireServices = value;
+            ShowAspireServices();
+        }
+    }
+
+    private void ShowAspireServices()
+    {
+        int generation = ++aspireReading;
+        aspireServices.Children.Clear();
+        if (Chosen is not { Aspire: true, IsContainer: false } configuration || aspireClosed)
+        {
+            return;
+        }
+        aspireServices.Children.Add(new TextBlock { Text = "Reading AppHost resources…", Classes = { "muted" } });
+        _ = Read();
+
+        async Task Read()
+        {
+            try
+            {
+                if (ReadAspireServices is not { } read)
+                {
+                    throw new InvalidOperationException("Open the AppHost's solution to read its resources");
+                }
+                IReadOnlyList<AspireRunResource> resources = await read(configuration, aspireLifetime.Token);
+                if (aspireClosed || generation != aspireReading || Chosen?.Project != configuration.Project)
+                {
+                    return;
+                }
+                aspireServices.Children.Clear();
+                foreach (AspireRunResource resource in resources)
+                {
+                    ComboBox action = new()
+                    {
+                        Classes = { "cell" },
+                        ItemsSource = (string[])["Run", "Debug"],
+                        SelectedIndex = configuration.ServiceActions.GetValueOrDefault(resource.Name) == ServiceStart.Debug ? 1 : 0,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                    };
+                    ToolTip.SetTip(action, $"How {resource.Name} starts; Debug keeps its debugger through service restarts");
+                    action.SelectionChanged += (_, _) => Edit(current => current with
+                    {
+                        ServiceActions = new Dictionary<string, ServiceStart>(current.ServiceActions)
+                        {
+                            [resource.Name] = action.SelectedIndex == 1 ? ServiceStart.Debug : ServiceStart.Run,
+                        },
+                        ServiceProjects = new Dictionary<string, string>(current.ServiceProjects) { [resource.Name] = resource.Project },
+                    });
+                    Grid row = new() { ColumnDefinitions = new ColumnDefinitions("*,*,130"), MinHeight = ListRow.Height };
+                    row.Children.Add(new TextBlock { Text = resource.Name, VerticalAlignment = VerticalAlignment.Center });
+                    row.Children.Add(new TextBlock
+                    {
+                        Text = projects.FirstOrDefault(project => Core.PathNames.Same(project.Path, resource.Project))?.Name ?? Path.GetFileNameWithoutExtension(resource.Project),
+                        Classes = { "muted" },
+                        VerticalAlignment = VerticalAlignment.Center,
+                        [Grid.ColumnProperty] = 1,
+                    });
+                    action[Grid.ColumnProperty] = 2;
+                    row.Children.Add(action);
+                    aspireServices.Children.Add(row);
+                }
+                if (resources.Count == 0)
+                {
+                    aspireServices.Children.Add(new TextBlock { Text = "No project resources are statically declared in this AppHost", Classes = { "muted" } });
+                }
+            }
+            catch (OperationCanceledException) when (aspireClosed)
+            {
+            }
+            catch (Exception error) when (error is IOException or InvalidOperationException or Lsp.LanguageServerFailed)
+            {
+                if (!aspireClosed && generation == aspireReading)
+                {
+                    aspireServices.Children.Clear();
+                    aspireServices.Children.Add(new TextBlock { Text = error.Message, Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+                }
+            }
+        }
+    }
 
     public ComboBox FrameworkBox { get; }
 
@@ -418,6 +537,20 @@ public sealed class RunConfigurationsDialog : Window
     /// <summary>The configuration chosen in the list, as the fields show it.</summary>
     public RunConfiguration? Chosen => (list.SelectedItem as Entry)?.Configuration;
 
+    public void ShowRunningAppHosts(IEnumerable<string> paths)
+    {
+        runningAppHosts = new HashSet<string>(paths, StringComparer.FromComparison(Core.PathNames.Comparison));
+        showing = true;
+        try
+        {
+            List();
+        }
+        finally
+        {
+            showing = false;
+        }
+    }
+
     private IReadOnlyList<Entry> Entries => list.ItemsSource as IReadOnlyList<Entry> ?? [];
 
     /// <summary>Why the last Apply or OK was refused, or empty.</summary>
@@ -534,6 +667,12 @@ public sealed class RunConfigurationsDialog : Window
             {
                 return (row, configuration.Kind == RunKind.Compose ? $"{configuration.Name} has no compose file to run" : $"{configuration.Name} has no project to run");
             }
+            if (configuration.LinkedAppHosts.Count > 0 && (configuration.IsContainer || !configuration.Aspire
+                || configuration.LinkedAppHosts.Any(path => Core.PathNames.Same(path, configuration.Project)
+                    || (!projects.Any(p => p.IsAspireHost && Core.PathNames.Same(p.Path, path)) && !singleFileAppHosts.Any(p => Core.PathNames.Same(p, path))))))
+            {
+                return (row, $"{configuration.Name} links an AppHost that is not available in this solution");
+            }
         }
         return null;
     }
@@ -575,6 +714,7 @@ public sealed class RunConfigurationsDialog : Window
             Name = RunConfiguration.UniqueName("Unnamed", Rows.Select(r => r.Name)),
             Kind = kind,
             Project = kind == RunKind.Compose ? string.Empty : projects.FirstOrDefault()?.Path ?? string.Empty,
+            Aspire = kind == RunKind.Project && projects.FirstOrDefault()?.IsAspireHost == true,
             ComposeFiles = kind == RunKind.Compose ? [.. generated.Select(g => g.Configuration).FirstOrDefault(g => g.Kind == RunKind.Compose)?.ComposeFiles ?? []] : [],
             LaunchBrowser = kind != RunKind.Project,
             BrowserUrl = kind != RunKind.Project ? Containers.ContainerConfigurations.ServiceUrl : string.Empty,
@@ -681,6 +821,9 @@ public sealed class RunConfigurationsDialog : Window
             Framework = current.Framework,
             BuildBeforeLaunch = current.BuildBeforeLaunch,
             Console = current.Console,
+            LinkedAppHosts = profile.RunsInContainer ? [] : current.LinkedAppHosts,
+            ServiceActions = new Dictionary<string, ServiceStart>(current.ServiceActions),
+            ServiceProjects = new Dictionary<string, string>(current.ServiceProjects),
             Unsupported = null,
         };
     }
@@ -702,8 +845,34 @@ public sealed class RunConfigurationsDialog : Window
         {
             ProjectModel? project = Project(shown);
             NameBox.Text = shown.Name;
-            ProjectBox.ItemsSource = project is null && shown.Project.Length > 0 ? (object[])[.. projects, $"{Path.GetFileName(shown.Project)} (not loaded)"] : projects;
-            ProjectBox.SelectedIndex = project is null ? (shown.Project.Length > 0 ? projects.Count : -1) : IndexOf(project);
+            IReadOnlyList<string> files = shown.IsContainer ? [] : singleFileAppHosts;
+            bool singleFile = files.Contains(shown.Project);
+            object[] choices = [.. projects, .. files];
+            ProjectBox.ItemsSource = project is null && !singleFile && shown.Project.Length > 0
+                ? (object[])[.. choices, $"{Path.GetFileName(shown.Project)} (not loaded)"] : choices;
+            ProjectBox.SelectedIndex = project is not null ? IndexOf(project) : singleFile ? projects.Count + files.ToList().IndexOf(shown.Project)
+                : shown.Project.Length > 0 ? choices.Length : -1;
+            linkedAppHosts.Children.Clear();
+            IEnumerable<(string Path, string Name)> appHosts = projects.Where(p => p.IsAspireHost).Select(p => (p.Path, p.Name))
+                .Concat(singleFileAppHosts.Select(path => (path, Path.GetFileNameWithoutExtension(path))));
+            foreach ((string path, string name) in appHosts.Where(p => !Core.PathNames.Same(p.Path, shown.Project)))
+            {
+                CheckBox box = new()
+                {
+                    Content = name,
+                    Tag = path,
+                    IsChecked = shown.LinkedAppHosts.Any(linked => Core.PathNames.Same(linked, path)),
+                };
+                box.IsCheckedChanged += (_, _) => Edit(c => c with
+                {
+                    LinkedAppHosts = [.. LinkedAppHostBoxes.Where(b => b.IsChecked == true).Select(b => (string)b.Tag!)],
+                });
+                linkedAppHosts.Children.Add(box);
+            }
+            if (linkedAppHosts.Children.Count == 0)
+            {
+                linkedAppHosts.Children.Add(new TextBlock { Text = "No other AppHosts in this solution", Classes = { "muted" } });
+            }
             IReadOnlyList<string> frameworks = project?.TargetFrameworks ?? [];
             FrameworkBox.ItemsSource = (string[])[frameworks.Count > 0 ? $"Default ({frameworks[0]})" : "Default", .. frameworks];
             FrameworkBox.SelectedIndex = shown.Framework.Length == 0 ? 0 : Math.Max(0, frameworks.ToList().IndexOf(shown.Framework) + 1);
@@ -732,6 +901,8 @@ public sealed class RunConfigurationsDialog : Window
             {
                 row.IsVisible = kinds.Contains(shown.Kind);
             }
+            linkedRow.IsVisible = !shown.IsContainer && shown.Aspire;
+            aspireRow.IsVisible = !shown.IsContainer && shown.Aspire;
             variables.Children.Clear();
             foreach ((string name, string value) in shown.Environment)
             {
@@ -753,6 +924,7 @@ public sealed class RunConfigurationsDialog : Window
         }
         ShowChanges(list.SelectedItem as Entry);
         ShowServices();
+        ShowAspireServices();
     }
 
     /// <summary>What the fields cannot say: where a generated one comes from and how a change to it is kept, and why one
@@ -834,7 +1006,7 @@ public sealed class RunConfigurationsDialog : Window
         TextBox valueBox = Field("Value");
         nameBox.Text = name;
         valueBox.Text = value;
-        Button remove = Tool("Icon.Close", "Remove Variable");
+        Button remove = ToolButtons.Of("Icon.Close", "Remove Variable");
         Grid row = new() { ColumnDefinitions = new ColumnDefinitions("240,8,*,4,Auto") };
         Grid.SetColumn(valueBox, 2);
         Grid.SetColumn(remove, 4);
@@ -885,10 +1057,14 @@ public sealed class RunConfigurationsDialog : Window
     /// <summary>A list row: the configuration's name ("(running)" after it while a run of it is up), greyed when it cannot run
     /// here (why in its tip), marked as a changed field's row is when it is a generated one changed from its source, and for
     /// a generated one where it came from, muted beside it; where came from gives way first, then the name, each to an ellipsis.</summary>
-    private static Control RowView(RunConfiguration? row, string? whyNot, bool running, bool changed)
+    private static Control RowView(RunConfiguration? row, string? whyNot, int running, bool changed)
     {
         ShrinkingRow line = new();
-        TextBlock name = new() { Text = running ? $"{row?.Name} (running)" : row?.Name, VerticalAlignment = VerticalAlignment.Center };
+        TextBlock name = new()
+        {
+            Text = running switch { 0 => row?.Name, 1 => $"{row?.Name} (running)", _ => $"{row?.Name} ({running} apps running)" },
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         if (whyNot is not null)
         {
             name.Classes.Add("muted");
@@ -904,6 +1080,7 @@ public sealed class RunConfigurationsDialog : Window
         {
             string from = row.Kind switch
             {
+                RunKind.Project when row.Aspire => "Aspire",
                 RunKind.Compose when Containers.ContainerConfigurations.IsComposeProject(row.Project) => row.LaunchProfile.Length > 0 ? "launchSettings.json" : ".dcproj",
                 RunKind.Compose => "compose file",
                 RunKind.Dockerfile when row.LaunchProfile.Length == 0 => "Dockerfile",
@@ -946,13 +1123,6 @@ public sealed class RunConfigurationsDialog : Window
     }
 
     private static TextBox Field(string? placeholder = null) => new() { Classes = { "search" }, PlaceholderText = placeholder };
-
-    private static Button Tool(string icon, string tip)
-    {
-        Button button = new() { Classes = { "tool" }, Content = Glyph(icon) };
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
 
     private static PathIcon Glyph(string key)
     {

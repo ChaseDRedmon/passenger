@@ -70,7 +70,7 @@ public sealed class ContainerDetailsTests
         window.Show();
         window.OpenFolder(TestFolders.Create("ctr-details-window-"));
         Ui.Settle();
-        window.ShowToolWindow("containers");
+        window.ShowToolWindow(ToolWindowIds.Containers);
         Ui.Settle();
         ContainersView view = window.ContainersWindow;
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == "app"), "the app service's row");
@@ -98,10 +98,7 @@ public sealed class ContainerDetailsTests
         Button link = view.Details.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "detailsPort");
         link.BringIntoView();
         Ui.Settle();
-        Point at = link.TranslatePoint(new Point(link.Bounds.Width / 2, link.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(link);
         Assert.Contains(new Uri($"http://localhost:{port}/"), window.Browsed);
 
         Assert.True(window.Perform(AppActions.ContainerInspect), "Inspect did not run");
@@ -133,7 +130,21 @@ public sealed class ContainerDetailsTests
         string masked = Path.Combine(copies, "shop-web-1.json");
         File.WriteAllText(old, $"[{{ \"Config\": {{ \"Env\": [\"POSTGRES_PASSWORD={Secret}\", \"PGDATA=/data\"] }} }}]\n");
         File.WriteAllText(masked, $"[{{ \"Config\": {{ \"Env\": [\"DB_PASSWORD={ContainerSecrets.Masked}\", \"DATABASE_URL=postgres://app:{ContainerSecrets.Masked}@db/shop\", \"GREETING=hello\"] }} }}]\n");
-        MainWindow window = new() { Width = 1200, Height = 900, StateFolder = state };
+        string engineFolder = Directory.CreateDirectory(Path.Combine(state, "engine")).FullName;
+        string cli;
+        if (OperatingSystem.IsWindows())
+        {
+            cli = Path.Combine(engineFolder, "docker.cmd");
+            File.WriteAllText(cli, "@echo off\r\nif \"%1\"==\"version\" (echo {\"Client\":{\"Version\":\"29.0.0\",\"Context\":\"stand-in\"},\"Server\":{\"Version\":\"29.0.0\",\"Os\":\"linux\",\"Arch\":\"amd64\"}}& exit /b 0)\r\nif \"%1\"==\"context\" (echo [{\"Name\":\"stand-in\",\"Endpoints\":{\"docker\":{\"Host\":\"unix:///nowhere/docker.sock\"}}}]& exit /b 0)\r\nif \"%1\"==\"compose\" (echo {\"version\":\"2.39.0\"}& exit /b 0)\r\necho []\r\n");
+        }
+        else
+        {
+            string engine = ContainersTests.StandInEngine(engineFolder, up: true).Cli;
+            cli = Path.Combine(engineFolder, "ready-docker");
+            File.WriteAllText(cli, $"#!/bin/sh\nif [ \"$1\" = compose ]; then printf '%s\\n' '{{\"version\":\"2.39.0\"}}'; exit 0; fi\nexec \"{engine}\" \"$@\"\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        MainWindow window = new() { Width = 1200, Height = 900, StateFolder = state, Engine = new ContainerEngine(cli) };
         window.Show();
         try
         {
@@ -142,7 +153,7 @@ public sealed class ContainerDetailsTests
             Ui.Settle();
             Assert.Equal(PathNames.Canonical(old), window.EditorArea.Active?.Path);
 
-            window.ShowToolWindow("containers");
+            window.ShowToolWindow(ToolWindowIds.Containers);
             Ui.Settle();
             Assert.False(File.Exists(old), "Inspect's copy written before masking, holding a password, is still on disk");
             Assert.True(File.Exists(masked), "Inspect's copy written masked was removed with the old one");

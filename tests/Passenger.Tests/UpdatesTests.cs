@@ -65,6 +65,9 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         Assert.True(window.UpdateShown?.Link.AbsoluteUri == download,
             $"The notice's link opens {window.UpdateShown?.Link}, not this system's download from the release, {download}");
         Assert.Contains(download, ToolTip.GetTip(window.FindControl<Button>("UpdateButton")!) as string ?? string.Empty);
+        // Its click opens the download in the browser the one way the IDE opens one (#393).
+        Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
+        Assert.True(window.Browsed.LastOrDefault()?.AbsoluteUri == download, $"The notice's click opened [{string.Join(", ", window.Browsed)}], not {download} through Browse");
         Assert.True(window.Status == before, $"A check of the window's own said '{window.Status}' in the status bar's message, where it says nothing");
         Assert.Contains(Ui.IdeLog().Split('\n'), line => line.Contains($"Updates: Passenger {newer} is out (v{newer}; this is {Product.Version}): {download}", StringComparison.Ordinal));
 
@@ -394,7 +397,7 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", $"the status bar to offer Restart to Update to v{newer}");
 
         // The person chooses it: the window closes, and as the process ends the new app takes the old one's place and starts.
-        window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
         Ui.Settle();
         Assert.False(window.IsVisible, "Restart to Update did not close the window");
         window.Ended?.Wait();
@@ -440,11 +443,11 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
             // Cancel: the window stays open, and closed later it installs the update without starting it.
             string newer = Bumped(1, 0);
             MainWindow window = ReadyWithLockedChanges(newer);
-            window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Press(Unsaved(window), "Cancel");
+            Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
+            Ui.ClickButton(Unsaved(window), "Cancel");
             Assert.True(window.IsVisible, "Cancel closed the window, and the read-only file's changes with it");
             window.Close();
-            Press(Unsaved(window), "Close Without Saving");
+            Ui.ClickButton(Unsaved(window), "Close Without Saving");
             Ui.WaitFor(() => !window.IsVisible, "the window to close without the read-only file's changes");
             window.Ended?.Wait();
             window.InstallUpdate();
@@ -454,8 +457,8 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
             // Close Without Saving: Passenger quits, installs the update and starts it.
             string later = Bumped(1, 1);
             window = ReadyWithLockedChanges(later);
-            window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Press(Unsaved(window), "Close Without Saving");
+            Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
+            Ui.ClickButton(Unsaved(window), "Close Without Saving");
             Ui.WaitFor(() => !window.IsVisible, "Restart to Update to close the window once the read-only file's question was answered");
             window.Ended?.Wait();
             window.InstallUpdate();
@@ -549,8 +552,7 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         using System.Diagnostics.Process other = ChildProcesses.Start(ChildProcesses.Command(executable, ["120"]));
         try
         {
-            window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Ui.Settle();
+            Ui.Click(window.FindControl<Button>("UpdateButton")!);
             Assert.True(window.IsVisible, "Restart to Update closed the window while another Passenger runs from the same app");
             Assert.Equal($"Another Passenger is open from {copy.Bundle}: close it, then restart to update", window.Status);
 
@@ -644,15 +646,15 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         NativeMenuItem item;
         if (OperatingSystem.IsMacOS())
         {
-            Assert.DoesNotContain("Check for Updates...", helpItems);
+            Assert.DoesNotContain("Check for Updates…", helpItems);
             string[] application = [.. window.ApplicationMenu().Items.Select(i => (i as NativeMenuItem)?.Header ?? "-")];
-            Assert.Equal(["About Passenger", "Check for Updates...", "-", "Settings..."], application);
-            item = window.ApplicationMenu().Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates...");
+            Assert.Equal(["About Passenger", "Check for Updates…", "-", "Settings…"], application);
+            item = window.ApplicationMenu().Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates…");
         }
         else
         {
-            Assert.Equal(["Check for Updates...", "About"], helpItems[^2..]);
-            item = help.Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates...");
+            Assert.Equal(["Check for Updates…", "About"], helpItems[^2..]);
+            item = help.Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates…");
         }
         item.Command!.Execute(null);
         Ui.Settle();
@@ -665,13 +667,6 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
         Assert.Equal("Clear Read-Only Status", asked.Title);
         return asked;
-    }
-
-    private static void Press(Window dialog, string button)
-    {
-        Button pressed = dialog.GetVisualDescendants().OfType<Button>().First(b => (string?)b.Content == button);
-        pressed.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
     }
 
     /// <summary>The status bar's notice of a newer release, or null while it shows none.</summary>

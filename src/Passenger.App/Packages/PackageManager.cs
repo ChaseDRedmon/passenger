@@ -3,6 +3,14 @@ using Passenger.Core;
 
 namespace Passenger.App.Packages;
 
+/// <summary>What a package change came to, whoever asked for it (the NuGet window, an agent): whether dotnet did it, the
+/// files it changed (the project, the nearest Directory.Packages.props), what dotnet said, and, for one never begun, why
+/// (another change under way).</summary>
+public sealed record PackageOutcome(bool Done, IReadOnlyList<string> Changed, IReadOnlyList<string> Said)
+{
+    public string? Refused { get; init; }
+}
+
 /// <summary>Adds, updates and removes a project's packages through the .NET command line (dotnet add and remove
 /// package), as the SDK means them to be changed: it restores to check the package fits, and under central package
 /// management it writes the version into Directory.Packages.props. What the command says goes to the log.</summary>
@@ -52,6 +60,8 @@ public sealed class PackageManager
     private async Task<bool> RunAsync(IReadOnlyList<string> arguments)
     {
         UiThread.Check();
+        // A folder left stops the change under way; the next folder's changes run, retried as ever.
+        stopped = false;
         string folder = Path.GetDirectoryName(arguments[1]) ?? Environment.CurrentDirectory;
         for (int attempt = 1; ; attempt++)
         {

@@ -62,7 +62,7 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException(failed);
         }
         int left = vcs.Conflicts.Count;
-        return left == 0 ? $"{Relative(full)} resolved; no conflicts are left" : $"{Relative(full)} resolved; {left} {(left == 1 ? "file is" : "files are")} still in conflict";
+        return left == 0 ? $"{Relative(full)} resolved; no conflicts are left" : $"{Relative(full)} resolved; {Plural.Of(left, "file")} {(left == 1 ? "is" : "are")} still in conflict";
     });
 
     [McpServerTool(Name = "vcs_diff", Title = "A file's changes", ReadOnly = true), Description(
@@ -91,7 +91,7 @@ public sealed partial class PassengerTools
         IReadOnlyList<FileChange> chosen = paths is null
             ? [.. vcs.Changes.Where(c => c.Kind is not ChangeKind.Unversioned)]
             : [.. paths.Select(Resolve).Select(p => vcs.Changes.FirstOrDefault(c => c.Path == p) ?? throw new ArgumentException($"{Relative(p)} has no changes to commit"))];
-        AgentCall.Say($"Committing {chosen.Count} file{(chosen.Count == 1 ? string.Empty : "s")}{(push ? " and pushing" : string.Empty)}");
+        AgentCall.Say($"Committing {Plural.Of(chosen.Count, "file")}{(push ? " and pushing" : string.Empty)}");
         CommitResult result = await vcs.CommitAsync(chosen, message, amend, push);
         if (!result.Commit.Succeeded)
         {
@@ -209,16 +209,9 @@ public sealed partial class PassengerTools
         IPackageFeed feeds = await window.NuGet.FeedAsync(null);
         string at = version ?? (await feeds.VersionsAsync(id, prerelease: false, cancel)).FirstOrDefault()
             ?? throw new ArgumentException($"{feeds.Name} has no package {id}");
-        AgentCall.Say($"Installing {id} {at} into {chosen.Name} and restoring it");
-        PackageManager manager = new();
-        List<string> said = [];
-        manager.Line += (_, line) => said.Add(line);
-        // What dotnet add package rewrites holds the open files' edits, as the NuGet window's install does.
-        Editors.SaveAll();
-        Func<IReadOnlyList<string>> changed = Changes(PackageFiles(chosen));
-        bool done = await manager.InstallAsync(chosen.Path, id, at);
-        IReadOnlyList<string> files = Changed(changed());
-        return done ? new PackageChange(id, at, chosen.Name, files) : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
+        AgentCall.Say(null);
+        AgentCall.Follow(window.Actions.Work, ToolWindows.NuGetView.Changing);
+        return new PackageChange(id, at, chosen.Name, Changed(await window.NuGet.InstallAsync(chosen, id, at)));
     });
 
     [McpServerTool(Name = "nuget_remove", Title = "Remove a package", Destructive = true), Description(
@@ -226,44 +219,16 @@ public sealed partial class PassengerTools
     public Task<PackageChange> NuGetRemove(string project, string id, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
-        AgentCall.Say($"Removing {id} from {chosen.Name}");
-        PackageManager manager = new();
-        List<string> said = [];
-        manager.Line += (_, line) => said.Add(line);
-        Editors.SaveAll();
-        Func<IReadOnlyList<string>> changed = Changes(PackageFiles(chosen));
-        bool done = await manager.RemoveAsync(chosen.Path, id);
-        IReadOnlyList<string> files = Changed(changed());
-        return done ? new PackageChange(id, null, chosen.Name, files) : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
+        AgentCall.Follow(window.Actions.Work, ToolWindows.NuGetView.Changing);
+        return new PackageChange(id, null, chosen.Name, Changed(await window.NuGet.RemoveAsync(chosen, id)));
     });
 
-    /// <summary>The files a package change wrote, taken into the editors that show them and named as the answer names them;
-    /// the projects read again.</summary>
-    private IReadOnlyList<string> Changed(IReadOnlyList<string> written)
-    {
-        window.FollowWritten(written);
-        Session.ReadAgain();
-        return [.. written.Select(Relative)];
-    }
-
-    /// <summary>Which of some files differ, when asked, from what they hold now.</summary>
-    private static Func<IReadOnlyList<string>> Changes(IReadOnlyList<string> files)
-    {
-        byte[]?[] before = [.. files.Select(Bytes)];
-        return () => [.. files.Where((file, i) => !(Bytes(file) ?? []).AsSpan().SequenceEqual(before[i] ?? []))];
-
-        static byte[]? Bytes(string file)
-        {
-            try
-            {
-                return File.Exists(file) ? File.ReadAllBytes(file) : null;
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                return null;
-            }
-        }
-    }
+    /// <summary>The files a package change wrote, named as the answer names them (the window's change took them into the
+    /// editors and read the projects again); one refused, or that dotnet failed, is an error saying why.</summary>
+    private IReadOnlyList<string> Changed(PackageOutcome outcome) =>
+        outcome.Refused is { } why ? throw new InvalidOperationException(why)
+        : outcome.Done ? [.. outcome.Changed.Select(Relative)]
+        : throw new InvalidOperationException(string.Join('\n', outcome.Said.TakeLast(15)));
 
     // The profiler
 
@@ -274,7 +239,7 @@ public sealed partial class PassengerTools
         "longest, measure, arrange, render and compositor totals, the layout table by control type with the heaviest controls " +
         "and their XAML lines, and the longest frame's breakdown (or 0 and why). With attach, Attach Profiler instead: the " +
         "debugged program, else Run's, or with container the .NET program in it (debug_processes lists them), from now for " +
-        "seconds (else until it ends), left running.")]
+        "seconds (else until it ends), left running. With resource, that Aspire resource or compose service as it runs.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -283,9 +248,15 @@ public sealed partial class PassengerTools
         [Description("With seconds: a memory snapshot too, the heap's types by size")] bool memory = false,
         [Description("Profile the program running (debugged, else Run's) from now, rather than launch one")] bool attach = false,
         string? container = null,
+        string? resource = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        if (attach && (configuration is not null || arguments is not null))
+        ProjectSession current = Session;
+        if (resource is not null && container is not null)
+        {
+            throw new ArgumentException("Name resource or container, not both");
+        }
+        if (attach && (arguments is not null || configuration is not null && resource is null))
         {
             throw new ArgumentException("An attached profiler profiles the program already running: name no configuration or arguments");
         }
@@ -293,17 +264,25 @@ public sealed partial class PassengerTools
         {
             throw new ArgumentException("A container's program is profiled as it runs: give attach with container");
         }
-        if (!attach)
+        if (!attach && resource is null)
         {
             Choose(configuration);
         }
-        AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler);
-        Task<string?> started = !attach ? window.ProfileAsync(arguments)
-            : container is null ? window.AttachProfilerAsync()
-            : window.AttachProfilerAsync(await ProfiledIn(container));
-        if (await started.WaitAsync(cancel) is { } problem)
+        AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler, AppActions.RunProgram);
+        using (LaunchBuild built = new(Builds))
         {
-            throw new InvalidOperationException(WithBuildErrors(problem));
+            Task<string?> started = resource is not null ? ComposeService(resource) is { } service ? window.ServiceActionAsync(AppActions.ServiceProfile, service) : ProfileAspireTarget()
+                : !attach ? window.ProfileAsync(arguments)
+                : container is null ? window.AttachProfilerAsync()
+                : window.AttachProfilerAsync(await ProfiledIn(container));
+            if (await started.WaitAsync(cancel) is { } problem)
+            {
+                throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
+            }
+        }
+        if (resource is not null && (Session != current || current.IsEnded))
+        {
+            throw new InvalidOperationException("The workspace changed while starting the resource profiler");
         }
         AgentCall.Say(seconds is { } lasting ? $"Profiling for {Math.Clamp(lasting, 1, 3600)} s" : "Profiling until the program ends (10 minutes at most)");
         Passenger.Profiler.ProfilingSession running = Session.Profiling!;
@@ -313,6 +292,7 @@ public sealed partial class PassengerTools
         if (seconds is { } limit)
         {
             await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)), cancel);
+            CheckProfileTarget();
             if (memory && !running.HasExited && await window.MemorySnapshotAsync(cancel) is { } taken)
             {
                 heap = [.. taken.Types.Take(Math.Clamp(top, 1, 200)).Select(t => new HeapTypeInfo(t.Name, t.Count, t.Bytes))];
@@ -323,7 +303,9 @@ public sealed partial class PassengerTools
             await Until(() => running.HasExited, TimeSpan.FromMinutes(10), cancel);
         }
         AgentCall.Say("Reading the profile");
+        CheckProfileTarget();
         SnapshotRead read = await window.SnapshotAsync();
+        CheckProfileTarget(snapshotCompleted: true);
         Passenger.Profiler.Snapshot snapshot = read.Snapshot ?? throw new InvalidOperationException(read.Message);
         List<ProfileFrame> path = [];
         if (snapshot.Threads.FirstOrDefault() is { } busiest)
@@ -369,6 +351,21 @@ public sealed partial class PassengerTools
             return PathNames.IsUnder(file, folder)
                 ? $"{Relative(file)}:{CSharp.ServerPlaces.PositionOfCompiled(file, texts(file), new Lsp.LspPosition(at.Line - 1, 0)).Line + 1}"
                 : null;
+        }
+
+        async Task<string?> ProfileAspireTarget()
+        {
+            (Aspire.AspireSelection selection, bool launched) = await PrepareAspireResource(resource!, configuration,
+                attach ? null : global::Passenger.App.Run.RunStart.Profile, arguments, cancel);
+            return launched ? null : await window.RunAspireToolResourceAsync(selection, "profile", cancel);
+        }
+
+        void CheckProfileTarget(bool snapshotCompleted = false)
+        {
+            if (resource is not null && (Session != current || current.IsEnded || current.Profiling != (snapshotCompleted ? null : running)))
+            {
+                throw new InvalidOperationException("The workspace or resource profile changed");
+            }
         }
     });
 
@@ -492,7 +489,7 @@ public sealed partial class PassengerTools
         {
             return running;
         }
-        window.ShowToolWindow("terminal");
+        window.ShowToolWindow(ToolWindowIds.Terminal);
         TerminalSession shell = window.TerminalPanel.Active is { IsRunning: true } started ? started : await window.TerminalPanel.NewSessionAsync();
         // Its first prompt before anything is typed: output alone is not it, since ConPTY clears the screen before the shell starts.
         DateTime limit = DateTime.UtcNow.AddSeconds(20);
@@ -513,23 +510,6 @@ public sealed partial class PassengerTools
     /// <summary>The text before the cursor on its line, which at a shell waiting for a command is its prompt.</summary>
     private static string Prompt(TerminalScreen screen) =>
         screen.IsAlternate ? string.Empty : screen.Lines[screen.CursorRow].Text(0, screen.CursorColumn);
-
-    /// <summary>What a package change may write: the project file, and the Directory.Packages.props nearest above it,
-    /// where under central package management an install puts the version.</summary>
-    private static IReadOnlyList<string> PackageFiles(ProjectModel project)
-    {
-        List<string> files = [project.Path];
-        for (string? at = Path.GetDirectoryName(project.Path); at is not null; at = Path.GetDirectoryName(at))
-        {
-            string props = Path.Combine(at, "Directory.Packages.props");
-            if (File.Exists(props))
-            {
-                files.Add(props);
-                break;
-            }
-        }
-        return files;
-    }
 
     private ProjectModel Project(string project)
     {

@@ -37,10 +37,9 @@ public sealed class ContainerLogPane : DockPanel
         // The editor's own Find, over the console's text: case, whole words and regular expressions, every match marked.
         Find = new Editors.FindBar { [DockProperty] = Dock.Top };
         Find.Attach(Console.Editor);
-        Button finding = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false, VerticalAlignment = VerticalAlignment.Center, Name = "containerLogFind" };
-        ((PathIcon)finding.Content).Bind(PathIcon.DataProperty, finding.GetResourceObservable("Icon.Search"));
-        ToolTip.SetTip(finding, "Find in the log");
-        finding.Click += (_, _) => OpenFind();
+        Button finding = ToolButtons.Of("Icon.Search", "Find in the log", OpenFind);
+        finding.Name = "containerLogFind";
+        finding.VerticalAlignment = VerticalAlignment.Center;
         StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 4, [DockProperty] = Dock.Right, Children = { finding, timestamps } };
         DockPanel bar = new() { [DockProperty] = Dock.Top, Height = 32, Margin = new Thickness(8, 0) };
         bar.Children.Add(right);

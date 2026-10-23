@@ -18,37 +18,13 @@ namespace Passenger.Tests;
 
 /// <summary>Discord shows Playing Passenger as the JetBrains IDEs' Discord plugins have it: at first Passenger's own words
 /// alone, the solution and the file only as the person chooses, Passenger's icon and button and the time since the
-/// solution opened; only Passenger once the person is idle; nothing once the setting goes off, the solution closes or
-/// Passenger quits. An older Passenger's settings, never turned on, come up naming only Passenger. With no Discord one line says so, and
-/// Discord is found when it starts. A stand-in listens in each test's own place, and the run points
-/// <c>PASSENGER_DISCORD_IPC</c> where nothing listens, so no window reaches the person's Discord.</summary>
-[Collection(Alone.Name)]
-public sealed class DiscordTests : IDisposable
+/// solution opened; nothing once the setting goes off, the solution closes or Passenger quits. An older Passenger's
+/// settings, never turned on, come up naming only Passenger. With no Discord one line says so, and Discord is found when it
+/// starts. A stand-in listens in each test's own place, and the run points <c>PASSENGER_DISCORD_IPC</c> where nothing
+/// listens, so no window reaches the person's Discord. What is held to a time (a Discord that never answers, the person's
+/// idle time) is <see cref="DiscordResponsivenessTests"/>', alone.</summary>
+public sealed class DiscordTests : DiscordFolders
 {
-    private const string Show = "Show activity in Discord";
-    private const string Idle = "Only Passenger when idle for";
-
-    private readonly string folder = TestFolders.Create("dc-");
-    private readonly string settings = TestFolders.Create("dc-settings-");
-    private readonly string solution;
-    private readonly DiscordStandIn discord;
-
-    public DiscordTests()
-    {
-        // A short folder: a Unix socket's path is at most 103 bytes.
-        discord = new DiscordStandIn(folder);
-        solution = Directory.CreateDirectory(Path.Combine(folder, "Shop")).FullName;
-        File.WriteAllText(Path.Combine(solution, "One.cs"), "class One { }\n");
-        File.WriteAllText(Path.Combine(solution, "Two.cs"), "class Two { }\n");
-    }
-
-    public void Dispose()
-    {
-        discord.Dispose();
-        TestFolders.Delete(folder);
-        TestFolders.Delete(settings);
-    }
-
     [AvaloniaFact]
     public void A_fresh_Passenger_shows_only_itself_in_Discord_and_turning_it_off_clears_it()
     {
@@ -208,49 +184,6 @@ public sealed class DiscordTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_Discord_that_never_answers_never_slows_the_window()
-    {
-        discord.Start(answers: false);
-        MainWindow window = Started();
-        Ui.PumpUntil(() => discord.Connections > 0, "the window to reach the Discord that never answers", TimeSpan.FromSeconds(10));
-        Stopwatch switching = Stopwatch.StartNew();
-        for (int i = 0; i < 10; i++)
-        {
-            window.OpenFile(Path.Combine(solution, i % 2 == 0 ? "One.cs" : "Two.cs"));
-            Ui.Settle();
-        }
-        Assert.True(switching.Elapsed < TimeSpan.FromSeconds(5), $"Ten file switches took {switching.Elapsed.TotalSeconds:0.0} s with Discord not answering");
-        Ui.PumpUntil(() => discord.Connections > 1, "the window to try again after the handshake went unanswered", TimeSpan.FromSeconds(10));
-        Assert.True(Discords().Length == 1 && Discords()[0].Contains("did not answer the handshake", StringComparison.Ordinal),
-            $"A Discord that never answers was said other than once:\n{string.Join('\n', Discords())}");
-        Stopwatch closing = Stopwatch.StartNew();
-        window.Close();
-        Assert.True(closing.Elapsed < TimeSpan.FromSeconds(1), $"Closing the window waited {closing.Elapsed.TotalSeconds:0.0} s, Discord not answering");
-        Ui.WaitFor(() => discord.Ended == discord.Connections, "Passenger to let go of the Discord that never answers as it quit", TimeSpan.FromSeconds(3));
-    }
-
-    [AvaloniaFact]
-    public void After_the_idle_time_only_Passenger_shows_until_the_person_is_back()
-    {
-        discord.Start();
-        // The person chose the solution and the file before, so no dialog's time counts towards the short idle time.
-        File.WriteAllText(Path.Combine(settings, "settings.json"),
-            $"{{\n  \"version\": {AppSettings.Upgrades.Count},\n  \"discordShows\": \"SolutionAndFile\"\n}}\n");
-        MainWindow window = Started(idle: TimeSpan.FromSeconds(2));
-        window.OpenFile(Path.Combine(solution, "One.cs"));
-        // At work in the editor, however long the window took to start.
-        Ui.Press(window, "right");
-        WaitForActivity(a => (string?)a?["state"] == "Editing One.cs", "the activity naming the file");
-        JsonObject idle = WaitForActivity(a => (string?)a?["details"] == "An IDE for C# and .NET" && a["timestamps"] is null, "only Passenger once the person was idle");
-        string[] keys = [.. idle.Select(p => p.Key).Order(StringComparer.Ordinal)];
-        Assert.True(keys.SequenceEqual(["assets", "buttons", "details", "state"]) && (string?)idle["state"] == "Open source · Windows, macOS and Linux",
-            $"Idle, the activity names more than Passenger: {idle.ToJsonString()}");
-        Ui.Press(window, "right");
-        WaitForActivity(a => (string?)a?["state"] == "Editing One.cs", "the solution and the file once a key was pressed");
-        window.Close();
-    }
-
-    [AvaloniaFact]
     public void Only_the_persons_window_reaches_Discord_and_a_tests_never_the_persons_own()
     {
         discord.Start();
@@ -307,9 +240,9 @@ public sealed class DiscordTests : IDisposable
             $"The Discord page does not say what each choice shows and who sees it:\n{string.Join('\n', words.Where(w => w.Length > 40))}");
 
         // Off is the opt-out: everything under it greyed.
-        Click(dialog, on);
+        Ui.Click(on);
         Assert.False(shows.IsEnabled || idle.IsEnabled || minutes.IsEnabled, "Discord's options can be changed while its activity is off");
-        Click(dialog, on);
+        Ui.Click(on);
         Assert.True(shows.IsEnabled && idle.IsEnabled && minutes.IsEnabled, "Turning the activity on left its options greyed");
         shows.SelectedIndex = 1;
         minutes.Value = 12;
@@ -353,10 +286,88 @@ public sealed class DiscordTests : IDisposable
             TestFolders.Delete(chosen);
         }
     }
+}
+
+/// <summary>Discord held to a time: a Discord that never answers never slows the window or its close, and the person idle
+/// for the idle time shows only Passenger until they are back. Held to times, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class DiscordResponsivenessTests : DiscordFolders
+{
+    [AvaloniaFact]
+    public void A_Discord_that_never_answers_never_slows_the_window()
+    {
+        discord.Start(answers: false);
+        MainWindow window = Started();
+        Ui.PumpUntil(() => discord.Connections > 0, "the window to reach the Discord that never answers", TimeSpan.FromSeconds(10));
+        Stopwatch switching = Stopwatch.StartNew();
+        for (int i = 0; i < 10; i++)
+        {
+            window.OpenFile(Path.Combine(solution, i % 2 == 0 ? "One.cs" : "Two.cs"));
+            Ui.Settle();
+        }
+        Assert.True(switching.Elapsed < TimeSpan.FromSeconds(5), $"Ten file switches took {switching.Elapsed.TotalSeconds:0.0} s with Discord not answering");
+        Ui.PumpUntil(() => discord.Connections > 1, "the window to try again after the handshake went unanswered", TimeSpan.FromSeconds(10));
+        Assert.True(Discords().Length == 1 && Discords()[0].Contains("did not answer the handshake", StringComparison.Ordinal),
+            $"A Discord that never answers was said other than once:\n{string.Join('\n', Discords())}");
+        Stopwatch closing = Stopwatch.StartNew();
+        window.Close();
+        Assert.True(closing.Elapsed < TimeSpan.FromSeconds(1), $"Closing the window waited {closing.Elapsed.TotalSeconds:0.0} s, Discord not answering");
+        Ui.WaitFor(() => discord.Ended == discord.Connections, "Passenger to let go of the Discord that never answers as it quit", TimeSpan.FromSeconds(3));
+    }
+
+    [AvaloniaFact]
+    public void After_the_idle_time_only_Passenger_shows_until_the_person_is_back()
+    {
+        discord.Start();
+        // The person chose the solution and the file before, so no dialog's time counts towards the short idle time.
+        File.WriteAllText(Path.Combine(settings, "settings.json"),
+            $"{{\n  \"version\": {AppSettings.Upgrades.Count},\n  \"discordShows\": \"SolutionAndFile\"\n}}\n");
+        MainWindow window = Started(idle: TimeSpan.FromSeconds(2));
+        window.OpenFile(Path.Combine(solution, "One.cs"));
+        // At work in the editor, however long the window took to start.
+        Ui.Press(window, "right");
+        WaitForActivity(a => (string?)a?["state"] == "Editing One.cs", "the activity naming the file");
+        JsonObject idle = WaitForActivity(a => (string?)a?["details"] == "An IDE for C# and .NET" && a["timestamps"] is null, "only Passenger once the person was idle");
+        string[] keys = [.. idle.Select(p => p.Key).Order(StringComparer.Ordinal)];
+        Assert.True(keys.SequenceEqual(["assets", "buttons", "details", "state"]) && (string?)idle["state"] == "Open source · Windows, macOS and Linux",
+            $"Idle, the activity names more than Passenger: {idle.ToJsonString()}");
+        Ui.Press(window, "right");
+        WaitForActivity(a => (string?)a?["state"] == "Editing One.cs", "the solution and the file once a key was pressed");
+        window.Close();
+    }
+}
+
+/// <summary>A Discord stand-in listening in each test's own place, the test's state and solution folders, and the helpers
+/// that start the person's window there and read what Discord was sent.</summary>
+public abstract class DiscordFolders : IDisposable
+{
+    protected const string Show = "Show activity in Discord";
+    protected const string Idle = "Only Passenger when idle for";
+
+    protected readonly string folder = TestFolders.Create("dc-");
+    protected readonly string settings = TestFolders.Create("dc-settings-");
+    protected readonly string solution;
+    protected readonly DiscordStandIn discord;
+
+    protected DiscordFolders()
+    {
+        // A short folder: a Unix socket's path is at most 103 bytes.
+        discord = new DiscordStandIn(folder);
+        solution = Directory.CreateDirectory(Path.Combine(folder, "Shop")).FullName;
+        File.WriteAllText(Path.Combine(solution, "One.cs"), "class One { }\n");
+        File.WriteAllText(Path.Combine(solution, "Two.cs"), "class Two { }\n");
+    }
+
+    public void Dispose()
+    {
+        discord.Dispose();
+        TestFolders.Delete(folder);
+        TestFolders.Delete(settings);
+    }
 
     /// <summary>The person's window as the app makes it, its settings kept in the test's state folder (or another), looking
     /// for Discord at the stand-in's place, with the solution open.</summary>
-    private MainWindow Started(TimeSpan? idle = null, string? state = null)
+    protected MainWindow Started(TimeSpan? idle = null, string? state = null)
     {
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = state ?? settings, DiscordIpc = discord.Ipc, DiscordIdleAfter = idle };
         window.Show();
@@ -368,7 +379,7 @@ public sealed class DiscordTests : IDisposable
     }
 
     /// <summary>Turns Show activity in Discord on or off as a person does, in Settings.</summary>
-    private static void SetShown(MainWindow window, bool on)
+    protected static void SetShown(MainWindow window, bool on)
     {
         SettingsDialog dialog = window.ShowSettings();
         Ui.Settle();
@@ -377,14 +388,14 @@ public sealed class DiscordTests : IDisposable
         CheckBox box = Editor<CheckBox>(dialog, Show);
         if (box.IsChecked != on)
         {
-            Click(dialog, box);
+            Ui.Click(box);
         }
         dialog.Ok();
         Ui.Settle();
     }
 
     /// <summary>Chooses what the activity shows, in Settings.</summary>
-    private static void Choose(MainWindow window, string shown)
+    protected static void Choose(MainWindow window, string shown)
     {
         SettingsDialog dialog = window.ShowSettings();
         Ui.Settle();
@@ -397,11 +408,11 @@ public sealed class DiscordTests : IDisposable
     }
 
     /// <summary>The activity each SET_ACTIVITY gave, in order, null for a clear.</summary>
-    private IReadOnlyList<JsonObject?> Activities() =>
+    protected IReadOnlyList<JsonObject?> Activities() =>
         [.. discord.Frames.Where(f => f.Op == 1 && (string?)f.Json["cmd"] == "SET_ACTIVITY").Select(f => f.Json["args"]?["activity"] as JsonObject)];
 
     /// <summary>Waits for the newest activity on a connection to be as wanted, and gives it.</summary>
-    private JsonObject WaitForActivity(Func<JsonObject?, bool> wanted, string what, int connection = 1)
+    protected JsonObject WaitForActivity(Func<JsonObject?, bool> wanted, string what, int connection = 1)
     {
         JsonObject? newest = null;
         Ui.WaitFor(() =>
@@ -414,35 +425,23 @@ public sealed class DiscordTests : IDisposable
     }
 
     /// <summary>The log's lines about this test's Discord.</summary>
-    private string[] Discords() =>
+    protected string[] Discords() =>
         [.. Ui.IdeLog().Split('\n').Where(l => l.Contains("Discord: ", StringComparison.Ordinal) && l.Contains(discord.Base, StringComparison.Ordinal))];
 
     /// <summary>Lets the window run a while, its timers and Passenger's looks for Discord with it.</summary>
-    private static void Wait(TimeSpan time)
-    {
-        Stopwatch waiting = Stopwatch.StartNew();
-        Ui.PumpUntil(() => waiting.Elapsed > time, $"{time.TotalSeconds} s to pass");
-    }
+    protected static void Wait(TimeSpan time) => Ui.Hold(time, "the window running a while, its timers and Passenger's looks for Discord with it");
 
     /// <summary>What edits an option, beside its label in the page shown.</summary>
-    private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
+    protected static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
         ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
 
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>A frame Discord was sent, on the connection numbered from 1.</summary>
-    private sealed record Frame(int Connection, int Op, JsonObject Json);
+    protected sealed record Frame(int Connection, int Op, JsonObject Json);
 
     /// <summary>The Discord app as Passenger finds it, in a test's own place: a Unix socket at <c>discord-ipc-0</c> in the
     /// test's folder, or a pipe of the test's own name on Windows. It answers the handshake with READY and a command with
     /// its answer, as Discord does (or, told not to, never answers), and keeps every frame it is sent.</summary>
-    private sealed class DiscordStandIn(string folder) : IDisposable
+    protected sealed class DiscordStandIn(string folder) : IDisposable
     {
         private readonly List<Frame> frames = [];
         private readonly List<Stream> clients = [];

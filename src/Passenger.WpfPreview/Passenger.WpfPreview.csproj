@@ -18,4 +18,9 @@
     <UseAppHost>false</UseAppHost>
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The runtime's and WPF's variables as Passenger names them. -->
+    <Compile Include="../Passenger.Core/RuntimeVariables.cs" Link="RuntimeVariables.cs" />
+  </ItemGroup>
 </Project>

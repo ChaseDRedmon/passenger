@@ -52,7 +52,9 @@ public sealed class FindInFilesTests : IDisposable
         // A regex that does not read says why, and finds nothing.
         Search(popup, "count(");
         Assert.Empty(popup.Matches);
-        Assert.NotEqual("Nothing found", popup.Status);
+        string? why = FileSearch.Problem(popup.Query);
+        Assert.True(why is { Length: > 0 }, "A regex that does not read is not said to be wrong");
+        Assert.Equal(why, popup.Status);
         window.Close();
     }
 
@@ -376,12 +378,5 @@ public sealed class FindInFilesTests : IDisposable
         Ui.WaitFor(() => searching.IsCompleted, $"the search for {text}");
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(folder);
 }

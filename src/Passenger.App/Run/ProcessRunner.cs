@@ -19,6 +19,9 @@ public sealed class ProcessRunner : IDisposable
     private readonly bool takesInput;
     private Process? process;
     private bool running;
+    private Task draining = Task.CompletedTask;
+    private Task reading = Task.CompletedTask;
+    private Task? deferredStop;
 
     /// <summary>The wait of a run whose process has yet to start, which Stop ends.</summary>
     private CancellationTokenSource? waiting;
@@ -47,6 +50,9 @@ public sealed class ProcessRunner : IDisposable
 
     /// <summary>The process ended, with its exit code; UI thread.</summary>
     public event EventHandler<int>? Exited;
+
+    /// <summary>Program output before console formatting, delivered on the UI thread.</summary>
+    public event EventHandler<ProcessOutput>? OutputReceived;
 
     public TextDocument Output => console.Document;
 
@@ -97,9 +103,10 @@ public sealed class ProcessRunner : IDisposable
     public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null) =>
         Start(ChildProcesses.Command(file, arguments, folder), environment);
 
-    private string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment, Func<CancellationToken, Task>? after = null)
+    public string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment = null, Func<CancellationToken, Task>? after = null)
     {
         UiThread.Check();
+        ObjectDisposedException.ThrowIf(deferredStop is not null, this);
         if (IsRunning)
         {
             throw new InvalidOperationException("The process is still running.");
@@ -185,8 +192,8 @@ public sealed class ProcessRunner : IDisposable
             landing.Ended();
         }
         CancellationTokenSource letGo = new();
-        Task outputs = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output, letGo.Token), Pump(started.StandardError, sink, ConsoleStream.Error, letGo.Token));
-        _ = LandAsync(started, outputs, letGo, input, ending, landing);
+        Task outputs = reading = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output, letGo.Token), Pump(started.StandardError, sink, ConsoleStream.Error, letGo.Token));
+        draining = LandAsync(started, outputs, letGo, input, ending, landing);
         return null;
     }
 
@@ -204,10 +211,21 @@ public sealed class ProcessRunner : IDisposable
             letGo.Cancel();
         }
         int code = started.ExitCode;
+        if (!ReferenceEquals(Volatile.Read(ref process), started))
+        {
+            ending.TrySetResult(code);
+            landing.Landed();
+            return;
+        }
         UiThread.Post(() =>
         {
             try
             {
+                if (!ReferenceEquals(process, started))
+                {
+                    ending.TrySetResult(code);
+                    return;
+                }
                 // Typing goes on to whatever has had the console since.
                 if (console.Input == input)
                 {
@@ -282,23 +300,85 @@ public sealed class ProcessRunner : IDisposable
         }
     }
 
+    /// <summary>Transfers this closing runner's process to background cleanup after its owner's prerequisite finishes.
+    /// The runner cannot start again. Completion includes output drainage, without waiting for UI landing.</summary>
+    public Task DeferStopAfter(Task prerequisite)
+    {
+        UiThread.Check();
+        if (deferredStop is not null)
+        {
+            return deferredStop;
+        }
+        if (waiting is not null)
+        {
+            Stop();
+            return deferredStop = Task.CompletedTask;
+        }
+        if (!running || process is not { } owned)
+        {
+            return Task.CompletedTask;
+        }
+        WasStopped = true;
+        running = false;
+        process = null;
+        console.Input = null;
+        Task drained = draining;
+        Task readers = reading;
+        TaskCompletionSource<int> finished = ended;
+        return deferredStop = Task.Run(async () =>
+        {
+            try
+            {
+                await prerequisite.ConfigureAwait(false);
+            }
+            finally
+            {
+                ChildProcesses.Kill(owned);
+                try
+                {
+                    await drained.ConfigureAwait(false);
+                    finished.TrySetResult(owned.ExitCode);
+                }
+                finally
+                {
+                    try
+                    {
+                        owned.StandardOutput.Dispose();
+                        owned.StandardError.Dispose();
+                        if (takesInput)
+                        {
+                            owned.StandardInput.Dispose();
+                        }
+                    }
+                    finally
+                    {
+                        owned.Dispose();
+                        try
+                        {
+                            await readers.ConfigureAwait(false);
+                        }
+                        catch (Exception error) when (error is OperationCanceledException or ObjectDisposedException)
+                        {
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     /// <summary>Reads a stream into the sink as it comes, a read at a time, and ends the stream's state at its end; once let
     /// go of (its program ended, and what holds the stream is out of the kill's reach), what still comes is nobody's,
     /// since the console may be another program's by then.</summary>
-    private static async Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream, CancellationToken letGo)
-    {
-        char[] buffer = new char[8192];
-        int read;
-        while ((read = await reader.ReadAsync(buffer, letGo)) > 0)
+    private Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream, CancellationToken letGo)
+        => sink.PumpAsync(reader, stream, letGo, chunks: text =>
         {
-            if (letGo.IsCancellationRequested)
+            if (OutputReceived is null)
             {
                 return;
             }
-            sink.Write(buffer.AsSpan(0, read), stream);
-        }
-        sink.End(stream);
-    }
+            ProcessOutput output = new(text, stream == ConsoleStream.Error);
+            UiThread.Post(() => OutputReceived?.Invoke(this, output));
+        });
 
     private void Lines(string text)
     {
@@ -317,3 +397,5 @@ public sealed class ProcessRunner : IDisposable
         partialLine.Append(lines, end + 1, lines.Length - end - 1);
     }
 }
+
+public sealed record ProcessOutput(string Text, bool IsError);

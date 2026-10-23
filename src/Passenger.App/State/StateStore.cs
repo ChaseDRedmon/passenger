@@ -20,6 +20,9 @@ namespace Passenger.App.State;
 /// document is held once and what one window keeps another reads at once; a headless IDE starts on the defaults.</summary>
 public sealed class StateStore
 {
+    /// <summary>The settings' file at the store's top, which the --mcp-attach proxy reads too.</summary>
+    public const string SettingsFile = "settings.json";
+
     /// <summary>The stores open in this process by their folder: the person's windows share theirs, and a test's windows
     /// the one it names. UI thread only.</summary>
     private static readonly Dictionary<string, StateStore> Shared = new(StringComparer.Ordinal);
@@ -32,7 +35,7 @@ public sealed class StateStore
     {
         Root = root;
         this.key = key;
-        Settings = SettingsStore.Kept(new StateDocument<AppSettings>(Path.Combine(root, "settings.json")));
+        Settings = SettingsStore.Kept(new StateDocument<AppSettings>(Path.Combine(root, SettingsFile)));
         Layout = new(Path.Combine(root, "layout.json"));
         Recent = new(Path.Combine(root, "recentSolutions.json"));
         Updates = new(Path.Combine(root, "updates.json"));
@@ -134,9 +137,10 @@ public sealed class StateStore
 }
 
 /// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
-/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, whether agents
-/// are let in unasked, what its .http requests may take from the person's computer, the publish profile each project last
-/// published with, and its projects as MSBuild last evaluated and built them at design time.</summary>
+/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, what its
+/// .http requests may take from the person's computer, the publish profile each project last published with, and its
+/// projects as MSBuild last evaluated and built them at design time. The folders agents are let in on unasked are the
+/// settings' (<see cref="AppSettings.AgentFolders"/>), which every window shares.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)

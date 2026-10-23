@@ -142,7 +142,7 @@ public sealed class TestsView : DockPanel
         };
         search.TextChanged += (_, _) => model.SearchFor(search.Text ?? string.Empty);
         search.KeyDown += OnSearchKey;
-        groupBy = Tool("Icon.GroupBy", "Group By", ShowGroupBy);
+        groupBy = ToolButtons.Of("Icon.GroupBy", "Group By", ShowGroupBy);
         all = Filter("Icon.TestAll", "Passenger.Icon", "All Tests", out allCount);
         all.Click += (_, _) =>
         {
@@ -158,8 +158,8 @@ public sealed class TestsView : DockPanel
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                Tool("Icon.ExpandAll", "Expand All", model.ExpandAll),
-                Tool("Icon.CollapseAll", "Collapse All", model.CollapseAll),
+                ToolButtons.Of("Icon.ExpandAll", "Expand All", model.ExpandAll),
+                ToolButtons.Of("Icon.CollapseAll", "Collapse All", model.CollapseAll),
                 groupBy,
                 Divider(),
                 all,
@@ -344,18 +344,9 @@ public sealed class TestsView : DockPanel
     /// <summary>A toolbar button that runs one of the window's actions.</summary>
     private Button ActionTool(string action, string icon, string tip)
     {
-        Button button = Tool(icon, tip, () => ActionRequested?.Invoke(this, action));
+        Button button = ToolButtons.Of(icon, tip, () => ActionRequested?.Invoke(this, action));
         ActionTips.Set(button, action, tip);
         ActionButtons.Mark(button, action);
-        return button;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
         return button;
     }
 

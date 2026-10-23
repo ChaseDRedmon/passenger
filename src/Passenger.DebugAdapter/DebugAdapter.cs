@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Debugger;
 using Passenger.Debugger.Models;
@@ -11,7 +12,7 @@ namespace Passenger.DebugAdapter;
 /// an event; a read of the stop (<see cref="Read{T}(Func{T})"/>) waits behind every other request, and the read under way
 /// gives way as one that leaves the stop comes (<see cref="Leave"/>). Each engine event goes out as the protocol's.
 /// Lines and columns are the client's choice of base, the engine's own counting from one.</summary>
-public sealed class DebugAdapter
+public sealed partial class DebugAdapter
 {
     private readonly ManagedDebugger debugger;
     private readonly DapConnection connection;
@@ -88,14 +89,14 @@ public sealed class DebugAdapter
 
     private void Register()
     {
-        connection.Handle<InitializeArguments, DapCapabilities>("initialize", Initialize, then: () => connection.SendEvent("initialized"));
-        connection.Handle<LaunchArguments>("launch", Launch);
-        connection.Handle<AttachArguments>("attach", Attach);
-        connection.Handle<DapEmpty>("configurationDone", ConfigurationDone, then: LetEventsGo, evenIfFailed: true);
-        connection.Handle<SetBreakpointsArguments, SetBreakpointsResponse>("setBreakpoints", SetBreakpoints);
-        connection.Handle<SetFunctionBreakpointsArguments, SetBreakpointsResponse>("setFunctionBreakpoints", SetFunctionBreakpoints);
-        connection.Handle<SetExceptionBreakpointsArguments, SetExceptionBreakpointsResponse>("setExceptionBreakpoints", SetExceptionBreakpoints);
-        connection.Handle<DataBreakpointInfoArguments, DataBreakpointInfoResponse>("dataBreakpointInfo", async arguments =>
+        connection.Handle<InitializeArguments, DapCapabilities>(DapCommands.Initialize, Initialize, then: () => connection.SendEvent(DapEvents.Initialized));
+        connection.Handle<LaunchArguments>(DapCommands.Launch, Launch);
+        connection.Handle<AttachArguments>(DapCommands.Attach, Attach);
+        connection.Handle<DapEmpty>(DapCommands.ConfigurationDone, ConfigurationDone, then: LetEventsGo, evenIfFailed: true);
+        connection.Handle<SetBreakpointsArguments, SetBreakpointsResponse>(DapCommands.SetBreakpoints, SetBreakpoints);
+        connection.Handle<SetFunctionBreakpointsArguments, SetBreakpointsResponse>(DapCommands.SetFunctionBreakpoints, SetFunctionBreakpoints);
+        connection.Handle<SetExceptionBreakpointsArguments, SetExceptionBreakpointsResponse>(DapCommands.SetExceptionBreakpoints, SetExceptionBreakpoints);
+        connection.Handle<DataBreakpointInfoArguments, DataBreakpointInfoResponse>(DapCommands.DataBreakpointInfo, async arguments =>
         {
             DataBreakpointAnswer answer = await Read(() => debugger.DataBreakpointInfo(arguments.VariablesReference, arguments.Name));
             return new DataBreakpointInfoResponse
@@ -106,20 +107,20 @@ public sealed class DebugAdapter
                 CanPersist = false,
             };
         });
-        connection.Handle<SetDataBreakpointsArguments, SetDataBreakpointsResponse>("setDataBreakpoints", SetDataBreakpoints);
-        connection.Handle<DapEmpty, ThreadsResponse>("threads", async _ =>
+        connection.Handle<SetDataBreakpointsArguments, SetDataBreakpointsResponse>(DapCommands.SetDataBreakpoints, SetDataBreakpoints);
+        connection.Handle<DapEmpty, ThreadsResponse>(DapCommands.Threads, async _ =>
         {
-            List<(int id, string name)> threads = await Read(() => debugger.GetThreads());
-            return new ThreadsResponse([.. threads.Select(t => new DapThread(t.id, t.name))]);
+            List<(int id, string name, bool main)> threads = await Read(() => debugger.GetThreads());
+            return new ThreadsResponse([.. threads.Select(t => new DapThread(t.id, t.name) { IsMain = t.main ? true : null })]);
         });
-        connection.Handle<StackTraceArguments, StackTraceResponse>("stackTrace", async arguments =>
+        connection.Handle<StackTraceArguments, StackTraceResponse>(DapCommands.StackTrace, async arguments =>
         {
             List<StackFrameInfo> frames = await Read(() => debugger.GetStackTrace(arguments.ThreadId, arguments.StartFrame ?? 0, arguments.Levels));
             return new StackTraceResponse([.. frames.Select(ToProtocol)]);
         });
         // The frame's assembly is decompiled between two holds of the engine's lock, never under one (CoreLib's takes many
         // seconds), so a request meanwhile, a disconnect among them, is answered; the second fails if the program ran on.
-        connection.Handle<ResolveStackFrameArguments, ResolveStackFrameResponse>("resolveStackFrame", async arguments =>
+        connection.Handle<ResolveStackFrameArguments, ResolveStackFrameResponse>(DapCommands.ResolveStackFrame, async arguments =>
         {
             if (await Read(() => debugger.SymbolsWantedAt(arguments.StackFrameId)) is { } wanted)
             {
@@ -127,12 +128,12 @@ public sealed class DebugAdapter
             }
             return new ResolveStackFrameResponse(ToProtocol(await Read(() => debugger.ResolveStackFrame(arguments.StackFrameId))));
         });
-        connection.Handle<ScopesArguments, ScopesResponse>("scopes", async arguments =>
+        connection.Handle<ScopesArguments, ScopesResponse>(DapCommands.Scopes, async arguments =>
         {
             List<ScopeInfo> scopes = await Read(() => debugger.GetScopes(arguments.FrameId));
             return new ScopesResponse([.. scopes.Select(s => new DapScope(s.Name, s.VariablesReference, s.Expensive))]);
         });
-        connection.Handle<VariablesArguments, VariablesResponse>("variables", async arguments =>
+        connection.Handle<VariablesArguments, VariablesResponse>(DapCommands.Variables, async arguments =>
         {
             List<VariableInfo> variables = await Read(() => debugger.GetVariables(arguments.VariablesReference));
             return new VariablesResponse([.. variables.Select(v => new DapVariable
@@ -145,7 +146,7 @@ public sealed class DebugAdapter
                 VariablesReference = v.VariablesReference,
             })]);
         });
-        connection.Handle<EvaluateArguments, EvaluateResponse>("evaluate", async arguments =>
+        connection.Handle<EvaluateArguments, EvaluateResponse>(DapCommands.Evaluate, async arguments =>
         {
             // A hover, or a value the client shows of itself, is evaluated as the Variables view's getters are.
             VariableInfo value = await Read(() => debugger.Evaluate(arguments.Expression, arguments.FrameId, implicitly: arguments.Context is "hover" or "variables"));
@@ -159,7 +160,7 @@ public sealed class DebugAdapter
         });
         // Set Next Statement: a target per line asked of, in the method the last stopped thread is in; its id is the
         // IL offset, which goto hands back.
-        connection.Handle<GotoTargetsArguments, GotoTargetsResponse>("gotoTargets", async arguments =>
+        connection.Handle<GotoTargetsArguments, GotoTargetsResponse>(DapCommands.GotoTargets, async arguments =>
         {
             if (stoppedThread is not int thread || arguments.Source.Path is not { } path)
             {
@@ -170,7 +171,7 @@ public sealed class DebugAdapter
                 ? new GotoTargetsResponse { Targets = [new GotoTarget(found.ILOffset, $"Line {found.Line}", LineOut(found.Line), ColumnOut(found.Column))] }
                 : new GotoTargetsResponse();
         });
-        connection.Handle<GotoArguments, object>("goto", async arguments =>
+        connection.Handle<GotoArguments, object>(DapCommands.Goto, async arguments =>
         {
             await Locked(() =>
             {
@@ -179,11 +180,19 @@ public sealed class DebugAdapter
             });
             return new object();
         });
-        connection.Handle<SetExpressionArguments, SetExpressionResponse>("setExpression", async arguments =>
+        connection.Handle<SetExpressionArguments, SetExpressionResponse>(DapCommands.SetExpression, async arguments =>
         {
             // The expression compiler compiles an assignment as it does any expression, and the interpreter writes it
             // through to the frame, the object or the array; the value is then read back as it now is.
-            VariableInfo assigned = await Locked(() => debugger.Evaluate($"{arguments.Expression} = {arguments.Value}", arguments.FrameId));
+            string value = arguments.Value;
+            if (RealLiteral().IsMatch(value))
+            {
+                // A float's or a decimal's value is shown as C# writes a double's (3.14), which C# assigns to neither:
+                // the text shown takes the suffix its type's literal has, so it sets back what was shown.
+                VariableInfo target = await Locked(() => debugger.Evaluate(arguments.Expression, arguments.FrameId));
+                value += target.Type switch { "float" or "float?" => "f", "decimal" or "decimal?" => "m", _ => string.Empty };
+            }
+            VariableInfo assigned = await Locked(() => debugger.Evaluate($"{arguments.Expression} = {value}", arguments.FrameId));
             if (assigned.PresentationHint?.Attributes == AttributesValue.FailedEvaluation)
             {
                 throw new InvalidOperationException(assigned.Value.StartsWith("error: ", StringComparison.Ordinal) ? assigned.Value["error: ".Length..] : assigned.Value);
@@ -191,7 +200,7 @@ public sealed class DebugAdapter
             VariableInfo now = await Locked(() => debugger.Evaluate(arguments.Expression, arguments.FrameId));
             return new SetExpressionResponse { Value = now.Value, Type = now.Type, VariablesReference = now.VariablesReference };
         });
-        connection.Handle<ThreadArguments, ContinueResponse>("continue", async _ =>
+        connection.Handle<ThreadArguments, ContinueResponse>(DapCommands.Continue, async _ =>
         {
             await Leave(() =>
             {
@@ -200,12 +209,12 @@ public sealed class DebugAdapter
             });
             return new ContinueResponse(AllThreadsContinued: true);
         });
-        connection.Handle<ThreadArguments>("next", arguments => Leave(() => debugger.Step(arguments.ThreadId, StepType.StepOver)));
-        connection.Handle<StepInArguments>("stepIn", arguments => Leave(() => arguments.TargetId is int target
+        connection.Handle<ThreadArguments>(DapCommands.Next, arguments => Leave(() => debugger.Step(arguments.ThreadId, StepType.StepOver)));
+        connection.Handle<StepInArguments>(DapCommands.StepIn, arguments => Leave(() => arguments.TargetId is int target
             ? debugger.StepIntoTarget(arguments.ThreadId, target)
             : debugger.Step(arguments.ThreadId, StepType.StepIn)));
         // Smart Step Into: the calls of the frame's statement, each placed where it is written.
-        connection.Handle<StepInTargetsArguments, StepInTargetsResponse>("stepInTargets", async arguments =>
+        connection.Handle<StepInTargetsArguments, StepInTargetsResponse>(DapCommands.StepInTargets, async arguments =>
         {
             List<StepInTargetInfo> targets = await Read(() => debugger.StepInTargets(arguments.FrameId));
             return new StepInTargetsResponse
@@ -222,7 +231,7 @@ public sealed class DebugAdapter
             };
         });
         // Hot Reload: what the language's Edit and Continue needs of the program, and its updates applied.
-        connection.Handle<DapEmpty, HotReloadStateResponse>("hotReloadState", async _ => await Locked(() =>
+        connection.Handle<DapEmpty, HotReloadStateResponse>(DapCommands.HotReloadState, async _ => await Locked(() =>
         {
             (IReadOnlyList<string>? capabilities, string? unknown) = debugger.HotReloadCapabilities();
             return new HotReloadStateResponse
@@ -234,7 +243,7 @@ public sealed class DebugAdapter
                     s.StartLine, s.StartColumn, s.EndLine, s.EndColumn, s.Flags))],
             };
         }));
-        connection.Handle<ApplyChangesArguments, ApplyChangesResponse>("applyChanges", async arguments =>
+        connection.Handle<ApplyChangesArguments, ApplyChangesResponse>(DapCommands.ApplyChanges, async arguments =>
         {
             List<ModuleUpdate> updates = [.. arguments.Updates.Select(u => new ModuleUpdate(u.Module, u.Name, u.Metadata, u.IL, u.Pdb, u.UpdatedMethods, u.UpdatedTypes,
                 [.. u.Lines.Select(l => (l.Document, (IReadOnlyList<(int, int)>)[.. l.Updates.Select(x => (x.OldLine, x.NewLine))]))],
@@ -242,10 +251,10 @@ public sealed class DebugAdapter
             IReadOnlyList<ModuleApplied> applied = await Locked(() => debugger.ApplyChanges(updates));
             return new ApplyChangesResponse([.. applied.Select(a => new DapModuleApplied(a.Module, a.Name, a.Applied, a.Message))]);
         });
-        connection.Handle<ThreadArguments>("stepOut", arguments => Leave(() => debugger.Step(arguments.ThreadId, StepType.StepOut)));
-        connection.Handle<ThreadArguments>("pause", _ => Locked(() => debugger.Pause()));
+        connection.Handle<ThreadArguments>(DapCommands.StepOut, arguments => Leave(() => debugger.Step(arguments.ThreadId, StepType.StepOut)));
+        connection.Handle<ThreadArguments>(DapCommands.Pause, _ => Locked(() => debugger.Pause()));
         // A start still waiting for the program's runtime holds the engine's lock: told the session is ending, it lets go.
-        connection.Handle<DisconnectArguments>("disconnect", arguments =>
+        connection.Handle<DisconnectArguments>(DapCommands.Disconnect, arguments =>
         {
             debugger.Ending();
             return Leave(() =>
@@ -254,7 +263,7 @@ public sealed class DebugAdapter
                 return Task.CompletedTask;
             });
         }, then: RequestShutdown);
-        connection.Handle<TerminateArguments>("terminate", _ =>
+        connection.Handle<TerminateArguments>(DapCommands.Terminate, _ =>
         {
             debugger.Ending();
             return Leave(() =>
@@ -263,9 +272,9 @@ public sealed class DebugAdapter
                 return Task.CompletedTask;
             });
         });
-        connection.Handle<ThreadArguments, ExceptionInfoResponse>("exceptionInfo", ExceptionInfo);
+        connection.Handle<ThreadArguments, ExceptionInfoResponse>(DapCommands.ExceptionInfo, ExceptionInfo);
         // Not under the engine's lock: a program waiting for input may be running, and the write is all.
-        connection.Handle<InputArguments>("input", arguments =>
+        connection.Handle<InputArguments>(DapCommands.Input, arguments =>
         {
             debugger.WriteInput(arguments.Text, arguments.Close ?? false);
             return Task.CompletedTask;
@@ -277,7 +286,7 @@ public sealed class DebugAdapter
         debugger.OnStopped += stop =>
         {
             stoppedThread = stop.ThreadId;
-            connection.SendEvent("stopped", new StoppedEvent
+            connection.SendEvent(DapEvents.Stopped, new StoppedEvent
             {
                 Reason = StopReason(stop.Reason),
                 Text = stop.Text,
@@ -289,24 +298,24 @@ public sealed class DebugAdapter
                 Column = stop.FilePath is null ? null : ColumnOut(stop.Column),
             });
         };
-        debugger.OnBreakpointChanged += breakpoint => connection.SendEvent("breakpoint", new BreakpointEvent { Reason = "changed", Breakpoint = ToProtocol(breakpoint, isEvent: true) });
+        debugger.OnBreakpointChanged += breakpoint => connection.SendEvent(DapEvents.Breakpoint, new BreakpointEvent { Reason = "changed", Breakpoint = ToProtocol(breakpoint, isEvent: true) });
         // Told only when known: a process attached to on macOS or Linux tells its exit code to its parent alone.
         debugger.OnExited += exitCode =>
         {
             if (exitCode is int code)
             {
-                connection.SendEvent("exited", new ExitedEvent(code));
+                connection.SendEvent(DapEvents.Exited, new ExitedEvent(code));
             }
         };
-        debugger.OnTerminated += () => connection.SendEvent("terminated", new TerminatedEvent());
-        debugger.OnThreadStarted += threadId => connection.SendEvent("thread", new ThreadEvent("started", threadId));
-        debugger.OnThreadExited += threadId => connection.SendEvent("thread", new ThreadEvent("exited", threadId));
-        debugger.OnModuleLoaded += (id, name, path) => connection.SendEvent("module", new ModuleEvent("new", new DapModule(id, name, path)));
-        debugger.OnModuleUnloaded += (id, name, path) => connection.SendEvent("module", new ModuleEvent("removed", new DapModule(id, name, path)));
-        debugger.OnProcessStarted += (processId, name) => connection.SendEvent("process", new ProcessEvent(name, processId, IsLocalProcess: !Remote, StartMethod: "launch"));
-        debugger.OnAttached += processId => connection.SendEvent("process", new ProcessEvent($"process {processId}", processId, IsLocalProcess: !Remote, StartMethod: "attach"));
-        debugger.OnOutput += (output, isStdError) => connection.SendEvent("output", new OutputEvent(output, isStdError ? "stderr" : "stdout"));
-        debugger.OnConsole += message => connection.SendEvent("output", new OutputEvent(message, "console"));
+        debugger.OnTerminated += () => connection.SendEvent(DapEvents.Terminated, new TerminatedEvent());
+        debugger.OnThreadStarted += threadId => connection.SendEvent(DapEvents.Thread, new ThreadEvent("started", threadId));
+        debugger.OnThreadExited += threadId => connection.SendEvent(DapEvents.Thread, new ThreadEvent("exited", threadId));
+        debugger.OnModuleLoaded += (id, name, path) => connection.SendEvent(DapEvents.Module, new ModuleEvent("new", new DapModule(id, name, path)));
+        debugger.OnModuleUnloaded += (id, name, path) => connection.SendEvent(DapEvents.Module, new ModuleEvent("removed", new DapModule(id, name, path)));
+        debugger.OnProcessStarted += (processId, name) => connection.SendEvent(DapEvents.Process, new ProcessEvent(name, processId, IsLocalProcess: !Remote, StartMethod: DapCommands.Launch));
+        debugger.OnAttached += processId => connection.SendEvent(DapEvents.Process, new ProcessEvent($"process {processId}", processId, IsLocalProcess: !Remote, StartMethod: DapCommands.Attach));
+        debugger.OnOutput += (output, isStdError) => connection.SendEvent(DapEvents.Output, new OutputEvent(output, isStdError ? "stderr" : "stdout"));
+        debugger.OnConsole += message => connection.SendEvent(DapEvents.Output, new OutputEvent(message, "console"));
         debugger.SendRunInTerminalRequest += RunInTerminal;
     }
 
@@ -371,7 +380,7 @@ public sealed class DebugAdapter
             if (hotReload)
             {
                 // The runtime's own switch for code that may change, as dotnet watch sets it; a launch's own is kept.
-                environment.TryAdd("DOTNET_MODIFIABLE_ASSEMBLIES", "debug");
+                environment.TryAdd(RuntimeVariables.ModifiableAssemblies, "debug");
             }
             LaunchInfo launch = new()
             {
@@ -547,7 +556,7 @@ public sealed class DebugAdapter
         Dictionary<string, string> env = new(launch.Env)
         {
             // The program waits at startup for the debugger to attach and let it go.
-            ["DOTNET_DefaultDiagnosticPortSuspend"] = "1",
+            [RuntimeVariables.DefaultDiagnosticPortSuspend] = "1",
         };
         RunInTerminalArguments arguments = new(
             launch.LaunchRequestConsoleType switch
@@ -565,7 +574,7 @@ public sealed class DebugAdapter
         try
         {
             // The connection reads the answer on a thread of its own, so this wait never holds up the read that brings it.
-            response = await connection.RequestAsync<RunInTerminalResponse>("runInTerminal", arguments, limit.Token).ConfigureAwait(false);
+            response = await connection.RequestAsync<RunInTerminalResponse>(DapCommands.RunInTerminal, arguments, limit.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (limit.IsCancellationRequested)
         {
@@ -753,8 +762,9 @@ public sealed class DebugAdapter
 
     private static string StopReason(string reason) => reason.ToLowerInvariant() switch
     {
-        "step" or "breakpoint" or "exception" or "pause" or "entry" or "goto" or "function breakpoint" or "data breakpoint" or "instruction breakpoint" => reason.ToLowerInvariant(),
-        _ => "unknown",
+        StopReasons.Step or StopReasons.Breakpoint or StopReasons.Exception or StopReasons.Pause or StopReasons.Entry or StopReasons.Goto
+            or StopReasons.FunctionBreakpoint or StopReasons.DataBreakpoint or StopReasons.InstructionBreakpoint => reason.ToLowerInvariant(),
+        _ => StopReasons.Unknown,
     };
 
     private int LineIn(int line) => linesStartAt1 ? line : line + 1;
@@ -764,4 +774,8 @@ public sealed class DebugAdapter
     private int ColumnIn(int column) => columnsStartAt1 ? column : column + 1;
 
     private int ColumnOut(int column) => columnsStartAt1 ? column : column - 1;
+
+    /// <summary>A real number as the debugger shows a float's, a double's or a decimal's: a point or an exponent, no suffix.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^-?\d+(\.\d+([eE][+-]?\d+)?|[eE][+-]?\d+)$")]
+    private static partial System.Text.RegularExpressions.Regex RealLiteral();
 }

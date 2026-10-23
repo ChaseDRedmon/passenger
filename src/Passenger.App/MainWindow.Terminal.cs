@@ -15,7 +15,7 @@ public partial class MainWindow
     private void AddTerminal()
     {
         terminal = new ToolWindows.TerminalPanel(() => Folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-        Dock.Add(new Docking.ToolWindow("terminal", "Terminal", "Icon.Terminal", terminal, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Terminal, "Terminal", "Icon.Terminal", terminal, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowTerminal,
             HeaderTools = terminal.HeaderTools,
@@ -24,7 +24,7 @@ public partial class MainWindow
         });
         terminal.Emptied += (_, _) =>
         {
-            Dock.Hide("terminal");
+            Dock.Hide(ToolWindowIds.Terminal);
             if (Editors.Active is not null)
             {
                 Editors.CodeEditor.Focus();
@@ -37,7 +37,7 @@ public partial class MainWindow
     {
         // The tab is made before the window shows, so showing it starts no shell of its own in the open folder.
         Task<Terminal.TerminalSession> starting = terminal!.NewSessionAsync(at);
-        ShowToolWindow("terminal");
+        ShowToolWindow(ToolWindowIds.Terminal);
         return starting;
     }
 
@@ -46,14 +46,14 @@ public partial class MainWindow
     {
         if (terminal!.View.IsFocused)
         {
-            Dock.Hide("terminal");
+            Dock.Hide(ToolWindowIds.Terminal);
             if (Editors.Active is not null)
             {
                 Editors.CodeEditor.Focus();
             }
             return;
         }
-        ShowToolWindow("terminal");
+        ShowToolWindow(ToolWindowIds.Terminal);
         terminal.FocusView();
     }
 

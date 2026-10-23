@@ -45,6 +45,7 @@ public partial class MainWindow
         cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings, work, () => Engine)
     {
         DockerHub = DockerHub,
+        StartsLanguageServer = StartsLanguageServer,
     };
 
     /// <summary>Where this window's Dockerfile server asks for image tags in Docker Hub's place: a test's stand-in; null for
@@ -53,7 +54,7 @@ public partial class MainWindow
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
-        OpenBrowserOnceListening, () => StateFolder, work)
+        OpenBrowserOnceListening, () => StateFolder, work, ShowAspireEngineAsync)
     {
         Reveal = project => containersView?.Reveal(project),
         Tools = () => ToolsSource,
@@ -61,6 +62,7 @@ public partial class MainWindow
         AskCertificate = AskCertificateAsync,
         AskReplace = AskReplaceAsync,
         AsksNoOne = AgentsOwn,
+        ProfileService = ProfileRunServiceAsync,
         ShowFolder = ShowInFileManager,
     };
 
@@ -185,7 +187,7 @@ public partial class MainWindow
         Task terminals = Task.CompletedTask;
         if (terminal is { Tabs.Count: > 0 })
         {
-            Dock.Hide("terminal");
+            Dock.Hide(ToolWindowIds.Terminal);
             terminals = terminal.CloseAllAsync();
         }
         ending = leaving.LeaveAsync(("the terminal", terminals));
@@ -200,7 +202,9 @@ public partial class MainWindow
     private void Bind(ProjectSession next)
     {
         session = next;
+        ForgetRunMarks();
         buildRun = new BuildRunController(next, BuildRunParts());
+        BindAspire(next);
         buildRun.RunningChanged += (_, _) =>
         {
             if (session == next)
@@ -236,7 +240,7 @@ public partial class MainWindow
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();
         buildRun.ShowBindings();
-        if (Dock["problems"] is { } problemsWindow)
+        if (Dock[ToolWindowIds.Problems] is { } problemsWindow)
         {
             problemsWindow.Title = "Problems";
         }
@@ -278,7 +282,7 @@ public partial class MainWindow
             {
                 if (session == next)
                 {
-                    Say(message, StatusPlace.Log);
+                    Say(message, LogPlace);
                 }
             };
             web.Message += (_, message) =>
@@ -317,6 +321,8 @@ public partial class MainWindow
                 Explorer.Reload(next.Workspace!);
                 ShowWorkspaceName();
                 FindTests();
+                // Each file's project, which Problems lists the solution's under, as the projects now are.
+                ShowSolutionProblems();
             }
         };
         next.ProjectsEvaluated += (_, evaluated) =>
@@ -340,7 +346,8 @@ public partial class MainWindow
             if (session == next)
             {
                 ShowChosenConfiguration(next.Configurations);
-                runMarksLater?.Restart();
+                // An AppHost evaluated or found since: its open files' resources are read, the others' kept.
+                ReadOpenAspireMarks(again: false);
             }
         };
         if (next.Watcher is { } watcher)
@@ -367,14 +374,14 @@ public partial class MainWindow
         BindHotReload(next);
         debugger.ActionRequested += (_, action) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 Request(action);
             }
         };
         debugger.Message += (_, message) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 // A stop at a binding error says it, and Problems' Bindings lists it.
                 Say(message, debugger.BindingStop is { } stop && message == debugger.Summary ? BindingPlace(stop.Problem.Problem) : null);
@@ -382,7 +389,7 @@ public partial class MainWindow
         };
         debugger.Navigate += (_, target) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 ShowStop(target.Path, target.Position);
             }
@@ -405,8 +412,17 @@ public partial class MainWindow
             service.StateChanged += (_, _) => usages.Refresh();
             service.StateChanged += (_, _) => OutlineWhenUnseen();
             service.StateChanged += (_, _) => Structure.FollowServer();
+            service.StateChanged += (_, _) =>
+            {
+                // Ready, as it loaded the folder's projects: the open AppHosts' resources are read from it once.
+                if (service == session.CSharp && !session.IsEnded && service.IsReady && aspireMarksFrom != service)
+                {
+                    aspireMarksFrom = service;
+                    ReadOpenAspireMarks(again: true);
+                }
+            };
             // Each stop is logged with why: the log is where to see more.
-            service.Stopped += (_, message) => Say(message, StatusPlace.Log);
+            service.Stopped += (_, message) => Say(message, LogPlace);
             service.Said += (_, said) => status.Say(said.Text, said.Severity, said.Problem is { } problem ? LoadProblemPlace(problem) : null);
             WatchProblems(service);
             service.FollowIndent(Editors.Active);

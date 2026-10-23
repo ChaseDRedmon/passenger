@@ -14,77 +14,91 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
 
     private static int Line(string code) => Debuggees.Line("PassengerCases", code);
 
+    /// <summary>An exception caught in code marked not the user's stops as user-unhandled; a step from it stops where the
+    /// user's code goes on; Step Into then passes over each method marked not the user's, a breakpoint in one is not hit and
+    /// says why, and an evaluation that never returns on the way is stopped and the debugger goes on.</summary>
     [Fact]
-    public async Task Step_into_passes_over_methods_the_code_marks_as_not_the_users()
+    public async Task An_exception_caught_in_code_marked_not_the_users_stops_as_user_unhandled_and_step_into_passes_over_such_code()
     {
-        using DebugSession host = await Launch(breakpointLine: Line("Attributed.StepThrough();"), exceptionFilters: []);
+        int marked = Line("[DebuggerStepThrough] public static void StepThrough()");
+        int end = Line("Console.WriteLine(\"end\");");
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments(["user-unhandled"]));
+        host.WithBreakpointsRequest(Source, [new DapSourceBreakpoint(marked), new DapSourceBreakpoint(end)]).WithConfigurationDoneRequest();
 
         StoppedEvent stop = await host.WaitForStoppedEvent();
-        Assert.Equal(Line("Attributed.StepThrough();"), stop.ReadStopInfo().line);
+        Assert.Equal(("exception", Line("Wrapper.CallWithCatch(")), (stop.Reason, stop.ReadStopInfo().line));
         int thread = stop.ThreadId!.Value;
-        foreach (int expected in new[] { Line("Attributed.NonUser();"), Line("Attributed.Hidden();"), Line("Console.WriteLine(\"end\");") })
-        {
-            stop = await host.WithStepInRequest(thread).WaitForStoppedEvent();
-            Assert.Equal((Source, expected), (stop.ReadStopInfo().filePath, stop.ReadStopInfo().line));
-        }
-    }
-
-    [Fact]
-    public async Task An_exception_caught_in_code_marked_not_the_users_stops_as_user_unhandled()
-    {
-        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"end\");"), exceptionFilters: ["user-unhandled"]);
-
-        StoppedEvent stop = await host.WaitForStoppedEvent();
-        Assert.Equal("exception", stop.Reason);
-        Assert.Equal(Line("Wrapper.CallWithCatch("), stop.ReadStopInfo().line);
-        ExceptionInfoResponse exception = host.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(stop.ThreadId!.Value));
+        ExceptionInfoResponse exception = host.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(thread));
         Assert.Equal("userUnhandled", exception.BreakMode);
         Assert.Equal("System.InvalidOperationException", exception.Details?.FullTypeName);
 
-        stop = await host.WithContinueRequest().WaitForStoppedEvent();
-        Assert.Equal("breakpoint", stop.Reason);
-        Assert.Equal(Line("Console.WriteLine(\"end\");"), stop.ReadStopInfo().line);
-    }
-
-    [Fact]
-    public async Task A_step_from_an_exception_the_user_left_unhandled_stops_where_the_users_code_goes_on()
-    {
-        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"end\");"), exceptionFilters: ["user-unhandled"]);
-        StoppedEvent stop = await host.WaitForStoppedEvent();
-        Assert.Equal(("exception", Line("Wrapper.CallWithCatch(")), (stop.Reason, stop.ReadStopInfo().line));
-
         // Past the handler outside the user's code that caught it, back in the code that called it, as from a step out.
-        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        stop = await host.WithStepOverRequest(thread).WaitForStoppedEvent();
         Assert.True(stop.Reason == "step", $"The step from the exception ran on to the {stop.Reason} at line {stop.Line}");
         Assert.Equal(Line("Wrapper.CallWithCatch("), stop.ReadStopInfo().line);
-        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        stop = await host.WithStepOverRequest(thread).WaitForStoppedEvent();
         Assert.Equal(("step", Line("Attributed.StepThrough();")), (stop.Reason, stop.ReadStopInfo().line));
+
+        // Step Into passes over each marked method, the breakpoint in StepThrough's never stopping it.
+        stop = await host.WithStepInRequest(thread).WaitForStoppedEvent();
+        Assert.Equal((Source, Line("Attributed.NonUser();")), (stop.ReadStopInfo().filePath, stop.ReadStopInfo().line));
+        stop = await host.WithStepInRequest(thread).WaitForStoppedEvent();
+        Assert.Equal((Source, Line("Attributed.Hidden();")), (stop.ReadStopInfo().filePath, stop.ReadStopInfo().line));
+
+        // A failed evaluation is a value saying so, as the engine answers any error, and the debugger goes on from it.
+        int frame = host.GetTopStackFrame(thread).Id;
+        host.WithEvaluateRequest(frame, "Slow.Forever", out EvaluateResponse timedOut);
+        Assert.Contains("was stopped", timedOut.Result, StringComparison.Ordinal);
+        host.WithEvaluateRequest(frame, "1 + 1", out EvaluateResponse after);
+        Assert.Equal("2", after.Result);
+        stop = await host.WithStepInRequest(thread).WaitForStoppedEvent();
+        Assert.Equal((Source, end), (stop.ReadStopInfo().filePath, stop.ReadStopInfo().line));
+
+        // Just My Code passes over the breakpoint in the marked method, as Visual Studio's does, and says so.
+        SetBreakpointsResponse again = host.Request<SetBreakpointsResponse>("setBreakpoints",
+            new SetBreakpointsArguments(new DapSource { Path = Source }, [new DapSourceBreakpoint(marked)]));
+        DapBreakpoint unbound = Assert.Single(again.Breakpoints);
+        Assert.False(unbound.Verified);
+        Assert.Contains("Just My Code", unbound.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>A step from where an exception is thrown goes past a handler outside the user's code, and stops in the user's
+    /// own catch; and every thread listed at a later stop has frames to show.</summary>
     [Fact]
-    public async Task A_step_from_where_an_exception_is_thrown_goes_past_a_handler_outside_the_users_code()
+    public async Task A_step_from_where_an_exception_is_thrown_goes_past_a_handler_outside_the_users_code_or_stops_in_their_catch()
     {
-        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"end\");"), exceptionFilters: ["all"]);
+        string thrown = "try { throw new Exception(\"Message1\"); }";
+        string waiting = "Console.WriteLine(\"both workers are waiting\");";
+        using DebugSession host = await Launch(breakpointLine: Line(waiting), exceptionFilters: ["all"]);
         StoppedEvent stop = await host.WaitForStoppedEvent();
         Assert.Equal(("exception", Line("Wrapper.CallWithCatch(")), (stop.Reason, stop.ReadStopInfo().line));
-
         stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
         Assert.True(stop.Reason == "step", $"The step from the throw ran on to the {stop.Reason} at line {stop.Line}");
         Assert.Equal(Line("Wrapper.CallWithCatch("), stop.ReadStopInfo().line);
-    }
 
-    [Fact]
-    public async Task A_step_from_where_an_exception_is_thrown_stops_in_the_users_own_catch()
-    {
-        string thrown = "try { throw new Exception(\"Message1\"); }";
-        using DebugSession host = await Launch(breakpointLine: Line(thrown), exceptionFilters: []);
-        StoppedEvent stop = await host.WaitForStoppedEvent();
+        // No filter until the throw in the user's own try, where it stops; the step from it stops in their catch.
+        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([]));
+        host.WithBreakpointsRequest([Line(thrown), Line(waiting)], Source);
+        stop = await host.WithContinueRequest().WaitForStoppedEvent();
+        Assert.Equal(("breakpoint", Line(thrown)), (stop.Reason, stop.ReadStopInfo().line));
         host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments(["all"]));
         stop = await host.WithContinueRequest().WaitForStoppedEvent();
         Assert.Equal(("exception", Line(thrown)), (stop.Reason, stop.ReadStopInfo().line));
-
         stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
         Assert.Equal(("step", Line("catch (Exception e1)")), (stop.Reason, stop.ReadStopInfo().line));
+
+        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([]));
+        stop = await host.WithContinueRequest().WaitForStoppedEvent();
+        Assert.Equal(("breakpoint", Line(waiting)), (stop.Reason, stop.ReadStopInfo().line));
+        IReadOnlyList<DapThread> threads = host.Request<ThreadsResponse>("threads").Threads;
+        Assert.Equal("Main Thread", Assert.Single(threads, t => t.Id == stop.ThreadId).Name);
+        Assert.Single(threads, t => t.Name == "worker-named");
+        Assert.All(threads, t => Assert.NotEmpty(host.Request<StackTraceResponse>("stackTrace", new StackTraceArguments(t.Id)).StackFrames));
     }
 
     [Fact]
@@ -105,56 +119,25 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(("step", Line("Attributed.StepThrough();")), (stop.Reason, stop.ReadStopInfo().line));
     }
 
+    /// <summary>The thread running Main is marked as Main's whatever the program named it, as an app names its UI thread:
+    /// what reads an app's binding values at a stop looked for it by the name the debugger gives one left unnamed.</summary>
     [Fact]
-    public async Task An_evaluation_that_never_returns_is_stopped_and_the_debugger_goes_on()
+    public async Task The_thread_running_Main_is_marked_as_Mains_under_the_name_the_program_gave_it()
     {
-        using DebugSession host = await Launch(breakpointLine: Line("Attributed.Hidden();"), exceptionFilters: []);
-
-        StoppedEvent stop = await host.WaitForStoppedEvent();
-        int frame = host.GetTopStackFrame(stop.ThreadId!.Value).Id;
-        // A failed evaluation is a value saying so, as the engine answers any error.
-        host.WithEvaluateRequest(frame, "Slow.Forever", out EvaluateResponse timedOut);
-        Assert.Contains("was stopped", timedOut.Result, StringComparison.Ordinal);
-
-        host.WithEvaluateRequest(frame, "1 + 1", out EvaluateResponse after);
-        Assert.Equal("2", after.Result);
-        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
-        Assert.Equal(("step", Line("Console.WriteLine(\"end\");")), (stop.Reason, stop.ReadStopInfo().line));
-    }
-
-    [Fact]
-    public async Task A_breakpoint_in_a_method_marked_not_the_users_is_not_hit_and_says_why()
-    {
-        int marked = Line("[DebuggerStepThrough] public static void StepThrough()");
-        int end = Line("Console.WriteLine(\"end\");");
         using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
         await host
             .WithInitializeRequest()
-            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true)
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true, arguments: ["named main"])
             .WaitForInitializedEvent();
-        host.WithBreakpointsRequest(Source, [new DapSourceBreakpoint(marked), new DapSourceBreakpoint(end)], out SetBreakpointsResponse set)
+        host.WithBreakpointsRequest(Line("Console.WriteLine(\"both workers are waiting\");"), Source)
             .WithConfigurationDoneRequest();
-
-        // Just My Code passes over it, as Visual Studio's does: the stop is the later breakpoint.
-        StoppedEvent stop = await host.WaitForStoppedEvent();
-        Assert.Equal(end, stop.ReadStopInfo().line);
-        SetBreakpointsResponse again = host.Request<SetBreakpointsResponse>("setBreakpoints",
-            new SetBreakpointsArguments(new DapSource { Path = Source }, [new DapSourceBreakpoint(marked)]));
-        DapBreakpoint unbound = Assert.Single(again.Breakpoints);
-        Assert.False(unbound.Verified);
-        Assert.Contains("Just My Code", unbound.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Every_thread_listed_has_frames_to_show()
-    {
-        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"both workers are waiting\");"), exceptionFilters: []);
         StoppedEvent stop = await host.WaitForStoppedEvent();
 
         IReadOnlyList<DapThread> threads = host.Request<ThreadsResponse>("threads").Threads;
-        Assert.Equal("Main Thread", Assert.Single(threads, t => t.Id == stop.ThreadId).Name);
-        Assert.Single(threads, t => t.Name == "worker-named");
-        Assert.All(threads, t => Assert.NotEmpty(host.Request<StackTraceResponse>("stackTrace", new StackTraceArguments(t.Id)).StackFrames));
+        DapThread main = Assert.Single(threads, t => t.IsMain == true);
+        Assert.True(main.Id == stop.ThreadId && main.Name == "UI",
+            $"Main's thread, named UI, was to be the one marked; the threads are {string.Join(", ", threads.Select(t => $"{t.Id} {t.Name}{(t.IsMain == true ? " (main)" : "")}"))}, stopped on {stop.ThreadId}");
+        Assert.DoesNotContain(threads, t => t.Name == "Main Thread");
     }
 
     private Task<DebugSession> Launch(int breakpointLine, IReadOnlyList<string> exceptionFilters) =>

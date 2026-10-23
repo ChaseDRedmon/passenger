@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Passenger.Editor;
+using Passenger.Core;
 
 namespace Passenger.App.Containers;
 
@@ -286,7 +287,7 @@ public sealed class ContainerDetailsPane : DockPanel
             if (details.Health is { } now)
             {
                 health.Add(("Status", Words(now == "unhealthy" && details.FailingStreak > 0
-                    ? $"unhealthy: its last {details.FailingStreak} check{(details.FailingStreak == 1 ? string.Empty : "s")} failed" : now,
+                    ? $"unhealthy: its last {Plural.Of(details.FailingStreak, "check")} failed" : now,
                     brush: now == "unhealthy" ? "Passenger.Error" : null)));
             }
             foreach (HealthProbe probe in details.Probes)

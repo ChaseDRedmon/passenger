@@ -51,10 +51,13 @@ public sealed class PackagesTests : IDisposable
 
     public void Dispose() => TestFolders.Delete(folder);
 
+    /// <summary>In a window opened on the folder above the project, which no solution names: a package is installed at the
+    /// version chosen, updated and removed, then installed again from the Install on the project's line.</summary>
     [AvaloniaFact]
-    public void A_package_found_in_the_feed_is_installed_updated_and_removed_in_a_project()
+    public void A_package_found_in_the_feed_is_installed_updated_and_removed_in_a_project_below_a_folder_with_no_solution()
     {
-        MainWindow window = Open(new FolderFeed(feed));
+        // The folder above Lib: its project is a folder down, and no solution names it.
+        MainWindow window = Open(new FolderFeed(feed), folder);
         NuGetView nuget = window.NuGet;
         nuget.Query = "sample";
         Task searched = nuget.RefreshAsync();
@@ -76,21 +79,12 @@ public sealed class PackagesTests : IDisposable
         Run(nuget, nuget.RemoveAsync(Assert.Single(window.Projects)));
         Assert.Null(Version(window));
         Assert.DoesNotContain("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_project_below_a_folder_with_no_solution_is_in_the_nuget_window_and_takes_a_package()
-    {
-        // The folder above Lib: its project is a folder down, and no solution names it.
-        MainWindow window = Open(new FolderFeed(feed), folder);
-        NuGetView nuget = window.NuGet;
-        nuget.Query = "sample";
-        Task searched = nuget.RefreshAsync();
-        Ui.Landed(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
-
+        // The Install on the project's line, the latest version chosen.
+        Ui.Landed(() => !nuget.IsBusy && nuget.Versions.Count == 2, "the package's versions once it was removed");
+        nuget.ChosenVersion = "1.1.0";
         Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window lists no Lib project to install the package in");
-        install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(install, settle: false);
         Ui.Landed(() => !nuget.IsBusy && Version(window) is not null, "the package installed in Lib");
         Assert.Equal("1.1.0", Version(window));
         Assert.Contains("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
@@ -192,7 +186,7 @@ public sealed class PackagesTests : IDisposable
         searched = nuget.RefreshAsync();
         Ui.Landed(() => searched.IsCompleted && nuget.Selected?.Id == "Passenger.Other" && nuget.Versions.Count == 1, "Passenger.Other and its version");
         Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window offers no Install on Lib's line");
-        install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(install, settle: false);
         Ui.Landed(() => !nuget.IsBusy && ShownVersion(nuget, "Lib") == "2.0.0", "Passenger.Other installed in Lib at 2.0.0");
         System.Xml.Linq.XElement? central = System.Xml.Linq.XDocument.Load(props).Descendants("PackageVersion").SingleOrDefault(e => (string?)e.Attribute("Include") == "Passenger.Other");
         Assert.True((string?)central?.Attribute("Version") == "2.0.0", $"The install did not put Passenger.Other's version in Directory.Packages.props:\n{File.ReadAllText(props)}");
@@ -207,10 +201,11 @@ public sealed class PackagesTests : IDisposable
         .Select(line => line.Children.OfType<TextBlock>().Skip(1).FirstOrDefault()?.Text)
         .FirstOrDefault();
 
-    /// <summary>A window on a folder (the Lib project's unless given) with the NuGet window open on a feed.</summary>
+    /// <summary>A window on a folder (the Lib project's unless given) with the NuGet window open on a feed; without the C#
+    /// language server, which nothing here asks of, so none starts and restores the project.</summary>
     private MainWindow Open(IPackageFeed packages, string? opened = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(opened ?? Path.Combine(folder, "Lib"));
         Ui.Settle();

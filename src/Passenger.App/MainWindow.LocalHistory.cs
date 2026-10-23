@@ -33,20 +33,20 @@ public partial class MainWindow
     private void AddLocalHistory()
     {
         localHistoryView = new LocalHistoryView();
-        Dock.Add(new Docking.ToolWindow("localHistory", "Local History", "Icon.History", localHistoryView, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.LocalHistory, "Local History", "Icon.History", localHistoryView, Docking.ToolAnchor.BottomLeft)
         {
             HeaderTools = localHistoryView.Tabs,
         });
         // Rider's names: the menus' own, and Find Action's (Show Local History...) beside the Git window's Show History.
-        actions!.Add(new IdeAction(AppActions.ShowLocalHistory, "Show Local History...", "Local History", context => ShowLocalHistory(Target(context, fileOnly: false)!))
+        actions!.Add(new IdeAction(AppActions.ShowLocalHistory, "Show Local History…", "Local History", context => ShowLocalHistory(Target(context, fileOnly: false)!))
         {
-            TitleIn = _ => "Show History...",
+            TitleIn = _ => "Show History…",
             WhyNot = context => NeedsFolder(context) ?? WhyNoTarget(context, fileOnly: false),
             Menus = [new MenuPlace(LocalHistoryMenu, 0, 0)],
         });
-        actions.Add(new IdeAction(AppActions.ShowProjectHistory, "Show Local History for Project...", "Local History", _ => ShowLocalHistory(Folder!))
+        actions.Add(new IdeAction(AppActions.ShowProjectHistory, "Show Local History for Project…", "Local History", _ => ShowLocalHistory(Folder!))
         {
-            TitleIn = _ => "Show Project History...",
+            TitleIn = _ => "Show Project History…",
             WhyNot = NeedsFolder,
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 0)],
         });
@@ -55,7 +55,7 @@ public partial class MainWindow
             WhyNot = NeedsFolder,
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 1)],
         });
-        actions.Add(new IdeAction(AppActions.PutLabel, "Put Label...", "Local History", _ => ShowPutLabel())
+        actions.Add(new IdeAction(AppActions.PutLabel, "Put Label…", "Local History", _ => ShowPutLabel())
         {
             WhyNot = NeedsFolder,
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 2)],
@@ -100,7 +100,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } folder)
         {
-            status.Text = NoFolder;
+            status.Text = Refusals.NoFolder;
             return null;
         }
         string full = PathNames.Canonical(path);
@@ -110,7 +110,7 @@ public partial class MainWindow
             return null;
         }
         bool isFolder = Directory.Exists(full);
-        ShowToolWindow("localHistory");
+        ShowToolWindow(ToolWindowIds.LocalHistory);
         return localHistoryView!.Show(full, Path.GetFileName(Path.TrimEndingDirectorySeparator(full)),
             () => new HistoryTab(history, new HistoryHost(Editors, RevertAsync), full, isFolder));
     }
@@ -120,7 +120,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } open)
         {
-            status.Text = NoFolder;
+            status.Text = Refusals.NoFolder;
             return null;
         }
         IReadOnlyList<HistoryEvent> events = history.Snapshot().Events;
@@ -144,7 +144,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history)
         {
-            status.Text = NoFolder;
+            status.Text = Refusals.NoFolder;
             return null;
         }
         NamePopup popup = new("Put Label", string.Empty, name =>
@@ -169,7 +169,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } folder)
         {
-            return NoFolder;
+            return Refusals.NoFolder;
         }
         string full = PathNames.Canonical(path);
         bool isFolder = Directory.Exists(full);
@@ -177,7 +177,7 @@ public partial class MainWindow
         IReadOnlyList<HistoryRow> rows = await BackgroundWork.Run(() => isFolder ? HistoryRows.OfFolder(events, full) : HistoryRows.OfFile(events, known, full));
         if (rows.FirstOrDefault(r => r.Set == set) is not { } row)
         {
-            return $"No change set {set} is in the history of {Path.GetRelativePath(folder, full)}";
+            return $"No change set {set} is in the history of {PathNames.Shown(full, folder)}";
         }
         IReadOnlyList<(string Path, string? Version)> files = isFolder
             ? [.. (await BackgroundWork.Run(() => HistoryRows.Since(events, known, set, full))).Select(f => (f.Path, f.Then))]
@@ -193,7 +193,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history)
         {
-            return NoFolder;
+            return Refusals.NoFolder;
         }
         List<string> refused = [];
         using (history.During(activity))

@@ -1,11 +1,13 @@
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.App.Workspace;
 
 /// <summary>Every file under the open folder, by relative path, for Go to File and Find in Files. Built off the UI
-/// thread when the folder opens; build output, dependencies, version control and a save's temporary file (gone once the
-/// save is done, which walks nothing again) are left out, and a symlinked folder is not followed, since it can loop.</summary>
+/// thread when the folder opens, by the walk every look at the open folder's files takes (<see cref="FolderWalk"/>): build
+/// output, dependencies, version control, the system's own files and a save's temporary file (gone once the save is done,
+/// which walks nothing again) left out, a linked folder never walked twice or out of the folder.</summary>
 public sealed class FileIndex
 {
     /// <summary>The most files indexed, so a folder that is really a disk does not hold the IDE up.</summary>
@@ -22,6 +24,10 @@ public sealed class FileIndex
 
     /// <summary>Whether a walk is under way whose list has not landed: an agent's search waits for it, as the folder opens.</summary>
     public bool IsWalking { get; private set; }
+
+    /// <summary>The newest walk landed (its list, or the one before when it failed), on the UI thread: what else looks for files
+    /// among the folder's (its single-file AppHosts) takes them from it rather than walking the folder again.</summary>
+    public event EventHandler? Walked;
 
     /// <summary>Walks the folder again off the UI thread. The files found before stay searchable until the walk is done,
     /// and only the newest walk's list lands; another folder's list goes at once.</summary>
@@ -47,6 +53,7 @@ public sealed class FileIndex
                 if (walk == walks)
                 {
                     IsWalking = false;
+                    Walked?.Invoke(this, EventArgs.Empty);
                 }
             });
             held.Dispose();
@@ -83,35 +90,7 @@ public sealed class FileIndex
     /// Files reads of a directory outside the open folder.</summary>
     internal static List<string> Walk(string root)
     {
-        List<string> found = [];
-        Stack<DirectoryInfo> folders = new([new DirectoryInfo(root)]);
-        while (folders.Count > 0 && found.Count < Limit)
-        {
-            DirectoryInfo folder = folders.Pop();
-            IEnumerable<FileSystemInfo> entries;
-            try
-            {
-                entries = folder.EnumerateFileSystemInfos().ToList();
-            }
-            catch (Exception error) when (error is UnauthorizedAccessException or IOException)
-            {
-                continue;
-            }
-            foreach (FileSystemInfo entry in entries)
-            {
-                if (entry is DirectoryInfo directory)
-                {
-                    if (!IgnoredFolders.Contains(directory.Name) && directory.LinkTarget is null)
-                    {
-                        folders.Push(directory);
-                    }
-                }
-                else if (entry.Name != ".DS_Store" && !FileText.IsSaving(entry.Name))
-                {
-                    found.Add(Path.GetRelativePath(root, entry.FullName));
-                }
-            }
-        }
-        return found;
+        string top = PathNames.Canonical(root);
+        return [.. FolderWalk.Files(top).Take(Limit).Select(file => Path.GetRelativePath(top, file))];
     }
 }

@@ -34,8 +34,10 @@ internal static class Program
             Web.DockerHubTags.CheckVariable();
             _ = Containers.BuildKitChecks.ByDefault;
             Mcp.McpProxy.CheckVariable();
+            _ = Mcp.McpHost.StartsLanguageServer;
             _ = MainWindow.WatchSaysLater;
             _ = Mcp.AgentCall.Every;
+            _ = Dap.AdapterEnvironment.EvaluationTimeout;
         }
         catch (FormatException error)
         {

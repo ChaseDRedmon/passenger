@@ -97,11 +97,11 @@ public sealed class MergeView : DockPanel
 
         status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
-        applyNonConflicting = Tool("Icon.ApplyNonConflicts", "Apply All Non-Conflicting Changes", ApplyNonConflicting);
+        applyNonConflicting = ToolButtons.Of("Icon.ApplyNonConflicts", "Apply All Non-Conflicting Changes", ApplyNonConflicting);
         // Rider's icon is two arrows meeting in the middle: the vertical one turned on its side.
         applyNonConflicting.Content = new PathIcon { RenderTransform = new RotateTransform(90) };
         ((PathIcon)applyNonConflicting.Content).Bind(PathIcon.DataProperty, applyNonConflicting.GetResourceObservable("Icon.ApplyNonConflicts"));
-        resolveSimple = Tool("Icon.Wand", "Resolve Simple Conflicts", ResolveSimpleConflicts);
+        resolveSimple = ToolButtons.Of("Icon.Wand", "Resolve Simple Conflicts", ResolveSimpleConflicts);
         Border rule = new() { Width = 1, Height = 16, Margin = new Thickness(6, 0) };
         rule.Bind(Border.BackgroundProperty, rule.GetResourceObservable("Passenger.Divider"));
         StackPanel tools = new()
@@ -115,8 +115,8 @@ public sealed class MergeView : DockPanel
                 applyNonConflicting,
                 resolveSimple,
                 rule,
-                Tool("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
-                Tool("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
+                ToolButtons.Of("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
+                ToolButtons.Of("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
                 new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) },
                 status,
             },
@@ -452,8 +452,7 @@ public sealed class MergeView : DockPanel
         static string Count(int count, string what, string none) => count switch
         {
             0 => none,
-            1 => $"1 {what}",
-            _ => $"{count} {what}s",
+            _ => Core.Plural.Of(count, what),
         };
     }
 
@@ -690,15 +689,6 @@ public sealed class MergeView : DockPanel
         label.Bind(TextBlock.ForegroundProperty, label.GetResourceObservable("Passenger.TextMuted"));
         Grid.SetColumn(label, column);
         return label;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
     }
 
     /// <summary>A change's place in the result, and its sides dealt with; <see cref="Taken"/> once a conflict's side is in.</summary>

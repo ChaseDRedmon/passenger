@@ -26,6 +26,9 @@ public sealed class DapConnection : IAsyncDisposable
     /// any real one, and a Content-Length beyond it ends the conversation rather than take the reader's memory.</summary>
     public const long MostBody = 256L * 1024 * 1024;
 
+    /// <summary>The read buffer's size between messages: a larger message's room is let go once it has been read.</summary>
+    private const int UsualBuffer = 64 * 1024;
+
     private readonly Stream input;
     private readonly Stream output;
     private readonly Action<string>? log;
@@ -222,7 +225,7 @@ public sealed class DapConnection : IAsyncDisposable
 
     private async Task ReadAsync()
     {
-        byte[] buffer = new byte[64 * 1024];
+        byte[] buffer = new byte[UsualBuffer];
         int filled = 0;
         try
         {
@@ -274,7 +277,10 @@ public sealed class DapConnection : IAsyncDisposable
                 Trace?.Invoke(Name, $"<-- {Encoding.UTF8.GetString(buffer, start, size)}");
                 // Parsed from a copy: a document reads the memory it is given, and the buffer is reused.
                 JsonElement message = JsonDocument.Parse(buffer.AsSpan(start, size).ToArray()).RootElement;
-                buffer.AsSpan(start + size, filled - start - size).CopyTo(buffer);
+                // What came after it moves to the front, into a buffer of the usual size again when it had grown for a large one.
+                byte[] next = buffer.Length > UsualBuffer && filled - start - size <= UsualBuffer ? new byte[UsualBuffer] : buffer;
+                buffer.AsSpan(start + size, filled - start - size).CopyTo(next);
+                buffer = next;
                 filled -= start + size;
                 Receive(message);
             }

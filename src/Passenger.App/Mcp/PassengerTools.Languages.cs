@@ -8,6 +8,7 @@ using Passenger.Text;
 using Passenger.Xaml;
 using Passenger.Xaml.Features;
 using Passenger.Xaml.Syntax;
+using Passenger.Core;
 
 namespace Passenger.App.Mcp;
 
@@ -175,6 +176,23 @@ public sealed partial class PassengerTools
             : throw new InvalidOperationException(answer.Said);
     }
 
+    /// <summary>Aspire's Go to Declaration in an AppHost's or a service's C# file, as the window's goes: AddProject's project,
+    /// a connection string's or service's name to the AppHost line declaring it; null elsewhere, for the server's own.</summary>
+    private async Task<IReadOnlyList<Place>?> AspireDefinition(Served served, int offset, CancellationToken cancel) =>
+        served is ServerServed { Web: null, Language: "C#" } csharp && Session.AspireFiles.RoleOf(csharp.Document.Path) != Aspire.AspireRole.None
+            && await CodeAssist.AspireDeclarationAsync(csharp.Lsp, offset, ServerPlaces.Texts(Editors)) is { } place
+            ? await PlacesOf([place], cancel) : null;
+
+    /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, so the fixes Passenger offers on
+    /// Aspire's warnings stand on the text as the agent wrote it, not on a pull still to come.</summary>
+    private async Task AspireMarked(Served served, CancellationToken cancel)
+    {
+        if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { AspireRole: not Aspire.AspireRole.None } csharp)
+        {
+            await csharp.PullNowAsync(cancel);
+        }
+    }
+
     /// <summary>Rename in JSON, whose server has none: the property's name, and in a package.json's scripts every run of a
     /// script renamed with it, one undoable edit, saved.</summary>
     private async Task<string> JsonRename(ServerServed json, int offset, string newName)
@@ -195,7 +213,7 @@ public sealed partial class PassengerTools
         WorkspaceEdits.ApplyTo(Editors, document, placed);
         document.Save();
         int runs = placed.Count - 1;
-        return $"Renamed {old} to {newName} in {Relative(document.Path)}{(runs == 0 ? string.Empty : $", and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it")}";
+        return $"Renamed {old} to {newName} in {Relative(document.Path)}{(runs == 0 ? string.Empty : $", and in {Plural.Of(runs, "script")} that run{(runs == 1 ? "s" : "")} it")}";
     }
 
     /// <summary>ESLint's fixes for the problems on a web file's line, which Show Context Actions lists first; none where ESLint
@@ -324,7 +342,7 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException(renamed.Said);
         }
         Editors.SaveAll();
-        return $"Renamed {named.Value} to {newName} in {renamed.Files.Count} file{(renamed.Files.Count == 1 ? "" : "s")}: {string.Join(", ", renamed.Files.Select(Relative))}";
+        return $"Renamed {named.Value} to {newName} in {Plural.Of(renamed.Files.Count, "file")}: {string.Join(", ", renamed.Files.Select(Relative))}";
     }
 
     /// <summary>A XAML file's elements, indented, each with what names it (x:Class, x:Name, x:Key, a style's selector or
@@ -355,12 +373,33 @@ public sealed partial class PassengerTools
     }
 
     /// <summary>One of Passenger's own fixes made as choosing it makes it: worked out again on the file's text as it stands,
-    /// one undoable edit, the file saved; refused when the text no longer has what it fixes.</summary>
-    private string ApplyOwnFix(OpenDocument document, EditorFix fix)
+    /// one undoable edit, the file saved; refused when the text no longer has what it fixes. One made in another file (an
+    /// AppHost's WithReference) is that file's command, told the call's <paramref name="patience"/>.</summary>
+    private async Task<string> ApplyOwnFix(OpenDocument document, EditorFix fix, Patience? patience = null, string? value = null)
     {
         if (fix.On(document.Text.Snapshot) is not { } now)
         {
             throw new InvalidOperationException($"'{fix.Title}' was not applied: the file changed, so it no longer fits");
+        }
+        if (now.Asks is { } asks)
+        {
+            RefactorOutcome set = await asks.Make(value ?? throw new InvalidOperationException($"'{fix.Title}' sets a value: give it as name"), patience);
+            if (set.Problem is { } refused)
+            {
+                throw new InvalidOperationException(refused);
+            }
+            Editors.SaveAll();
+            return set.Said;
+        }
+        if (now.Elsewhere is { } elsewhere)
+        {
+            RefactorOutcome made = await elsewhere(now.Range, patience);
+            if (made.Problem is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            Editors.SaveAll();
+            return $"Applied '{fix.Title}' to {string.Join(", ", made.Files.Select(f => Relative(f.Path)).Distinct())}";
         }
         WorkspaceEdits.ApplyTo(Editors, document, [new TextEdit(now.Range.Start, now.Range.Length, now.Text)]);
         Editors.SaveAll();
@@ -396,9 +435,9 @@ public sealed partial class PassengerTools
         return offered;
     }
 
-    private const string ExtractResource = "Extract Resource...";
+    private const string ExtractResource = "Extract Resource…";
 
-    private const string ExtractStyle = "Extract Style...";
+    private const string ExtractStyle = "Extract Style…";
 
     /// <summary>A XAML fix or refactoring made as choosing it in the window makes it, as one command, and the files saved:
     /// Extract Resource and Extract Style take the dialog's defaults (every use replaced; the element's properties that are
@@ -413,10 +452,10 @@ public sealed partial class PassengerTools
         switch (chosen.Made)
         {
             case EditorFix fix:
-                return ApplyOwnFix(xaml.Document, fix);
+                return await ApplyOwnFix(xaml.Document, fix);
             case XamlFix fix:
                 IReadOnlyList<XamlFileChange> changes = [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others];
-                refused = window.Assist.ApplyXamlChanges(fix.Title, changes);
+                refused = window.Assist.ApplyFileChanges(fix.Title, changes);
                 if (refused is not null)
                 {
                     throw new InvalidOperationException($"{what} was not applied: {refused}");
@@ -433,7 +472,7 @@ public sealed partial class PassengerTools
             {
                 throw new InvalidOperationException($"{what} cannot name the resource '{key}': {problem}");
             }
-            refused = window.Assist.ApplyXamlChanges("Extract Resource", XamlRefactorings.ExtractResource(xaml.File, value, key, place, everywhere: true));
+            refused = window.Assist.ApplyFileChanges("Extract Resource", XamlRefactorings.ExtractResource(xaml.File, value, key, place, everywhere: true));
             if (refused is not null)
             {
                 throw new InvalidOperationException($"{what} was not applied: {refused}");
@@ -453,13 +492,13 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"{what} cannot name the style '{style}': {named}");
         }
-        refused = window.Assist.ApplyXamlChanges("Extract Style", XamlRefactorings.ExtractStyle(xaml.File, source, style, properties, into));
+        refused = window.Assist.ApplyFileChanges("Extract Style", XamlRefactorings.ExtractStyle(xaml.File, source, style, properties, into));
         if (refused is not null)
         {
             throw new InvalidOperationException($"{what} was not applied: {refused}");
         }
         Editors.SaveAll();
-        return $"Extracted {properties.Count} {(properties.Count == 1 ? "property" : "properties")} of {source.ElementName} ({string.Join(", ", properties)}) to style '{style}' in {into.Title}";
+        return $"Extracted {Plural.Of(properties.Count, "property", "properties")} of {source.ElementName} ({string.Join(", ", properties)}) to style '{style}' in {into.Title}";
 
         ResourcePlace PlaceChosen(IReadOnlyList<ResourcePlace> places) => choice is null
             ? places.Count == 1 ? places[0] : throw new InvalidOperationException($"{what} needs a choice of where it goes: {string.Join("; ", places.Select(p => p.Title))}")

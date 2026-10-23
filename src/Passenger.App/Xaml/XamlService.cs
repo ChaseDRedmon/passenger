@@ -71,7 +71,7 @@ public sealed class XamlService : IDisposable
         {
             return;
         }
-        if (IsXaml(document.Path) && !Paths.IsUnder(document.Path, LibrarySources.Folder))
+        if (IsXaml(document.Path) && !PathNames.Within(document.Path, LibrarySources.Folder))
         {
             if (ProjectOf(document.Path) is { } loading)
             {
@@ -243,7 +243,7 @@ public sealed class XamlService : IDisposable
 
     /// <summary>The project already loading or loaded that a file belongs to.</summary>
     private XamlLoading? Loaded(string path) =>
-        projects.Values.Where(l => Paths.IsUnder(path, l.Folder)).OrderByDescending(l => l.Folder.Length).FirstOrDefault();
+        projects.Values.Where(l => PathNames.Within(path, l.Folder)).OrderByDescending(l => l.Folder.Length).FirstOrDefault();
 
     /// <summary>The projects loaded or loading that a file changed on disk may change: for C#, each that may read it; for
     /// anything else, the project it is in, or whose restore it is.</summary>
@@ -260,8 +260,8 @@ public sealed class XamlService : IDisposable
     /// XAML binding to App.Core's view models), and each still loading, whose references are not known yet. Each builder
     /// says off the UI thread whether it compiles the file.</summary>
     private IEnumerable<XamlLoading> Reading(string path) =>
-        projects.Values.Where(l => Paths.IsUnder(path, l.Folder) || !l.Loaded.IsCompleted
-            || (l.Loaded.IsCompletedSuccessfully && l.Loaded.Result is { } project && project.Referenced.Any(r => Paths.IsUnder(path, r.Folder))));
+        projects.Values.Where(l => PathNames.Within(path, l.Folder) || !l.Loaded.IsCompleted
+            || (l.Loaded.IsCompletedSuccessfully && l.Loaded.Result is { } project && project.Referenced.Any(r => PathNames.Within(path, r.Folder))));
 
     /// <summary>The project a restore's assets under an artifacts folder are of (UseArtifactsOutput's
     /// artifacts/obj/Project/project.assets.json, which ProjectInputs reads), under no project's folder: the project of that
@@ -275,7 +275,7 @@ public sealed class XamlService : IDisposable
             return null;
         }
         string name = Path.GetFileName(named);
-        return projects.Values.Where(l => Path.GetFileNameWithoutExtension(l.ProjectPath) == name && Paths.IsUnder(l.ProjectPath, root))
+        return projects.Values.Where(l => Path.GetFileNameWithoutExtension(l.ProjectPath) == name && PathNames.Within(l.ProjectPath, root))
             .OrderByDescending(l => l.Folder.Length).FirstOrDefault();
     }
 
@@ -339,48 +339,35 @@ public sealed class XamlService : IDisposable
     }
 
     /// <summary>The XAML file whose <c>x:Class</c> is a class, in the project of a C# file of it: an open one's text first,
-    /// else the files on disk; null for none.</summary>
-    public string? ClassFile(string className, string near)
+    /// else the project's files on disk, read off the UI thread by the walk a project's files take (<see cref="FolderWalk"/>);
+    /// null for none.</summary>
+    public async Task<string?> ClassFileAsync(string className, string near)
     {
         UiThread.Check();
+        string declared = $"Class=\"{className}\"";
         foreach (XamlDocument document in documents.Values)
         {
-            if (document.Document.Text.Snapshot.ToString().Contains($"Class=\"{className}\"", StringComparison.Ordinal))
+            if (document.Document.Text.Snapshot.ToString().Contains(declared, StringComparison.Ordinal))
             {
                 return document.Document.Path;
             }
         }
-        if (ProjectFile(near) is not { } project)
+        return await BackgroundWork.Run(() => ProjectFile(near) is { } project
+            ? FolderWalk.Files(Path.GetDirectoryName(project)!, built: true).Where(IsXaml).FirstOrDefault(file => Declares(file, declared))
+            : null);
+    }
+
+    private static bool Declares(string file, string declared)
+    {
+        try
         {
-            return null;
+            return File.ReadAllText(file).Contains(declared, StringComparison.Ordinal);
         }
-        Stack<string> waiting = new([Path.GetDirectoryName(project)!]);
-        while (waiting.Count > 0)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            string folder = waiting.Pop();
-            try
-            {
-                foreach (string file in Directory.EnumerateFiles(folder).Where(IsXaml))
-                {
-                    if (File.ReadAllText(file).Contains($"Class=\"{className}\"", StringComparison.Ordinal))
-                    {
-                        return PathNames.Canonical(file);
-                    }
-                }
-                foreach (string sub in Directory.EnumerateDirectories(folder))
-                {
-                    if (Path.GetFileName(sub) is not ("bin" or "obj") && !Path.GetFileName(sub).StartsWith('.'))
-                    {
-                        waiting.Push(sub);
-                    }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                // A folder that cannot be read holds no XAML to go to.
-            }
+            // Gone, or not readable: no XAML to go to.
+            return false;
         }
-        return null;
     }
 
     /// <summary>A file's project: the nearest folder at or above it with a C# project file.</summary>

@@ -14,7 +14,7 @@ namespace Passenger.App.Containers;
 
 /// <summary>What the Containers window works with: the window's engine, its actions' work, the status bar, the browser a
 /// port's link opens in, and the folder the state's copies of a container's files go under.</summary>
-public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Work, StatusSay Say, Action<Uri> Browse, Func<string> StateFolder);
+public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Work, StatusSay Say, Action<Uri> Browse, Func<string> StateFolder, Func<string, string> Title);
 
 /// <summary>The Containers window: the engine's Compose projects with their services and containers (stopped ones still
 /// listed), then every other container (Testcontainers' apart), images, volumes and networks, each row with its state,
@@ -43,7 +43,8 @@ public sealed class ContainersView : DockPanel
 
     /// <summary>Events that change nothing the window lists: a command run in a container, an attach, a copy.</summary>
     private static bool Quiet(string action) =>
-        action.StartsWith("exec_", StringComparison.Ordinal) || action is "attach" or "detach" or "resize" or "top" or "archive-path" or "extract-to-dir" or "export" or "copy";
+        action.StartsWith("exec_", StringComparison.Ordinal) || action is "exec" or "attach" or "detach" or "resize" or "top" or "archive-path" or "extract-to-dir"
+            or "export" or "copy";
     private int reads;
     private string shownTab = LogTab;
 
@@ -58,20 +59,20 @@ public sealed class ContainersView : DockPanel
         Log.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
 
         StackPanel tools = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
-        foreach ((string action, string icon, string tip) in (ReadOnlySpan<(string, string, string)>)[
-            (AppActions.ContainersRefresh, "Icon.Rerun", "Refresh"),
-            (AppActions.ContainerStart, "Icon.Run", "Start"),
-            (AppActions.ContainerStop, "Icon.Stop", "Stop"),
-            (AppActions.ContainerRestart, "Icon.Update", "Restart"),
-            (AppActions.ContainerPause, "Icon.Pause", "Pause or Unpause"),
-            (AppActions.ContainerRemove, "Icon.Close", "Remove"),
-            (AppActions.ContainerShell, "Icon.Terminal", "Open Shell"),
-            (AppActions.ContainerInspect, "Icon.DocumentText", "Inspect"),
-            (AppActions.ContainerPull, "Icon.ArrowDown", "Pull"),
-            (AppActions.ContainerScale, "Icon.Add", "Scale Service…"),
-            (AppActions.ContainerPrune, "Icon.Clear", "Prune…")])
+        foreach ((string action, string icon) in (ReadOnlySpan<(string, string)>)[
+            (AppActions.ContainersRefresh, "Icon.Rerun"),
+            (AppActions.ContainerStart, "Icon.Run"),
+            (AppActions.ContainerStop, "Icon.Stop"),
+            (AppActions.ContainerRestart, "Icon.Update"),
+            (AppActions.ContainerPause, "Icon.Pause"),
+            (AppActions.ContainerRemove, "Icon.Close"),
+            (AppActions.ContainerShell, "Icon.Terminal"),
+            (AppActions.ContainerInspect, "Icon.DocumentText"),
+            (AppActions.ContainerPull, "Icon.ArrowDown"),
+            (AppActions.ContainerScale, "Icon.Add"),
+            (AppActions.ContainerPrune, "Icon.Clear")])
         {
-            tools.Children.Add(ActionTool(action, icon, tip));
+            tools.Children.Add(ActionTool(action, icon, parts.Title(action)));
         }
         Border bar = new() { [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = tools };
         bar.Bind(Border.BorderBrushProperty, bar.GetResourceObservable("Passenger.Divider"));
@@ -100,25 +101,25 @@ public sealed class ContainersView : DockPanel
         };
         ListMenus.Attach(list, () => Chosen is not { Kind: not ContainerRowKind.Group } ? [] :
         [
-            ListMenus.Item("Start", null, () => ActionRequested?.Invoke(this, AppActions.ContainerStart)),
-            ListMenus.Item("Stop", null, () => ActionRequested?.Invoke(this, AppActions.ContainerStop)),
-            ListMenus.Item("Restart", null, () => ActionRequested?.Invoke(this, AppActions.ContainerRestart)),
-            ListMenus.Item("Pause or Unpause", null, () => ActionRequested?.Invoke(this, AppActions.ContainerPause)),
+            Item(AppActions.ContainerStart),
+            Item(AppActions.ContainerStop),
+            Item(AppActions.ContainerRestart),
+            Item(AppActions.ContainerPause),
             new Separator(),
-            ListMenus.Item("Open Shell", null, () => ActionRequested?.Invoke(this, AppActions.ContainerShell)),
-            ListMenus.Item("Inspect", null, () => ActionRequested?.Invoke(this, AppActions.ContainerInspect)),
-            ListMenus.Item("Pull", null, () => ActionRequested?.Invoke(this, AppActions.ContainerPull)),
-            ListMenus.Item("Scale Service…", null, () => ActionRequested?.Invoke(this, AppActions.ContainerScale)),
+            Item(AppActions.ContainerShell),
+            Item(AppActions.ContainerInspect),
+            Item(AppActions.ContainerPull),
+            Item(AppActions.ContainerScale),
             // A .NET service of the container run under way, acted on as the run goes on (the window's actions say why not).
             .. Chosen is { Kind: ContainerRowKind.Service or ContainerRowKind.Container } ? (Control[])[
                 new Separator(),
-                ListMenus.Item("Debug Service", null, () => ActionRequested?.Invoke(this, AppActions.ServiceDebug)),
-                ListMenus.Item("Attach to Service", null, () => ActionRequested?.Invoke(this, AppActions.ServiceAttach)),
-                ListMenus.Item("Run Service without Debugger", null, () => ActionRequested?.Invoke(this, AppActions.ServiceRun)),
-                ListMenus.Item("Profile Service", null, () => ActionRequested?.Invoke(this, AppActions.ServiceProfile)),
+                Item(AppActions.ServiceDebug),
+                Item(AppActions.ServiceAttach),
+                Item(AppActions.ServiceRun),
+                Item(AppActions.ServiceProfile),
             ] : [],
             new Separator(),
-            ListMenus.Item("Remove", null, () => ActionRequested?.Invoke(this, AppActions.ContainerRemove)),
+            Item(AppActions.ContainerRemove),
         ]);
         empty = new TextBlock { Classes = { "emptyText" }, Text = "Reading what the engine holds…" };
         nothingChosen = new TextBlock { Classes = { "emptyText" }, Text = "Choose a container or a Compose project to see its log and stats" };
@@ -302,7 +303,7 @@ public sealed class ContainersView : DockPanel
         ContainerSnapshot snapshot = Snapshot;
         if (snapshot.Projects.Count > 0)
         {
-            Group("Compose", $"{snapshot.Projects.Count} project{Plural(snapshot.Projects.Count)}", () =>
+            Group("Compose", Core.Plural.Of(snapshot.Projects.Count, "project"), () =>
             {
                 foreach (ComposeProject project in snapshot.Projects)
                 {
@@ -382,7 +383,6 @@ public sealed class ContainersView : DockPanel
     private static ContainerRow ContainerRowOf(ContainerInfo container, int depth) =>
         new(ContainerRowKind.Container, depth, $"container:{container.Name}", container.Name) { Detail = container.Image, Container = container };
 
-    private static string Plural(int count) => count == 1 ? string.Empty : "s";
 
     /// <summary>Expands or collapses a row with rows under it.</summary>
     public void Toggle(ContainerRow? row)
@@ -474,12 +474,14 @@ public sealed class ContainersView : DockPanel
         }
     }
 
+    /// <summary>A row menu's item for one of the window's actions, titled as the action is.</summary>
+    private MenuItem Item(string action) => ListMenus.Item(parts.Title(action), null, () => ActionRequested?.Invoke(this, action));
+
     private Button ActionTool(string action, string icon, string tip)
     {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false, Name = action };
+        Button button = ToolButtons.Of(icon, tip, () => ActionRequested?.Invoke(this, action));
+        button.Name = action;
         ActionTips.Set(button, action, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => ActionRequested?.Invoke(this, action);
         ActionButtons.Mark(button, action);
         return button;
     }

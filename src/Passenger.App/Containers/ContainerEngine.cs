@@ -32,6 +32,30 @@ public sealed record EngineState(EngineStatus Status, string? Cli, string? Probl
 {
     public bool IsReady => Status == EngineStatus.Ready;
 
+    /// <summary>Whether the engine is Podman: Docker's CLI on Podman's socket (its server names Podman Engine), or a
+    /// <c>docker</c> that is Podman's own command (<see cref="PodmanCli"/>).</summary>
+    public bool IsPodman { get; init; }
+
+    /// <summary>Whether the <c>docker</c> command is Podman's own (podman-docker, or a link to podman), whose commands take
+    /// Podman's flags and answer in Podman's JSON.</summary>
+    public bool PodmanCli { get; init; }
+
+    /// <summary>Whether the engine runs rootless, a container's users mapped onto the person's subordinate ids, so a
+    /// container's user other than root is not the person on the host (Podman's <c>keep-id</c> makes it so).</summary>
+    public bool Rootless { get; init; }
+
+    /// <summary>The engine's processor, docker's name for it (amd64, arm64).</summary>
+    public string? ServerArch { get; init; }
+
+    /// <summary>The engine's name as messages give it.</summary>
+    public string EngineName => IsPodman ? "Podman" : "Docker";
+
+    /// <summary>What the engine cannot do that Passenger would otherwise, said where its problems are: Podman has no
+    /// BuildKit, whose checks a Dockerfile's are (buildx would start a BuildKit container on it, which Passenger never does).</summary>
+    public string? Limit => IsPodman
+        ? "Dockerfiles are not checked with BuildKit: Podman has none (it builds with Buildah), and Passenger starts no BuildKit container for its checks"
+        : null;
+
     /// <summary>Whether Docker Desktop is installed where a click can start it (macOS's app, Windows' executable).</summary>
     public static string? DesktopApp => OperatingSystem.IsMacOS() && Directory.Exists("/Applications/Docker.app") ? "/Applications/Docker.app"
         : OperatingSystem.IsWindows() && File.Exists(WindowsDesktop) ? WindowsDesktop : null;
@@ -127,6 +151,8 @@ public sealed class ContainerEngine
         start.Environment["DOCKER_CLI_HINTS"] = "false";
         start.Environment["COMPOSE_ANSI"] = "never";
         start.Environment["COMPOSE_STATUS_STDOUT"] = "1";
+        // Podman's own docker says before each compose command which provider it runs, into what the IDE reads.
+        start.Environment["PODMAN_COMPOSE_WARNING_LOGS"] = "false";
         return start;
     }
 
@@ -234,6 +260,11 @@ public sealed class ContainerEngine
         return found;
     }
 
+    /// <summary>Whether a line is Podman's own compose saying its provider failed ("Error: executing …/docker-compose …:
+    /// exit status 1"), which it writes after the provider's own words, the ones that say why.</summary>
+    public static bool ProviderFailed(string line) =>
+        line.StartsWith("Error: executing ", StringComparison.Ordinal) && line.Contains(": exit status ", StringComparison.Ordinal);
+
     /// <summary>What a failed command said: its errors, else its output, else its exit code.</summary>
     public static string Said(ChildResult result) =>
         (result.Error.Trim() is { Length: > 0 } error ? error : result.Output.Trim() is { Length: > 0 } output ? output : $"exit code {result.ExitCode}")
@@ -307,33 +338,98 @@ public sealed class ContainerEngine
         {
             return new EngineState(EngineStatus.NotRunning, cli, $"The container engine did not answer: {failed.Message}", null, null, null, null, null, null);
         }
-        (string? serverVersion, string? serverOs, string? context) = (null, null, null);
+        (string? serverVersion, string? serverOs, string? serverArch, string? context, bool podmanCli, bool podman) = (null, null, null, null, false, false);
         foreach (JsonElement read in JsonLines(version.Output))
         {
             context = Text(read, "Client", "Context");
             serverVersion = Text(read, "Server", "Version");
             serverOs = Text(read, "Server", "Os");
+            serverArch = Text(read, "Server", "Arch") ?? ArchOf(Text(read, "Server", "OsArch"));
+            // Podman's own command words its system as OsArch; on Linux it is the engine itself, with no server apart.
+            podmanCli = Text(read, "Client", "OsArch") is not null;
+            podman = podmanCli || (read.TryGetProperty("Server", out JsonElement server) && server.ValueKind == JsonValueKind.Object
+                && server.TryGetProperty("Components", out JsonElement parts) && parts.ValueKind == JsonValueKind.Array
+                && parts.EnumerateArray().Any(p => Text(p, "Name") == "Podman Engine"));
+            if (podmanCli && version.Succeeded && serverVersion is null)
+            {
+                (serverVersion, serverOs, serverArch) = (Text(read, "Client", "Version"), Text(read, "Client", "Os"), ArchOf(Text(read, "Client", "OsArch")));
+            }
         }
         string?[] answers = await Task.WhenAll(EndpointAsync(), ComposeAsync(), BuildxAsync());
         (string? endpoint, string? compose, string? buildx) = (answers[0], answers[1], answers[2]);
+        // A Podman that does not answer says so, through Docker's CLI too, as does the socket a context names.
+        podman |= Said(version).Contains("Podman", StringComparison.Ordinal) || endpoint?.Contains("podman", StringComparison.OrdinalIgnoreCase) == true;
+        string name = podman ? "Podman" : "Docker";
         if (!version.Succeeded || serverVersion is null)
         {
-            string desktop = EngineState.DesktopApp is not null ? "start Docker Desktop" : OperatingSystem.IsLinux()
+            string start = podman ? OperatingSystem.IsLinux() ? "start its socket (systemctl --user start podman.socket)" : "start its machine (podman machine start)"
+                : EngineState.DesktopApp is not null ? "start Docker Desktop" : OperatingSystem.IsLinux()
                 ? "start it (sudo systemctl start docker), or another context's (docker context use)" : "start it, or choose another context (docker context use)";
-            return new EngineState(EngineStatus.NotRunning, cli, $"Docker isn't running{(context is null ? string.Empty : $" (context {context})")}: {desktop}",
-                null, null, context, endpoint, compose, buildx);
+            return new EngineState(EngineStatus.NotRunning, cli, $"{name} isn't running{(context is null ? string.Empty : $" (context {context})")}: {start}",
+                null, null, context, endpoint, compose, buildx) { IsPodman = podman, PodmanCli = podmanCli };
         }
+        bool rootless = false;
+        bool socket = true;
+        if (podman)
+        {
+            (rootless, string? remoteSocket, socket) = await PodmanInfoAsync();
+            endpoint ??= remoteSocket;
+        }
+        EngineState Made(EngineStatus status, string? problem) =>
+            new(status, cli, problem, serverVersion, serverOs, context, endpoint, compose, buildx)
+            {
+                IsPodman = podman, PodmanCli = podmanCli, Rootless = rootless, ServerArch = serverArch,
+            };
         if (string.Equals(serverOs, "windows", StringComparison.OrdinalIgnoreCase))
         {
-            return new EngineState(EngineStatus.WindowsContainers, cli, "Docker runs Windows containers: switch Docker Desktop to Linux containers",
-                serverVersion, serverOs, context, endpoint, compose, buildx);
+            return Made(EngineStatus.WindowsContainers, "Docker runs Windows containers: switch Docker Desktop to Linux containers");
+        }
+        if (!socket)
+        {
+            return Made(EngineStatus.NoCompose, "Podman's API socket, which docker compose talks to, is not running: systemctl --user enable --now podman.socket");
         }
         if (compose is null)
         {
-            return new EngineState(EngineStatus.NoCompose, cli, "Docker Compose v2 (docker compose) is not installed beside the docker command",
-                serverVersion, serverOs, context, endpoint, compose, buildx);
+            return Made(EngineStatus.NoCompose, podmanCli
+                ? "podman compose found no Docker Compose v2 to run: install docker-compose on the PATH or as Docker's CLI plugin (podman-compose does not serve)"
+                : "Docker Compose v2 (docker compose) is not installed beside the docker command");
         }
-        return new EngineState(EngineStatus.Ready, cli, null, serverVersion, serverOs, context, endpoint, compose, buildx);
+        return Made(EngineStatus.Ready, null);
+
+        // Whether Podman runs rootless, and where its own command's API socket is: Docker's info through its CLI, Podman's through its own.
+        async Task<(bool Rootless, string? Socket, bool SocketThere)> PodmanInfoAsync()
+        {
+            try
+            {
+                ChildResult said = await RunAsync(["info", "--format", "json"], AskLimit);
+                if (!said.Succeeded)
+                {
+                    return (false, null, true);
+                }
+                // Podman's own writes it over many lines.
+                using JsonDocument read = JsonDocument.Parse(said.Output);
+                JsonElement info = read.RootElement;
+                if (info.ValueKind != JsonValueKind.Object)
+                {
+                    return (false, null, true);
+                }
+                if (info.TryGetProperty("SecurityOptions", out JsonElement options) && options.ValueKind == JsonValueKind.Array)
+                {
+                    return (options.EnumerateArray().Any(o => o.ValueKind == JsonValueKind.String && o.GetString() == "name=rootless"), null, true);
+                }
+                bool isRootless = Text(info, "host", "security", "rootless") == "true";
+                if (!podmanCli || !OperatingSystem.IsLinux())
+                {
+                    return (isRootless, null, true);
+                }
+                bool there = Text(info, "host", "remoteSocket", "exists") != "false";
+                return (isRootless, there && Text(info, "host", "remoteSocket", "path") is { Length: > 0 } path ? (path.Contains("://", StringComparison.Ordinal) ? path : $"unix://{path}") : null, there);
+            }
+            catch (Exception failed) when (failed is TimeoutException or JsonException)
+            {
+                return (false, null, true);
+            }
+        }
 
         async Task<string?> EndpointAsync()
         {
@@ -366,7 +462,9 @@ public sealed class ContainerEngine
             try
             {
                 ChildResult said = await RunAsync(["buildx", "version"], AskLimit);
-                return said.Succeeded ? said.Output.Split(' ', StringSplitOptions.RemoveEmptyEntries).ElementAtOrDefault(1) : null;
+                // Podman's own buildx is Buildah's build ("buildah 1.42.1"), which has no BuildKit and none of buildx's flags.
+                string[] words = said.Output.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                return said.Succeeded && words.FirstOrDefault() != "buildah" ? words.ElementAtOrDefault(1) : null;
             }
             catch (TimeoutException)
             {
@@ -374,6 +472,9 @@ public sealed class ContainerEngine
             }
         }
     }
+
+    /// <summary>The processor of Podman's "linux/arm64".</summary>
+    private static string? ArchOf(string? osArch) => osArch?.Split('/') is [_, var arch, ..] ? arch : null;
 
     /// <summary>A string at a path of properties, or null.</summary>
     public static string? Text(JsonElement element, params string[] path)
@@ -599,15 +700,19 @@ public sealed class ContainerEngine
             using JsonDocument read = JsonDocument.Parse(line);
             JsonElement root = read.RootElement;
             Dictionary<string, string> attributes = [];
-            if (root.TryGetProperty("Actor", out JsonElement actor) && actor.TryGetProperty("Attributes", out JsonElement given) && given.ValueKind == JsonValueKind.Object)
+            // Docker's attributes are its actor's; Podman's own command puts them, its status and id at the top.
+            JsonElement given = root.TryGetProperty("Actor", out JsonElement actor) && actor.ValueKind == JsonValueKind.Object
+                && actor.TryGetProperty("Attributes", out JsonElement actors) ? actors
+                : root.TryGetProperty("Attributes", out JsonElement own) ? own : default;
+            if (given.ValueKind == JsonValueKind.Object)
             {
                 foreach (JsonProperty property in given.EnumerateObject())
                 {
                     attributes[property.Name] = property.Value.ToString();
                 }
             }
-            return new ContainerEvent(Text(root, "Type") ?? string.Empty, Text(root, "Action") ?? Text(root, "status") ?? string.Empty,
-                Text(root, "Actor", "ID") ?? Text(root, "id") ?? string.Empty, attributes);
+            return new ContainerEvent(Text(root, "Type") ?? string.Empty, Text(root, "Action") ?? Text(root, "status") ?? Text(root, "Status") ?? string.Empty,
+                Text(root, "Actor", "ID") ?? Text(root, "id") ?? Text(root, "ID") ?? string.Empty, attributes);
         }
         catch (JsonException)
         {

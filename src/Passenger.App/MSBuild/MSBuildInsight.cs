@@ -24,7 +24,7 @@ public sealed class MSBuildInsight
         targets = insight.Targets.DistinctBy(t => t.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
         paths = [.. insight.Files.Select(f => f.Length == 0 ? f : PathNames.Canonical(f))];
         Project = PathNames.Canonical(insight.Project);
-        walked = new HashSet<string>(insight.Folders.Select(f => f.Path), StringComparer.FromComparison(PathNames.Comparison));
+        walked = new HashSet<string>(insight.Folders.Select(f => f.Path), PathNames.Comparer);
     }
 
     public ProjectInsight Raw { get; }

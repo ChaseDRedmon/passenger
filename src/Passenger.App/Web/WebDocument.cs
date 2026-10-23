@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Passenger.App.CSharp;
 using Passenger.App.Workspace;
 using Passenger.Editor;
@@ -17,14 +16,11 @@ public sealed class WebDocument : IServerDocument, IDisposable
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(400);
 
     private readonly OpenDocument document;
-    private CancellationTokenSource? pulling;
+    private readonly ServerDiagnostics diagnostics;
     private LanguageSession? session;
 
     /// <summary>The file's checks held while its server starts: until it is connected, or cannot start.</summary>
     private IDisposable? waiting;
-    private Diagnostic[] found = [];
-    private TextRange[] ranges = [];
-    private IReadOnlyList<Diagnostic>? placed = [];
 
     /// <summary>The file's checks held, for the Dockerfile and YAML servers, which push a file's diagnostics after each
     /// change of it, from the change until that push lands or <see cref="PushLimit"/> passes: what an agent's diagnostics
@@ -43,6 +39,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
     internal WebDocument(OpenDocument document, WebServerKind kind, string languageId)
     {
         this.document = document;
+        diagnostics = new ServerDiagnostics(document, holdsChecks: true);
         Kind = kind;
         LanguageId = languageId;
         // What a server before this one marked moves with the text until this one says otherwise.
@@ -73,7 +70,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
     /// definitions or renames, which Passenger then gives itself.</summary>
     public bool Provides(string capability) => session?.Server.Provides(capability) == true;
 
-    public IReadOnlyList<Diagnostic> Diagnostics => placed ??= DiagnosticMarks.Placed(document.Text.Snapshot, found, ranges);
+    public IReadOnlyList<Diagnostic> Diagnostics => diagnostics.Placed;
 
     /// <summary>ESLint's share of the file, while ESLint checks it.</summary>
     public EslintDocument? Lint { get; set; }
@@ -167,7 +164,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
 
     public void Dispose()
     {
-        pulling?.Cancel();
+        diagnostics.Stop();
         PushLanded();
         Unreached();
         document.Text.Changed -= OnChanged;
@@ -182,14 +179,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (ranges.Length > 0)
-        {
-            for (int i = 0; i < ranges.Length; i++)
-            {
-                ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
-            }
-            placed = null;
-        }
+        diagnostics.Move(e);
         if (own.Count + lint.Count + engine.Count > 0)
         {
             own = [.. own.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
@@ -214,10 +204,10 @@ public sealed class WebDocument : IServerDocument, IDisposable
             {
                 if (lsp == Lsp)
                 {
-                    (IReadOnlyList<Diagnostic> diagnostics, int version) = lsp.Pushed;
+                    (IReadOnlyList<Diagnostic> pushed, int version) = lsp.Pushed;
                     if (version == document.Text.Version)
                     {
-                        Show(diagnostics);
+                        Show(pushed);
                         PushLanded();
                     }
                 }
@@ -232,64 +222,31 @@ public sealed class WebDocument : IServerDocument, IDisposable
         {
             return;
         }
-        pulling?.Cancel();
-        CancellationTokenSource cancel = new();
-        pulling = cancel;
-        BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token, document.Checking());
+        diagnostics.Pull(delay, cancel => PullAsync(lsp, cancel));
     }
 
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel, IDisposable checking)
+    /// <summary>The file's diagnostics where its server is asked for them (the rest push theirs), then its colours where it
+    /// finds them, each for the text as it stands.</summary>
+    private async Task PullAsync(LspDocument lsp, CancellationToken cancel)
     {
-        try
+        if (session?.Server.Provides("diagnosticProvider") == true && await diagnostics.PulledAsync(lsp, cancel) is { } pulled)
         {
-            if (delay > TimeSpan.Zero)
-            {
-                await Task.Delay(delay, cancel);
-            }
-            if (session?.Server.Provides("diagnosticProvider") == true)
-            {
-                (IReadOnlyList<Diagnostic> diagnostics, int version) = await lsp.DiagnosticsAsync(cancel);
-                if (!cancel.IsCancellationRequested && version == document.Text.Version)
-                {
-                    Show(diagnostics);
-                }
-            }
-            if (session?.Server.Provides("colorProvider") == true)
-            {
-                (IReadOnlyList<ColorInformation> colours, int coloured) = await lsp.ColoursAsync(cancel);
-                if (!cancel.IsCancellationRequested && coloured == document.Text.Version)
-                {
-                    document.ColourMarks = Swatches(lsp, colours);
-                }
-            }
+            Show(pulled);
         }
-        catch (OperationCanceledException)
+        if (session?.Server.Provides("colorProvider") == true)
         {
-            // Typing went on, or the file was let go.
-        }
-        catch (LanguageServerFailed)
-        {
-            // The markers stand until the server answers again, or a server started again does.
-        }
-        finally
-        {
-            Dispatcher.UIThread.Post(() =>
+            (IReadOnlyList<ColorInformation> colours, int coloured) = await lsp.ColoursAsync(cancel);
+            if (!cancel.IsCancellationRequested && coloured == document.Text.Version)
             {
-                checking.Dispose();
-                BackgroundWork.End();
-            });
+                document.ColourMarks = Swatches(lsp, colours);
+            }
         }
     }
 
-    private void Show(IReadOnlyList<Diagnostic> diagnostics)
+    private void Show(IReadOnlyList<Diagnostic> reported)
     {
-        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-        found = [.. diagnostics];
-        ranges = [.. found.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
-        placed = diagnostics;
         // The server's own codes stay with the diagnostics, which its quick fixes are asked for by.
-        own = [.. found.Select((d, i) => DiagnosticMarks.Marker(Named(d), ranges[i])).OfType<Marker>()];
+        own = diagnostics.Take(reported, (d, range) => DiagnosticMarks.Marker(Named(d), range));
         document.Markers = Shown();
     }
 

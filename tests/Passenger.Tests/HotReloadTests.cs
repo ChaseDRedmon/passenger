@@ -12,37 +12,34 @@ namespace Passenger.Tests;
 /// <summary>Hot Reload while debugging (Edit and Continue), as a person uses it: a program launched with Debug, its code
 /// edited in the editor, paused or running, and Apply Hot Reload Changes (Alt+F10) or the next resume putting the edits into
 /// the program, which then prints what the new code prints; an edit the runtime cannot take named at its line in Problems'
-/// Hot Reload tab, nothing applied, and the program restarted with its breakpoints. Debugged, so run alone.</summary>
+/// Hot Reload tab, nothing applied, and the program restarted with its breakpoints. The tests share one project
+/// (<see cref="Greetings"/>): restored once, its warm language server and the build the last test left, each test's window
+/// never saving what it typed. Debugged, so run alone.</summary>
 [Collection(Alone.Name)]
-public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
+public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
 {
-    private readonly string folder;
+    private readonly Greetings project;
 
-    public HotReloadTests(RestoredFolders folders)
+    public HotReloadTests(Greetings project)
     {
-        folder = folders.Take("hotreload-", made =>
-        {
-            File.WriteAllText(Path.Combine(made, "Greetings.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
-            File.WriteAllText(Path.Combine(made, "Program.cs"), Program);
-            File.WriteAllText(Path.Combine(made, "Greeter.cs"), Greeter);
-            return made;
-        });
+        this.project = project;
+        project.Reset();
     }
-
-    public void Dispose() => TestFolders.Delete(folder);
 
     /// <summary>Greets once every 100 ms, numbered, until stopped.</summary>
     private const string Program = "for (int i = 1; ; i++)\n{\n    Greeter.Greet(i);\n    Thread.Sleep(100);\n}\n";
 
     private const string Greeter = "static class Greeter\n{\n    public static void Greet(int i)\n    {\n        Console.WriteLine($\"Hello {i}\");\n    }\n}\n";
 
-    private string ProgramPath => Path.Combine(PathNames.Canonical(folder), "Program.cs");
+    private string ProgramPath => Path.Combine(PathNames.Canonical(project.Folder), "Program.cs");
 
-    private string GreeterPath => Path.Combine(PathNames.Canonical(folder), "Greeter.cs");
+    private string GreeterPath => Path.Combine(PathNames.Canonical(project.Folder), "Greeter.cs");
 
+    /// <summary>An edit applied while paused before a call is what that call runs; then, paused in the edited method, a step
+    /// after another edit to it applies that one with no Apply, runs the paused statement in the new code and stops at the
+    /// statement the edit added.</summary>
     [AvaloniaFact]
-    public void An_edit_made_while_paused_is_applied_and_the_program_goes_on_running_it()
+    public void An_edit_applied_while_paused_runs_from_the_next_call_and_a_step_after_an_edit_goes_through_the_edited_code()
     {
         MainWindow window = Open();
         try
@@ -68,91 +65,24 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => Output(window).Contains("Howdy 2", StringComparison.Ordinal), $"the program to print what the edited code prints ({Output(window)})");
             Assert.Contains("Howdy 1", Output(window), StringComparison.Ordinal);
             Assert.DoesNotContain("Hello", Output(window), StringComparison.Ordinal);
-        }
-        finally
-        {
-            End(window);
-        }
-    }
 
-    [AvaloniaFact]
-    public void An_edit_to_a_running_program_is_applied_without_pausing_it()
-    {
-        MainWindow window = Open();
-        try
-        {
-            Ui.Run(window, AppActions.Debug);
-            Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), "the program to greet");
+            // Paused in Greet, Step Over applies the next edit, runs the paused statement in the new code and stops at the one
+            // added after it.
             window.OpenFile(GreeterPath);
-            Replace(window, "Hello", "Howdy");
-            Ui.Run(window, AppActions.ApplyHotReloadChanges);
-            HotReloadOutcome applied = Applied(window);
-            Assert.True(applied.Result == HotReloadResult.Applied, $"The edit should apply to the running program: {applied.Said}");
-            Ui.WaitFor(() => Output(window).Contains("Howdy", StringComparison.Ordinal), $"the running program to greet with the edited code ({Output(window)})");
-            Assert.Equal(DebugState.Running, window.Debugger.Session!.State);
-
-            // The edits Roslyn's rules allowed are those the program's own runtime says it can take, read from its CoreLib.
-            Dap.HotReloadStateResponse state = Ui.Await(window.Debugger.Session.HotReloadStateAsync(), "what the program's runtime can take");
-            TestContext.Current.TestOutputHelper?.WriteLine($"The runtime's capabilities: {string.Join(' ', state.Capabilities ?? [])}");
-            Assert.True(state.Capabilities is { } capabilities && capabilities.Contains("Baseline") && capabilities.Contains("AddMethodToExistingType"),
-                $"The runtime should say which edits it takes: {state.CapabilitiesUnknown}");
-            Assert.Contains(state.Modules, m => m.Name == "Greetings.dll" && m.Editable);
-            Assert.Contains(state.Modules, m => m.Name == "System.Private.CoreLib.dll" && !m.Editable);
-        }
-        finally
-        {
-            End(window);
-        }
-    }
-
-    [AvaloniaFact]
-    public void A_method_on_the_stack_runs_its_edited_statement_when_the_program_goes_on()
-    {
-        MainWindow window = Open();
-        try
-        {
-            window.OpenFile(GreeterPath);
-            window.EditorArea.CodeEditor.GoTo(new TextPosition(4, 8));
-            Ui.Run(window, AppActions.ToggleBreakpoint);
-            Ui.Run(window, AppActions.Debug);
-            Paused(window, "the program to stop in Greet");
-
-            Replace(window, "Hello", "Howdy");
-            Ui.Run(window, AppActions.ToggleBreakpoint);
-            // Rider's: an edit made while paused is applied as the program goes on.
-            Ui.Run(window, AppActions.Resume);
-            Ui.WaitFor(() => Output(window).Contains("Howdy 2", StringComparison.Ordinal), $"the program to greet with the edited code ({Output(window)})");
-            Assert.True(window.Debugger.LastApplied?.Result == HotReloadResult.Applied, $"Resuming should apply the edit: {window.Debugger.LastApplied?.Said}");
-            // The frame paused in Greet's old code goes on at its statement in the new code.
-            Assert.Contains("Howdy 1", Output(window), StringComparison.Ordinal);
-            Assert.DoesNotContain("Hello", Output(window), StringComparison.Ordinal);
-        }
-        finally
-        {
-            End(window);
-        }
-    }
-
-    [AvaloniaFact]
-    public void A_step_after_an_edit_to_the_method_paused_in_goes_through_the_edited_code()
-    {
-        MainWindow window = Open();
-        try
-        {
-            window.OpenFile(GreeterPath);
-            window.EditorArea.CodeEditor.GoTo(new TextPosition(4, 8));
-            Ui.Run(window, AppActions.ToggleBreakpoint);
-            Ui.Run(window, AppActions.Debug);
-            Paused(window, "the program to stop in Greet");
             CodeEditor editor = window.EditorArea.CodeEditor;
-
-            // Step Over applies the edit, runs the paused statement in the new code and stops at the one added after it.
-            Replace(window, "        Console.WriteLine($\"Hello {i}\");", "        Console.WriteLine($\"Howdy {i}\");\n        Console.WriteLine(\"added\");");
+            editor.GoTo(new TextPosition(4, 8));
+            Ui.Run(window, AppActions.ToggleBreakpoint);
+            Paused(window, "the program to stop in Greet");
+            string? greeting = null;
+            Ui.WaitFor(() => (greeting = window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == "i")?.Value) is not null,
+                "the paused greeting's number in Variables");
+            HotReloadOutcome before = window.Debugger.LastApplied!;
+            Replace(window, "        Console.WriteLine($\"Howdy {i}\");", "        Console.WriteLine($\"Hi {i}\");\n        Console.WriteLine(\"added\");");
             Ui.Run(window, AppActions.StepOver);
-            Ui.WaitFor(() => window.Debugger.LastApplied is not null && editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line == 5),
+            Ui.WaitFor(() => window.Debugger.LastApplied != before && editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line == 5),
                 $"the step to stop at the added statement ({window.Debugger.LastApplied?.Said}; marks {string.Join(", ", editor.LineMarks)})");
             Assert.Equal(HotReloadResult.Applied, window.Debugger.LastApplied!.Result);
-            Assert.Contains("Howdy 1", Output(window), StringComparison.Ordinal);
+            Assert.Contains($"Hi {greeting}", Output(window), StringComparison.Ordinal);
             Ui.Run(window, AppActions.StepOver);
             Ui.WaitFor(() => Output(window).Contains("added", StringComparison.Ordinal), $"the added statement to run ({Output(window)})");
         }
@@ -162,18 +92,23 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
+    /// <summary>With Hot Reload on save, a saved edit reaches the debugged program with no Apply; a breakpoint on the line the
+    /// edit added then stops it there, its new local in Variables and the evaluator compiling against the method as the update
+    /// made it.</summary>
     [AvaloniaFact]
-    public void A_breakpoint_on_a_line_an_applied_edit_added_stops_the_program_there()
+    public void With_apply_on_save_a_saved_edit_reaches_the_program_and_a_breakpoint_on_a_line_it_added_stops_there()
     {
         MainWindow window = Open();
+        window.ApplySettings(window.Settings with { HotReloadOnSave = true });
         try
         {
             Ui.Run(window, AppActions.Debug);
             Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), "the program to greet");
             window.OpenFile(GreeterPath);
             Replace(window, "        Console.WriteLine($\"Hello {i}\");", "        string said = $\"Howdy {i}\";\n        Console.WriteLine(said);");
-            Ui.Run(window, AppActions.ApplyHotReloadChanges);
-            Assert.Equal(HotReloadResult.Applied, Applied(window).Result);
+            Ui.Run(window, AppActions.Save);
+            Ui.WaitFor(() => Output(window).Contains("Howdy", StringComparison.Ordinal), $"the saved edit to reach the program ({Output(window)})");
+            Assert.Equal(HotReloadResult.Applied, window.Debugger.LastApplied!.Result);
 
             // Line 6, the WriteLine the edit moved down a line, is the program's code now.
             CodeEditor editor = window.EditorArea.CodeEditor;
@@ -191,16 +126,18 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
         }
         finally
         {
+            window.ApplySettings(window.Settings with { HotReloadOnSave = false });
             End(window);
         }
     }
 
     /// <summary>The comment above the field holds breaks Roslyn counts and the editor does not: the edit is named at the editor's
-    /// line 4, not the compiler's 8, which only the console's message in a compiler's shape names, as a compiler would.</summary>
+    /// line 4, not the compiler's 8, which only the console's message in a compiler's shape names, as a compiler would. Then,
+    /// with always restart off, the next rude edit asks as dotnet watch asks, and Never stops the asking.</summary>
     [AvaloniaFact]
-    public void A_rude_edit_is_named_at_its_line_nothing_is_applied_and_the_program_restarts_with_it()
+    public void A_rude_edit_is_named_at_its_line_and_restarts_the_program_with_it_and_with_always_restart_off_asks_until_never()
     {
-        File.WriteAllText(GreeterPath, $"static class Greeter\n{{\n    /* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\n    static int count;\n\n"
+        project.Write("Greeter.cs", $"static class Greeter\n{{\n    /* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\n    static int count;\n\n"
             + "    public static void Greet(int i)\n    {\n        count++;\n        Console.WriteLine($\"Hello {i} ({count})\");\n    }\n}\n");
         MainWindow window = Open();
         try
@@ -233,75 +170,43 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains(message, StringComparison.Ordinal),
                 "the console's message for the edit, in a compiler's shape at the compiler's line 8");
             Assert.DoesNotContain("Howdy", Output(window), StringComparison.Ordinal);
+            window.OpenFile(ProgramPath);
+            window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
+            Ui.Run(window, AppActions.ToggleBreakpoint);
             Ui.Run(window, AppActions.Resume);
-            Ui.WaitFor(() => Output(window).Contains("Howdy 1 (1)", StringComparison.Ordinal), $"the restarted program to run the edits ({Output(window)})");
+            Ui.WaitFor(() => Output(window).Contains("Howdy 2 (2)", StringComparison.Ordinal), $"the restarted program to run the edits ({Output(window)})");
+            Assert.Contains("Howdy 1 (1)", Output(window), StringComparison.Ordinal);
             TestContext.Current.TestOutputHelper?.WriteLine($"Hot Reload restart for a rude edit took {window.LastHotReloadRestart!.Value.TotalSeconds:0.0} s");
-        }
-        finally
-        {
-            End(window);
-        }
-    }
 
-    [AvaloniaFact]
-    public void With_always_restart_off_a_rude_edit_asks_as_dotnet_watch_asks_and_never_stops_the_asking()
-    {
-        File.WriteAllText(GreeterPath, "static class Greeter\n{\n    static int count;\n\n    public static void Greet(int i)\n    {\n        count++;\n        Console.WriteLine($\"Hello {i} ({count})\");\n    }\n}\n");
-        MainWindow window = Open();
-        window.ApplySettings(window.Settings with { RestartOnRudeEdit = false });
-        try
-        {
-            Ui.Run(window, AppActions.Debug);
-            Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), "the program to greet");
-            DebugSession first = window.Debugger.Session!;
+            // With always restart off, the next rude edit asks as dotnet watch asks, and No leaves the program running as it was.
+            window.ApplySettings(window.Settings with { RestartOnRudeEdit = false });
+            DebugSession restarted = window.Debugger.Session!;
+            TimeSpan? restart = window.LastHotReloadRestart;
             window.OpenFile(GreeterPath);
-            Replace(window, "static int count;", "static long count;");
-
+            Replace(window, "static long count;", "static int count;");
             Ui.Run(window, AppActions.ApplyHotReloadChanges);
             ChoiceDialog asked = Asked(window);
             Assert.Contains(MainWindow.RestartQuestion, Said(asked), StringComparison.Ordinal);
             Assert.Contains("Updating the type of field requires restarting the application", Said(asked), StringComparison.Ordinal);
-            Press(asked, "No");
-            Assert.Same(first, window.Debugger.Session);
-            Assert.Equal(DebugState.Running, first.State);
-            Assert.Null(window.LastHotReloadRestart);
+            Ui.ClickButton(asked, "No");
+            Assert.Same(restarted, window.Debugger.Session);
+            Assert.Equal(DebugState.Running, restarted.State);
+            Assert.Equal(restart, window.LastHotReloadRestart);
 
             // Asked again at the next Apply, until Never, which leaves the program as it is for the rest of its session.
             Ui.Run(window, AppActions.ApplyHotReloadChanges);
-            Press(Asked(window), "Never");
+            Ui.ClickButton(Asked(window), "Never");
             HotReloadOutcome told = window.Debugger.LastApplied!;
             Ui.Run(window, AppActions.ApplyHotReloadChanges);
             Ui.WaitFor(() => window.Debugger.LastApplied != told, "the third Apply to say what it came to");
             Ui.Settle();
             Assert.Empty(window.OwnedWindows.OfType<ChoiceDialog>());
-            Assert.Same(first, window.Debugger.Session);
+            Assert.Same(restarted, window.Debugger.Session);
             Assert.Equal(HotReloadResult.RestartNeeded, window.Debugger.LastApplied!.Result);
         }
         finally
         {
             window.ApplySettings(window.Settings with { RestartOnRudeEdit = true });
-            End(window);
-        }
-    }
-
-    [AvaloniaFact]
-    public void With_apply_on_save_a_saved_edit_reaches_the_debugged_program()
-    {
-        MainWindow window = Open();
-        window.ApplySettings(window.Settings with { HotReloadOnSave = true });
-        try
-        {
-            Ui.Run(window, AppActions.Debug);
-            Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), "the program to greet");
-            window.OpenFile(GreeterPath);
-            Replace(window, "Hello", "Saved");
-            Ui.Run(window, AppActions.Save);
-            Ui.WaitFor(() => Output(window).Contains("Saved", StringComparison.Ordinal), $"the saved edit to reach the program ({Output(window)})");
-            Assert.Equal(HotReloadResult.Applied, window.Debugger.LastApplied!.Result);
-        }
-        finally
-        {
-            window.ApplySettings(window.Settings with { HotReloadOnSave = false });
             End(window);
         }
     }
@@ -314,13 +219,6 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
 
     private static string Said(Avalonia.Controls.Window dialog) =>
         string.Join('\n', dialog.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text));
-
-    private static void Press(Avalonia.Controls.Window dialog, string button)
-    {
-        Avalonia.Controls.Button pressed = dialog.GetVisualDescendants().OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button);
-        pressed.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.Settle();
-    }
 
     /// <summary>Waits for the program to stop and the stop to be shown, its file brought forward, before the test types.</summary>
     private static void Paused(MainWindow window, string what)
@@ -340,14 +238,9 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
     /// <summary>Selects the first place a text is written in the editor and types another over it, as a person does.</summary>
     private static void Replace(MainWindow window, string old, string typed) => Typing.Replace(window, old, typed);
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
-        return window;
-    }
+    /// <summary>A window on the project, on the server the last test's left, which never saves what its test typed: what is
+    /// on disk stays what the build was made from, but for what a build or a save the test makes writes.</summary>
+    private MainWindow Open() => project.Open(null);
 
     private static void End(MainWindow window)
     {
@@ -357,6 +250,22 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         }
         window.Close();
+    }
+
+    /// <summary>A program that greets for ever, Greeter's one method printing each greeting.</summary>
+    public sealed class Greetings : SharedProject
+    {
+        public Greetings()
+            : base("hotreload-")
+        {
+            File.WriteAllText(PathOf("Greetings.csproj"),
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>"));
+            File.WriteAllText(PathOf("Program.cs"), Program);
+            File.WriteAllText(PathOf("Greeter.cs"), Greeter);
+            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+            Directory.CreateDirectory(PathOf("bin"));
+            Prepare();
+        }
     }
 }
 

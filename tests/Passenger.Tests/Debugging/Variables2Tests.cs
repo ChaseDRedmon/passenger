@@ -7,6 +7,45 @@ namespace Passenger.Tests.Debugging;
 [Collection(DebugSession.Collection)]
 public class Variables2Tests(ITestOutputHelper testOutputHelper)
 {
+    /// <summary>A float's and a double's values read as C# reads them whatever the machine's culture, as a decimal's always
+    /// did: under German the adapter wrote 3,14, which Set Value could not take back. The culture comes from LANG and LC_ALL
+    /// on macOS and Linux; Windows takes it from the user's settings, so there the test holds the values to C#'s alone.</summary>
+    [Fact]
+    public async Task A_float_and_a_double_read_as_CSharp_writes_them_under_a_German_culture_and_take_back_the_text_shown()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper, environment: new Dictionary<string, string> { ["LANG"] = "de_DE.UTF-8", ["LC_ALL"] = "de_DE.UTF-8" });
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("DebuggableConsoleApp"), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest(150, Debuggees.Source("DebuggableConsoleApp", "VariablesClass.cs"))
+            .WithConfigurationDoneRequest();
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+        host.WithStackTraceRequest(stopped.ThreadId!.Value, out StackTraceResponse? frames)
+            .WithScopesRequest(frames.StackFrames.First().Id, out ScopesResponse? scopes)
+            .WithVariablesRequest(scopes.Scopes.Single().VariablesReference, out List<DapVariable>? locals);
+        int frame = frames.StackFrames.First().Id;
+
+        Assert.Equal(("1.5", "2.5", "3.5"), (Shown("localFloat"), Shown("localDouble"), Shown("localDecimal")));
+        Assert.Equal("3.14", Set("localDouble", "3.14"));
+        Assert.Equal("3.14", Set("localFloat", "3.14f"));
+        // Set Value of the text shown sets what was shown, a float's and a decimal's though C# writes neither's literal so.
+        string pi = Set("localDouble", "Math.PI");
+        Assert.Equal("3.141592653589793", pi);
+        Assert.Equal("0", Set("localDouble", "0"));
+        Assert.Equal(pi, Set("localDouble", pi));
+        string third = Set("localFloat", "1f / 3");
+        Assert.Equal("0.33333334", third);
+        Assert.Equal("0", Set("localFloat", "0"));
+        Assert.Equal(third, Set("localFloat", third));
+        Assert.Equal("2.75", Set("localDecimal", "2.75"));
+        Assert.Equal("-1E+20", Set("localDouble", "-1E+20"));
+
+        string Set(string name, string value) => host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments(name, value, frame)).Value;
+
+        string? Shown(string name) => locals.FirstOrDefault(v => v.Name == name)?.Value;
+    }
+
     [Fact]
     public async Task SyncMethod_VariablesClass_VariablesRequest_ReturnsCorrectVariables()
     {

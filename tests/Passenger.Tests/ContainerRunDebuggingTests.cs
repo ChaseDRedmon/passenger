@@ -12,10 +12,11 @@ namespace Passenger.Tests;
 /// <summary>Debug of a container run configuration as a person uses it, against a real engine: a Compose solution's two
 /// ASP.NET Core services held at their start, a session each in its own Debug tab (the adapter in each container over
 /// docker exec), each stopping at a breakpoint in Main and in a request, stepped and evaluated, its tab's console its
-/// container's log, and Stop taking everything down; Hot Reload applied to a paused service; Run with Hot Reload applying an
-/// edit through the debugger and restarting a service for one it cannot apply; the gutter's Debug of one service; and images
-/// mode stopping through the path map. Each skips, saying why, where no Linux engine runs; the tools are published for the
-/// engine's processor where a dev build finds them, and what the runs make carries the run's labels.</summary>
+/// container's log, and the Containers window's Restart, Stop and Remove going through the run; Hot Reload applied to a
+/// paused service; Run with Hot Reload applying an edit through the debugger and restarting a service for one it cannot
+/// apply; the gutter's Debug of one service; and images mode stopping through the path map. Each skips, saying why, where
+/// no Linux engine runs; the tools are published for the engine's processor where a dev build finds them, and what the runs
+/// make carries the run's labels.</summary>
 [Collection(Alone.Name)]
 public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools tools) : IClassFixture<ContainerRunDebuggingTests.Tools>
 {
@@ -37,8 +38,13 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
     private const int InMain = 1;
     private const int InRequest = 4;
 
+    /// <summary>Two services debugged at once, each stopping in Main and in a request, stepped and evaluated; then the
+    /// Containers window's actions on the debugged run go through it: the project's Restart ends the sessions, restarts every
+    /// service and attaches to the debugged ones again; a debugged service's Stop and Remove end its session before its
+    /// container stops or goes (an adapter losing it would be the IDE's error, which fails the test), the run going on; and
+    /// the project's Stop is the run's, its sessions ended before its containers go.</summary>
     [AvaloniaFact]
-    public void Two_services_debugged_at_once_each_stop_in_Main_and_in_a_request_are_stepped_and_evaluated_and_Stop_takes_them_down()
+    public void Two_services_debugged_at_once_stop_in_Main_and_in_a_request_and_the_Containers_windows_Restart_Stop_and_Remove_go_through_the_run()
     {
         Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
         (string folder, string project) = Shop("both");
@@ -80,16 +86,50 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             }
             // Each tab's console is its container's log, which an attach gets none of through the debugger.
             Ui.WaitFor(() => window.Debugger.Output(web.Session).ToString().Contains("Now listening on", StringComparison.Ordinal), "web's log in its console");
-            Assert.DoesNotContain("not available", window.Debugger.Output(api.Session).ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(DebugController.AttachedConsole, window.Debugger.Output(api.Session).ToString(), StringComparison.Ordinal);
+
+            // The project's Restart in the Containers window: every service restarted, web and api held again and attached to
+            // again, running on with their breakpoints taken out.
+            foreach (string app in (string[])["Web", "Api"])
+            {
+                window.Debugger.Breakpoints.Toggle(Source(folder, app), InMain);
+                window.Debugger.Breakpoints.Toggle(Source(folder, app), InRequest);
+            }
+            ContainersView view = ContainerServicesTests.Shown(window);
+            string cacheStarted = ContainerRunsTests.Started(project, "cache");
+            DebugSession webBefore = web.Session!;
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Project && r.Project?.Name == project), $"{project}'s row");
+            Assert.True(window.Perform(AppActions.ContainerRestart), $"Restart could not run on {project}: {window.Status}");
+            Ui.WaitFor(() => window.Actions.Work.Of(AppActions.ContainerRestart) is null, $"{project}'s restart", TimeSpan.FromMinutes(3));
+            Assert.Equal("Compose: compose.yaml: restarted its services", window.Status);
+            Assert.NotEqual(cacheStarted, ContainerRunsTests.Started(project, "cache"));
+            web = Tab(window, "web");
+            api = Tab(window, "api");
+            Ui.WaitFor(() => web.Session is { State: DebugState.Running } && web.Session != webBefore && api.Session is { State: DebugState.Running },
+                "web and api to run under the debugger again");
+
+            // A debugged service's Stop and Remove go through the run, its session ended first, the other's going on.
+            ContainerServicesTests.Act(window, view, project, "api", AppActions.ContainerStop);
+            Ui.WaitFor(() => !api.IsLive && ContainerRunsTests.StatesNow(project)?.GetValueOrDefault("api") == "exited", "api's session to end and its container to stop",
+                TimeSpan.FromMinutes(2));
+            Assert.True(web.IsLive, "Stop of api ended web's session");
+            ContainerServicesTests.Act(window, view, project, "web", AppActions.ContainerRemove);
+            Ui.WaitFor(() => !web.IsLive && ContainerRunsTests.StatesNow(project) is { } states && !states.ContainsKey("web"), "web's session to end and its container to go", TimeSpan.FromMinutes(2));
+            Assert.Equal("running", ContainerRunsTests.States(project)["cache"]);
+
+            // The project's Stop is the run's: nothing of it left, its log no longer followed.
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Project && r.Project?.Name == project), $"{project}'s row");
+            Assert.True(window.Perform(AppActions.ContainerStop), $"Stop could not run on {project}: {window.Status}");
+            Docker.TakenDown(project, "the project's Stop to take the run down");
+            Ui.WaitFor(() => !window.IsRunning, "the run's log to stop being followed");
+            Assert.Null(window.Builds.Containers);
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take every container down");
         }
         // A debugger that lost its container under it would be an IDE error, which fails the test.
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "both sessions to end with Stop");
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "both sessions to end with the run");
         window.Close();
     }
 
@@ -98,7 +138,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
     {
         Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
         (string folder, string project) = Shop("reload");
-        MainWindow window = ContainerRunsTests.Open(folder);
+        MainWindow window = ContainerRunsTests.Open(folder, languageServer: true);
         Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the projects ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
         string message = Path.Combine(folder, "Web", "Message.cs");
         try
@@ -109,7 +149,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             Passenger.App.Workspace.OpenDocument compose = window.EditorArea.Active!;
             RunTarget target = window.RunTargets(compose).Single(t => t.Service == "web");
             window.Debugger.Breakpoints.Toggle(Source(folder, "Web"), InRequest);
-            Assert.Null(Ui.Await(window.RunTarget(target, ContainerStart.Debug), "web to come up under the debugger", TimeSpan.FromMinutes(5)));
+            Assert.Null(Ui.Await(window.RunTarget(target, RunStart.Debug), "web to come up under the debugger", TimeSpan.FromMinutes(5)));
             DebugTab web = Tab(window, "web");
             Assert.DoesNotContain(window.Debugger.Tabs, t => t.Name == "api");
 
@@ -123,7 +163,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             Resume(window, web);
             Assert.Equal("web 2", Ui.Await(answer, "web's answer after the edit", TimeSpan.FromMinutes(1)));
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => !window.Debugger.IsDebugging && Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => !window.Debugger.IsDebugging && Docker.NoneLeft(project),
                 "Stop to end web's session and take it down", TimeSpan.FromMinutes(2));
             window.Debugger.Breakpoints.Toggle(Source(folder, "Web"), InRequest);
 
@@ -165,9 +205,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take every container down");
         }
         Ui.WaitFor(() => window.Debugger.Running.Count == 0, "the Hot Reload sessions to end with Stop");
         window.Close();
@@ -184,7 +222,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         (string folder, string project) = Shop("images");
         foreach ((string app, string configuration) in (ReadOnlySpan<(string, string)>)[("Web", "Debug"), ("Api", "Release")])
         {
-            ContainerRunsTests.Write(folder, $"{app}/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /src\nCOPY . .\nEXPOSE 8080\n"
+            TestFolders.Write(folder, $"{app}/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /src\nCOPY . .\nEXPOSE 8080\n"
                 + $"ENTRYPOINT [\"dotnet\", \"/src/{app}/out/{app}.dll\"]\n");
             ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", Path.Combine(folder, app, $"{app}.csproj"), "-c", configuration,
                 "-o", Path.Combine(folder, app, "out"), $"-p:PathMap={folder}{Path.DirectorySeparatorChar}=/src/", "-nologo", "-v:q"], folder), null,
@@ -218,9 +256,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "Stop to take the services down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take the services down");
             window.Close();
         }
     }
@@ -231,8 +267,8 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         (string folder, string project) = ContainerRunsTests.Shop($"dbg{name}");
         foreach (string app in (string[])["Web", "Api"])
         {
-            ContainerRunsTests.Write(folder, $"{app}/Program.cs", Program);
-            ContainerRunsTests.Write(folder, $"{app}/Message.cs",
+            TestFolders.Write(folder, $"{app}/Program.cs", Program);
+            TestFolders.Write(folder, $"{app}/Message.cs",
                 $"public static class Message\n{{\n    public static int Count;\n\n    public static string Text => \"{app.ToLowerInvariant()} 1\";\n}}\n");
         }
         return (folder, project);
@@ -340,8 +376,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             WhyNot = Docker.WhyNot;
             if (WhyNot is null)
             {
-                string processor = Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64";
-                ContainerPrograms.Publish($"linux-{processor}");
+                ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}");
             }
         }
 

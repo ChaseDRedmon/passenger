@@ -38,10 +38,10 @@ public sealed class ChangePopup : UserControl
             Spacing = 2,
             Children =
             {
-                Tool("Icon.ArrowUp", "Previous Change", previous),
-                Tool("Icon.ArrowDown", "Next Change", next),
-                Tool("Icon.Rollback", "Rollback", rollback),
-                Tool("Icon.Diff", "Show Diff", diff),
+                ToolButtons.Of("Icon.ArrowUp", "Previous Change", previous),
+                ToolButtons.Of("Icon.ArrowDown", "Next Change", next),
+                ToolButtons.Of("Icon.Rollback", "Rollback", rollback),
+                ToolButtons.Of("Icon.Diff", "Show Diff", diff),
                 highlight,
             },
         };
@@ -101,14 +101,5 @@ public sealed class ChangePopup : UserControl
             inlines.Add(new Avalonia.Controls.Documents.Run(Before[at..]));
         }
         old.Inlines = inlines;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
     }
 }

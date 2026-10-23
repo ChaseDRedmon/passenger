@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Passenger.App.Debugging;
 using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
@@ -16,21 +17,12 @@ namespace Passenger.App.Containers;
 /// where Passenger's build puts it (mounted into the container in fast mode), what the configuration does with it, the
 /// stage fast mode stops its image at, and the folder its image's paths map back to (<see cref="Paths"/>).</summary>
 public sealed record DotnetService(string Service, string Project, string Assembly, string Output, ServiceStart Action, string? Stage, ContainerPaths Paths)
+    : IRunService
 {
     /// <summary>Whether this run starts it.</summary>
     public bool Starts => Action != ServiceStart.DontStart;
-}
 
-/// <summary>How a container configuration is started: run; debugged, its .NET services (those marked Debug, else every one)
-/// held at their start until a session per service attaches; run with Hot Reload, every .NET service held and attached
-/// to quietly, no breakpoint sent, so the edits reach it through the debugger (dotnet watch would need the SDK in its image);
-/// or profiled, one .NET service (<see cref="ContainerPlan.Profiled"/>) held at its start until the profiler records it there.</summary>
-public enum ContainerStart
-{
-    Run,
-    Debug,
-    HotReload,
-    Profile,
+    string IRunService.Name => Service;
 }
 
 /// <summary>What a container configuration runs, worked out once from Compose's own model of its files: the Compose
@@ -103,7 +95,7 @@ public static class ContainerPlans
         string stateFolder, ContainerEngine engine, IReadOnlyList<string> labels, CancellationToken cancel)
     {
         string folder = workspace?.Folder ?? throw new LaunchException("Nothing to run: no folder is open");
-        string state = Path.Combine(StateFolderOf(stateFolder, folder), "containers");
+        string state = StateOf(stateFolder, folder);
         Directory.CreateDirectory(state);
         string file = Slug(configuration.Name);
         List<string> files;
@@ -133,7 +125,7 @@ public static class ContainerPlans
             properties = await LaunchPlan.EvaluateAsync(single, configuration.Framework.Length > 0 ? configuration.Framework : null,
                 ["TargetPath", "TargetDir", "AssemblyName", "DockerfileContext", "DockerfileFile", "DockerfileFastModeStage", "ContainerDevelopmentMode",
                     "DockerfileBuildArguments", "DockerfileRunArguments", "DockerfileTag", "ContainerBaseImage", "ContainerPort", "RuntimeIdentifier", "SelfContained"],
-                cancel, configuration.Kind == RunKind.SdkContainer ? "ComputeContainerBaseImage" : null);
+                workspace, cancel, configuration.Kind == RunKind.SdkContainer ? "ComputeContainerBaseImage" : null);
             if (configuration.Kind == RunKind.Dockerfile && string.Equals(properties.GetValueOrDefault("ContainerDevelopmentMode"), "Regular", StringComparison.OrdinalIgnoreCase))
             {
                 mode = ContainerMode.Images;
@@ -174,7 +166,7 @@ public static class ContainerPlans
                 continue;
             }
             IReadOnlyDictionary<string, string> its = single is not null && PathNames.Same(project.Path, single.Path) ? properties
-                : await LaunchPlan.EvaluateAsync(project, null, ["TargetPath", "TargetDir", "AssemblyName", "DockerfileFastModeStage", "RuntimeIdentifier", "SelfContained"], cancel);
+                : await LaunchPlan.EvaluateAsync(project, null, ["TargetPath", "TargetDir", "AssemblyName", "DockerfileFastModeStage", "RuntimeIdentifier", "SelfContained"], workspace, cancel);
             string output = its.GetValueOrDefault("TargetDir") is { Length: > 0 } dir ? Path.TrimEndingDirectorySeparator(dir)
                 : Path.GetDirectoryName(its.GetValueOrDefault("TargetPath") ?? string.Empty) ?? project.Folder;
             string assembly = its.GetValueOrDefault("AssemblyName") is { Length: > 0 } named ? named : Path.GetFileNameWithoutExtension(project.Path);
@@ -231,11 +223,14 @@ public static class ContainerPlans
         string overrideFile = Path.Combine(state, $"{file}.override.yaml");
         compose.InsertRange(compose.IndexOf("--project-directory"), ["-f", overrideFile]);
         // Written once the host's build is done: what fast mode mounts (its static web assets' folders) is that build's.
-        bool pin = Overrides((await engine.StateAsync(cancel: cancel)).ComposeVersion);
+        EngineState engineState = await engine.StateAsync(cancel: cancel);
+        bool pin = Overrides(engineState.ComposeVersion);
+        // Rootless Podman maps a container's users onto the person's subordinate ids: keep-id makes the person's own theirs.
+        bool keepId = engineState is { IsPodman: true, Rootless: true };
         // Each port Passenger pins is chosen once for the plan: every override it writes after (a hold, a restart) keeps it.
         Dictionary<(string Service, int Port), int> pinned = [];
         async Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken stop) =>
-            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, stop), overriding: true);
+            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, keepId, stop), overriding: true);
         if (mode == ContainerMode.Images || dotnet.Count == 0)
         {
             await WriteOverride([], [], null, cancel);
@@ -279,9 +274,6 @@ public static class ContainerPlans
         }
         return needed;
     }
-
-    /// <summary>What holds a .NET service at its runtime's start until a debugger attaches and lets it go.</summary>
-    public const string HeldVariable = "DOTNET_DefaultDiagnosticPortSuspend";
 
     /// <summary>The tag of an SDK container's image Passenger has the SDK make, as deployed.</summary>
     public const string SdkImageTag = "passenger";
@@ -480,7 +472,7 @@ public static class ContainerPlans
     /// to Hot Reload. JSON, which Compose reads as YAML.</summary>
     private static async Task<JsonObject> OverrideAsync(ComposeModel model, string project, IReadOnlyList<DotnetService> dotnet, ContainerMode mode, IReadOnlyList<string> labels,
         IReadOnlyList<ProjectModel> projects, string state, Dictionary<(string Service, int Port), int>? pinned, IReadOnlyCollection<string> held,
-        IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken cancel)
+        IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, bool keepId, CancellationToken cancel)
     {
         JsonObject services = [];
         string? owner = OperatingSystem.IsLinux() ? DotnetProcesses.UserAndGroup : null;
@@ -553,14 +545,18 @@ public static class ContainerPlans
                 if (owner is not null && (mode == ContainerMode.Fast || Serves(service) || secrets is not null))
                 {
                     entry["user"] = owner;
+                    if (keepId)
+                    {
+                        entry["userns_mode"] = "keep-id";
+                    }
                 }
                 if (held.Contains(service.Name))
                 {
-                    environment[HeldVariable] = "1";
+                    environment[RuntimeVariables.DefaultDiagnosticPortSuspend] = "1";
                 }
                 if (modifiable.Contains(service.Name))
                 {
-                    environment["DOTNET_MODIFIABLE_ASSEMBLIES"] = "debug";
+                    environment[RuntimeVariables.ModifiableAssemblies] = "debug";
                 }
                 if (Serves(service) && certificate is { } exported)
                 {
@@ -644,20 +640,13 @@ public static class ContainerPlans
         }
     }
 
-    /// <summary>A service that serves HTTPS told to serve HTTP for this run, there being no certificate to give it (the person
-    /// chose so, or the export failed): its https addresses as http, and its HTTPS ports among its HTTP ones, so it listens
-    /// where it would and Kestrel finds no HTTPS to want a certificate for.</summary>
+    /// <summary>A service that serves HTTPS told to serve HTTP for this run, there being no certificate to give it
+    /// (<see cref="DevelopmentCertificate.OverHttp"/>).</summary>
     private static void OverHttp(ComposeService service, JsonObject environment)
     {
-        if (service.Environment.GetValueOrDefault("ASPNETCORE_URLS") is { } urls && urls.Contains("https:", StringComparison.OrdinalIgnoreCase))
+        foreach ((string name, string value) in DevelopmentCertificate.OverHttp(service.Environment))
         {
-            environment["ASPNETCORE_URLS"] = urls.Replace("https:", "http:", StringComparison.OrdinalIgnoreCase);
-        }
-        if (service.Environment.GetValueOrDefault("ASPNETCORE_HTTPS_PORTS") is { Length: > 0 } https)
-        {
-            string http = service.Environment.GetValueOrDefault("ASPNETCORE_HTTP_PORTS") ?? string.Empty;
-            environment["ASPNETCORE_HTTP_PORTS"] = string.Join(';', (http + ";" + https).Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct());
-            environment["ASPNETCORE_HTTPS_PORTS"] = string.Empty;
+            environment[name] = value;
         }
     }
 
@@ -677,23 +666,13 @@ public static class ContainerPlans
 
     /// <summary>The folder user secrets are kept in on this machine in place of .NET's own (APPDATA's Microsoft/UserSecrets
     /// on Windows, ~/.microsoft/usersecrets elsewhere): read for that alone, so a test's run never mounts the person's own.</summary>
-    public const string UserSecretsVariable = "PASSENGER_USER_SECRETS";
+    public const string UserSecretsVariable = Workspace.UserSecrets.Variable;
 
     /// <summary>The folder of a project's own user secrets on this machine and its id, when it has an id that names one
     /// folder (no separator, never a dot or two alone) and that folder is there.</summary>
-    private static (string Folder, string Id)? UserSecrets(ProjectModel? project)
-    {
-        if (project?.Property(Passenger.Host.CarriedProperties.UserSecretsId) is not { Length: > 0 } id || id is "." or ".."
-            || id.IndexOfAny([.. Path.GetInvalidFileNameChars(), '/', '\\']) >= 0)
-        {
-            return null;
-        }
-        string root = Environment.GetEnvironmentVariable(UserSecretsVariable) is { Length: > 0 } given ? given
-            : OperatingSystem.IsWindows() ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "UserSecrets")
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".microsoft", "usersecrets");
-        string folder = Path.Combine(root, id);
-        return Directory.Exists(folder) ? (folder, id) : null;
-    }
+    private static (string Folder, string Id)? UserSecrets(ProjectModel? project) =>
+        project?.Property(Passenger.Host.CarriedProperties.UserSecretsId) is { Length: > 0 } id
+            && Workspace.UserSecrets.FolderOf(id) is { } folder && Directory.Exists(folder) ? (folder, id) : null;
 
     private static JsonObject Labels(IReadOnlyList<string> words)
     {
@@ -752,14 +731,8 @@ public static class ContainerPlans
         // A service's ports Passenger chose replace the file's (YAML's tag, on JSON's flow, which YAML reads alike).
         string text = json.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         text = overriding ? text.Replace("\"ports\": [", "\"ports\": !override [", StringComparison.Ordinal) : text;
-        string temporary = path + ".tmp";
-        File.WriteAllText(temporary, text);
         // It may hold the certificate's password and the configuration's environment: the person's alone to read.
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
-        File.Move(temporary, path, overwrite: true);
+        OwnFiles.Write(path, text);
     }
 
     /// <summary>A name as Compose takes a project's: lowercase letters, digits, dashes and underscores.</summary>
@@ -780,6 +753,10 @@ public static class ContainerPlans
 
     /// <summary>The folder's own place in the state, where its override files live.</summary>
     private static string StateFolderOf(string stateFolder, string folder) => State.ProjectState.FolderOf(stateFolder, folder);
+
+    /// <summary>A folder's place in the state for its container runs (<see cref="ContainerPlan.State"/>), where the development
+    /// certificate is exported, and which a certificate made since lets go of.</summary>
+    public static string StateOf(string stateFolder, string folder) => Path.Combine(StateFolderOf(stateFolder, folder), "containers");
 }
 
 /// <summary>Compose would not read a configuration's files: what it said, for Problems' Containers tab.</summary>
@@ -788,158 +765,40 @@ public sealed class ComposeModelException(string name, string said) : LaunchExce
     public string Said { get; } = said;
 }
 
-/// <summary>The .NET command line <c>dotnet dev-certs</c> runs through: the machine's (<see cref="DevelopmentCertificate.Machine"/>),
-/// or a test's stand-in, which never trusts a certificate on the machine it runs on.</summary>
-public delegate ProcessStartInfo DotnetWords(IReadOnlyList<string> words, string folder);
-
-/// <summary>ASP.NET Core's development certificate for containers that serve HTTPS: how it stands on this machine
-/// (<c>dotnet dev-certs https --check --trust</c>), made and trusted when the person asks (<c>--trust</c>, which the system
-/// may ask about too), and exported once into the state (<c>-ep … -p …</c>), with a password of its own kept beside it and
-/// never written to a console; each through ChildProcesses, bounded, saying why when it does not come.</summary>
-public static partial class DevelopmentCertificate
+/// <summary>The state's files that only the person may read on macOS and Linux (the development certificate's copy and its
+/// password, a run's override and single service's compose file, which name them and the configuration's environment), so
+/// from the moment each is made: a folder made 0700, a file 0600 as it is created, never set so after its text is in.</summary>
+internal static class OwnFiles
 {
-    public sealed record Exported(string Folder, string File, string Password);
+    private const UnixFileMode OwnersFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
-    /// <summary>How this machine's development certificate stands.</summary>
-    public enum Standing
+    private const UnixFileMode OwnersFolder = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
+    /// <summary>Makes a folder only the person enters (one an earlier Passenger made, put right), before anything is
+    /// written in it.</summary>
+    public static void Folder(string path)
     {
-        Trusted,
-        NotTrusted,
-        Missing,
-        Unknown,
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(path);
+            return;
+        }
+        Directory.CreateDirectory(path, OwnersFolder);
+        File.SetUnixFileMode(path, OwnersFolder);
     }
 
-    /// <summary>The machine's own dotnet.</summary>
-    public static readonly DotnetWords Machine = (words, folder) => ChildProcesses.DotnetCommand(words, folder);
+    /// <summary>Writes a file only the person reads, whole (<see cref="AtomicFile"/>): one there before is replaced, never
+    /// written into, since it would keep the mode it had.</summary>
+    public static void Write(string path, string text) => AtomicFile.Write(path, System.Text.Encoding.UTF8.GetBytes(text), OwnersFile);
 
-    private static readonly SemaphoreSlim Gate = new(1, 1);
-
-    /// <summary>How long the export or the trust may take: one waiting on the system's certificate store (a locked keychain
-    /// asking for its password) is said rather than the run waiting for good.</summary>
-    public static readonly TimeSpan ExportLimit = TimeSpan.FromSeconds(60);
-
-    /// <summary>How long the check may take, which asks nothing of the person.</summary>
-    public static readonly TimeSpan CheckLimit = TimeSpan.FromSeconds(30);
-
-    /// <summary>Whether a certificate is there and trusted, as dev-certs answers (6: none valid, 7: not trusted), what it said,
-    /// and the thumbprint of the certificate it found, when it named one. Stopped, it throws <see cref="OperationCanceledException"/>.</summary>
-    public static async Task<(Standing Standing, string Said, string? Thumbprint)> CheckAsync(DotnetWords dotnet, string folder, CancellationToken cancel)
+    /// <summary>A file another program wrote in such a folder, made only the person's to read too.</summary>
+    public static void Keep(string path)
     {
-        try
+        if (!OperatingSystem.IsWindows())
         {
-            ChildResult answered = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "--check", "--trust"], folder), limit: CheckLimit, cancel: cancel,
-                answers: [6, 7]);
-            string? thumbprint = answered.ExitCode is 0 or 7 && Thumbprint().Match(answered.Output) is { Success: true } found ? found.Value.ToUpperInvariant() : null;
-            return (answered.ExitCode switch { 0 => Standing.Trusted, 6 => Standing.Missing, 7 => Standing.NotTrusted, _ => Standing.Unknown }, Said(answered), thumbprint);
-        }
-        catch (TimeoutException)
-        {
-            return (Standing.Unknown, $"dotnet dev-certs https --check did not answer within {CheckLimit.TotalSeconds:0} s", null);
-        }
-        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            return (Standing.Unknown, failed.Message, null);
+            File.SetUnixFileMode(path, OwnersFile);
         }
     }
-
-    /// <summary>A certificate's SHA-1 thumbprint, as dev-certs names the one it found ("A valid certificate was found: …").</summary>
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b[0-9A-Fa-f]{40}\b")]
-    private static partial System.Text.RegularExpressions.Regex Thumbprint();
-
-    /// <summary>Makes the certificate if there is none and trusts it, as <c>dotnet dev-certs https --trust</c> does (the
-    /// system may ask the person too), the copy exported before let go: null once trusted, else why not.</summary>
-    public static async Task<string?> TrustAsync(DotnetWords dotnet, string folder, string state, CancellationToken cancel)
-    {
-        try
-        {
-            ChildResult trusted = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "--trust"], folder), limit: ExportLimit, cancel: cancel);
-            Forget(state);
-            return trusted.Succeeded ? null : $"dotnet dev-certs https --trust ended with exit code {trusted.ExitCode}: {Said(trusted)}";
-        }
-        catch (TimeoutException)
-        {
-            return $"dotnet dev-certs https --trust did not end within {ExportLimit.TotalSeconds:0} s (the system's certificate store may be asking for a password)";
-        }
-        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
-        {
-            return failed.Message;
-        }
-    }
-
-    /// <summary>The certificate exported into the state (once for the certificate dev-certs has, <paramref name="thumbprint"/>
-    /// as its check named it: again once that is another, or after <see cref="TrustAsync"/>), or why it is not. Stopped, it
-    /// throws <see cref="OperationCanceledException"/>.</summary>
-    public static async Task<(Exported? Certificate, string? Problem)> ExportAsync(DotnetWords dotnet, string state, string? thumbprint, CancellationToken cancel)
-    {
-        string folder = Path.Combine(state, "https");
-        string file = Path.Combine(folder, "aspnetapp.pfx");
-        string kept = Path.Combine(folder, "password");
-        // The thumbprint of the certificate exported, as the check named it then: a copy of another the check no longer finds
-        // (made again since, or expired and replaced) would be refused by every browser that trusts the new one.
-        string exportedOf = Path.Combine(folder, "thumbprint");
-        await Gate.WaitAsync(cancel);
-        try
-        {
-            Directory.CreateDirectory(folder);
-            if (File.Exists(file) && File.Exists(kept)
-                && (thumbprint is null || File.Exists(exportedOf) && string.Equals((await File.ReadAllTextAsync(exportedOf, cancel)).Trim(), thumbprint, StringComparison.OrdinalIgnoreCase)))
-            {
-                return (new Exported(folder, file, (await File.ReadAllTextAsync(kept, cancel)).Trim()), null);
-            }
-            Forget(state);
-            string password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-            ChildResult exported = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "-ep", file, "-p", password], folder), limit: ExportLimit, cancel: cancel);
-            if (!exported.Succeeded || !File.Exists(file))
-            {
-                return (null, $"dotnet dev-certs https -ep ended with exit code {exported.ExitCode}: {Said(exported)}");
-            }
-            await File.WriteAllTextAsync(kept, password, cancel);
-            if (!OperatingSystem.IsWindows())
-            {
-                File.SetUnixFileMode(kept, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            }
-            if (thumbprint is not null)
-            {
-                await File.WriteAllTextAsync(exportedOf, thumbprint, cancel);
-            }
-            return (new Exported(folder, file, password), null);
-        }
-        catch (TimeoutException)
-        {
-            return (null, $"dotnet dev-certs https -ep did not end within {ExportLimit.TotalSeconds:0} s (the system's certificate store may be asking for a password)");
-        }
-        catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or FileNotFoundException
-            or InvalidOperationException)
-        {
-            return (null, failed.Message);
-        }
-        finally
-        {
-            Gate.Release();
-        }
-    }
-
-    /// <summary>Lets go of the copy exported before, which a certificate made since no longer matches.</summary>
-    private static void Forget(string state)
-    {
-        try
-        {
-            foreach (string kept in (string[])["aspnetapp.pfx", "thumbprint"])
-            {
-                if (Path.Combine(state, "https", kept) is var file && File.Exists(file))
-                {
-                    File.Delete(file);
-                }
-            }
-        }
-        catch (Exception kept) when (kept is IOException or UnauthorizedAccessException)
-        {
-            // An export kept stands until the next one replaces it.
-        }
-    }
-
-    private static string Said(ChildResult result) =>
-        string.Join(' ', ((string[])[result.Error.Trim(), result.Output.Trim()]).Where(s => s.Length > 0)) is { Length: > 0 } said ? said : "it said nothing";
 }
 
 /// <summary>A .NET service of a container run in its container, as the debugger and the profiler reach it: the container,
@@ -947,15 +806,14 @@ public static partial class DevelopmentCertificate
 /// and why its image may not be debugged where it runs under emulation, or null.</summary>
 public sealed record ServiceInContainer(string Container, DotnetProcess Program, string Tools, string Started, string? Emulated);
 
-/// <summary>Has the profiler record a .NET service held at its start in its container (its program there, by its id, and
-/// the place the tools record it at), which lets it go once recording: null once it records, else why not.</summary>
-public delegate Task<string?> ContainerProfiler(DotnetService service, DotnetProcess program, Profiler.ProfilePlace place, CancellationToken stop);
-
-/// <summary>A container configuration running: its plan, Compose's watch of the services that ask for one, and each .NET
-/// service's build as it was when started, so Rerun restarts only those whose build changed. Brought up by
-/// <see cref="UpAsync"/> (its words in the Run console), taken down by <see cref="StopAsync"/> (<c>docker compose down</c>,
-/// its volumes kept, or only the .NET services when backing services are kept). A UI-thread object of the session's.</summary>
-public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, ConsoleSink console)
+/// <summary>A container configuration running, a run of services (<see cref="ServiceRun"/>) whose services run in containers:
+/// its plan, Compose's watch of the services that ask for one, and each .NET service's build as it was when started, so
+/// Rerun restarts only those whose build changed. Brought up by <see cref="UpAsync"/> (its words in the Run console), taken
+/// down by <see cref="StopAsync"/> (<c>docker compose down</c>, its volumes kept, or only the .NET services when backing
+/// services are kept). What is its own: a service restarts through Compose (<see cref="RestartAsync"/>), a hold chosen is
+/// the override written again, and a service's program is in its container, reached through Passenger's tools there
+/// (<see cref="ProgramAsync"/>). A UI-thread object of the session's.</summary>
+public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, ConsoleSink console) : ServiceRun
 {
     private readonly Dictionary<string, string> stamps = new(StringComparer.Ordinal);
     private Process? watching;
@@ -981,82 +839,157 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
     public ContainerPlan Plan { get; private set; } = plan;
 
+    public override string Name => Plan.Name;
+
+    public override IReadOnlyList<IRunService> Services => Plan.Dotnet;
+
     /// <summary>The address the browser was opened at, which a restart on an engine that chose another port changes.</summary>
     public string? Address { get; set; }
 
     public ContainerEngine Engine => engine;
 
+    /// <summary>Where the container tools come from that are put in a service's container to reach its program.</summary>
+    public Func<ContainerToolsSource> ToolsFrom { get; init; } = () => ContainerToolsSource.Default(Updates.ReleaseFeed.Default);
+
     /// <summary>Whether it was taken down (or is being).</summary>
-    public bool IsStopped => stopping is not null;
+    public override bool IsStopped => stopping is not null;
 
     /// <summary>Done once <see cref="StopAsync"/> has had the engine take it down.</summary>
     public Task Stopped => stopping ?? Task.CompletedTask;
-
-    /// <summary>The Debug tabs of the services debugged (or attached to for Hot Reload), by their names: Stop ends them before
-    /// it takes their containers down.</summary>
-    public HashSet<string> Debugged { get; } = new(StringComparer.Ordinal);
-
-    /// <summary>How it was started: run, debugged, run with Hot Reload through the debugger, or profiled.</summary>
-    public ContainerStart How { get; init; }
-
-    /// <summary>What has the profiler record the service Profile holds at its start; null for any other start.</summary>
-    public ContainerProfiler? Profiler { get; init; }
-
-    /// <summary>What each .NET service is held at its start for, as last chosen (debugged, or attached to quietly for Hot
-    /// Reload): a restart holds it again and attaches again. A service not here runs unheld.</summary>
-    private readonly Dictionary<string, ContainerStart> holds = new(StringComparer.Ordinal);
 
     /// <summary>The services whose container was made held (the override in force when it was made said so), which
     /// <c>docker compose restart</c> holds again whatever was chosen since: one chosen otherwise is made anew instead.</summary>
     private readonly HashSet<string> madeHeld = new(StringComparer.Ordinal);
 
-    /// <summary>The .NET services held at their start for the debugger, which a restart holds again.</summary>
-    public IReadOnlyList<DotnetService> Held => [.. Plan.Dotnet.Where(d => holds.ContainsKey(d.Service))];
+    protected override void MadeHeld(string service) => madeHeld.Add(service);
 
-    /// <summary>What a service is held at its start for (Debug or Hot Reload), or null when it runs unheld.</summary>
-    public ContainerStart? HeldFor(string service) => holds.TryGetValue(service, out ContainerStart how) ? how : null;
-
-    /// <summary>The services as they were brought up: those held for the debugger (or the one for the profiler, whose hold its
-    /// recording lets go, never asked again), their containers made so.</summary>
-    public void Brought(IReadOnlyList<(DotnetService Service, ContainerStart How)> held)
-    {
-        foreach ((DotnetService service, ContainerStart how) in held)
-        {
-            if (how != ContainerStart.Profile)
-            {
-                holds[service.Service] = how;
-            }
-            madeHeld.Add(service.Service);
-        }
-    }
-
-    /// <summary>The services attached to as they ran (Attach, not held at their start), which a restart attaches to again.</summary>
-    public HashSet<string> AttachedRunning { get; } = new(StringComparer.Ordinal);
-
-    /// <summary>Chooses what a service is held at its start for from now (null: unheld), and writes the override so: its
-    /// next restart makes it so.</summary>
-    public Task HoldAsync(string service, ContainerStart? how, CancellationToken cancel)
-    {
-        if (how is { } held)
-        {
-            holds[service] = held;
-        }
-        else
-        {
-            holds.Remove(service);
-        }
-        return WriteOverrideAsync(cancel);
-    }
+    /// <summary>A hold chosen takes effect as the override, written again, says it at the service's next restart.</summary>
+    protected override Task HoldsChangedAsync(CancellationToken cancel) => WriteOverrideAsync(cancel);
 
     /// <summary>The override as the holds chosen say, each held service's code open to Hot Reload.</summary>
-    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. holds.Keys], [.. holds.Keys], Certificate, cancel);
+    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. HeldNames], [.. HeldNames], Certificate, cancel);
 
-    /// <summary>The service the profiler records, which Stop ends (<see cref="EndProfiling"/>, its snapshot read) before it
-    /// takes the containers down; null when none is.</summary>
-    public string? Profiled { get; set; }
+    /// <summary>In fast mode a service's container runs the build here, which an edit's restart builds first; as deployed,
+    /// its restart builds its image.</summary>
+    public override bool BuildsBeforeRestart => Plan.Mode == ContainerMode.Fast;
 
-    /// <summary>Ends the profiler's recording of <see cref="Profiled"/>, reading its snapshot, done once it has.</summary>
-    public Func<Task>? EndProfiling { get; set; }
+    public override bool Refused(Exception failure) => failure is IOException or UnauthorizedAccessException or ContainerToolsException or ContainerCommandException
+        or TimeoutException;
+
+    /// <summary>The run's .NET service by its name in the run.</summary>
+    private DotnetService Dotnet(IRunService service) => Plan.Dotnet.First(d => d.Service == service.Name);
+
+    /// <summary>A service's program in its container once Compose has started it, reached through Passenger's tools there:
+    /// the adapter run there over docker exec, its console the container's log since its start, its paths mapped back in
+    /// images mode; the profiler's tools there too.</summary>
+    public override async Task<ServiceProgram?> ProgramAsync(IRunService service, Task up, CancellationToken stop)
+    {
+        DotnetService dotnet = Dotnet(service);
+        ServiceInContainer? found;
+        try
+        {
+            found = await ThereAsync(dotnet, up, stop);
+        }
+        catch (Exception failed) when (failed is ContainerToolsException or ContainerCommandException or FileNotFoundException or TimeoutException or JsonException)
+        {
+            throw new ServiceUnreachedException(failed.Message, failed);
+        }
+        if (found is not { } there)
+        {
+            return null;
+        }
+        ContainerPaths paths = Plan.Mode == ContainerMode.Images ? dotnet.Paths : ContainerPaths.None;
+        AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(there.Container, there.Tools, arguments)), ContainerTools.SymbolCache, paths, there.Container)
+        {
+            Output = () => engine.Command(["logs", "--follow", "--since", there.Started, there.Container]),
+            // Its container stopped (its own end, the Containers window's Stop) is its program's end, never the debugger's.
+            Running = AdapterPlace.Runs(engine, there.Container),
+            Program = there.Program.Program,
+        };
+        return new ServiceProgram(there.Program.Id, place, ProfilePlaceOf(dotnet, there))
+        {
+            WhyNot = there.Program.WhyNot,
+            Notes = [.. ((string?[])[there.Program.Note, there.Emulated]).OfType<string>()],
+            Caveat = there.Emulated,
+            HotReload = there.Program.HotReload,
+        };
+    }
+
+    /// <summary>A service of the run in its container, once Compose has started it (null when Compose ended without it):
+    /// Passenger's tools in it (copied in for its image's system, found here or downloaded), its program by its assembly as
+    /// the tools list it there, when its container started, and whether its image runs under emulation. Off the UI thread.</summary>
+    public Task<ServiceInContainer?> ThereAsync(DotnetService service, Task up, CancellationToken stop)
+    {
+        ContainerToolsSource source = ToolsFrom();
+        return BackgroundWork.Run(async () =>
+        {
+            string? container = await ContainerOfAsync(engine, Plan, service.Service, up, stop);
+            if (container is null)
+            {
+                return null;
+            }
+            ContainerSystem system = await ContainerTools.SystemOfContainerAsync(engine, container, stop);
+            string architecture = await ContainerTools.EngineArchitectureAsync(engine, stop);
+            string? emulated = system.Architecture == architecture ? null
+                : $"its image is for {system.Architecture}, which this {architecture} engine runs under emulation, where the debugger may not attach";
+            string rid = system.Rid ?? throw new ContainerToolsException($"{service.Service}'s image is for {system.Architecture}, for which Passenger has no debugger");
+            string tools = await ContainerTools.InContainerAsync(engine, container, stop)
+                ?? await ContainerTools.CopyIntoAsync(engine, container, await ContainerTools.FolderAsync(source, rid, null, stop), stop);
+            DotnetProcess program = await HeldProgramAsync(engine, container, tools, service, stop);
+            // As JSON, RFC 3339 either way: Podman's own docker writes the time itself in Go's words, which its logs --since refuses.
+            ChildResult started = await engine.RunAsync(["inspect", "-f", "{{json .State.StartedAt}}", container], cancel: stop);
+            return (ServiceInContainer?)new ServiceInContainer(container, program, tools, started.Output.Trim().Trim('"'), emulated);
+        }, stop);
+    }
+
+    /// <summary>Where the profiler records a service of the run: Passenger's tools in its container over docker exec, its
+    /// PDBs' paths made this machine's through the service's map in images mode (in fast mode they are this machine's).</summary>
+    public Profiler.ProfilePlace ProfilePlaceOf(DotnetService service, ServiceInContainer there)
+    {
+        ContainerPaths paths = Plan.Mode == ContainerMode.Images ? service.Paths : ContainerPaths.None;
+        return new Profiler.ProfilePlace(words => engine.Command(ContainerTools.ToolsCommand(there.Container, there.Tools, words)), there.Container, path => paths.ToHost(path) ?? path);
+    }
+
+    /// <summary>A service's container once Compose has started it (null when Compose ended without it).</summary>
+    internal static async Task<string?> ContainerOfAsync(ContainerEngine engine, ContainerPlan plan, string service, Task up, CancellationToken stop)
+    {
+        while (true)
+        {
+            bool ended = up.IsCompleted;
+            ChildResult found = await engine.RunAsync([.. plan.Compose, "ps", "-q", "--", service], cancel: stop);
+            if (found.Succeeded && found.Output.Trim().Split('\n')[0].Trim() is { Length: > 0 } container)
+            {
+                return container;
+            }
+            if (ended)
+            {
+                return null;
+            }
+            await Task.WhenAny(up, Task.Delay(TimeSpan.FromMilliseconds(300), stop));
+            stop.ThrowIfCancellationRequested();
+        }
+    }
+
+    /// <summary>The service's program in its container as the tools list it once its runtime has loaded: held at its start
+    /// for the debugger (or, its debugger turned off, saying why), by its assembly; given up on after a minute.</summary>
+    internal static async Task<DotnetProcess> HeldProgramAsync(ContainerEngine engine, string container, string tools, DotnetService service, CancellationToken stop)
+    {
+        DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(1);
+        string assembly = $"{service.Assembly}.dll";
+        while (true)
+        {
+            IReadOnlyList<DotnetProcess> there = await ContainerTools.ProcessesAsync(engine, container, tools, stop);
+            if ((there.FirstOrDefault(p => p.CommandLine.Contains(assembly, StringComparison.OrdinalIgnoreCase)) ?? (there is [{ } only] ? only : null)) is { } program)
+            {
+                return program;
+            }
+            if (DateTime.UtcNow > until)
+            {
+                throw new ContainerToolsException($"no .NET program running {assembly} started in its container {container} within a minute");
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(250), stop);
+        }
+    }
 
     /// <summary>Brings it up as <c>docker compose up --detach --wait</c> (images built as Compose says in images mode), its
     /// words in the console as they come: null once every service is up (healthy where it has a check), else what went
@@ -1117,7 +1050,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             // What the services said before they ended is why, which the down that follows would take with them.
             await StreamAsync([.. Plan.Compose, "logs", "--no-color", "--tail", "40"], cancel);
-            string last = up.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is { Length: > 0 } lines
+            string last = up.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => !ContainerEngine.ProviderFailed(l)).ToArray()
+                is { Length: > 0 } lines
                 ? lines.LastOrDefault(l => l.Contains("rror", StringComparison.Ordinal)) ?? lines[^1] : $"exit code {up.ExitCode}";
             return $"{Plan.Name} did not come up: {last}";
         }
@@ -1138,7 +1072,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             start.RedirectStandardError = true;
             Process started = ChildProcesses.Start(start);
             watching = started;
-            Task pumped = Task.WhenAll(Pump(started.StandardOutput, ConsoleStream.Output), Pump(started.StandardError, ConsoleStream.Output));
+            Task pumped = Task.WhenAll(console.PumpAsync(started.StandardOutput, ConsoleStream.Output), console.PumpAsync(started.StandardError, ConsoleStream.Output));
             _ = Ended();
 
             // A watch that ends while the run lasts says so, rather than leaving its files unsynced unsaid.
@@ -1155,21 +1089,6 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             console.Write($"Compose's watch could not start: {failed.Message}\n", ConsoleStream.Error);
-        }
-
-        async Task Pump(StreamReader reader, ConsoleStream stream)
-        {
-            try
-            {
-                while (await reader.ReadLineAsync() is { } line)
-                {
-                    console.Write(line + "\n", stream);
-                }
-            }
-            catch (Exception ended) when (ended is IOException or ObjectDisposedException)
-            {
-                // Ended with the run.
-            }
         }
     }
 
@@ -1234,10 +1153,6 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         return upEnded.Task;
     }
 
-    /// <summary>What the run said of itself as it came up (its notes: a service over HTTP, one run as the person, one that runs
-    /// without the debugger), which an agent's answer carries too.</summary>
-    public List<string> Notes { get; } = [];
-
     /// <summary>The .NET services whose build changed since they started (or were last restarted), Rerun's to restart.</summary>
     public IReadOnlyList<DotnetService> Changed() =>
         [.. Plan.Restartable.Where(d => !stamps.TryGetValue(d.Service, out string? was) || was != Stamp(d.Output))];
@@ -1245,45 +1160,35 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     /// <summary>Restarts services (their containers kept, the same mount reading the new build), saying so in the console
     /// (<paramref name="why"/>, else that their build changed). A service whose container was made held, or unheld, other
     /// than as it is now chosen is made anew from the override, as are all of them in images mode, from an image built again
-    /// from its Dockerfile. <paramref name="alongside"/> runs while they come up, as <see cref="UpAsync"/>'s does.</summary>
-    public async Task<string?> RestartAsync(IReadOnlyList<DotnetService> services, CancellationToken cancel, string? why = null,
-        Func<Task, CancellationToken, Task<string?>>? alongside = null)
+    /// from its Dockerfile.</summary>
+    public override async Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null, bool build = false)
     {
         if (services.Count == 0)
         {
             console.Write("No service's build changed: nothing restarted\n");
             return null;
         }
-        console.Write($"Restarting {string.Join(", ", services.Select(s => s.Service))}: {why ?? (services.Count == 1 ? "its build changed" : "their builds changed")}\n");
-        List<string> made = [.. services.Select(s => s.Service).Where(s => Plan.Mode == ContainerMode.Images || madeHeld.Contains(s) != holds.ContainsKey(s))];
-        List<string> kept = [.. services.Select(s => s.Service).Except(made)];
+        console.Write($"Restarting {string.Join(", ", services.Select(s => s.Name))}: {why ?? (services.Count == 1 ? "its build changed" : "their builds changed")}\n");
+        List<string> made = [.. services.Select(s => s.Name).Where(s => Plan.Mode == ContainerMode.Images || madeHeld.Contains(s) != HeldFor(s) is not null)];
+        List<string> kept = [.. services.Select(s => s.Name).Except(made)];
         if (made.Count > 0)
         {
             await WriteOverrideAsync(cancel);
         }
         // Stop of the run ends its restart too, whoever asked for it.
         using CancellationTokenSource restartEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
-        Task<string?> restarting = RestartEachAsync(restartEnding.Token);
-        if (alongside is not null && await alongside(restarting, restartEnding.Token) is { } unattached)
-        {
-            await restartEnding.CancelAsync();
-            try
-            {
-                await restarting;
-            }
-            catch (OperationCanceledException)
-            {
-                // Ended for the attach that failed, which says why.
-            }
-            return unattached;
-        }
-        string? failed = await restarting;
+        string? failed = await RestartEachAsync(restartEnding.Token);
         // Only those restarted run the build they have now: another's that changed meanwhile is still Rerun's to restart.
-        Stamp(services);
+        Stamp(services.Select(Dotnet));
         return failed;
 
         async Task<string?> RestartEachAsync(CancellationToken stop)
         {
+            // On Podman, stopped while another service keeps the run's log going: Compose's logs --follow crashes on Podman's late die.
+            if (made.Count > 0 && engine.Known is { IsPodman: true } && Plan.Touched.Except(made, StringComparer.Ordinal).Any())
+            {
+                await StreamAsync([.. Plan.Compose, "stop", "--", .. made], stop);
+            }
             foreach ((List<string> named, IReadOnlyList<string> words) in ((List<string>, IReadOnlyList<string>)[])[
                 (kept, [.. Plan.Compose, "restart", "--", .. kept]),
                 // As deployed, a service's image is built again from its Dockerfile and its container made anew from it.
@@ -1300,7 +1205,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
                 }
                 foreach (string service in named)
                 {
-                    if (holds.ContainsKey(service))
+                    if (HeldFor(service) is not null)
                     {
                         madeHeld.Add(service);
                     }
@@ -1423,9 +1328,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         console.Write($"{ChildProcesses.Display(start)}\n");
         Queue<string> said = new();
         using Process process = ChildProcesses.Start(start);
-        Task output = Pump(process.StandardOutput, ConsoleStream.Output);
+        Task output = console.PumpAsync(process.StandardOutput, ConsoleStream.Output, lines: Line);
         // Compose writes its progress to standard error: the console's ordinary text, not an error's.
-        Task errors = Pump(process.StandardError, ConsoleStream.Output);
+        Task errors = console.PumpAsync(process.StandardError, ConsoleStream.Output, lines: Line);
         try
         {
             await process.WaitForExitAsync(cancel);
@@ -1443,24 +1348,21 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             return new ChildResult(process.ExitCode, string.Join('\n', said), string.Empty);
         }
 
-        async Task Pump(StreamReader reader, ConsoleStream stream)
+        // Each line read: its last lines say why it failed.
+        void Line(string line)
         {
-            while (await reader.ReadLineAsync() is { } line)
+            lock (said)
             {
-                console.Write(line + "\n", stream);
-                lock (said)
+                said.Enqueue(line);
+                if (said.Count > 8)
                 {
-                    said.Enqueue(line);
-                    if (said.Count > 8)
-                    {
-                        said.Dequeue();
-                    }
+                    said.Dequeue();
                 }
-                // An image's build that fails says where in the workspace's files, as a host build does.
-                if (Plan.Mode == ContainerMode.Images && BuildOutput.Parse(line, Plan.Paths) is { } problem)
-                {
-                    UiThread.Post(() => ProblemFound?.Invoke(this, problem));
-                }
+            }
+            // An image's build that fails says where in the workspace's files, as a host build does.
+            if (Plan.Mode == ContainerMode.Images && BuildOutput.Parse(line, Plan.Paths) is { } problem)
+            {
+                UiThread.Post(() => ProblemFound?.Invoke(this, problem));
             }
         }
     }

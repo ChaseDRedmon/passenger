@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Passenger.Dap;
 using Passenger.Debugger.ExpressionEvaluator;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.Interop;
@@ -292,11 +293,11 @@ public partial class ManagedDebugger
             SourceInfo? sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame, _justMyCode is false);
             if (sourceInfo is null)
             {
-                ReportStop(corThread.Id, "entry");
+                ReportStop(corThread.Id, StopReasons.Entry);
             }
             else
             {
-                ReportStop(corThread.Id, "entry", sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, null);
+                ReportStop(corThread.Id, StopReasons.Entry, sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, null);
             }
 
             return;
@@ -356,7 +357,7 @@ public partial class ManagedDebugger
             (bool holds, string? error) = await EvaluateBreakpointCondition(corThread, condition);
             if (error is not null)
             {
-                string message = $"The condition '{condition}' could not be evaluated, so the breakpoint stopped: {error}";
+                string message = $"{Passenger.Dap.BreakpointConditions.NotEvaluated(condition)}, so the breakpoint stopped: {error}";
                 managedBreakpoint.Message = message;
                 OnBreakpointChanged?.Invoke(managedBreakpoint);
                 OnConsole?.Invoke($"{message}\n");
@@ -393,11 +394,11 @@ public partial class ManagedDebugger
             // There exists a 'function breakpoint' type, but netcoredbg et al do not use it, so lets just use 'breakpoint'
             if (sourceInfo is null)
             {
-                ReportStop(corThread.Id, "breakpoint");
+                ReportStop(corThread.Id, StopReasons.Breakpoint);
             }
             else
             {
-                ReportStop(corThread.Id, "breakpoint", sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, [managedBreakpoint.Id]);
+                ReportStop(corThread.Id, StopReasons.Breakpoint, sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, [managedBreakpoint.Id]);
             }
 
             return;
@@ -412,7 +413,7 @@ public partial class ManagedDebugger
             _stoppedShort = (corThread.Id, shortRange, resolvedBreakpoint);
         }
 
-        ReportStop(corThread.Id, "breakpoint", managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, [managedBreakpoint.Id]);
+        ReportStop(corThread.Id, StopReasons.Breakpoint, managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, [managedBreakpoint.Id]);
     }
 
     private void TryBindEntryBreakpoint(ModuleInfo moduleInfo)
@@ -523,7 +524,7 @@ public partial class ManagedDebugger
         string sourceFilePath = sourceInfo.Value.FilePath;
         int line = sourceInfo.Value.StartLine;
         int column = sourceInfo.Value.StartColumn;
-        ReportStop(corThread.Id, "step", sourceFilePath, line, column, null);
+        ReportStop(corThread.Id, StopReasons.Step, sourceFilePath, line, column, null);
     }
 
     /// <summary>A breakpoint that stops ends the step in progress, on its own thread or another, as Rider's does: the
@@ -605,7 +606,7 @@ public partial class ManagedDebugger
             return;
         }
         EndStepForStop();
-        ReportStop(corThread.Id, "pause");
+        ReportStop(corThread.Id, StopReasons.Pause);
     }
 
     private void HandleException(object? sender, ExceptionCorDebugManagedCallbackEventArgs exceptionEventArgs)
@@ -745,7 +746,7 @@ public partial class ManagedDebugger
         EndStepForStop();
         _exceptionBreakModes[new ThreadId(corThread.Id)] = breakMode;
         _unhandledByUser = breakMode is ExceptionBreakMode.UserUnhandled && handler is { } range ? (corThread.Id, range) : null;
-        ReportStop(corThread.Id, "exception", hitBreakpointIds: hit is { Count: > 0 } ? hit : null);
+        ReportStop(corThread.Id, StopReasons.Exception, hitBreakpointIds: hit is { Count: > 0 } ? hit : null);
     }
 
     /// <summary>The exception breakpoints for an exception of this type thrown where it was and handled as it is (or not).</summary>
@@ -778,7 +779,7 @@ public partial class ManagedDebugger
                 (bool holds, string? error) = await EvaluateBreakpointCondition(thread, condition);
                 if (error is not null)
                 {
-                    OnConsole?.Invoke($"The condition '{condition}' could not be evaluated, so the breakpoint on {exceptionType} stopped: {error}\n");
+                    OnConsole?.Invoke($"{Passenger.Dap.BreakpointConditions.NotEvaluated(condition)}, so the breakpoint on {exceptionType} stopped: {error}\n");
                 }
                 else if (!holds)
                 {

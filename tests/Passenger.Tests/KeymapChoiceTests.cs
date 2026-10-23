@@ -32,6 +32,8 @@ public sealed class KeymapChoiceTests : IDisposable
 
     public void Dispose()
     {
+        // The keymap in force is the process's: whatever a test here left chosen, failing or not, the next starts on the platform's.
+        AppActions.Choose(KeymapPreset.VisualStudio, new Dictionary<string, string[]>());
         TestFolders.Delete(folder);
         TestFolders.Delete(settings);
     }
@@ -62,7 +64,7 @@ public sealed class KeymapChoiceTests : IDisposable
             Assert.Equal([Shortcut.Parse($"{Cmd} P").Display()], dialog.ShortcutsShown(AppActions.GoToFile));
             Assert.Equal([Shortcut.Parse($"{Cmd} BACK_SLASH").Display()], dialog.ShortcutsShown(AppActions.SplitRight));
             Assert.False(dialog.ShowsChanged(AppActions.SplitRight), "Split Right, the person's in Visual Studio's keymap alone, is shown changed in VS Code's");
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
             Assert.Equal(KeymapPreset.VSCode, window.Settings.Keymap);
 
             VSCodeKeysWork(window);
@@ -113,9 +115,9 @@ public sealed class KeymapChoiceTests : IDisposable
             KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitDown);
             Ui.Press(keys, $"{Cmd} P");
             Assert.Equal([$"{goToFile} in Main Menu | Navigate"], keys.Conflicts);
-            Click(keys, keys.OkButton);
+            Ui.Click(keys.OkButton);
             ConfirmDialog warning = Asked(dialog);
-            Click(warning, Button(warning, "Remove"));
+            Ui.Click(Button(warning, "Remove"));
             Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
             Assert.Equal([vsCodes], dialog.ShortcutsShown(AppActions.SplitDown));
             Assert.Empty(dialog.ShortcutsShown(AppActions.GoToFile));
@@ -134,7 +136,7 @@ public sealed class KeymapChoiceTests : IDisposable
             Assert.Equal([vsCodes], dialog.ShortcutsShown(AppActions.GoToFile));
             Assert.Empty(dialog.ShortcutsShown(AppActions.SplitDown));
             Assert.False(dialog.ShowsChanged(AppActions.GoToFile), "Go to File, reset, is still shown as changed");
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
 
             Assert.Empty(window.Settings.Shortcuts);
             window.EditorArea.CodeEditor.Focus();
@@ -206,7 +208,7 @@ public sealed class KeymapChoiceTests : IDisposable
             // So is a Ctrl+letter the keymap gives a tool window's action (Hide Active Tool Window's Ctrl+J, the Mac's Next
             // Project Window's Ctrl+W): the shell reads it as a control character, ^W deleting a word.
             Ui.Press(window, "control J");
-            Assert.True(window.DockHost.IsShown("terminal") && window.TerminalPanel.View.IsFocused, "Ctrl+J, pressed in the terminal, hid it rather than going to the shell");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Terminal) && window.TerminalPanel.View.IsFocused, "Ctrl+J, pressed in the terminal, hid it rather than going to the shell");
             if (!OperatingSystem.IsWindows())
             {
                 window.KeyTextInput("echo one two");
@@ -217,7 +219,7 @@ public sealed class KeymapChoiceTests : IDisposable
             }
 
             Ui.Press(window, "control BACK_QUOTE");
-            Assert.False(window.DockHost.IsShown("terminal"), "Ctrl+`, pressed in the terminal, went to the shell rather than closing it");
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal), "Ctrl+`, pressed in the terminal, went to the shell rather than closing it");
             Assert.True(window.EditorArea.CodeEditor.IsFocused, "Ctrl+`, pressed in the terminal, left the keys away from the editor");
         }
         finally
@@ -237,15 +239,12 @@ public sealed class KeymapChoiceTests : IDisposable
         try
         {
             Passenger.App.Docking.DockHost dock = window.DockHost;
-            dock.Show("tests");
-            dock.SetMode(dock["tests"]!, Passenger.App.Docking.ToolMode.Floating);
+            dock.Show(ToolWindowIds.Tests);
+            dock.SetMode(dock[ToolWindowIds.Tests]!, Passenger.App.Docking.ToolMode.Floating);
             Ui.Settle();
             Window floating = Assert.Single(window.OwnedWindows);
             TextBox search = window.BottomPanel.Tests.GetVisualDescendants().OfType<TextBox>().Single(b => b.Classes.Contains("search"));
-            Point at = search.TranslatePoint(new Point(search.Bounds.Width / 2, search.Bounds.Height / 2), floating)!.Value;
-            floating.MouseDown(at, MouseButton.Left);
-            floating.MouseUp(at, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(search);
             Assert.True(search.IsKeyboardFocusWithin, "A click on the floating Unit Tests window's search box left the keys elsewhere");
             floating.KeyTextInput("Onex");
             Ui.Press(floating, "BACK_SPACE");
@@ -288,7 +287,7 @@ public sealed class KeymapChoiceTests : IDisposable
             window.TerminalPanel.Shell = OperatingSystem.IsWindows() ? ("cmd.exe", []) : ("/bin/sh", []);
             window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
             Passenger.App.Docking.DockHost dock = window.DockHost;
-            dock.SetMode(dock["terminal"]!, Passenger.App.Docking.ToolMode.Floating);
+            dock.SetMode(dock[ToolWindowIds.Terminal]!, Passenger.App.Docking.ToolMode.Floating);
             Ui.Settle();
             window.EditorArea.CodeEditor.Focus();
             Ui.Press(window, "control BACK_QUOTE");
@@ -304,7 +303,7 @@ public sealed class KeymapChoiceTests : IDisposable
             Ui.WaitFor(() => window.TerminalPanel.Active!.Screen.ScreenText().Contains("\nfloated", StringComparison.Ordinal), "what was typed run in the floating terminal");
 
             Ui.Press(floating, "control BACK_QUOTE");
-            Assert.False(window.DockHost.IsShown("terminal"), "Ctrl+`, pressed in the floating terminal, went to the shell rather than closing it");
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal), "Ctrl+`, pressed in the floating terminal, went to the shell rather than closing it");
         }
         finally
         {
@@ -319,7 +318,7 @@ public sealed class KeymapChoiceTests : IDisposable
         MainWindow window = Open();
         try
         {
-            window.ShowToolWindow("debug");
+            window.ShowToolWindow(ToolWindowIds.Debug);
             Ui.Settle();
             Button breakpoints = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>()
                 .Single(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("View Breakpoints and Exceptions", StringComparison.Ordinal));
@@ -327,11 +326,11 @@ public sealed class KeymapChoiceTests : IDisposable
             // Containers' actions have no keys of either keymap's: Refresh is given one over VS Code's alone.
             string refreshKeys = $"{Cmd} alt shift J";
             window.ApplySettings(window.Settings with { VSCodeShortcuts = new() { [AppActions.ContainersRefresh] = [refreshKeys] } });
-            window.ShowToolWindow("containers");
+            window.ShowToolWindow(ToolWindowIds.Containers);
             Ui.Settle();
             Button refresh = window.ContainersWindow.GetVisualDescendants().OfType<Button>().Single(b => b.Name == AppActions.ContainersRefresh);
             Assert.Equal("Refresh", ToolTip.GetTip(refresh));
-            window.ShowToolWindow("debug");
+            window.ShowToolWindow(ToolWindowIds.Debug);
             Ui.Settle();
 
             window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
@@ -339,7 +338,7 @@ public sealed class KeymapChoiceTests : IDisposable
             string vsCodes = Shortcut.Parse($"{Cmd} shift F8").Display();
             Assert.Equal($"View Breakpoints and Exceptions ({vsCodes})", ToolTip.GetTip(breakpoints));
             // The Containers window, hidden as the keymap changed, names the key once it is shown, and follows a change while shown.
-            window.ShowToolWindow("containers");
+            window.ShowToolWindow(ToolWindowIds.Containers);
             Ui.Settle();
             Assert.Equal($"Refresh ({Shortcut.Parse(refreshKeys).Display()})", ToolTip.GetTip(refresh));
             window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VisualStudio });
@@ -413,12 +412,12 @@ public sealed class KeymapChoiceTests : IDisposable
     /// <summary>A keymap chosen in the drop-down at the Keymap page's top, by a click on it and one on its name.</summary>
     private static void Choose(SettingsDialog dialog, string keymap)
     {
-        Click(dialog, dialog.KeymapChoice);
+        Ui.Click(dialog.KeymapChoice);
         Ui.WaitFor(() => dialog.KeymapChoice.IsDropDownOpen, "the keymaps' list to open");
         Ui.Settle();
         ComboBoxItem item = dialog.KeymapChoice.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.Popup>().First().Child!
             .GetVisualDescendants().OfType<ComboBoxItem>().First(i => i.Content as string == keymap);
-        Click(dialog, item);
+        Ui.Click(item);
         Ui.WaitFor(() => !dialog.KeymapChoice.IsDropDownOpen, "the keymaps' list to close");
         Assert.Equal(keymap, dialog.KeymapChoice.SelectedItem);
     }
@@ -441,18 +440,6 @@ public sealed class KeymapChoiceTests : IDisposable
 
     private static Button Button(Window window, string content) =>
         window.GetVisualDescendants().OfType<Button>().First(b => b.Content as string == content);
-
-    /// <summary>A click on a control, at its middle, as a person's mouse makes it.</summary>
-    private static void Click(Window window, Control control)
-    {
-        Ui.Settle();
-        TopLevel top = TopLevel.GetTopLevel(control) ?? window;
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), top)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not shown");
-        top.MouseDown(at, MouseButton.Left);
-        top.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     private static JsonNode? Read(string file)
     {

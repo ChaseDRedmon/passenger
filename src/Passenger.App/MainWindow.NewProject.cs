@@ -14,13 +14,13 @@ public partial class MainWindow
 {
     private void AddNewProjectActions()
     {
-        actions!.Add(new IdeAction(AppActions.NewSolution, "New Solution...", "IDE", _ => ShowNewSolution())
+        actions!.Add(new IdeAction(AppActions.NewSolution, "New Solution…", "IDE", _ => ShowNewSolution())
         {
             Menus = [new MenuPlace("File", 0, -1)],
         });
-        actions.Add(new IdeAction(AppActions.NewProject, "New Project...", "IDE", _ => ShowNewProject(ChosenSolutionFolder()))
+        actions.Add(new IdeAction(AppActions.NewProject, "New Project…", "IDE", _ => ShowNewProject(ChosenSolutionFolder()))
         {
-            WhyNot = _ => Solution is null ? "No solution is open to add a project to" : null,
+            WhyNot = _ => Solution is null ? Refusals.NoSolution : null,
         });
     }
 
@@ -56,7 +56,7 @@ public partial class MainWindow
     {
         if (Solution is not { } solution)
         {
-            status.Text = "No solution is open to add a project to";
+            status.Text = Refusals.NoSolution;
             return null;
         }
         ProjectTarget target = new(solution.Path, into, [.. solution.Projects.Select(p => Path.GetFileNameWithoutExtension(p.Path))]);

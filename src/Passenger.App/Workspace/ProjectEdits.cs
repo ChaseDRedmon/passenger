@@ -41,16 +41,58 @@ public static partial class ProjectEdits
             file.Write(text.Insert(at, $"{LineIndent(text, last.Start)}{under}{element}{eol}"));
             return null;
         }
+        return InGroupOfItsOwn(file, project, element);
+    }
+
+    /// <summary>A package reference added as dotnet add package writes one, its version given (none under central package
+    /// management, whose Directory.Packages.props holds it): on a line of its own after the project's last package reference,
+    /// indented as it is, else in an item group of its own before &lt;/Project&gt;. Null once done, else why not.</summary>
+    public static string? AddPackage(string project, string id, string? version)
+    {
+        ProjectText file = new(project);
+        string text = file.Text;
+        if (Regex.IsMatch(text, $"<PackageReference\\s+Include=\"{Regex.Escape(id)}\"", RegexOptions.IgnoreCase))
+        {
+            return $"{Path.GetFileNameWithoutExtension(project)} already references {id}";
+        }
+        string element = version is null ? $"<PackageReference Include=\"{id}\" />" : $"<PackageReference Include=\"{id}\" Version=\"{version}\" />";
+        if (Regex.Matches(text, "<PackageReference\\b[^>]*/>").LastOrDefault() is { } last)
+        {
+            int end = last.Index + last.Length;
+            int lineEnd = text.IndexOf('\n', end);
+            string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            if (text[end..(lineEnd < 0 ? text.Length : lineEnd)].Trim().Length > 0)
+            {
+                file.Write(text.Insert(end, element));
+                return null;
+            }
+            file.Write(text.Insert(lineEnd < 0 ? text.Length : lineEnd + 1, $"{LineIndent(text, last.Index)}{element}{eol}"));
+            return null;
+        }
+        return InGroupOfItsOwn(file, project, element);
+    }
+
+    /// <summary>An item put in an item group of its own before &lt;/Project&gt;, indented as the file indents.</summary>
+    private static string? InGroupOfItsOwn(ProjectText file, string project, string element)
+    {
+        string text = file.Text;
+        string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        string indent = IndentUnit(text);
         int close = text.LastIndexOf("</Project>", StringComparison.Ordinal);
         if (close < 0)
         {
             return $"{Path.GetFileName(project)} is not a project file";
         }
         int closeLine = text.LastIndexOf('\n', Math.Max(0, close - 1)) + 1;
+        bool inline = text[closeLine..close].Trim().Length > 0;
+        if (inline)
+        {
+            closeLine = close;
+        }
         // A file that leaves a blank line between its groups gets one after the new group too.
         bool spaced = closeLine >= 2 && text[..closeLine].TrimEnd('\r', '\n').Length < text[..closeLine].Length - eol.Length;
         string group = $"{indent}<ItemGroup>{eol}{indent}{indent}{element}{eol}{indent}</ItemGroup>{eol}{(spaced ? eol : string.Empty)}";
-        file.Write(text.Insert(closeLine, group));
+        file.Write(text.Insert(closeLine, (inline ? eol : string.Empty) + group));
         return null;
     }
 

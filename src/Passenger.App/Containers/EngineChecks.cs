@@ -118,6 +118,22 @@ public sealed class EngineChecks : IDisposable
 
     internal void Told() => Changed?.Invoke(this, EventArgs.Empty);
 
+    /// <summary>Raised once, on the UI thread, when a Dockerfile is left unchecked for what the engine cannot do
+    /// (<see cref="EngineState.Limit"/>), for the window to say.</summary>
+    public event EventHandler<EngineState>? Limited;
+
+    private bool limitSaid;
+
+    /// <summary>A Dockerfile's check found the engine unable to run it; from any thread.</summary>
+    internal void Limit(EngineState state) => UiThread.Post(() =>
+    {
+        if (!disposed && !limitSaid)
+        {
+            limitSaid = true;
+            Limited?.Invoke(this, state);
+        }
+    });
+
     /// <summary>Passenger's own fixes for what the engine found on the line of an offset of an open file: a compose file's
     /// name a service uses that it does not declare (<see cref="ComposeFixes"/>), each worked out on its text as it stands.</summary>
     public IReadOnlyList<CSharp.EditorFix> Fixes(OpenDocument document, int offset)
@@ -420,6 +436,12 @@ internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document,
     protected override async Task<Outcome> CheckAsync(ContainerEngine engine, string path, TextSnapshot snapshot, string text, CancellationToken cancel)
     {
         EngineState state = await engine.StateAsync(cancel: cancel);
+        // Podman has no BuildKit of its own: Docker's buildx on it would start one in a container. Said once by the window.
+        if (state.IsPodman && state.Status is EngineStatus.Ready or EngineStatus.NoCompose)
+        {
+            Owner.Limit(state);
+            return Outcome.None;
+        }
         if (state.Status is not (EngineStatus.Ready or EngineStatus.NoCompose) || state.BuildxVersion is null)
         {
             return Outcome.None;

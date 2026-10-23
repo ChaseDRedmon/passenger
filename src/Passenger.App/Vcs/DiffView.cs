@@ -60,7 +60,7 @@ public sealed class DiffView : DockPanel, IOwnKeys
 
         count = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
         count.Bind(TextBlock.ForegroundProperty, count.GetResourceObservable("Passenger.TextMuted"));
-        settings = Tool("Icon.Settings", $"Settings ({(OperatingSystem.IsMacOS() ? "⌘⇧D" : "Ctrl+Shift+D")})", ShowSettings);
+        settings = ToolButtons.Of("Icon.Settings", $"Settings ({(OperatingSystem.IsMacOS() ? "⌘⇧D" : "Ctrl+Shift+D")})", ShowSettings);
         settings[DockProperty] = Dock.Right;
         settings.Margin = new Thickness(0, 0, 6, 0);
         settings.VerticalAlignment = VerticalAlignment.Center;
@@ -73,8 +73,8 @@ public sealed class DiffView : DockPanel, IOwnKeys
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                Tool("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
-                Tool("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
+                ToolButtons.Of("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
+                ToolButtons.Of("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
                 new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) },
                 count,
             },
@@ -312,15 +312,6 @@ public sealed class DiffView : DockPanel, IOwnKeys
         label.Bind(TextBlock.ForegroundProperty, label.GetResourceObservable("Passenger.TextMuted"));
         Grid.SetColumn(label, column);
         return label;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
     }
 
     /// <summary>The strip between the sides: each difference a band from its lines on the left to its lines on the

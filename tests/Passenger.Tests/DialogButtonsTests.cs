@@ -38,7 +38,9 @@ public sealed class DialogButtonsTests : IDisposable
     public void Every_dialog_has_its_buttons_words_centred_and_its_text_buttons_alike_with_the_default_where_Rider_puts_it(Look look)
     {
         using IDisposable worn = UiRulesTests.Wearing(look);
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        // A solution, which Add Aspire Orchestration adds to; no C# language server, which no dialog here asks of.
+        File.WriteAllText(Path.Combine(folder, "Dialogs.slnx"), "<Solution />\n");
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
@@ -75,6 +77,9 @@ public sealed class DialogButtonsTests : IDisposable
 
             Closed(window.ShowCloneRepository());
 
+            Assert.True(window.Perform(AppActions.AddAspireOrchestration), $"Add Aspire Orchestration could not run: {window.Status}");
+            Closed(Opened<Passenger.App.Aspire.AspireOrchestrationDialog>(window));
+
             // Rider's Open Solution question, as another folder opens over the one open.
             window.Open(other);
             Ui.Settle();
@@ -108,6 +113,13 @@ public sealed class DialogButtonsTests : IDisposable
             double right = button.Bounds.Width - left - Math.Min(content.DesiredSize.Width, content.Bounds.Width);
             Assert.True(Math.Abs(left - right) <= 1.5,
                 $"{Name(button)} in {title} has its words {left:0.#} px from its left edge and {right:0.#} px from its right: they are not centred in the button");
+        }
+
+        // A button that asks more before it acts ends in the one ellipsis, as every label does (#392): never three dots.
+        Assert.False(title.Contains("...", StringComparison.Ordinal), $"The dialog's title '{title}' ends in three dots, where every label has the one ellipsis, '…'");
+        foreach (Button button in shown.Where(b => b.Content is string words && words.Contains("...", StringComparison.Ordinal)))
+        {
+            Assert.Fail($"{Name(button)} in {title} has three dots, where every label has the one ellipsis, '…'");
         }
 
         Button[] text = [.. shown.Where(b => b.Content is string && b.Classes.Where(c => !c.StartsWith(':')).All(c => c == "primary"))];

@@ -1,4 +1,5 @@
 using System.Text;
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App.Workspace;
@@ -237,38 +238,18 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
             throw new ReadOnlyFileException(path);
         }
         byte[]? before = Wrote is not null && there ? Before(target) : null;
-        // A name of its own, made new: a link already there by a known name (a cloned repository's) took the save wherever it pointed.
-        string temporary = Path.Combine(Path.GetDirectoryName(target)!, Guid.NewGuid().ToString("N") + SaveSuffix);
-        bool made = false;
-        try
+        byte[] bytes = preamble.Length == 0 ? body : [.. preamble, .. body];
+        UnixFileMode? mode = !OperatingSystem.IsWindows() && File.Exists(target) ? File.GetUnixFileMode(target) : null;
+        // A failed save leaves the old file as it was, and nothing of its own beside it.
+        AtomicFile.Write(target, bytes, mode, SaveSuffix, (temporary, at) =>
         {
-            using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            if (mode is not null && OperatingSystem.IsMacOS())
             {
-                made = true;
-                stream.Write(preamble);
-                stream.Write(body);
-                stream.Flush(flushToDisk: true);
+                MacFileMetadata.Copy(at, temporary, encoding);
             }
-            if (!OperatingSystem.IsWindows() && File.Exists(target))
-            {
-                File.SetUnixFileMode(temporary, File.GetUnixFileMode(target));
-                if (OperatingSystem.IsMacOS())
-                {
-                    MacFileMetadata.Copy(target, temporary, encoding);
-                }
-            }
-            Replace(temporary, target, preamble, body);
-        }
-        catch
-        {
-            // A failed save leaves the old file as it was, and nothing of its own beside it.
-            if (made)
-            {
-                File.Delete(temporary);
-            }
-            throw;
-        }
-        Wrote?.Invoke(path, before, preamble.Length == 0 ? body : [.. preamble, .. body]);
+            Replace(temporary, at, bytes);
+        });
+        Wrote?.Invoke(path, before, bytes);
     }
 
     /// <summary>What a file about to be written over holds, when Local History would keep it.</summary>
@@ -288,7 +269,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     /// without sharing its deletion (a virus scanner, a build reading it): the move is tried again for a moment, then the
     /// target is written in place, which such a program allows, so no save (nor the one quitting makes) fails for it; one
     /// sharing no writes either is waited out (<see cref="WhileHeld"/>).</summary>
-    private static void Replace(string temporary, string target, byte[] preamble, byte[] body)
+    private static void Replace(string temporary, string target, byte[] bytes)
     {
         for (int attempt = 1; ; attempt++)
         {
@@ -309,8 +290,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         WhileHeld(() =>
         {
             using FileStream stream = new(target, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-            stream.Write(preamble);
-            stream.Write(body);
+            stream.Write(bytes);
             stream.SetLength(stream.Position);
             stream.Flush(flushToDisk: true);
         });

@@ -102,9 +102,9 @@ public sealed class DebugSession
         if (place is not null)
         {
             // The adapter where the program is (in its container): its flags the same, its symbols kept there.
-            // PASSENGER_ENGINE_LOG keeps the engine's log there too, in the container's own temporary folder.
+            // The engine's log, when the IDE keeps it, is kept there too, in the container's own temporary folder.
             start = place.Command(["--interpreter=vscode", $"--symbolCache={place.SymbolCache}", "--remote",
-                .. Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } ? (string[])[$"--engineLogging={ContainerEngineLog}"] : []]);
+                .. AdapterEnvironment.EngineLog is not null ? (string[])[$"--engineLogging={ContainerEngineLog}"] : []]);
         }
         else
         {
@@ -113,9 +113,8 @@ public sealed class DebugSession
             {
                 throw new FileNotFoundException("The debug adapter is not beside the app", path);
             }
-            // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of every session, for a stop or an end that goes wrong.
             List<string> arguments = [path, "--interpreter=vscode", $"--symbolCache={SymbolCache}"];
-            if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } engineLog)
+            if (AdapterEnvironment.EngineLog is { } engineLog)
             {
                 arguments.Add($"--engineLogging={engineLog}");
             }
@@ -162,7 +161,7 @@ public sealed class DebugSession
         connection = new DapConnection(adapter.StandardOutput.BaseStream, adapter.StandardInput.BaseStream, log) { Name = name };
         connection.EventReceived += (name, body) =>
         {
-            if (name == "output")
+            if (name == DapEvents.Output)
             {
                 // Here, in order with the events around it, rather than a job for the window at each of a program's writes.
                 if (body.ValueKind == JsonValueKind.Object && body.Deserialize<OutputEvent>(DapConnection.Options) is { } written)
@@ -278,7 +277,7 @@ public sealed class DebugSession
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null, bool hotReload = false,
         Action<DebugSession>? starting = null, bool elsewhere = false, AdapterPlace? place = null)
     {
-        return StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
+        return StartAsync(plan.Built ?? plan.Program, DapCommands.Launch, new LaunchArguments
         {
             Program = place?.ToProgram(plan.Program) ?? plan.Program,
             Args = plan.Arguments,
@@ -299,7 +298,7 @@ public sealed class DebugSession
     public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
         Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null,
         bool quiet = false) =>
-        StartAsync(place is null ? $"process {processId}" : $"process {processId} in {place.Where}", "attach",
+        StartAsync(place is null ? $"process {processId}" : $"process {processId} in {place.Where}", DapCommands.Attach,
             new AttachArguments { ProcessId = processId, JustMyCode = true, HotReload = hotReload ? true : null },
             breakpoints, lines, log, output, null, columns, starting, elsewhere, place, quiet);
 
@@ -311,12 +310,12 @@ public sealed class DebugSession
         bool quiet = false)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere, place, quiet) { Program = program, Attached = request == "attach" };
+        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere, place, quiet) { Program = program, Attached = request == DapCommands.Attach };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         if (runInTerminal is not null)
         {
             // Asked inside configurationDone, on the connection's thread: the terminal is the window's.
-            session.connection.Handle<RunInTerminalArguments, RunInTerminalResponse>("runInTerminal", asked => UiThread.InvokeAsync(async () =>
+            session.connection.Handle<RunInTerminalArguments, RunInTerminalResponse>(DapCommands.RunInTerminal, asked => UiThread.InvokeAsync(async () =>
             {
                 Run.TerminalRun run = await runInTerminal(asked);
                 session.Terminal = run;
@@ -327,7 +326,7 @@ public sealed class DebugSession
         starting?.Invoke(session);
         try
         {
-            DapCapabilities capabilities = await session.connection.RequestAsync<DapCapabilities>("initialize", new InitializeArguments
+            DapCapabilities capabilities = await session.connection.RequestAsync<DapCapabilities>(DapCommands.Initialize, new InitializeArguments
             {
                 ClientId = "passenger",
                 ClientName = "Passenger",
@@ -346,7 +345,7 @@ public sealed class DebugSession
             if (quiet)
             {
                 // Exception breakpoints given, none of them: an unhandled exception ends the program as it would run.
-                await session.connection.RequestAsync<SetExceptionBreakpointsResponse>("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [], []));
+                await session.connection.RequestAsync<SetExceptionBreakpointsResponse>(DapCommands.SetExceptionBreakpoints, new SetExceptionBreakpointsArguments([], [], []));
             }
             else
             {
@@ -354,7 +353,7 @@ public sealed class DebugSession
             }
             // Never asked of an adapter already told to go: it would start the program as it went.
             session.GoingOn();
-            await session.connection.RequestAsync("configurationDone", new DapEmpty());
+            await session.connection.RequestAsync(DapCommands.ConfigurationDone, new DapEmpty());
             // A stop told before this answer stands, as one before a resume's does (Passenger's adapter tells none until it is written).
             if (session.State == DebugState.Starting)
             {
@@ -383,21 +382,21 @@ public sealed class DebugSession
         }
     }
 
-    public Task ContinueAsync() => Resume("continue");
+    public Task ContinueAsync() => Resume(DapCommands.Continue);
 
-    public Task StepOverAsync() => Resume("next");
+    public Task StepOverAsync() => Resume(DapCommands.Next);
 
-    public Task StepIntoAsync() => Resume("stepIn");
+    public Task StepIntoAsync() => Resume(DapCommands.StepIn);
 
     /// <summary>Smart Step Into's step: straight into one of the calls <see cref="StepInTargetsAsync"/> gave.</summary>
-    public Task StepIntoTargetAsync(int target) => Resume("stepIn", thread => new StepInArguments(thread, target));
+    public Task StepIntoTargetAsync(int target) => Resume(DapCommands.StepIn, thread => new StepInArguments(thread, target));
 
     /// <summary>The calls a frame's statement can step into, in the order they run, each placed where it is written (lines
     /// and columns from one, at the built lines).</summary>
     public async Task<IReadOnlyList<StepInTarget>> StepInTargetsAsync(int frameId) =>
-        (await connection.RequestAsync<StepInTargetsResponse>("stepInTargets", new StepInTargetsArguments(frameId))).Targets;
+        (await connection.RequestAsync<StepInTargetsResponse>(DapCommands.StepInTargets, new StepInTargetsArguments(frameId))).Targets;
 
-    public Task StepOutAsync() => Resume("stepOut");
+    public Task StepOutAsync() => Resume(DapCommands.StepOut);
 
     /// <summary>Runs on to a line: a breakpoint the user never sees, gone again at the next stop (the stop shown again when the
     /// continue is refused among them, so no later run stops at a breakpoint no one set).</summary>
@@ -409,21 +408,21 @@ public sealed class DebugSession
             return Task.CompletedTask;
         }
         runToCursor = (path, lines.ToBuilt(path, line));
-        return Resume("continue", before: () => SendBreakpointsAsync(path));
+        return Resume(DapCommands.Continue, before: () => SendBreakpointsAsync(path));
     }
 
     /// <summary>Text for the program's standard input.</summary>
-    public Task InputAsync(string text) => State == DebugState.Ended || disconnected is not null ? Task.CompletedTask : connection.RequestAsync("input", new InputArguments(text));
+    public Task InputAsync(string text) => State == DebugState.Ended || disconnected is not null ? Task.CompletedTask : connection.RequestAsync(DapCommands.Input, new InputArguments(text));
 
     /// <summary>The end of the program's standard input, as Ctrl+D in its console.</summary>
-    public Task CloseInputAsync() => State == DebugState.Ended || disconnected is not null ? Task.CompletedTask : connection.RequestAsync("input", new InputArguments(string.Empty, Close: true));
+    public Task CloseInputAsync() => State == DebugState.Ended || disconnected is not null ? Task.CompletedTask : connection.RequestAsync(DapCommands.Input, new InputArguments(string.Empty, Close: true));
 
     public async Task PauseAsync()
     {
         UiThread.Check();
         if (State == DebugState.Running && disconnected is null)
         {
-            await connection.RequestAsync("pause", new ThreadArguments(0));
+            await connection.RequestAsync(DapCommands.Pause, new ThreadArguments(0));
         }
     }
 
@@ -475,13 +474,9 @@ public sealed class DebugSession
         End(null);
     }
 
-    /// <summary>How long the adapter's evaluations may run (its PASSENGER_EVAL_TIMEOUT_MS, which it has as the IDE has it, a
-    /// container's adapter given it too); 5 s, its own default, when that is unset or no whole number above 0.</summary>
-    internal static TimeSpan EvaluationLimit =>
-        Environment.GetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS") is { Length: > 0 } given
-        && int.TryParse(given, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int milliseconds) && milliseconds > 0
-            ? TimeSpan.FromMilliseconds(milliseconds)
-            : TimeSpan.FromSeconds(5);
+    /// <summary>How long the adapter's evaluations may run, which it has as the IDE has it (a container's adapter given it
+    /// too): the IDE refuses to start with a malformed value, so this is the adapter's own.</summary>
+    internal static TimeSpan EvaluationLimit => AdapterEnvironment.EvaluationTimeout;
 
     /// <summary>How long Detach waits for the adapter's let-go: an evaluation the stop's read gave up a moment before has the
     /// rest of its time (<see cref="EvaluationLimit"/> at most), then the program is run off its stop in rounds of 3.2 s at
@@ -544,7 +539,7 @@ public sealed class DebugSession
     {
         try
         {
-            await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: terminate,
+            await connection.RequestAsync(DapCommands.Disconnect, new DisconnectArguments(TerminateDebuggee: terminate,
                 LetGoWithin: letGoWithin is { } within ? (int)within.TotalMilliseconds : null));
         }
         catch (DapException)
@@ -665,11 +660,14 @@ public sealed class DebugSession
             {
                 return;
             }
-            log($"{Path.GetFileName(Program)} (process {program.Id}) was left running by the debugger, and is ended with it");
+            log(EndedLeftRunning(Path.GetFileName(Program), program.Id));
             ChildProcesses.Kill(program);
             ChildProcesses.Kill(adapter);
         }
     }
+
+    /// <summary>What the session's console says as the IDE ends a launched program its adapter left running.</summary>
+    public static string EndedLeftRunning(string program, int processId) => $"{program} (process {processId}) was left running by the debugger, and is ended with it";
 
     /// <summary>A launched program's process, its handle opened at once on Windows so its id is never another's while held;
     /// null when it has gone already.</summary>
@@ -691,55 +689,55 @@ public sealed class DebugSession
     }
 
     public async Task<IReadOnlyList<DapThread>> ThreadsAsync() =>
-        (await connection.RequestAsync<ThreadsResponse>("threads", new DapEmpty())).Threads;
+        (await connection.RequestAsync<ThreadsResponse>(DapCommands.Threads, new DapEmpty())).Threads;
 
     /// <summary>A thread's frames, each source on this disk named as the IDE names its files: a PDB records a file as the
     /// build was given it (another letter case, an 8.3 name, a container's path the session's map names back), and its
     /// stops would otherwise miss the open file.</summary>
     public async Task<IReadOnlyList<DapStackFrame>> StackTraceAsync(int threadId) =>
-        [.. (await connection.RequestAsync<StackTraceResponse>("stackTrace", new StackTraceArguments(threadId))).StackFrames.Select(f =>
+        [.. (await connection.RequestAsync<StackTraceResponse>(DapCommands.StackTrace, new StackTraceArguments(threadId))).StackFrames.Select(f =>
             f.Source is { Path: { } named } source && ToIde(named) is var path && Path.IsPathFullyQualified(path) && File.Exists(path)
                 ? f with { Source = source with { Path = PathNames.Canonical(path) } }
                 : f)];
 
     public async Task<IReadOnlyList<DapScope>> ScopesAsync(int frameId) =>
-        (await connection.RequestAsync<ScopesResponse>("scopes", new ScopesArguments(frameId))).Scopes;
+        (await connection.RequestAsync<ScopesResponse>(DapCommands.Scopes, new ScopesArguments(frameId))).Scopes;
 
     public async Task<IReadOnlyList<DapVariable>> VariablesAsync(int reference) =>
-        (await connection.RequestAsync<VariablesResponse>("variables", new VariablesArguments(reference))).Variables;
+        (await connection.RequestAsync<VariablesResponse>(DapCommands.Variables, new VariablesArguments(reference))).Variables;
 
     /// <summary>The exception a thread stopped on: its type, message and inner exceptions.</summary>
     public Task<ExceptionInfoResponse> ExceptionInfoAsync(int threadId) =>
-        connection.RequestAsync<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(threadId));
+        connection.RequestAsync<ExceptionInfoResponse>(DapCommands.ExceptionInfo, new ThreadArguments(threadId));
 
     /// <summary>Assigns a value (a C# expression) to what an expression names, in a frame.</summary>
     public Task<SetExpressionResponse> SetExpressionAsync(string expression, string value, int frameId) =>
-        connection.RequestAsync<SetExpressionResponse>("setExpression", new SetExpressionArguments(expression, value, frameId));
+        connection.RequestAsync<SetExpressionResponse>(DapCommands.SetExpression, new SetExpressionArguments(expression, value, frameId));
 
     /// <summary>Where the paused thread could go on from at a line of a file (from one), if the line is in its method.</summary>
     public async Task<GotoTarget?> GotoTargetAsync(string path, int line) =>
-        (await connection.RequestAsync<GotoTargetsResponse>("gotoTargets", new GotoTargetsArguments(new DapSource { Path = ToProgram(path) }, line))).Targets.FirstOrDefault();
+        (await connection.RequestAsync<GotoTargetsResponse>(DapCommands.GotoTargets, new GotoTargetsArguments(new DapSource { Path = ToProgram(path) }, line))).Targets.FirstOrDefault();
 
     /// <summary>Set Next Statement: the paused thread goes on from a target; it stops there anew.</summary>
-    public Task GotoAsync(int thread, GotoTarget target) => connection.RequestAsync<object>("goto", new GotoArguments(thread, target.Id));
+    public Task GotoAsync(int thread, GotoTarget target) => connection.RequestAsync<object>(DapCommands.Goto, new GotoArguments(thread, target.Id));
 
     /// <summary>Whether a data breakpoint can watch a member of a value (by the reference its members were listed by, and its
     /// name there), and what it would watch, or why none can.</summary>
     public Task<DataBreakpointInfoResponse> DataBreakpointInfoAsync(int variablesReference, string name) =>
-        connection.RequestAsync<DataBreakpointInfoResponse>("dataBreakpointInfo", new DataBreakpointInfoArguments(name, variablesReference));
+        connection.RequestAsync<DataBreakpointInfoResponse>(DapCommands.DataBreakpointInfo, new DataBreakpointInfoArguments(name, variablesReference));
 
     /// <summary>What Hot Reload needs of the program: its runtime's capabilities, its modules and, paused, its active
     /// statements.</summary>
     public async Task<HotReloadStateResponse> HotReloadStateAsync()
     {
-        HotReloadStateResponse state = await connection.RequestAsync<HotReloadStateResponse>("hotReloadState", new DapEmpty());
+        HotReloadStateResponse state = await connection.RequestAsync<HotReloadStateResponse>(DapCommands.HotReloadState, new DapEmpty());
         return state with { ActiveStatements = [.. state.ActiveStatements.Select(s => s.Document is { } document ? s with { Document = ToIde(document) } : s)] };
     }
 
     /// <summary>Applies Edit and Continue's updates to the program, paused or running, each document's lines named as the
     /// program's PDB names it.</summary>
     public Task<ApplyChangesResponse> ApplyChangesAsync(IReadOnlyList<DapModuleUpdate> updates) =>
-        connection.RequestAsync<ApplyChangesResponse>("applyChanges", new ApplyChangesArguments(
+        connection.RequestAsync<ApplyChangesResponse>(DapCommands.ApplyChanges, new ApplyChangesArguments(
             [.. updates.Select(u => u with { Lines = [.. u.Lines.Select(l => l with { Document = ToProgram(l.Document) })] })]));
 
     /// <summary>Sends files' breakpoints again, at their lines now, after an update the program took: the debugger binds
@@ -758,7 +756,7 @@ public sealed class DebugSession
 
     /// <summary>An expression's value in a frame; context is watch, hover or repl.</summary>
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>
-        connection.RequestAsync<EvaluateResponse>("evaluate", new EvaluateArguments(expression, frameId, context));
+        connection.RequestAsync<EvaluateResponse>(DapCommands.Evaluate, new EvaluateArguments(expression, frameId, context));
 
     /// <summary>Sets the paused program going (a continue or a step), saying it runs at once, as the adapter takes it ahead
     /// of what the stop still reads: a request it refuses throws its reason, and the stop is shown again as it was, the
@@ -803,7 +801,7 @@ public sealed class DebugSession
         }
         sent[path] = Signature(path);
         SetBreakpointsResponse response = await connection.RequestAsync<SetBreakpointsResponse>(
-            "setBreakpoints", new SetBreakpointsArguments(new DapSource { Path = ToProgram(path), Name = Path.GetFileName(path) }, requests));
+            DapCommands.SetBreakpoints, new SetBreakpointsArguments(new DapSource { Path = ToProgram(path), Name = Path.GetFileName(path) }, requests));
         foreach (int id in byId.Where(p => p.Value.Path == path).Select(p => p.Key).ToList())
         {
             byId.Remove(id);
@@ -916,7 +914,7 @@ public sealed class DebugSession
         List<(ExceptionBreakpoint Breakpoint, DapExceptionOptions Option)> sending = ExceptionOptions();
         exceptionsSent = ExceptionSignature();
         SetExceptionBreakpointsResponse response = await connection.RequestAsync<SetExceptionBreakpointsResponse>(
-            "setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [], [.. sending.Select(s => s.Option)]));
+            DapCommands.SetExceptionBreakpoints, new SetExceptionBreakpointsArguments([], [], [.. sending.Select(s => s.Option)]));
         IReadOnlyList<DapBreakpoint> said = response.Breakpoints ?? [];
         breakpoints.ReportExceptions(this, [.. said.Select(b => (b.Verified ? BreakpointStatus.Bound : BreakpointStatus.Invalid, b.Message))], [.. sending.Select(s => s.Breakpoint)]);
     }
@@ -941,7 +939,7 @@ public sealed class DebugSession
         SetDataBreakpointsResponse response;
         try
         {
-            response = await connection.RequestAsync<SetDataBreakpointsResponse>("setDataBreakpoints",
+            response = await connection.RequestAsync<SetDataBreakpointsResponse>(DapCommands.SetDataBreakpoints,
                 new SetDataBreakpointsArguments([.. sending.Select(d => new DapDataBreakpoint(d.DataId, "write", d.Condition, d.HitCondition, d.LogMessage, d.Suspend))]));
         }
         catch (DapException refused)
@@ -972,8 +970,8 @@ public sealed class DebugSession
 
     private string DataSignature() => string.Join(';', DataSending().Select(d => $"{d.DataId}|{d.Condition}|{d.HitCondition}|{d.LogMessage}|{d.Suspend}"));
 
-    /// <summary>The property breakpoints that are on; none while muted.</summary>
-    private List<PropertyBreakpoint> PropertiesSending() => breakpoints.Muted ? [] : [.. breakpoints.Properties.Where(p => p.Enabled)];
+    /// <summary>The property breakpoints on this session's app that are on; none while muted.</summary>
+    private List<PropertyBreakpoint> PropertiesSending() => breakpoints.Muted ? [] : [.. breakpoints.Properties.Where(p => p.Enabled && p.Session == this)];
 
     /// <summary>XAML Binding Errors when it is on; never while muted.</summary>
     private BindingErrorBreakpoint? BindingErrorsSending() => !breakpoints.Muted && breakpoints.BindingErrors.Enabled ? breakpoints.BindingErrors : null;
@@ -1000,8 +998,7 @@ public sealed class DebugSession
         }
         BindingErrorBreakpoint? bindingErrors = BindingErrorsSending();
         functionsSent = FunctionSignature();
-        List<DapFunctionBreakpoint> requests = [.. sending.Select(p => new DapFunctionBreakpoint(Inspector.Wire.Changed,
-            $"breakpoint == {p.Id}" + (p.Condition is { } condition ? $" && ({condition})" : string.Empty), null, p.LogMessage, p.Suspend))];
+        List<DapFunctionBreakpoint> requests = [.. sending.Select(p => new DapFunctionBreakpoint(Inspector.Wire.Changed, EngineCondition(p), null, p.LogMessage, p.Suspend))];
         if (bindingErrors is not null)
         {
             requests.Add(new DapFunctionBreakpoint(Inspector.Wire.Failed, BindingErrorTerms(bindingErrors.Condition), bindingErrors.HitCondition,
@@ -1010,7 +1007,7 @@ public sealed class DebugSession
         SetBreakpointsResponse response;
         try
         {
-            response = await connection.RequestAsync<SetBreakpointsResponse>("setFunctionBreakpoints", new SetFunctionBreakpointsArguments(requests));
+            response = await connection.RequestAsync<SetBreakpointsResponse>(DapCommands.SetFunctionBreakpoints, new SetFunctionBreakpointsArguments(requests));
         }
         catch (DapException refused)
         {
@@ -1050,6 +1047,11 @@ public sealed class DebugSession
     /// Variables shows the failure by, is the parameter of the method it stops in.</summary>
     private static string? BindingErrorTerms(string? text) => text?.Replace("$bindingError", "bindingError", StringComparison.Ordinal);
 
+    /// <summary>A property breakpoint's condition as the debugger is given it, on the one method every such breakpoint
+    /// stops in: its own id, then the person's condition, which a message about it names whole.</summary>
+    public static string EngineCondition(PropertyBreakpoint breakpoint) =>
+        $"breakpoint == {breakpoint.Id}" + (breakpoint.Condition is { } condition ? $" && ({condition})" : string.Empty);
+
     /// <summary>What the debugger said of XAML Binding Errors: until an Avalonia or WPF app's inspector has loaded, it has nowhere
     /// to stop, which is no fault of the breakpoint.</summary>
     private void ReportBindingErrors(DapBreakpoint answer) =>
@@ -1086,11 +1088,11 @@ public sealed class DebugSession
         stoppedAt = stopped;
         StoppedThread = stopped.ThreadId;
         StopReason = stopped.Reason;
-        DataStop = stopped.Reason == "data breakpoint" && stopped.HitBreakpointIds?.Select(id => dataById.GetValueOrDefault(id)).FirstOrDefault(d => d is not null) is { } watched
+        DataStop = stopped.Reason == StopReasons.DataBreakpoint && stopped.HitBreakpointIds?.Select(id => dataById.GetValueOrDefault(id)).FirstOrDefault(d => d is not null) is { } watched
             ? (watched, stopped.Text)
             : null;
-        PropertyStop = stopped.Reason == "breakpoint" ? stopped.HitBreakpointIds?.Select(id => propertyById.GetValueOrDefault(id)).FirstOrDefault(p => p is not null) : null;
-        BindingErrorStop = stopped.Reason == "breakpoint" && bindingErrorsId is int failed && stopped.HitBreakpointIds?.Contains(failed) == true;
+        PropertyStop = stopped.Reason == StopReasons.Breakpoint ? stopped.HitBreakpointIds?.Select(id => propertyById.GetValueOrDefault(id)).FirstOrDefault(p => p is not null) : null;
+        BindingErrorStop = stopped.Reason == StopReasons.Breakpoint && bindingErrorsId is int failed && stopped.HitBreakpointIds?.Contains(failed) == true;
         if (runToCursor is { } target)
         {
             runToCursor = null;
@@ -1110,12 +1112,12 @@ public sealed class DebugSession
     {
         switch (name)
         {
-            case "initialized":
+            case DapEvents.Initialized:
                 initialized.TrySetResult();
                 break;
-            case "stopped" when disconnected is null:
+            case DapEvents.Stopped when disconnected is null:
                 StoppedEvent stopped = body.Read<StoppedEvent>();
-                if (stopped.Reason == "breakpoint" && !functionsAnswered.IsCompleted
+                if (stopped.Reason == StopReasons.Breakpoint && !functionsAnswered.IsCompleted
                     && stopped.HitBreakpointIds?.Any(id => !byId.ContainsKey(id) && !propertyById.ContainsKey(id) && id != bindingErrorsId) == true)
                 {
                     _ = TakeStopAfter(functionsAnswered, stopped);
@@ -1123,10 +1125,7 @@ public sealed class DebugSession
                 }
                 TakeStop(stopped);
                 break;
-            case "continued":
-                SetState(DebugState.Running);
-                break;
-            case "breakpoint":
+            case DapEvents.Breakpoint:
                 BreakpointEvent changed = body.Read<BreakpointEvent>();
                 if (changed.Breakpoint.Id is int id && byId.TryGetValue(id, out LineBreakpoint? breakpoint))
                 {
@@ -1142,24 +1141,24 @@ public sealed class DebugSession
                     ReportBindingErrors(changed.Breakpoint);
                 }
                 break;
-            case "process":
+            case DapEvents.Process:
                 ProcessEvent started = body.Read<ProcessEvent>();
                 if (started.SystemProcessId is int processId)
                 {
                     processLocal = started.IsLocalProcess != false;
                     // A program elsewhere has an id of its machine's: holding this machine's process by it could kill another.
-                    if (started.StartMethod == "launch" && IsLocal)
+                    if (started.StartMethod == DapCommands.Launch && IsLocal)
                     {
                         launched ??= Hold(processId);
                     }
                     processStarted.TrySetResult(processId);
                 }
                 break;
-            case "exited":
+            case DapEvents.Exited:
                 ExitCode = body.Read<ExitedEvent>().ExitCode;
                 programEnded = true;
                 break;
-            case "terminated":
+            case DapEvents.Terminated:
                 programEnded = true;
                 _ = StopAsync();
                 break;

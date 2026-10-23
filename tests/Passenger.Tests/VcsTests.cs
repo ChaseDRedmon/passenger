@@ -32,6 +32,8 @@ public sealed class VcsTests : IDisposable
 
     public void Dispose() => TestFolders.Delete(folder);
 
+    /// <summary>An edit's change bar, and a commit from the Commit window, made by the message's own key (Cmd+Enter, Ctrl+Enter
+    /// elsewhere) rather than a new line in it, which clears the bar.</summary>
     [AvaloniaFact]
     public void An_edit_shows_a_change_bar_and_committing_it_from_the_commit_window_clears_it()
     {
@@ -47,35 +49,17 @@ public sealed class VcsTests : IDisposable
         CommitView commit = window.CommitView;
         window.Perform(AppActions.Commit);
         Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs" && c.Kind == ChangeKind.Modified), "Shop.cs listed as modified");
-        Assert.True(window.DockHost.IsShown("commit"));
-        commit.Message = "Count with a long";
-        Task<bool> committed = commit.CommitAsync(push: false);
-        Ui.Landed(() => committed.IsCompleted, "the commit made");
-        Assert.True(committed.Result, window.Status);
-
-        // Committed: saved first, in the log, the bars gone and nothing left to commit.
-        Assert.Equal("Count with a long", Git("log", "-1", "--format=%s").Trim());
-        Assert.Contains("long int count;", File.ReadAllText(Path.Combine(folder, "Shop.cs")), StringComparison.Ordinal);
-        Ui.Landed(() => Marks(window).Count == 0 && window.Vcs.Changes.Count == 0, "the bars and the changes cleared");
-        Assert.Empty(commit.Rows);
-        Assert.Empty(commit.Message);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Cmd_enter_in_the_commit_message_commits_rather_than_starting_a_new_line()
-    {
-        MainWindow window = Open();
-        window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
-        window.KeyTextInput("long ");
-        CommitView commit = window.CommitView;
-        window.Perform(AppActions.Commit);
-        Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed as changed");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Commit));
         Ui.Landed(() => window.FocusManager?.GetFocusedElement() is TextBox, "the commit message to have the keys");
         window.KeyTextInput("Count with a long");
         Ui.Press(window, OperatingSystem.IsMacOS() ? "meta Enter" : "control Enter");
         Ui.Landed(() => Git("log", "-1", "--format=%s").Trim() == "Count with a long",
             $"Committing from the message's own key: the log's last commit is '{Git("log", "-1", "--format=%s").Trim()}' and the message reads '{commit.Message}'");
+
+        // Committed: saved first, in the log, the bars gone and nothing left to commit.
+        Assert.Contains("long int count;", File.ReadAllText(Path.Combine(folder, "Shop.cs")), StringComparison.Ordinal);
+        Ui.Landed(() => Marks(window).Count == 0 && window.Vcs.Changes.Count == 0, "the bars and the changes cleared");
+        Assert.Empty(commit.Rows);
         Assert.Empty(commit.Message);
         window.Close();
     }
@@ -148,40 +132,6 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void Rollback_from_the_commit_window_restores_a_changed_file_and_deletes_a_new_one()
-    {
-        MainWindow window = Open();
-        string added = Path.Combine(folder, "Prices.cs");
-        File.WriteAllText(added, "class Prices { }\n");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        editor.GoTo(new TextPosition(0, 0));
-        window.KeyTextInput("sealed ");
-        window.Perform(AppActions.Save);
-        _ = window.Vcs.RefreshAsync();
-        CommitView commit = window.CommitView;
-        Ui.Landed(() => window.Vcs.Changes.Count == 2, "a changed file and a new one listed");
-        Assert.DoesNotContain(commit.Chosen, c => c.Kind == ChangeKind.Unversioned);
-
-        string? asked = null;
-        window.Confirm = (title, text, yes) =>
-        {
-            asked = text;
-            return Task.FromResult(true);
-        };
-        foreach (CommitRow row in commit.Rows.OfType<CommitRow>())
-        {
-            row.IsChosen = true;
-        }
-        window.Perform(AppActions.ShowCommit);
-        RollbackChosen(commit);
-        AssertNothingChanged(window);
-        Assert.Contains("deleted", asked, StringComparison.Ordinal);
-        Assert.False(File.Exists(added));
-        Assert.Equal(Original, Text(window));
-        window.Close();
-    }
-
     /// <summary>A save writes the new text beside the file and moves it over the file. Git reading the folder in that
     /// moment (a read under way as Save is pressed) listed the temporary file as a new one in place of the file saved, and
     /// Rollback of what the Commit window listed deleted it and left the saved edit, as on the Windows runner.</summary>
@@ -206,6 +156,9 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Rollback from the Commit window, the new file chosen by hand (unversioned files are not chosen at first),
+    /// asks first, saying the new file is deleted, then puts back the changed file and deletes the new one, once another
+    /// program reading them lets them go (Windows refuses git meanwhile).</summary>
     [AvaloniaFact]
     public void Rollback_puts_back_a_file_another_program_was_reading_and_deletes_a_new_one_it_held_once_they_are_let_go()
     {
@@ -218,7 +171,13 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.Save);
         _ = window.Vcs.RefreshAsync();
         Ui.Landed(() => window.Vcs.Changes.Count == 2, "a changed file and a new one listed");
-        window.Confirm = (_, _, _) => Task.FromResult(true);
+        Assert.DoesNotContain(window.CommitView.Chosen, c => c.Kind == ChangeKind.Unversioned);
+        string? asked = null;
+        window.Confirm = (title, text, yes) =>
+        {
+            asked = text;
+            return Task.FromResult(true);
+        };
         foreach (CommitRow row in window.CommitView.Rows.OfType<CommitRow>())
         {
             row.IsChosen = true;
@@ -238,7 +197,7 @@ public sealed class VcsTests : IDisposable
         Passenger.Core.ChildProcesses.Ended += letGo;
         try
         {
-            RollbackChosen(window.CommitView);
+            RollbackChosen(window);
             AssertNothingChanged(window);
         }
         finally
@@ -247,6 +206,7 @@ public sealed class VcsTests : IDisposable
             reading.Dispose();
             holding.Dispose();
         }
+        Assert.Contains("deleted", asked, StringComparison.Ordinal);
         Assert.Equal(Original, File.ReadAllText(shop));
         Assert.False(File.Exists(added), "The new file stayed after the program holding it let go");
         Ui.Landed(() => Text(window) == Original, "the open file at the last commit's text");
@@ -333,7 +293,7 @@ public sealed class VcsTests : IDisposable
     public void A_diff_opened_before_the_language_server_answers_takes_its_colours_and_a_new_servers_when_it_starts_again()
     {
         File.WriteAllText(Path.Combine(folder, "Shop.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Library());
         Restore.Run(folder);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
@@ -424,9 +384,7 @@ public sealed class VcsTests : IDisposable
         window.KeyTextInput("public ");
         Ui.Landed(() => Marks(window).Count == 1, "a change bar on line 5");
 
-        Avalonia.Point at = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Changes, 4), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Click(editor, editor.GutterColumnPoint(GutterColumn.Changes, 4), settle: false);
         Ui.Landed(() => window.Popup is ChangePopup, "the change's popup");
         ChangePopup popup = (ChangePopup)window.Popup!;
         Assert.Equal("    void Add() { count++; }", popup.Before);
@@ -436,7 +394,7 @@ public sealed class VcsTests : IDisposable
         Avalonia.Controls.Button rollback = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(popup)
             .OfType<Avalonia.Controls.Button>()
             .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Rollback");
-        rollback.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(rollback, settle: false);
         Ui.Landed(() => Text(window) == Original, "the line as committed");
         Assert.False(window.IsPopupOpen);
         window.Close();
@@ -475,6 +433,7 @@ public sealed class VcsTests : IDisposable
         Ui.Settle();
         Avalonia.Point at = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Changes, 8), window)!.Value;
         long allocated = GC.GetAllocatedBytesForCurrentThread();
+        // Pressed raw: Ui.Click's look at the frame before it would count among what the click allocated.
         window.MouseDown(at, Avalonia.Input.MouseButton.Left);
         window.MouseUp(at, Avalonia.Input.MouseButton.Left);
         long clicked = GC.GetAllocatedBytesForCurrentThread() - allocated;
@@ -484,9 +443,8 @@ public sealed class VcsTests : IDisposable
         Assert.True(vcs.Comparisons == comparisons, $"Opening the bar's popup compared the file {vcs.Comparisons - comparisons} times again");
 
         // Show Diff opens on those same differences.
-        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(popup).OfType<Avalonia.Controls.Button>()
-            .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Show Diff")
-            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(popup).OfType<Avalonia.Controls.Button>()
+            .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Show Diff"), settle: false);
         Ui.Landed(() => window.Frontmost is DiffWindow, "the diff window");
         DiffWindow diff = (DiffWindow)window.Frontmost;
         Assert.Equal(1669, diff.View.Hunks.Count);
@@ -649,9 +607,7 @@ public sealed class VcsTests : IDisposable
 
         // A click on a line's annotation chooses its commit in the Git window.
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Point line5 = editor.TranslatePoint(new Point(10, (5 * editor.LineHeight) + (editor.LineHeight / 2) - editor.ScrollOffset.Y), window)!.Value;
-        window.MouseDown(line5, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(line5, Avalonia.Input.MouseButton.Left);
+        Ui.Click(editor, new Point(10, (5 * editor.LineHeight) + (editor.LineHeight / 2) - editor.ScrollOffset.Y), settle: false);
         Ui.Landed(() => window.GitLog.Selected?.Hash == twice, "the commit chosen in the log");
 
         // Closing them takes the column away.
@@ -702,27 +658,10 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Annotations closed while their blame runs leave the gutter empty, and typing brings them back no more; and a
+    /// large file git does not track is said so, with nothing shown.</summary>
     [AvaloniaFact]
-    public void Annotating_a_large_file_git_does_not_track_says_so_and_shows_nothing()
-    {
-        // Larger than a pipe holds: git refuses the file before it reads the text it is given, so writing it fails.
-        string notes = Path.Combine(folder, "Notes.txt");
-        File.WriteAllText(notes, string.Concat(Enumerable.Repeat("A line of notes that nobody has committed yet.\n", 4500)));
-        Assert.True(new FileInfo(notes).Length > 200_000);
-        MainWindow window = Open();
-        window.OpenFile(notes);
-        Passenger.App.Workspace.OpenDocument opened = window.EditorArea.Active!;
-        Task annotating = window.ToggleAnnotationsAsync(opened);
-        Ui.Landed(() => annotating.IsCompleted, "the blame");
-        Assert.True(annotating.IsCompletedSuccessfully, $"Annotating the file failed: {annotating.Exception?.InnerException}");
-        Assert.Equal("Notes.txt is not tracked by Git", window.Status);
-        Assert.Empty(opened.GutterAnnotations);
-        Assert.False(window.Vcs.IsAnnotated(opened), "The annotations stayed open on a file with nothing to show");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Closing_annotations_while_the_blame_runs_leaves_the_gutter_empty()
+    public void Closing_annotations_while_the_blame_runs_leaves_the_gutter_empty_and_a_large_file_git_does_not_track_shows_none()
     {
         MainWindow window = Open();
         Passenger.App.Workspace.OpenDocument shop = window.EditorArea.Active!;
@@ -738,6 +677,19 @@ public sealed class VcsTests : IDisposable
         Ui.Hold(TimeSpan.FromSeconds(1), "past the pause after typing, which would blame the file were the annotations open");
         Ui.Settle();
         Assert.Empty(shop.GutterAnnotations);
+
+        // Larger than a pipe holds: git refuses the file before it reads the text it is given, so writing it fails.
+        string notes = Path.Combine(folder, "Notes.txt");
+        File.WriteAllText(notes, string.Concat(Enumerable.Repeat("A line of notes that nobody has committed yet.\n", 4500)));
+        Assert.True(new FileInfo(notes).Length > 200_000);
+        window.OpenFile(notes);
+        Passenger.App.Workspace.OpenDocument opened = window.EditorArea.Active!;
+        Task annotating = window.ToggleAnnotationsAsync(opened);
+        Ui.Landed(() => annotating.IsCompleted, "the blame");
+        Assert.True(annotating.IsCompletedSuccessfully, $"Annotating the file failed: {annotating.Exception?.InnerException}");
+        Assert.Equal("Notes.txt is not tracked by Git", window.Status);
+        Assert.Empty(opened.GutterAnnotations);
+        Assert.False(window.Vcs.IsAnnotated(opened), "The annotations stayed open on a file with nothing to show");
         window.Close();
     }
 
@@ -852,7 +804,10 @@ public sealed class VcsTests : IDisposable
         window.KeyPress(Avalonia.Input.Key.Delete, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
         Assert.All(buttons, b => Assert.False(b.IsEnabled, $"{b.Content} could be pressed while a drop ran"));
         window.KeyPress(Avalonia.Input.Key.Delete, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+        // Raised, not clicked: a pointer never reaches a button that is off, and this checks its handler refuses too.
+#pragma warning disable RS0030
         buttons[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+#pragma warning restore RS0030
         Assert.True(window.IsPopupOpen, "A second drop pressed while the first ran closed Unstash Changes before it ended");
         Ui.Landed(() => !window.IsPopupOpen, "the drop's end");
         Assert.Equal(2, asked.Count);
@@ -954,7 +909,7 @@ public sealed class VcsTests : IDisposable
         log.Select(first);
         Ui.ChooseFromMenu(commits, "Copy Revision Number");
         Ui.WaitFor(() => Ui.Clipboard(window) == first.Hash, "the hash on the clipboard");
-        Ui.ChooseFromMenu(commits, "New Branch...");
+        Ui.ChooseFromMenu(commits, "New Branch…");
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = "from-first";
         Task named = popup.SubmitAsync();
@@ -1108,14 +1063,13 @@ public sealed class VcsTests : IDisposable
         Assert.Equal([("A.cs", ChangeKind.Deleted)], changes.SelectedItems!.OfType<CommitRow>().Select(r => (r.Change.Name, r.Change.Kind)));
 
         // Rollback asks naming the file it will roll back, and rolls back that one alone.
-        RollbackChosen(commit);
+        RollbackChosen(window);
         Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the Rollback Changes dialog");
         ConfirmDialog dialog = window.OwnedWindows.OfType<ConfirmDialog>().Single();
         string[] shown = [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text ?? string.Empty)];
         Assert.Contains("A.cs", shown);
         Assert.DoesNotContain(shown, t => t is "B.cs" or "C.cs" or "Shop.cs" or "Notes.txt");
-        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == "Rollback")
-            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == "Rollback"), settle: false);
         Ui.Landed(() => window.Vcs.Changes.All(c => c.Name != "A.cs"), "A.cs rolled back");
         Assert.Equal("class A { }\n", File.ReadAllText(Path.Combine(folder, "A.cs")));
         Assert.Equal(["B.cs", "C.cs", "Notes.txt", "Shop.cs"], window.Vcs.Changes.Select(c => c.Name).Order(StringComparer.Ordinal));
@@ -1134,15 +1088,18 @@ public sealed class VcsTests : IDisposable
         commit.Message = "More";
         Ui.Settle();
         Avalonia.Controls.Button[] buttons = [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(commit).OfType<Avalonia.Controls.Button>()
-            .Where(b => b.Content is "Commit" or "Commit and Push...")];
+            .Where(b => b.Content is "Commit" or "Commit and Push…")];
         Assert.Equal(2, buttons.Length);
         Assert.All(buttons, b => Assert.True(b.IsEnabled));
 
         // Pressed twice, as a double-click does: the buttons are off from the first press until it is done.
         Avalonia.Controls.Button press = buttons.First(b => b.Content is "Commit");
-        press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(press, settle: false);
         Assert.All(buttons, b => Assert.False(b.IsEnabled, "A commit can be pressed again while one runs"));
+        // Raised, not clicked: a pointer never reaches a button that is off, and this checks its handler refuses too.
+#pragma warning disable RS0030
         press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+#pragma warning restore RS0030
         Ui.Landed(() => window.Vcs.Changes.Count == 0 && window.Status?.StartsWith("1 file committed", StringComparison.Ordinal) == true, $"the commit ({window.Status})");
         Assert.Equal("2", Git("rev-list", "--count", "HEAD").Trim());
         // Git reads what the commit did (slower on Windows) before it takes another change; one asked for meanwhile is refused.
@@ -1318,7 +1275,6 @@ public sealed class VcsTests : IDisposable
     private static Avalonia.Controls.ListBox Find(Avalonia.Controls.Control view, object rows) =>
         Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, rows));
 
-
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
@@ -1340,13 +1296,15 @@ public sealed class VcsTests : IDisposable
             + $"the status bar said \"{window.Status}\" and git status says \"{Git("status", "--porcelain").Trim()}\"");
     }
 
-    /// <summary>Presses the Commit window's Rollback, as the person would.</summary>
-    private static void RollbackChosen(CommitView commit)
+    /// <summary>Presses the Commit window's Rollback, as the person would, the Commit window shown first.</summary>
+    private static void RollbackChosen(MainWindow window)
     {
-        Avalonia.Controls.Button rollback = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(commit)
+        window.ShowToolWindow(ToolWindowIds.Commit);
+        Ui.Settle();
+        Avalonia.Controls.Button rollback = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.CommitView)
             .OfType<Avalonia.Controls.Button>()
             .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Rollback");
-        rollback.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(rollback, settle: false);
     }
 
     /// <summary>Shows the open file's diff, typed in on its right side, and closes it: the diff gone, held by nothing here.</summary>

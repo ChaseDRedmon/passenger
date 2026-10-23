@@ -81,31 +81,8 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     public bool LoadsAs(WorkspaceModel other) =>
         Solution?.Path == other.Solution?.Path && Projects.Select(p => p.Path).SequenceEqual(other.Projects.Select(p => p.Path));
 
-    /// <summary>The project files under a folder, those nearer the top first; a linked folder is not followed, since it
-    /// can loop.</summary>
-    private static List<string> ProjectsUnder(string folder)
-    {
-        List<string> found = [];
-        Queue<DirectoryInfo> folders = new([new DirectoryInfo(folder)]);
-        for (int read = 0; folders.Count > 0 && found.Count < ProjectLimit && read < FolderLimit; read++)
-        {
-            DirectoryInfo at = folders.Dequeue();
-            try
-            {
-                found.AddRange(at.EnumerateFiles("*.csproj").Select(f => f.FullName).Order(StringComparer.Ordinal));
-                foreach (DirectoryInfo child in at.EnumerateDirectories().OrderBy(d => d.Name, StringComparer.Ordinal))
-                {
-                    // Hidden folders are version control's, IDEs' and tools' own (a worktree's copy of the projects).
-                    if (!child.Name.StartsWith('.') && !IgnoredFolders.Contains(child.Name) && child.LinkTarget is null)
-                    {
-                        folders.Enqueue(child);
-                    }
-                }
-            }
-            catch (Exception error) when (error is UnauthorizedAccessException or IOException)
-            {
-            }
-        }
-        return [.. found.Take(ProjectLimit)];
-    }
+    /// <summary>The project files under a folder, those nearer the top first, as a walk for what projects build finds them
+    /// (<see cref="FolderWalk"/>): hidden folders are version control's, IDEs' and tools' own (a worktree's copy of them).</summary>
+    private static List<string> ProjectsUnder(string folder) =>
+        [.. FolderWalk.Folders(folder, built: true).Take(FolderLimit).SelectMany(f => f.Files).Where(IsProject).Take(ProjectLimit)];
 }

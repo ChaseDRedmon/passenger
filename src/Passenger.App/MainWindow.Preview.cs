@@ -21,9 +21,6 @@ public partial class MainWindow
     private readonly Dictionary<OpenDocument, (XamlPreview Preview, XamlPreviewPane Pane, Debounce Typing, EventHandler<DocumentChangedEventArgs> Changed)> previews = [];
     private bool previewing;
 
-    /// <summary>Whether XAML files are shown with their previews.</summary>
-    public bool Previewing => previewing;
-
     /// <summary>The preview of a file while it is shown, for tests.</summary>
     public XamlPreview? PreviewOf(OpenDocument document) => previews.TryGetValue(document, out var shown) ? shown.Preview : null;
 
@@ -34,7 +31,7 @@ public partial class MainWindow
     {
         actions!.Add(new IdeAction(A.XamlPreview, "XAML Preview", "Editor", _ => TogglePreview())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : session.Xaml.For(context.File) is null ? "The previewer is for the XAML of an Avalonia or WPF project" : null,
             IsChecked = _ => previewing,
             Menus = [new MenuPlace("View", 4, 0)],

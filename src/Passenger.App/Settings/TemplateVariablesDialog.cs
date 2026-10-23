@@ -30,8 +30,8 @@ public sealed class TemplateVariablesDialog : Window
         MinHeight = 260;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        Button up = Tool("Icon.ArrowUp", "Up");
-        Button down = Tool("Icon.ArrowDown", "Down");
+        Button up = ToolButtons.Of("Icon.ArrowUp", "Up");
+        Button down = ToolButtons.Of("Icon.ArrowDown", "Down");
         up.Click += (_, _) => Move(-1);
         down.Click += (_, _) => Move(1);
         names.SelectionChanged += (_, _) => ShowChosen();
@@ -155,14 +155,6 @@ public sealed class TemplateVariablesDialog : Window
         }
     }
 
-    private static Button Tool(string icon, string tip)
-    {
-        PathIcon glyph = new();
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-        Button button = new() { Classes = { "tool" }, Content = glyph };
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
 }
 
 /// <summary>Rider's Choose macro: "(No macro)" and every macro by what it does; OK, or a double click, chooses.</summary>

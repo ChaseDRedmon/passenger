@@ -83,7 +83,7 @@ public sealed class FileIconsTests : IDisposable
 
             // The Commit window shares the Explorer's place, and lists its files with the same icons.
             Ui.Landed(() => window.Vcs is { } vcs && vcs.Changes.Any(c => c.Name == "package.json"), "package.json listed as changed");
-            window.DockHost.Show("commit");
+            window.DockHost.Show(ToolWindowIds.Commit);
             Ui.Landed(() => Icons(window.CommitView).Any(i => ReferenceEquals(i.Data, Resource("FileIcon.Npm")) && ReferenceEquals(i.Foreground, Resource("Passenger.FileIcon.Red"))),
                 "the Commit window's package.json drawn with npm's icon");
         }

@@ -8,48 +8,6 @@ using Passenger.Editor;
 
 namespace Passenger.App.Explorer;
 
-/// <summary>What the Explorer's menu asks of the window for a row.</summary>
-public enum ExplorerAction
-{
-    NewFile,
-    NewFolder,
-    NewClass,
-    Rename,
-    Delete,
-    Cut,
-    Copy,
-    Paste,
-    Undo,
-    Redo,
-    AddReference,
-    Compare,
-    OpenInTerminal,
-    CopyPath,
-    Reveal,
-    Build,
-    Rebuild,
-    Clean,
-    ManageNuGet,
-    EditProjectFile,
-    Unload,
-    Reload,
-    NewSolutionFolder,
-    NewProject,
-    AddExistingProject,
-    AddExistingItem,
-    RunTests,
-    DebugTests,
-    ShowHistory,
-    ShowLocalHistory,
-    CompareWithRevision,
-    CompareWithBranch,
-    FindInFiles,
-    ReplaceInFiles,
-    AddDockerSupport,
-    AddDockerCompose,
-    Publish,
-}
-
 /// <summary>Files and folders dragged onto a row: moved into the folder it stands for, or copied with the platform's
 /// copy key held (Option on the Mac, Ctrl elsewhere).</summary>
 public sealed record ExplorerDrop(IReadOnlyList<ExplorerNode> Items, ExplorerNode Target, bool Copy);
@@ -80,8 +38,13 @@ public partial class ExplorerView : UserControl
         Rows.AddHandler(PointerReleasedEvent, OnRowsReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
         Rows.ContextRequested += (_, e) =>
         {
-            if (Rows.SelectedItem is ExplorerNode node && Menu(node) is { } menu)
+            if (Rows.SelectedItem is ExplorerNode node && MenuFor?.Invoke(node) is { Count: > 0 } items)
             {
+                ContextMenu menu = new();
+                foreach (Control item in items)
+                {
+                    menu.Items.Add(item);
+                }
                 OpenMenu?.Close();
                 OpenMenu = menu;
                 menu.Closed += (_, _) => OpenMenu = OpenMenu == menu ? null : OpenMenu;
@@ -97,23 +60,12 @@ public partial class ExplorerView : UserControl
     /// <summary>A file chosen with a double-click or Enter.</summary>
     public event EventHandler<string>? FileOpened;
 
-    /// <summary>A row's menu item or key: what to do, and to which row.</summary>
-    public event EventHandler<(ExplorerAction Action, ExplorerNode Node)>? ActionRequested;
-
-    /// <summary>The window's actions, whose keymap gives the menu's items their shortcuts, as the main menu shows them.</summary>
-    public ActionRegistry? Actions { get; set; }
-
-    /// <summary>Why a project does not publish, which greys its Publish...; null when it does.</summary>
-    public Func<string, string?>? WhyNotPublish { get; set; }
-
-    /// <summary>Whether Git has a path's history (it is in the folder's working tree), for a row's Git items.</summary>
-    public Func<string, bool> IsVersioned { get; set; } = _ => false;
+    /// <summary>A row's right-click menu, which the window makes of its actions run on that row; none for a row with
+    /// nothing to do.</summary>
+    public Func<ExplorerNode, IReadOnlyList<Control>?>? MenuFor { get; set; }
 
     /// <summary>Files and folders dragged onto a folder, a project or a file's folder.</summary>
     public event EventHandler<ExplorerDrop>? Dropped;
-
-    /// <summary>Whether a Paste would put something in: the menu's Paste is disabled otherwise, as Rider's is.</summary>
-    public Func<bool> CanPaste { get; set; } = () => false;
 
     /// <summary>The row chosen, if any.</summary>
     public ExplorerNode? Selected => Rows.SelectedItem as ExplorerNode;
@@ -173,211 +125,6 @@ public partial class ExplorerView : UserControl
         Rows.SelectedItem = chosen;
         Rows.ScrollIntoView(chosen);
     }
-
-    /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen (a solution
-    /// folder's, every one under it), their unit tests, a project's packages, file and unloading, Add where things can go
-    /// (a new or existing project, a solution folder or an existing item into the solution's folders; a file, a folder, a
-    /// type or a project's reference on disk), Edit (Cut, Copy, Paste, Rename, Delete or for the solution's own Remove,
-    /// Find and Replace in Files), the path of what is on disk, Open In (the file manager, a terminal), Tools' Compare and
-    /// Git's history. A project's Dependencies add a reference, and a project reference is removed.</summary>
-    private ContextMenu? Menu(ExplorerNode node)
-    {
-        bool onDisk = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project;
-        bool holds = (node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.Solution or NodeKind.File) && !node.IsSolutionItem;
-        bool solutionFolder = node.Kind == NodeKind.SolutionFolder;
-        bool dependency = node is { Kind: NodeKind.Dependencies or NodeKind.ProjectReference, Owner: not null };
-        if (!onDisk && !holds && !solutionFolder && !dependency)
-        {
-            return null;
-        }
-        ContextMenu menu = new();
-        MenuItem Item(string header, ExplorerAction action, string? keys = null)
-        {
-            MenuItem item = new() { Header = header, InputGesture = keys is null ? null : KeyGesture.Parse(keys) };
-            item.Click += (_, _) => ActionRequested?.Invoke(this, (action, node));
-            return item;
-        }
-        // An item that does what one of the window's actions does here shows that action's keys, as every menu does.
-        MenuItem Action(string header, ExplorerAction action, string id)
-        {
-            MenuItem item = Item(header, action);
-            Actions?.ShowKeys(item, id);
-            return item;
-        }
-        if (node.Kind is NodeKind.Solution or NodeKind.Project or NodeKind.SolutionFolder)
-        {
-            bool solution = node.Kind == NodeKind.Solution;
-            string what = solution ? "Solution" : "Selected Projects";
-            menu.Items.Add(Action($"Build {what}", ExplorerAction.Build, solution ? AppActions.Build : AppActions.BuildSelected));
-            menu.Items.Add(Action($"Rebuild {what}", ExplorerAction.Rebuild, solution ? AppActions.RebuildSolution : AppActions.RebuildSelected));
-            menu.Items.Add(Action($"Clean {what}", ExplorerAction.Clean, solution ? AppActions.CleanSolution : AppActions.CleanSelected));
-            if (node is { Kind: NodeKind.Project, Path: { } project })
-            {
-                // Greyed, with why, for a project that does not publish (a library, a test project, WPF off Windows).
-                MenuItem publish = Action("Publish...", ExplorerAction.Publish, AppActions.Publish);
-                if (WhyNotPublish?.Invoke(project) is { } why)
-                {
-                    publish.IsEnabled = false;
-                    ToolTip.SetTip(publish, why);
-                    ToolTip.SetShowOnDisabled(publish, true);
-                }
-                menu.Items.Add(publish);
-            }
-            menu.Items.Add(new Separator());
-        }
-        if (node.Kind is NodeKind.Project or NodeKind.SolutionFolder)
-        {
-            menu.Items.Add(Action("Run Unit Tests", ExplorerAction.RunTests, AppActions.RunTests));
-            menu.Items.Add(Action("Debug Unit Tests", ExplorerAction.DebugTests, AppActions.DebugTests));
-            menu.Items.Add(new Separator());
-        }
-        if (node.Kind == NodeKind.Project)
-        {
-            bool unloaded = node.Path is { } project && Tree.Unloaded.Contains(project);
-            menu.Items.Add(Item("Manage NuGet Packages", ExplorerAction.ManageNuGet));
-            menu.Items.Add(Item("Edit Project File", ExplorerAction.EditProjectFile));
-            menu.Items.Add(unloaded ? Item("Reload Project", ExplorerAction.Reload) : Item("Unload Project", ExplorerAction.Unload));
-            menu.Items.Add(new Separator());
-        }
-        if (holds || solutionFolder)
-        {
-            MenuItem add = new() { Header = "Add" };
-            if (node.Kind is NodeKind.Solution or NodeKind.SolutionFolder)
-            {
-                add.Items.Add(Action("New Project...", ExplorerAction.NewProject, AppActions.NewProject));
-                add.Items.Add(Item("New Solution Folder...", ExplorerAction.NewSolutionFolder));
-                add.Items.Add(Item("Existing Project...", ExplorerAction.AddExistingProject));
-                if (node.Kind == NodeKind.Solution)
-                {
-                    add.Items.Add(Item("Docker Compose...", ExplorerAction.AddDockerCompose));
-                }
-            }
-            if (solutionFolder)
-            {
-                add.Items.Add(Item("Existing Item...", ExplorerAction.AddExistingItem));
-            }
-            if (holds)
-            {
-                if (add.Items.Count > 0)
-                {
-                    add.Items.Add(new Separator());
-                }
-                add.Items.Add(Item("New File...", ExplorerAction.NewFile));
-                add.Items.Add(Item("New Folder...", ExplorerAction.NewFolder));
-                // Rider's C# file templates share this place: Class, Interface, Record, Struct and Enum, chosen in its popup.
-                add.Items.Add(Item("Class/Interface...", ExplorerAction.NewClass));
-            }
-            if (node.Kind == NodeKind.Project)
-            {
-                add.Items.Add(new Separator());
-                add.Items.Add(Item("Reference...", ExplorerAction.AddReference));
-                add.Items.Add(Item("Docker Support...", ExplorerAction.AddDockerSupport));
-            }
-            menu.Items.Add(add);
-            menu.Items.Add(new Separator());
-        }
-        if (node.Kind == NodeKind.Dependencies && node.Owner is not null)
-        {
-            menu.Items.Add(Item("Add Reference...", ExplorerAction.AddReference));
-            menu.Items.Add(Item("Manage NuGet Packages", ExplorerAction.ManageNuGet));
-            return menu;
-        }
-        if (node.Kind == NodeKind.ProjectReference && node.Referenced is not null)
-        {
-            menu.Items.Add(Item("Remove...", ExplorerAction.Delete, DeleteKey));
-            return menu;
-        }
-        // Rider's Edit submenu: the clipboard's actions, Delete and Rename, then Find and Replace in Files on the row.
-        MenuItem edit = new() { Header = "Edit" };
-        if (node.IsMovable)
-        {
-            edit.Items.Add(Action("Cut", ExplorerAction.Cut, EditorActions.Cut));
-            edit.Items.Add(Action("Copy", ExplorerAction.Copy, EditorActions.Copy));
-        }
-        if (node.Into is not null)
-        {
-            MenuItem paste = Action("Paste", ExplorerAction.Paste, EditorActions.Paste);
-            paste.IsEnabled = CanPaste();
-            edit.Items.Add(paste);
-        }
-        if (edit.Items.Count > 0 && (Removes(node) || Renames(node)))
-        {
-            edit.Items.Add(new Separator());
-        }
-        if (Removes(node))
-        {
-            // What is the solution's own only leaves the solution, as Rider's Remove does; its files stay on disk.
-            bool removes = node.Kind is NodeKind.Project or NodeKind.SolutionFolder || node.IsSolutionItem;
-            edit.Items.Add(Item(removes ? "Remove..." : "Delete...", ExplorerAction.Delete, DeleteKey));
-        }
-        if (Renames(node))
-        {
-            edit.Items.Add(Item("Rename...", ExplorerAction.Rename, "F2"));
-        }
-        if (edit.Items.Count > 0)
-        {
-            edit.Items.Add(new Separator());
-        }
-        edit.Items.Add(Action("Find in Files...", ExplorerAction.FindInFiles, AppActions.FindInFiles));
-        edit.Items.Add(Action("Replace in Files...", ExplorerAction.ReplaceInFiles, AppActions.ReplaceInFiles));
-        menu.Items.Add(edit);
-        // A solution folder is in no folder on disk, so it has no path to copy or show.
-        if (!solutionFolder)
-        {
-            menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
-            MenuItem openIn = new() { Header = "Open In" };
-            openIn.Items.Add(Item(ChildProcesses.FileManager, ExplorerAction.Reveal));
-            openIn.Items.Add(Item("Terminal", ExplorerAction.OpenInTerminal));
-            menu.Items.Add(openIn);
-        }
-        if (node.Kind == NodeKind.File && !node.IsSolutionItem)
-        {
-            // Rider's Compare With... for one file, Compare Files for two chosen together.
-            bool two = SelectedNodes.Contains(node) && SelectedNodes.Count(n => n.IsFile) == 2;
-            MenuItem tools = new() { Header = "Tools" };
-            MenuItem compare = Item(two ? "Compare Files" : "Compare With...", ExplorerAction.Compare);
-            compare.InputGesture = CompareKey;
-            tools.Items.Add(compare);
-            menu.Items.Add(tools);
-        }
-        bool histories = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution && node.Path is not null && !node.IsSolutionItem;
-        if (histories)
-        {
-            // Rider's Show Local History, just before its Git submenu: a file's versions, or a folder's (a project's or the
-            // solution's folder).
-            menu.Items.Add(new Separator());
-            menu.Items.Add(Action("Show Local History", ExplorerAction.ShowLocalHistory, AppActions.ShowLocalHistory));
-        }
-        if (node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution && node.Path is { } versioned && IsVersioned(versioned))
-        {
-            // Rider's Git submenu, last: a file's or a folder's history (a project's or the solution's folder), a file's versions.
-            MenuItem git = new() { Header = "Git" };
-            if (node.Kind == NodeKind.File)
-            {
-                git.Items.Add(Action("Compare with Revision...", ExplorerAction.CompareWithRevision, AppActions.CompareWithRevision));
-                git.Items.Add(Action("Compare with Branch or Tag...", ExplorerAction.CompareWithBranch, AppActions.CompareWithBranch));
-            }
-            git.Items.Add(Action("Show History", ExplorerAction.ShowHistory, AppActions.ShowHistory));
-            if (!histories)
-            {
-                menu.Items.Add(new Separator());
-            }
-            menu.Items.Add(git);
-        }
-        return menu;
-    }
-
-    private static string DeleteKey => OperatingSystem.IsMacOS() ? "Back" : "Delete";
-
-    /// <summary>Rider's Compare Files (CompareTwoFiles): Ctrl+D in its Visual Studio keymap, Cmd+D in Visual Studio OSX
-    /// (its Mac parent's Ctrl made Cmd), where the editor has the same keys for Duplicate.</summary>
-    private static KeyGesture CompareKey => new(Key.D, OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control);
-
-    /// <summary>Whether F2 renames the row: what is on disk, but a file only the solution lists, and a solution folder.</summary>
-    private static bool Renames(ExplorerNode node) => node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder || node.Kind == NodeKind.File && !node.IsSolutionItem;
-
-    private static bool Removes(ExplorerNode node) => node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder
-        || node is { Kind: NodeKind.ProjectReference, Referenced: not null };
 
     public ExplorerTree Tree { get; } = new();
 
@@ -505,7 +252,7 @@ public partial class ExplorerView : UserControl
         {
             return [];
         }
-        MenuItem nesting = new() { Header = "File Nesting..." };
+        MenuItem nesting = new() { Header = "File Nesting…" };
         nesting.Click += (_, _) => NestingAsked?.Invoke(this, EventArgs.Empty);
         return [new MenuItem { Header = "Appearance", Items = { nesting } }];
     }
@@ -699,46 +446,18 @@ public partial class ExplorerView : UserControl
         return place is { } lit ? new DropZone(lit.Intersect(new Rect(Surface.Bounds.Size))) : null;
     }
 
+    /// <summary>The tree's own keys: Enter opens a row, Right and Left open and close a folder or go to what holds a row.
+    /// Every key the keymap gives an action (Rename, Delete, the clipboard's) is the window's, run on the chosen row.</summary>
     private void OnRowsKeyDown(object? sender, KeyEventArgs e)
     {
         if (Rows.SelectedItem is not ExplorerNode node)
         {
             return;
         }
-        // The editor's Cut, Copy, Paste, Undo and Redo keys, whatever the keymap makes them, act on the rows that have them.
-        ExplorerAction? clipboard = AppActions.Keymap().ActionFor(new Shortcut(Keystroke.From(e))) switch
-        {
-            EditorActions.Cut when node.IsMovable => ExplorerAction.Cut,
-            EditorActions.Copy when node.IsMovable => ExplorerAction.Copy,
-            EditorActions.Paste when node.Into is not null => ExplorerAction.Paste,
-            EditorActions.Undo => ExplorerAction.Undo,
-            EditorActions.Redo => ExplorerAction.Redo,
-            _ => null,
-        };
-        if (clipboard is { } asked)
-        {
-            ActionRequested?.Invoke(this, (asked, node));
-            e.Handled = true;
-            return;
-        }
-        if (node is { Kind: NodeKind.File, IsSolutionItem: false } && CompareKey.Matches(e))
-        {
-            ActionRequested?.Invoke(this, (ExplorerAction.Compare, node));
-            e.Handled = true;
-            return;
-        }
         switch (e.Key)
         {
             case Key.Enter:
                 Activate(node);
-                e.Handled = true;
-                break;
-            case Key.F2 when Renames(node):
-                ActionRequested?.Invoke(this, (ExplorerAction.Rename, node));
-                e.Handled = true;
-                break;
-            case Key.Delete or Key.Back when Removes(node):
-                ActionRequested?.Invoke(this, (ExplorerAction.Delete, node));
                 e.Handled = true;
                 break;
             case Key.Right when node.HasChildren && !node.IsExpanded:

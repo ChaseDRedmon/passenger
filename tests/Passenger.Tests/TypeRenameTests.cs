@@ -32,19 +32,19 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     public TypeRenameTests(RestoredFolders folders) => folder = PathNames.Canonical(folders.Take("type-rename-", made =>
     {
         string project = PathNames.Canonical(made);
-        Write(project, "Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-        Write(project, ".gitignore", "bin/\nobj/\n");
-        Write(project, "Order.cs", Order);
-        Write(project, "Till.cs", Till);
-        Write(project, "Shapes.cs", Shapes);
+        TestFolders.Write(project, "Shop.csproj", TestProjects.Library());
+        TestFolders.Write(project, ".gitignore", "bin/\nobj/\n");
+        TestFolders.Write(project, "Order.cs", Order);
+        TestFolders.Write(project, "Till.cs", Till);
+        TestFolders.Write(project, "Shapes.cs", Shapes);
         // Files a test renames are the project's from the start, as a person's are: one written a moment before a rename
         // is one the server may not have read again, which the rename refuses (WorkspaceEdits.StaleAsync).
-        Write(project, "Form1.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Width;\n}\n");
-        Write(project, "Form1.Designer.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Height;\n}\n");
-        Write(project, "Form1.resx", "<root />\n");
-        Write(project, "Basket.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Count;\n}\n");
-        Write(project, "Basket.Lines.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Lines;\n}\n");
-        Write(project, "BasketExtras.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Extras;\n}\n");
+        TestFolders.Write(project, "Form1.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Width;\n}\n");
+        TestFolders.Write(project, "Form1.Designer.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Height;\n}\n");
+        TestFolders.Write(project, "Form1.resx", "<root />\n");
+        TestFolders.Write(project, "Basket.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Count;\n}\n");
+        TestFolders.Write(project, "Basket.Lines.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Lines;\n}\n");
+        TestFolders.Write(project, "BasketExtras.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Extras;\n}\n");
         TestGit.Init(project);
         return project;
     }));
@@ -55,12 +55,18 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
 
     private string PurchasePath => Path.Combine(folder, "Purchase.cs");
 
+    /// <summary>Rename on a class named like its file renames the file with it, its tab, breakpoint and bookmark following,
+    /// its uses changing and Git seeing a rename; then Undo in the editor takes back what was typed after it on its own,
+    /// and the next Undo the class, its file and the other file together, asked first, and Redo makes it all again.</summary>
     [AvaloniaFact]
-    public void Renaming_a_class_named_like_its_file_renames_the_file_its_tab_follows_its_uses_change_and_Git_sees_a_rename()
+    public void Renaming_a_class_named_like_its_file_renames_the_file_Git_sees_a_rename_and_undo_and_redo_take_it_back_whole()
     {
+        string till = Path.Combine(folder, "Till.cs");
         MainWindow window = Open("Order.cs");
+        List<(string Title, string Text)> asked = Answer(window);
         OpenDocument document = window.EditorArea.Active!;
-        PlaceAfter(window, "Total;");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.PlaceAfter(editor, "Total;");
         Ui.Run(window, AppActions.ToggleBreakpoint);
         Ui.Run(window, AppActions.ToggleBookmark);
 
@@ -75,164 +81,16 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         Assert.Empty(window.Debugger.Breakpoints.In(OrderPath));
         Assert.Equal(PurchasePath, Assert.Single(window.Bookmarks.All).Path);
         Assert.Equal(Order.Replace("Order", "Purchase", StringComparison.Ordinal), File.ReadAllText(PurchasePath));
-        Assert.Equal(Till.Replace("Order", "Purchase", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Till.cs")));
+        Assert.Equal(Till.Replace("Order", "Purchase", StringComparison.Ordinal), File.ReadAllText(till));
 
         // Git sees the file moved, as git mv leaves it, not one file deleted and another new.
         Ui.WaitFor(() => window.Vcs.Changes.Any(c => c.Kind == ChangeKind.Renamed && c.Path == PurchasePath && c.From == OrderPath), "Git to list Order.cs renamed to Purchase.cs");
         string status = Git("status", "--porcelain");
         Assert.True(status.Split('\n').Any(l => l.StartsWith('R') && l.EndsWith("Order.cs -> Purchase.cs", StringComparison.Ordinal)), $"git status shows no rename:\n{status}");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void With_the_file_option_turned_off_only_the_code_is_renamed_and_it_stays_off_for_the_next_rename()
-    {
-        MainWindow window = Open("Order.cs");
-        PlaceAfter(window, "class Ord");
-        Ui.Run(window, AppActions.Rename);
-        Ui.WaitFor(() => window.Assist.RenameOffersFiles.Count > 0, "the rename to offer Order.cs");
-        CheckBox option = Option(window, "Also rename files to reflect this change");
-        Assert.True(option.IsChecked, "Renaming a class named like its file does not rename the file unless asked, as Rider's does");
-        Click(window, option);
-        Assert.False(option.IsChecked, "A click did not clear Also rename files to reflect this change");
-        window.KeyTextInput("Purchase");
-        Ui.Press(window, "ENTER");
-        Ui.Settle();
-
-        Assert.False(File.Exists(PurchasePath), "The file was renamed with the option turned off");
-        Assert.Equal("Order.cs", window.EditorArea.Active?.Name);
-        Assert.Equal(Order.Replace("class Order", "class Purchase", StringComparison.Ordinal), window.EditorArea.Active?.Text.Snapshot.ToString());
-        Assert.Equal(Till.Replace("Order", "Purchase", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Till.cs")));
-
-        // The option stays as it was left for the next type named like its file, as Rider keeps it.
-        window.OpenFile(Path.Combine(folder, "Till.cs"));
-        Ui.Settle();
-        PlaceAfter(window, "class Ti");
-        Ui.Run(window, AppActions.Rename);
-        Ui.WaitFor(() => window.Assist.RenameOffersFiles.Count > 0, "the rename to offer Till.cs");
-        Assert.False(Option(window, "Also rename files to reflect this change").IsChecked, "The file option turned off came back on");
-        Ui.Press(window, "ESCAPE");
-        Assert.Null(window.Assist.Renaming);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Renaming_the_file_in_the_solution_view_offers_to_rename_its_class_which_renames_it_and_its_uses()
-    {
-        MainWindow window = Open("Till.cs");
-        List<(string Title, string Text)> asked = Answer(window);
-        Choose(window, OrderPath);
-        Ui.Press(window, "F2");
-        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
-        Assert.Equal("Order.cs", popup.Text);
-        CheckBox option = popup.Option ?? throw new Xunit.Sdk.XunitException("Renaming Order.cs did not offer to rename the class Order");
-        Assert.Equal("Rename type 'Order' to match the new file name", option.Content);
-        Assert.True(option.IsChecked, "Rider renames the type with its file unless asked not to");
-        window.KeyTextInput("Purchase.cs");
-        Ui.Press(window, "ENTER");
-        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
-
-        Assert.False(File.Exists(OrderPath), "Order.cs is still there");
-        Assert.Equal(Order.Replace("Order", "Purchase", StringComparison.Ordinal), File.ReadAllText(PurchasePath));
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        Assert.Equal(Till.Replace("Order", "Purchase", StringComparison.Ordinal), editor.Document.Snapshot.ToString());
-        Assert.Contains(window.ExplorerView.Tree.Rows, r => r.Path == PurchasePath);
-        Ui.WaitFor(() => window.Vcs.Changes.Any(c => c.Kind == ChangeKind.Renamed && c.Path == PurchasePath), "Git to list Order.cs renamed");
-
-        // Undo in the Solution view takes the file's rename and the class's back together, asked first.
-        Choose(window, PurchasePath);
-        Ui.Run(window, EditorActions.Undo);
-        Assert.Equal([("Undo", "Undo Rename Order to Purchase? It changes Till.cs and Purchase.cs.")], asked);
-        Assert.True(File.Exists(OrderPath), $"Undo did not rename Purchase.cs back: {window.Status}");
-        Assert.False(File.Exists(PurchasePath), "Undo left Purchase.cs");
-        Assert.Equal(Order, File.ReadAllText(OrderPath));
-        Assert.Equal(Till, editor.Document.Snapshot.ToString());
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_form_renamed_with_its_class_in_the_solution_view_takes_the_files_nested_under_it_along()
-    {
-        MainWindow window = Open("Till.cs");
-        Choose(window, Path.Combine(folder, "Form1.cs"));
-        Ui.Press(window, "F2");
-        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
-        Assert.True(popup.Option?.IsChecked == true, "Renaming Form1.cs did not offer to rename the class Form1 with it");
-        window.KeyTextInput("Window1.cs");
-        Ui.Press(window, "ENTER");
-        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
-
-        Assert.Equal(["Window1.Designer.cs", "Window1.cs", "Window1.resx"], Directory.GetFiles(folder, "Window1*").Select(Path.GetFileName).Order(StringComparer.Ordinal));
-        Assert.Empty(Directory.GetFiles(folder, "Form1*"));
-        Assert.Contains("public partial class Window1", File.ReadAllText(Path.Combine(folder, "Window1.Designer.cs")), StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Every_part_of_a_partial_class_in_a_file_named_after_it_is_renamed_with_it_and_a_part_named_otherwise_is_not()
-    {
-        MainWindow window = Open("Basket.Lines.cs");
-
-        IReadOnlyList<string> offered = RenameAt(window, "class Bask", "Cart");
-
-        Assert.Equal(["Basket.Lines.cs", "Basket.cs"], offered.Select(Path.GetFileName).Order(StringComparer.Ordinal));
-        Assert.True(File.Exists(Path.Combine(folder, "Cart.cs")), $"Basket.cs was not renamed with its class: {window.Status}");
-        Assert.True(File.Exists(Path.Combine(folder, "Cart.Lines.cs")), $"Basket.Lines.cs was not renamed with its class: {window.Status}");
-        Assert.Equal("Cart.Lines.cs", window.EditorArea.Active?.Name);
-        Assert.Contains("public partial class Cart", File.ReadAllText(Path.Combine(folder, "BasketExtras.cs")), StringComparison.Ordinal);
-        Assert.False(File.Exists(Path.Combine(folder, "Basket.cs")), "Basket.cs is still there");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_file_holding_types_of_other_names_is_renamed_alone_and_keeps_its_name_when_one_of_them_is_renamed()
-    {
-        string shapes = Path.Combine(folder, "Shapes.cs");
-        string figures = Path.Combine(folder, "Figures.cs");
-        MainWindow window = Open("Shapes.cs");
-
-        // Its class renamed, the file named otherwise stays as it is: there is no file to offer.
-        RenameAt(window, "class Circ", "Ring", offered: false);
-        Assert.True(File.Exists(shapes), "Shapes.cs was renamed with a class it is not named after");
-        Assert.Contains("public class Ring", window.EditorArea.Active?.Text.Snapshot.ToString(), StringComparison.Ordinal);
-
-        // Renamed in the Solution view, it offers no type to rename and its code stays as it is.
-        window.EditorArea.SaveAll();
-        Choose(window, shapes);
-        Ui.Press(window, "F2");
-        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
-        Assert.Null(popup.Option);
-        window.KeyTextInput("Figures.cs");
-        Ui.Press(window, "ENTER");
-        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
-        Assert.False(File.Exists(shapes), "Shapes.cs is still there");
-        Assert.Equal(Shapes.Replace("Circle", "Ring", StringComparison.Ordinal), File.ReadAllText(figures));
-        Assert.Equal("Figures.cs", window.EditorArea.Active?.Name);
-
-        // Undo in the Solution view names it back, asked first.
-        List<(string Title, string Text)> asked = Answer(window);
-        Choose(window, figures);
-        Ui.Run(window, EditorActions.Undo);
-        Assert.Equal([("Undo", "Undo Rename Shapes.cs to Figures.cs? It changes Figures.cs.")], asked);
-        Assert.True(File.Exists(shapes), $"Undo did not name Figures.cs back: {window.Status}");
-        Assert.Equal("Shapes.cs", window.EditorArea.Active?.Name);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Undo_in_the_editor_takes_the_class_and_file_rename_back_whole_once_asked_and_redo_makes_it_again()
-    {
-        string till = Path.Combine(folder, "Till.cs");
-        MainWindow window = Open("Order.cs");
-        List<(string Title, string Text)> asked = Answer(window);
-        OpenDocument document = window.EditorArea.Active!;
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        RenameAt(window, "class Ord", "Purchase");
-        Assert.True(File.Exists(PurchasePath), window.Status);
 
         // What was typed after it is the file's own to undo, asking nothing.
         editor.Focus();
-        PlaceAfter(window, "Total;");
+        Ui.PlaceAfter(editor, "Total;");
         window.KeyTextInput(" // kept");
         Ui.Run(window, EditorActions.Undo);
         Assert.Empty(asked);
@@ -262,6 +120,133 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         window.Close();
     }
 
+    /// <summary>Every part of a partial class in a file named after it is renamed with it, a part named otherwise is not;
+    /// then, with Also rename files to reflect this change turned off, only the code is renamed, and the option stays off
+    /// for the next rename.</summary>
+    [AvaloniaFact]
+    public void Each_partial_part_named_after_its_class_is_renamed_with_it_and_with_the_file_option_turned_off_only_the_code_is_and_it_stays_off()
+    {
+        MainWindow window = Open("Basket.Lines.cs");
+
+        IReadOnlyList<string> offered = RenameAt(window, "class Bask", "Cart");
+
+        Assert.Equal(["Basket.Lines.cs", "Basket.cs"], offered.Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.True(File.Exists(Path.Combine(folder, "Cart.cs")), $"Basket.cs was not renamed with its class: {window.Status}");
+        Assert.True(File.Exists(Path.Combine(folder, "Cart.Lines.cs")), $"Basket.Lines.cs was not renamed with its class: {window.Status}");
+        Assert.Equal("Cart.Lines.cs", window.EditorArea.Active?.Name);
+        Assert.Contains("public partial class Cart", File.ReadAllText(Path.Combine(folder, "BasketExtras.cs")), StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(folder, "Basket.cs")), "Basket.cs is still there");
+
+        window.OpenFile(OrderPath);
+        Ui.Settle();
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ord");
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.RenameOffersFiles.Count > 0, "the rename to offer Order.cs");
+        CheckBox option = Option(window, "Also rename files to reflect this change");
+        Assert.True(option.IsChecked, "Renaming a class named like its file does not rename the file unless asked, as Rider's does");
+        Ui.Click(option);
+        Assert.False(option.IsChecked, "A click did not clear Also rename files to reflect this change");
+        window.KeyTextInput("Purchase");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+
+        Assert.False(File.Exists(PurchasePath), "The file was renamed with the option turned off");
+        Assert.Equal("Order.cs", window.EditorArea.Active?.Name);
+        Assert.Equal(Order.Replace("class Order", "class Purchase", StringComparison.Ordinal), window.EditorArea.Active?.Text.Snapshot.ToString());
+        Assert.Equal(Till.Replace("Order", "Purchase", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Till.cs")));
+
+        // The option stays as it was left for the next type named like its file, as Rider keeps it.
+        window.OpenFile(Path.Combine(folder, "Till.cs"));
+        Ui.Settle();
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ti");
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.RenameOffersFiles.Count > 0, "the rename to offer Till.cs");
+        Assert.False(Option(window, "Also rename files to reflect this change").IsChecked, "The file option turned off came back on");
+        Ui.Press(window, "ESCAPE");
+        Assert.Null(window.Assist.Renaming);
+        window.Close();
+    }
+
+    /// <summary>Rename on a file in the Solution view offers to rename the class it is named after, which renames it and its
+    /// uses, and Undo there takes both back, asked first; a form's files nested under it go along; and a file holding types
+    /// of other names keeps its name when one of them is renamed, is renamed alone in the Solution view, and named back by
+    /// Undo there.</summary>
+    [AvaloniaFact]
+    public void Renaming_a_file_in_the_solution_view_offers_to_rename_its_class_takes_a_forms_nested_files_and_renames_a_file_of_other_types_alone()
+    {
+        MainWindow window = Open("Till.cs");
+        List<(string Title, string Text)> asked = Answer(window);
+        Choose(window, OrderPath);
+        Ui.Run(window, AppActions.Rename);
+        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
+        Assert.Equal("Order.cs", popup.Text);
+        CheckBox option = popup.Option ?? throw new Xunit.Sdk.XunitException("Renaming Order.cs did not offer to rename the class Order");
+        Assert.Equal("Rename type 'Order' to match the new file name", option.Content);
+        Assert.True(option.IsChecked, "Rider renames the type with its file unless asked not to");
+        window.KeyTextInput("Purchase.cs");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
+
+        Assert.False(File.Exists(OrderPath), "Order.cs is still there");
+        Assert.Equal(Order.Replace("Order", "Purchase", StringComparison.Ordinal), File.ReadAllText(PurchasePath));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.Equal(Till.Replace("Order", "Purchase", StringComparison.Ordinal), editor.Document.Snapshot.ToString());
+        Assert.Contains(window.ExplorerView.Tree.Rows, r => r.Path == PurchasePath);
+        Ui.WaitFor(() => window.Vcs.Changes.Any(c => c.Kind == ChangeKind.Renamed && c.Path == PurchasePath), "Git to list Order.cs renamed");
+
+        // Undo in the Solution view takes the file's rename and the class's back together, asked first.
+        Choose(window, PurchasePath);
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal([("Undo", "Undo Rename Order to Purchase? It changes Till.cs and Purchase.cs.")], asked);
+        Assert.True(File.Exists(OrderPath), $"Undo did not rename Purchase.cs back: {window.Status}");
+        Assert.False(File.Exists(PurchasePath), "Undo left Purchase.cs");
+        Assert.Equal(Order, File.ReadAllText(OrderPath));
+        Assert.Equal(Till, editor.Document.Snapshot.ToString());
+
+        // A form renamed with its class takes the files nested under it along.
+        Choose(window, Path.Combine(folder, "Form1.cs"));
+        Ui.Run(window, AppActions.Rename);
+        popup = Assert.IsType<NamePopup>(window.Popup);
+        Assert.True(popup.Option?.IsChecked == true, "Renaming Form1.cs did not offer to rename the class Form1 with it");
+        window.KeyTextInput("Window1.cs");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
+        Assert.Equal(["Window1.Designer.cs", "Window1.cs", "Window1.resx"], Directory.GetFiles(folder, "Window1*").Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Empty(Directory.GetFiles(folder, "Form1*"));
+        Assert.Contains("public partial class Window1", File.ReadAllText(Path.Combine(folder, "Window1.Designer.cs")), StringComparison.Ordinal);
+
+        // A file holding types of other names: its class renamed, it stays as it is, since there is no file to offer.
+        string shapes = Path.Combine(folder, "Shapes.cs");
+        string figures = Path.Combine(folder, "Figures.cs");
+        window.OpenFile(shapes);
+        Ui.Settle();
+        RenameAt(window, "class Circ", "Ring", offered: false);
+        Assert.True(File.Exists(shapes), "Shapes.cs was renamed with a class it is not named after");
+        Assert.Contains("public class Ring", window.EditorArea.Active?.Text.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // Renamed in the Solution view, it offers no type to rename and its code stays as it is.
+        window.EditorArea.SaveAll();
+        Choose(window, shapes);
+        Ui.Run(window, AppActions.Rename);
+        popup = Assert.IsType<NamePopup>(window.Popup);
+        Assert.Null(popup.Option);
+        window.KeyTextInput("Figures.cs");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
+        Assert.False(File.Exists(shapes), "Shapes.cs is still there");
+        Assert.Equal(Shapes.Replace("Circle", "Ring", StringComparison.Ordinal), File.ReadAllText(figures));
+        Assert.Equal("Figures.cs", window.EditorArea.Active?.Name);
+
+        // Undo in the Solution view names it back, asked first.
+        asked.Clear();
+        Choose(window, figures);
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal([("Undo", "Undo Rename Shapes.cs to Figures.cs? It changes Figures.cs.")], asked);
+        Assert.True(File.Exists(shapes), $"Undo did not name Figures.cs back: {window.Status}");
+        Assert.Equal("Shapes.cs", window.EditorArea.Active?.Name);
+        window.Close();
+    }
+
     private MainWindow Open(string file)
     {
         MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
@@ -278,7 +263,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     /// files it offered.</summary>
     private static IReadOnlyList<string> RenameAt(MainWindow window, string after, string name, bool offered = true)
     {
-        PlaceAfter(window, after);
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, AppActions.Rename);
         Ui.Settle();
@@ -292,25 +277,9 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         return files;
     }
 
-    private static void PlaceAfter(MainWindow window, string text)
-    {
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
-    }
-
     private static CheckBox Option(MainWindow window, string text) =>
         window.GetVisualDescendants().OfType<CheckBox>().FirstOrDefault(c => c.IsEffectivelyVisible && (string?)c.Content == text)
         ?? throw new Xunit.Sdk.XunitException($"No check box '{text}' shows");
-
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     /// <summary>Clicks a file's row in the Explorer, its folders opened down to it, as a person chooses it before a key.</summary>
     private static void Choose(MainWindow window, string path)
@@ -319,12 +288,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         Ui.Settle();
         ExplorerNode row = window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Path == path)
             ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {path}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = rows.ContainerFromItem(row) ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {row.Name}");
-        Click(window, item);
-        Assert.Equal([row], window.ExplorerView.SelectedNodes);
+        Ui.ClickRow(window, row);
     }
 
     /// <summary>Agrees to every question the window asks, keeping each one's title and text in order.</summary>
@@ -340,6 +304,4 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     }
 
     private string Git(params string[] arguments) => TestGit.Run(folder, arguments);
-
-    private static void Write(string folder, string relative, string text) => File.WriteAllText(Path.Combine(folder, relative), text);
 }

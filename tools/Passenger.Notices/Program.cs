@@ -7,8 +7,9 @@ namespace Passenger.Notices;
 
 /// <summary>Writes THIRD-PARTY-NOTICES.txt, which the app carries beside it, from what the build gives it in a file of
 /// <c>name=value</c> lines: the packages the app copies, the debugger's and Roslyn's server's (their .deps.json files),
-/// the runtime a self-contained app carries, THIRD_PARTY_NOTICES.md and the licence texts. A package whose licence it
-/// cannot write in full fails the build, naming it.</summary>
+/// the runtime a self-contained app carries, THIRD_PARTY_NOTICES.md and the licence texts; or, given <c>for=tools</c>,
+/// the container tools' own, from their .deps.json. A package whose licence it cannot write in full fails the build,
+/// naming it.</summary>
 public static class Program
 {
     public static int Main(string[] args)
@@ -48,6 +49,15 @@ public sealed class NoticeException(IReadOnlyList<string> problems) : Exception(
 public sealed class Inputs
 {
     public string Out { get; private set; } = "";
+
+    /// <summary>Whose notices these are: the app's, or the container tools' (<c>for=tools</c>).</summary>
+    public bool ForTools { get; private set; }
+
+    /// <summary>The container tools' .deps.json: every package they carry, and the runtime pack they are published with.</summary>
+    public List<string> ToolsDeps { get; } = [];
+
+    /// <summary>The sections of THIRD_PARTY_NOTICES.md's copied source carried, by their titles; none given, all of them.</summary>
+    public List<string> Sections { get; } = [];
 
     /// <summary>Passenger's own LICENSE.</summary>
     public string License { get; private set; } = "";
@@ -103,6 +113,20 @@ public sealed class Inputs
             {
                 case "out":
                     inputs.Out = value;
+                    break;
+                case "for":
+                    inputs.ForTools = value switch
+                    {
+                        "app" => false,
+                        "tools" => true,
+                        _ => throw new NoticeException([$"{path}: for={value} names neither the app nor the tools"]),
+                    };
+                    break;
+                case "tools":
+                    inputs.ToolsDeps.Add(value);
+                    break;
+                case "section":
+                    inputs.Sections.Add(value);
                     break;
                 case "license":
                     inputs.License = value;
@@ -161,6 +185,7 @@ public static class Place
     public const string Host = "host/";
     public const string Server = "roslyn/";
     public const string Web = "web/";
+    public const string Tools = "the container tools";
 }
 
 /// <summary>One package as the notices name it: where it is carried, the copyright its package states, and its licence
@@ -174,7 +199,7 @@ public sealed class Entry(string id, string version)
     /// <summary>The app first, then debugger/, host/ and roslyn/.</summary>
     public SortedSet<string> Places { get; } = new(Comparer<string>.Create((a, b) => Order(a).CompareTo(Order(b))));
 
-    private static int Order(string place) => Array.IndexOf([Place.App, Place.Debugger, Place.Host, Place.Server, Place.Web], place);
+    private static int Order(string place) => Array.IndexOf([Place.App, Place.Debugger, Place.Host, Place.Server, Place.Web, Place.Tools], place);
 
     public string Copyright { get; set; } = "";
 
@@ -221,6 +246,13 @@ public static partial class NoticesFile
                 Restored(id, version, path, Place.Host);
             }
         }
+        foreach (string deps in inputs.ToolsDeps)
+        {
+            foreach ((string id, string version, string? path) in Dependencies(deps))
+            {
+                Restored(id, version, path, Place.Tools);
+            }
+        }
         if (inputs.Server is { } server)
         {
             Package(Path.GetFullPath(server), Place.Server);
@@ -257,7 +289,27 @@ public static partial class NoticesFile
 
         StringBuilder text = new();
         string copyright = File.ReadLines(inputs.License).FirstOrDefault(l => l.StartsWith("Copyright", StringComparison.Ordinal))?.Trim() ?? "";
-        text.Append(Invariant($"""
+        text.Append(inputs.ForTools ? Invariant($"""
+            Third-party notices for Passenger's container tools
+            ===================================================
+
+            Passenger is {copyright}, under the MIT License in LICENSE.txt beside this file. Its container tools
+            (passenger-tools, which Passenger runs inside a Linux container to debug and profile the .NET programs there)
+            carry the software named below, each part under its own licence:
+
+            1. Packages: each with the copyright its package states and the full text of its licence: the .NET runtime
+               the tools run on, the debugger's and the profiler's packages, and dbgshim for the tools' system (musl's
+               own for a musl system).
+            2. The notices the packages carry of their own.
+            3. Source Passenger's debugger copied from other projects.
+
+            This file is written from the packages themselves each time the tools are built.
+
+
+            1. Packages
+            ===========
+
+            """) : Invariant($"""
             Third-party notices for Passenger
             =================================
 
@@ -303,8 +355,9 @@ public static partial class NoticesFile
             text.Append(Invariant($"From {string.Join(", ", from)}:\n\n{notice.Key}\n"));
         }
 
-        text.Append("\n\n3. Source and assets copied into Passenger\n==========================================\n\n");
-        text.Append(Carried(inputs.Notices)).Append('\n');
+        text.Append(inputs.ForTools ? "\n\n3. Source copied into the debugger\n==================================\n\n"
+            : "\n\n3. Source and assets copied into Passenger\n==========================================\n\n");
+        text.Append(Carried(inputs.Notices, inputs.Sections)).Append('\n');
         foreach ((string title, string path) in inputs.Texts)
         {
             text.Append('\n').Append(Rule).Append('\n');
@@ -362,6 +415,13 @@ public static partial class NoticesFile
             {
                 entry.Licence = $"its package's {license.Value.Trim()}";
                 entry.Text = Read(Path.Combine(folder, license.Value.Trim()));
+            }
+            else if (license is null && Directory.EnumerateFiles(folder).Select(Path.GetFileName).OfType<string>().Where(f => LicenceName().IsMatch(f))
+                .Order(StringComparer.Ordinal).FirstOrDefault() is { } carried)
+            {
+                // An older package names only its licence's URL, and carries the licence itself.
+                entry.Licence = $"its package's {carried} (its nuspec names only {Field("licenseUrl") ?? "no licence"})";
+                entry.Text = Read(Path.Combine(folder, carried));
             }
             else
             {
@@ -533,8 +593,9 @@ public static partial class NoticesFile
         return table;
     }
 
-    /// <summary>THIRD_PARTY_NOTICES.md from <see cref="CarriedFrom"/> on: the copied source and assets, with their licences.</summary>
-    private static string Carried(string notices)
+    /// <summary>THIRD_PARTY_NOTICES.md from <see cref="CarriedFrom"/> on: the copied source and assets, with their licences;
+    /// or only the sections (each from its "## " title to the next) <paramref name="sections"/> names, when it names any.</summary>
+    private static string Carried(string notices, IReadOnlyList<string> sections)
     {
         string text = Read(notices);
         int at = text.IndexOf(CarriedFrom, StringComparison.Ordinal);
@@ -542,7 +603,23 @@ public static partial class NoticesFile
         {
             throw new NoticeException([$"THIRD_PARTY_NOTICES.md has no line '{CarriedFrom}' before the copied source and assets it lists"]);
         }
-        return text[(at + CarriedFrom.Length)..].Trim('\n');
+        string carried = text[(at + CarriedFrom.Length)..].Trim('\n');
+        if (sections.Count == 0)
+        {
+            return carried;
+        }
+        Dictionary<string, string> titled = new(StringComparer.Ordinal);
+        foreach (string section in ("\n" + carried).Split("\n## ").Skip(1))
+        {
+            int titleEnd = section.IndexOf('\n', StringComparison.Ordinal);
+            titled[(titleEnd < 0 ? section : section[..titleEnd]).Trim()] = ("## " + section).Trim('\n');
+        }
+        string[] missing = [.. sections.Where(s => !titled.ContainsKey(s))];
+        if (missing.Length > 0)
+        {
+            throw new NoticeException([.. missing.Select(m => $"THIRD_PARTY_NOTICES.md has no section '## {m}' after the line '{CarriedFrom}'")]);
+        }
+        return string.Join("\n\n", sections.Select(s => titled[s]));
     }
 
     /// <summary>A text file's text, with the line endings it is written with here and without the control characters some

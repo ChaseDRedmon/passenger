@@ -47,6 +47,15 @@ out=artifacts/container-tools/$rid
 rm -rf "$out"
 AVALONIA_TELEMETRY_OPTOUT=1 dotnet publish src/Passenger.ContainerTools -c Release -r "$rid" --self-contained -p:Version="$version" -o "$out" -nologo -v:q
 test -x "$out/passenger-tools"
+# Its licence and its notices, written at its build from the packages it carries (tools/Passenger.Notices), which name the
+# runtime and the dbgshim it carries for its system (musl's own on a musl one).
+test -s "$out/LICENSE.txt"
+for package in Microsoft.NETCore.App.Runtime.$rid Microsoft.Diagnostics.DbgShim.$rid; do
+    if ! grep -q "^$package " "$out/THIRD-PARTY-NOTICES.txt"; then
+        echo "$out/THIRD-PARTY-NOTICES.txt does not name $package, which the tools carry" >&2
+        exit 1
+    fi
+done
 echo "$out: $(du -sh "$out" | cut -f1)"
 
 if [ "$archive" = yes ]; then

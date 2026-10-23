@@ -138,6 +138,19 @@
           "Azure.Core": "1.53.0"
         }
       },
+      "Grpc.Core.Api": {
+        "type": "Transitive",
+        "resolved": "2.83.0",
+        "contentHash": "xU8BT2bCw4Ct+/qIFJhhjkDEilKUbBOfp4US7l3Xa3hnlkN9l2LgISCbOw4PFYpW5jJFcK7FUAyWOFIQ94Hiqg=="
+      },
+      "Grpc.Net.Common": {
+        "type": "Transitive",
+        "resolved": "2.83.0",
+        "contentHash": "9w52xxORdIGu4Mm8lff3psMIlarenu+7TC4uIfiiW9AyaHZ6iPE/18gIkG1DD9byGDuhjuhnN9hiviBUAmCuZw==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.83.0"
+        }
+      },
       "HarfBuzzSharp": {
         "type": "Transitive",
         "resolved": "8.3.1.3",
@@ -484,6 +497,8 @@
           "Avalonia.Headless": "[12.1.4, )",
           "Avalonia.Skia": "[12.1.4, )",
           "Avalonia.Themes.Fluent": "[12.1.4, )",
+          "Google.Protobuf": "[3.36.1, )",
+          "Grpc.Net.Client": "[2.83.0, )",
           "ICSharpCode.Decompiler": "[11.1.0.9782, )",
           "Microsoft.TestPlatform.TranslationLayer": "[18.11.0, )",
           "ModelContextProtocol.Core": "[2.2.0, )",
@@ -640,6 +655,21 @@
         "contentHash": "vx7P4as07WLQqA2mhMy4iBsqhkWEGwZI7g9Rd2DlJgz3uKS2tSvY6nZqHq3sWMFDBYBT65jkTsetPrgV8oprsQ==",
         "dependencies": {
           "Avalonia": "12.1.4"
+        }
+      },
+      "Google.Protobuf": {
+        "type": "CentralTransitive",
+        "requested": "[3.36.1, )",
+        "resolved": "3.36.1",
+        "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ=="
+      },
+      "Grpc.Net.Client": {
+        "type": "CentralTransitive",
+        "requested": "[2.83.0, )",
+        "resolved": "2.83.0",
+        "contentHash": "dHYtx7hW4muttsCrWNG4/Ysb1iAIhNPEq28eo7vF166CdXn/RXOr3SGvSreIGIjvmdrADrBNJ2cUeJBto/T0XA==",
+        "dependencies": {
+          "Grpc.Net.Common": "2.83.0"
         }
       },
       "ICSharpCode.Decompiler": {

@@ -119,7 +119,7 @@ public static partial class BuildOutput
     /// framework.</summary>
     public static bool WindowsTargeting(string target, IReadOnlyList<ProjectModel> projects)
     {
-        Dictionary<string, ProjectModel> byPath = new(StringComparer.FromComparison(PathNames.Comparison));
+        Dictionary<string, ProjectModel> byPath = new(PathNames.Comparer);
         foreach (ProjectModel each in projects)
         {
             byPath.TryAdd(each.Path, each);
@@ -128,7 +128,7 @@ public static partial class BuildOutput
         {
             return projects.Any(p => p.WindowsTargeting);
         }
-        HashSet<string> seen = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> seen = new(PathNames.Comparer);
         Queue<string> next = new([target]);
         while (next.TryDequeue(out string? path))
         {

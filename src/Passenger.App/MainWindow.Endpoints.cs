@@ -22,7 +22,7 @@ public partial class MainWindow
         endpoints = view;
         view.GoToRequested += (_, request) => NavigateTo(request.File, new TextPosition(request.Line, 0));
         view.InteractiveRequested += (_, request) => OpenInteractiveTest(request);
-        Dock.Add(new Docking.ToolWindow("endpoints", "Endpoints", "Icon.Endpoints", view, Docking.ToolAnchor.RightTop)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Endpoints, "Endpoints", "Icon.Endpoints", view, Docking.ToolAnchor.RightTop)
         {
             Action = AppActions.ShowEndpoints,
             Menus = [new MenuPlace("Tools", 0, 3)],

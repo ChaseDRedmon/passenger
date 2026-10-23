@@ -265,6 +265,10 @@ public sealed class LspDocument : IDisposable
     /// <summary>The version a push answers that answers no text the editor has had: one before a debouncing server's rest.</summary>
     private const int NoVersion = -1;
 
+    /// <summary>When the latest colours and diagnostics the server gave were asked for and when they came.</summary>
+    private (long Asked, long Came) coloured;
+    private (long Asked, long Came) diagnosed;
+
     internal LspDocument(IDocumentHost session, string uri, TextDocument text, string? languageId = null)
     {
         this.session = session;
@@ -335,6 +339,47 @@ public sealed class LspDocument : IDisposable
             lock (gate)
             {
                 return (pushed.Diagnostics, pushed.Version ?? Text.Version);
+            }
+        }
+    }
+
+    /// <summary>When the latest colours the server gave the document (the whole file's or a range's) were asked for and
+    /// when they came, as Stopwatch timestamps (zeros before any came), an answer to an earlier question never taking
+    /// the place of a later one's: a start's timing reads them, so it asks the server nothing of its own.</summary>
+    public (long Asked, long Came) Coloured
+    {
+        get
+        {
+            lock (gate)
+            {
+                return coloured;
+            }
+        }
+    }
+
+    /// <summary>When the latest diagnostics pulled for the document were asked for and when they came, as
+    /// <see cref="Coloured"/> are.</summary>
+    public (long Asked, long Came) Diagnosed
+    {
+        get
+        {
+            lock (gate)
+            {
+                return diagnosed;
+            }
+        }
+    }
+
+    /// <summary>An answer come to a question asked at <paramref name="asked"/>, kept unless a later question's came
+    /// first.</summary>
+    private void Came(ref (long Asked, long Came) latest, long asked)
+    {
+        long came = System.Diagnostics.Stopwatch.GetTimestamp();
+        lock (gate)
+        {
+            if (asked >= latest.Asked)
+            {
+                latest = (asked, came);
             }
         }
     }
@@ -535,12 +580,14 @@ public sealed class LspDocument : IDisposable
     public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(CancellationToken cancel = default, SentRequest? sent = null)
     {
         int version = Text.Version;
+        long asked = System.Diagnostics.Stopwatch.GetTimestamp();
         SemanticTokensParams parameters = new(Identifier);
         if (sent is not null)
         {
             Server.Follow(parameters, sent);
         }
         SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/full", parameters, cancel);
+        Came(ref coloured, asked);
         if (tokens is { Data.Length: > 0 })
         {
             session.Coloured();
@@ -553,12 +600,14 @@ public sealed class LspDocument : IDisposable
     public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(TextRange range, CancellationToken cancel = default, SentRequest? sent = null)
     {
         int version = Text.Version;
+        long asked = System.Diagnostics.Stopwatch.GetTimestamp();
         SemanticTokensRangeParams parameters = new(Identifier, RangeOf(range));
         if (sent is not null)
         {
             Server.Follow(parameters, sent);
         }
         SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/range", parameters, cancel);
+        Came(ref coloured, asked);
         return (tokens, version);
     }
 
@@ -599,6 +648,7 @@ public sealed class LspDocument : IDisposable
             return Pushed;
         }
         int version = Text.Version;
+        long asked = System.Diagnostics.Stopwatch.GetTimestamp();
         List<Diagnostic> all = [];
         IReadOnlyList<string?> sources = IsRazor || session is not RoslynSession ? [null] : Server.DiagnosticSources;
         foreach (string? source in sources)
@@ -616,6 +666,7 @@ public sealed class LspDocument : IDisposable
         List<Diagnostic> distinct = all
             .DistinctBy(d => (d.Range, d.Message, d.Code?.ToString()))
             .ToList();
+        Came(ref diagnosed, asked);
         return (distinct, version);
     }
 

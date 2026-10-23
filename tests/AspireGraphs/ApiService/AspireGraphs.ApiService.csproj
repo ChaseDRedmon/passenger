@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- The starter's API service: OpenAPI over ServiceDefaults; a library, with no Main, where the web SDK makes a program. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ServiceDefaults/AspireGraphs.ServiceDefaults.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+</Project>

@@ -42,22 +42,25 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
     public ActionContext Context() => context();
 
     /// <summary>An action's first shortcut as Rider shows it ("⌘K, W"), or null with none.</summary>
-    public string? Shortcut(string id) => Keymap.ShortcutsFor(id) is { Count: > 0 } keys ? keys[0].Display() : null;
+    public string? Shortcut(string id) => Keymap.ShortcutsFor(KeysOf(id)) is { Count: > 0 } keys ? keys[0].Display() : null;
 
     /// <summary>An action's one-keystroke shortcut as a menu shows it; none for a chord, which a menu cannot show.</summary>
     public KeyGesture? Gesture(string id) =>
-        Keymap.ShortcutsFor(id).FirstOrDefault(s => s.Second is null) is { } shortcut ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers) : null;
+        Keymap.ShortcutsFor(KeysOf(id)).FirstOrDefault(s => s.Second is null) is { } shortcut ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers) : null;
 
     /// <summary>An action's shortcut in a menu item's column of keys, whoever builds the menu: its one keystroke as the
     /// item's gesture, a chord as its text. The gesture is shown, not bound: the window's keymap runs the keys.</summary>
     public void ShowKeys(MenuItem item, string id)
     {
         item.InputGesture = Gesture(id);
-        if (item.InputGesture is null && Keymap.ShortcutsFor(id).FirstOrDefault() is { Second: not null } chord)
+        if (item.InputGesture is null && Keymap.ShortcutsFor(KeysOf(id)).FirstOrDefault() is { Second: not null } chord)
         {
             ShowChord(item, chord);
         }
     }
+
+    /// <summary>The action whose keys run this one: another's where it shares them (<see cref="IdeAction.KeysOf"/>), else its own.</summary>
+    private string KeysOf(string id) => byId.GetValueOrDefault(id)?.KeysOf?.Invoke() ?? id;
 
     /// <summary>A chord in an item's shortcut column, as Rider's own menus show one ("⌘E, C"): a KeyGesture holds one
     /// keystroke, so the text Fluent's item draws its gesture with is given the chord. macOS's menu bar gets none, since

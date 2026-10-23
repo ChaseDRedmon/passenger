@@ -49,8 +49,8 @@ public sealed class ErrorsPopup : UserControl
             IdeErrors.Clear();
             Done?.Invoke(this, EventArgs.Empty);
         };
-        Button log = new() { Content = $"Show Log in {Core.ChildProcesses.FileManager}" };
-        log.Click += (_, _) => ShowLog();
+        Button log = new() { Content = $"Show Log in {FileManager.Name}" };
+        log.Click += (_, _) => LogAsked?.Invoke(this, EventArgs.Empty);
         Button close = new() { Content = "Close", Classes = { "primary" }, IsDefault = true };
         close.Click += (_, _) => Done?.Invoke(this, EventArgs.Empty);
         Content = new Border
@@ -118,11 +118,6 @@ public sealed class ErrorsPopup : UserControl
         ? $"Occurred once, at {error.At:HH:mm:ss}"
         : $"Occurred {error.Count} times, from {error.At:HH:mm:ss} to {error.Last:HH:mm:ss}";
 
-    /// <summary>Help, Show Log in Finder (Explorer on Windows): the log selected in the logs folder.</summary>
-    public static void ShowLog()
-    {
-        IdeErrors.Flush();
-        Directory.CreateDirectory(IdeErrors.LogFolder);
-        Core.ChildProcesses.Reveal(File.Exists(IdeErrors.LogPath) ? IdeErrors.LogPath : IdeErrors.LogFolder);
-    }
+    /// <summary>Show Log in Finder (Explorer on Windows) clicked.</summary>
+    public event EventHandler? LogAsked;
 }

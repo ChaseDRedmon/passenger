@@ -99,10 +99,10 @@ public sealed class ContainerRunProfilingTests(ContainerRunDebuggingTests.Tools 
             Assert.Equal(["api", "cache", "web"], ContainerRunsTests.States(project).Keys.Order(StringComparer.Ordinal));
             Assert.True(window.IsRunning, "The run's log is not followed in the Run window");
             int port = ContainerRunsTests.Published(project, "web");
-            Assert.True(Waiting.Until(() => ContainerRunsTests.Answer(port) == "web 1", TimeSpan.FromMinutes(1)), "web, let go by the profiler, did not answer");
+            Assert.True(Ui.Pumped(() => ContainerRunsTests.Answer(port) == "web 1", TimeSpan.FromMinutes(1)), "web, let go by the profiler, did not answer");
 
             // A memory snapshot is taken in web's container.
-            Click(window.ProfilerView, "Get Memory Snapshot");
+            Ui.ClickButton(window.ProfilerView, "Get Memory Snapshot");
             Ui.WaitFor(() => window.ProfilerView.Memory is not null || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
                 "the memory snapshot of web", TimeSpan.FromMinutes(2));
             Assert.True(window.ProfilerView.Memory?.Types.Any(t => t.Name == "Keepsake" && t.Count > 0) == true, $"web's memory snapshot keeps no Keepsake: {window.Status}");
@@ -135,9 +135,7 @@ public sealed class ContainerRunProfilingTests(ContainerRunDebuggingTests.Tools 
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take every container down");
         }
         Ui.WaitFor(() => !window.IsRunning && window.Profiling is null, "the run and its profile to end with Stop");
         window.Close();
@@ -158,14 +156,7 @@ public sealed class ContainerRunProfilingTests(ContainerRunDebuggingTests.Tools 
     internal static (string Folder, string Project) Shop(string name)
     {
         (string folder, string project) = ContainerRunsTests.Shop($"prof{name}");
-        ContainerRunsTests.Write(folder, "Web/Program.cs", Spinning);
+        TestFolders.Write(folder, "Web/Program.cs", Spinning);
         return (folder, project);
-    }
-
-    private static void Click(Avalonia.Visual within, string label)
-    {
-        Control found = within.GetVisualDescendants().OfType<Control>().First(c => c is Button { Content: string text } && text == label);
-        found.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
     }
 }

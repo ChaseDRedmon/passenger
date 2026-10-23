@@ -20,11 +20,18 @@ public static class Handlers
     public const string PullMembersUp = "Passenger.Roslyn.Extension.PullMembersUp";
     public const string PushMembersDown = "Passenger.Roslyn.Extension.PushMembersDown";
     public const string DocumentTexts = "Passenger.Roslyn.Extension.DocumentTexts";
+    public const string AspireProjectDeclaration = "Passenger.Roslyn.Extension.AspireProjectDeclaration";
+    public const string AspireCodeHelp = "Passenger.Roslyn.Extension.AspireCodeHelp";
+    public const string AspireReferenceFix = "Passenger.Roslyn.Extension.AspireReferenceFix";
+    public const string AspireRunResources = "Passenger.Roslyn.Extension.AspireRunResources";
+    public const string AspireRename = "Passenger.Roslyn.Extension.AspireRename";
+    public const string AspireParameters = "Passenger.Roslyn.Extension.AspireParameters";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
-        DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts,
+        DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
+        AspireRename, AspireParameters,
     ];
 }
 
@@ -53,6 +60,47 @@ public sealed record Place([property: JsonPropertyName("line")] int Line, [prope
 
 /// <summary>Where the caret is: what a describing message asks about.</summary>
 public sealed record Caret([property: JsonPropertyName("at")] Place At);
+
+/// <summary>Where Go to Declaration goes in Aspire's code: an AddProject call's project file, or the AppHost's file and the
+/// place (<paramref name="At"/>) its Add call names a resource a service reads; a null path when neither can be proven.</summary>
+public sealed record AspireProjectTarget([property: JsonPropertyName("path")] string? Path, [property: JsonPropertyName("at")] Place? At = null);
+
+/// <summary>Semantic Aspire help; a caret requests resource-name completion as well as diagnostics.</summary>
+public sealed record AspireHelpRequest([property: JsonPropertyName("at")] Place? At, bool Explain = false);
+
+/// <summary>The selected missing edge; its identity is checked again against the current semantic graph.</summary>
+public sealed record AspireFixRequest(Place At, string Service, string Resource);
+
+/// <summary>A proven absent AppHost reference, with its source range and proposed workspace change.</summary>
+public sealed record AspireMissingReference(Place Start, Place End, string Service, string Resource, Refactored Fix);
+
+/// <summary>Names valid at the caret's string argument and references missing from this service's AppHost.</summary>
+public sealed record AspireHelp(Place? Start, Place? End, IReadOnlyList<string> Names, IReadOnlyList<AspireMissingReference> Missing, string? Evidence = null);
+
+/// <summary>Rename of the resource whose name is at a place: described (no new name), or made with the new name.</summary>
+public sealed record AspireRenameRequest([property: JsonPropertyName("at")] Place At, [property: JsonPropertyName("newName")] string? NewName = null);
+
+/// <summary>The resource a rename would rename, by its name and the stretch of it at the place asked (none where no resource's
+/// name is), and once a new name is given, what renaming it changes or why it does not.</summary>
+public sealed record AspireRenaming(string? Name, Place? Start, Place? End, Refactored? Made);
+
+/// <summary>An AppHost file's parameters that take their value from its configuration alone are asked for.</summary>
+public sealed record AspireParametersRequest;
+
+/// <summary>A parameter an AppHost declares with no value of its own: its name, whether it is a secret, and where its name is.</summary>
+public sealed record AspireParameter(string Name, bool Secret, Place Start, Place End);
+
+/// <summary>The parameters an AppHost's file declares that take their value from its configuration alone.</summary>
+public sealed record AspireParametersFound(IReadOnlyList<AspireParameter> Parameters);
+
+/// <summary>The AppHost whose proven project resources and source locations are read.</summary>
+public sealed record AspireResourcesRequest(string AppHost);
+
+/// <summary>A project resource and the source fingerprint that makes its gutter location current.</summary>
+public sealed record AspireRunResource(string Name, string Project, string Source, Place At, string SourceHash);
+
+/// <summary>Proven resources, or why the AppHost cannot be read yet.</summary>
+public sealed record AspireRunResourcesResult(IReadOnlyList<AspireRunResource> Resources, string? Problem = null);
 
 /// <summary>One edit to a file's text, between two places of it as it was.</summary>
 public sealed record Edit(

@@ -6,6 +6,7 @@ using System.Runtime.Loader;
 using System.Text;
 using System.Text.Json;
 using Passenger.App.Run;
+using Passenger.App.State;
 using Passenger.Core;
 using Passenger.Inspector;
 
@@ -72,11 +73,11 @@ public sealed class LiveApp : IDisposable
             Dictionary<string, string> environment = new(plan.Environment)
             {
                 [Wire.SocketVariable] = socket,
-                [Wire.StartupHooks] = Hooks(plan, kind == LiveAppKind.Wpf ? WpfInspectorPath : InspectorPath),
+                [RuntimeVariables.StartupHooks] = StartupHooks.First(plan.Environment, kind == LiveAppKind.Wpf ? WpfInspectorPath : InspectorPath),
             };
             if (kind == LiveAppKind.Wpf)
             {
-                environment[Wire.XamlSourceInfoVariable] = "1";
+                environment[RuntimeVariables.XamlDiagnosticsSourceInfo] = "1";
                 if (plan.Project is { } project)
                 {
                     environment[Wire.ProjectVariable] = Path.GetDirectoryName(project)!;
@@ -261,33 +262,28 @@ public sealed class LiveApp : IDisposable
         return windows;
     }
 
-    /// <summary>A socket of its own in the temp folder for one app's inspector to connect to, or null, logged, when it cannot.</summary>
+    /// <summary>A socket of its own in Passenger's socket folder for one app's inspector to connect to, or null when it cannot
+    /// be made, which the IDE's errors say, the app then launched as it is.</summary>
     private static (string Socket, Socket Listener)? Listen(string name)
     {
-        string socket = Path.Combine(Path.GetTempPath(), $"passenger-{Environment.ProcessId}-{Interlocked.Increment(ref made)}.sock");
-        // Only a dead Passenger that had this process's number leaves one by this name.
-        File.Delete(socket);
+        string socket = $"{Environment.ProcessId}-{Interlocked.Increment(ref made)}.inspector";
         Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         try
         {
+            socket = Path.Combine(SocketFolders.Own(StateStore.DefaultRoot), socket);
+            // Only a dead Passenger that had this process's number leaves one by this name.
+            File.Delete(socket);
             listener.Bind(new UnixDomainSocketEndPoint(socket));
             listener.Listen(1);
         }
-        catch (SocketException error)
+        // ArgumentException: a path past what a Unix socket's address holds (104 bytes on macOS).
+        catch (Exception error) when (error is SocketException or IOException or UnauthorizedAccessException or ArgumentException)
         {
             listener.Dispose();
-            IdeErrors.Write($"The Live Visual Tree could not listen for {name} at {socket}: {error.Message}");
+            IdeErrors.Write($"The Live Visual Tree could not listen for {name} at {socket}, so it runs uninspected: {error.Message}");
             return null;
         }
         return (socket, listener);
-    }
-
-    /// <summary>The inspector first among the program's startup hooks, those its configuration or the IDE's environment
-    /// name after it.</summary>
-    private static string Hooks(LaunchPlan plan, string inspector)
-    {
-        string? others = plan.Environment.TryGetValue(Wire.StartupHooks, out string? given) ? given : Environment.GetEnvironmentVariable(Wire.StartupHooks);
-        return others is { Length: > 0 } ? $"{inspector}{Path.PathSeparator}{others}" : inspector;
     }
 
     /// <summary>The app's windows and their visual trees.</summary>
@@ -313,6 +309,10 @@ public sealed class LiveApp : IDisposable
     /// <summary>A picture the app draws of a window, or of an element's part of it, or of an area of the window.</summary>
     public async Task<Picture> CaptureAsync(long element, double? scale, Box? area) =>
         (await AskAsync(new Request(0, Wire.Capture, element) { Scale = scale, Area = area })).Picture ?? throw new LiveAppException($"{Name} drew nothing");
+
+    /// <summary>The property breakpoints its inspector was told to watch, each with the hit count it was given: the Live
+    /// Visual Tree's word to it, kept with the app so each app debugged at once keeps its own.</summary>
+    internal Dictionary<Debugging.PropertyBreakpoint, string> Watched { get; } = [];
 
     /// <summary>A property breakpoint's watch on an element's property, its hit count counted in the app, in place of what
     /// that breakpoint watched before.</summary>
@@ -379,13 +379,16 @@ public sealed class LiveApp : IDisposable
         {
             // Forgotten, so its answer, if it ever comes, finds no one waiting.
             Drop(id, answer);
-            throw new LiveAppException($"{Name} did not answer within {AnswerLimit.TotalSeconds:0} s");
+            throw new LiveAppException(NotAnswered(Name));
         }
         return reply.Error is { } why ? throw new LiveAppException(why) : reply;
     }
 
     /// <summary>How long the app may take to answer: its UI thread busy, or the app paused under the debugger.</summary>
     public static readonly TimeSpan AnswerLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>What a question the app left unanswered past <see cref="AnswerLimit"/> fails with.</summary>
+    public static string NotAnswered(string app) => $"{app} did not answer within {AnswerLimit.TotalSeconds:0} s";
 
     /// <summary>Takes the app's one connection, then reads what it says until it goes.</summary>
     private async Task ServeAsync()

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Passenger.App.CSharp;
@@ -92,15 +93,17 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         // A folder without a solution has its projects once the walk for them lands, and each project what MSBuild
         // evaluates once its evaluation lands.
         await Session.WorkspaceRead.WaitAsync(cancel);
+        await Session.AspireFilesRead.WaitAsync(cancel);
         await Task.Yield();
         await Session.Models.Idle.WaitAsync(cancel);
-        return Snapshot();
+        return await AspireWorkspace(Snapshot(), cancel);
     });
 
     [McpServerTool(Name = "workspace", Title = "The workspace", ReadOnly = true), Description(
         "The open folder and solution, its projects (output type, frameworks), the run configurations and the chosen one, " +
-        "the language server's state, the open files (unsaved ones marked) and the active file with its caret.")]
-    public Task<Workspace> GetWorkspace(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Snapshot()));
+        "the language server's state, the open files (unsaved ones marked) and the active file with its caret, and the Aspire " +
+        "AppHosts it runs, each resource's target the tools' resource takes.")]
+    public Task<Workspace> GetWorkspace(CancellationToken cancel = default) => OnUi(cancel, () => AspireWorkspace(Snapshot(), cancel));
 
     [McpServerTool(Name = "open_file", Title = "Show a file", Destructive = false), Description(
         "Opens a file in the editor, at a line and column if given, as the person sees it.")]
@@ -148,7 +151,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             string names = string.Join(", ", left.Select(d => FileText.IsReadOnly(d.Path) ? $"{Relative(d.Path)} (read-only)" : Relative(d.Path)));
             throw new InvalidOperationException($"Saved {unsaved - left.Count} of {unsaved} files; not saved: {names}");
         }
-        return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {unsaved} file{(unsaved == 1 ? "" : "s")}");
+        return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {Plural.Of(unsaved, "file")}");
     });
 
     // Code: the language server's
@@ -184,6 +187,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync(cancel);
+        // Aspire's own, as the editor marks them: a service's missing references, an AppHost's parameters with no value.
+        if (Session.CSharp?.For(document) is { } csharp)
+        {
+            found = [.. found, .. await csharp.AspireFindingsAsync(lsp, cancel)];
+        }
         TextSnapshot answered = lsp.Text.Snapshot;
         return (IReadOnlyList<Finding>)[.. found.Select(d =>
         {
@@ -218,7 +226,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "no source, and says so. From XAML: the C# or XAML declaring a type, property, event, resource or element, a library's " +
         "type decompiled (read-only), or a theme's XAML through its Source Link. In the web languages, their server's; in " +
         "package.json, a dependency's package and an npm run's script; in a compose file, a build's Dockerfile and project, a " +
-        "service, volume, network, config or secret named, a variable's .env line, an env_file. In an MSBuild file: where a property was set (the one " +
+        "service, volume, network, config or secret named, a variable's .env line, an env_file; in Aspire's C#, AddProject's project and " +
+        "a resource name a service reads (a connection string's, https+http://api) to its AppHost declaration. In an MSBuild file: where a property was set (the one " +
         "in force first), an item type or target defined, or the files an import or SDK brings in.")]
     public Task<IReadOnlyList<Place>> Definition(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
@@ -227,6 +236,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         if (await ComposeDefinition(served, offset, cancel) is { } composed)
         {
             return composed;
+        }
+        if (await AspireDefinition(served, offset, cancel) is { } aspire)
+        {
+            return aspire;
         }
         switch (served)
         {
@@ -295,7 +308,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
         "Renames the symbol at a position everywhere it is used, as Rename does, and saves the files. A type's files named " +
-        "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false. In XAML: an element's name and its " +
+        "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false; an Aspire resource's name in a string, " +
+        "where its AppHost declares it and its services read it. In XAML: an element's name and its " +
         "code-behind field's uses. In the web languages, their server's; in JSON a property, and in package.json's scripts " +
         "every npm run of one. MSBuild files have none.")]
     public Task<string> Rename(string path, int line, int column, string newName,
@@ -315,6 +329,17 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         ServerServed server = (ServerServed)served;
         LspDocument lsp = server.Lsp;
+        if (server.Web is null && Session.AspireFiles.RoleOf(served.Document.Path) != Aspire.AspireRole.None
+            && await CodeAssist.AspireResourceAtAsync(lsp, offset) is { } resource)
+        {
+            RefactorOutcome made = await window.Assist.RenameResourceAsync(served.Document, offset, resource, newName, patience);
+            if (made.Problem is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            Editors.SaveAll();
+            return $"{made.Said}: {string.Join(", ", made.Files.Select(f => Relative(f.Path)).Distinct())}";
+        }
         (string Type, IReadOnlyList<string> Files)? named = server.Web is null && Session.CSharp?.Session?.Folder is { } folder
             ? await TypeRename.NamedAsync(Editors, folder, lsp, offset) : null;
         DateTime asked = DateTime.UtcNow;
@@ -331,7 +356,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         TypeRename.Apply(Editors, edit, moves, $"Rename {named?.Type ?? "symbol"} to {newName}", null, []);
         Editors.SaveAll();
         string renamed = moves.Count > 0 ? $"; renamed {string.Join(", ", moves.Select(m => $"{Relative(m.From)} to {Relative(m.To)}"))}" : string.Empty;
-        return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}{renamed}";
+        return $"Renamed in {Plural.Of(files.Count, "file")}: {string.Join(", ", files.Select(Relative))}{renamed}";
     }, cancel));
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
@@ -339,7 +364,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Method and Introduce Variable are), as 'title [kind]', each followed by the choices it offers (actions nested under " +
         "it, a Fix All's scopes, where a new XAML resource or style goes), which apply_code_action takes as choice. In C#, " +
         "Razor and the web languages, the language server's, ESLint's fixes first where it checks the file (a compose file's " +
-        "names Compose finds undeclared have Passenger's own before them); in XAML, " +
+        "names Compose finds undeclared, and an Aspire service's references its AppHost lacks, have Passenger's own before " +
+        "them); in XAML, " +
         "Passenger's own: the line's problems' fixes (a binding's missing property or command, a missing converter), Extract " +
         "Resource and Extract Style. MSBuild files have none.")]
     public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -354,6 +380,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
         int offset = Offset(served.Document, line, column);
+        await AspireMarked(served, cancel);
         IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         return (IReadOnlyList<string>)[.. window.Assist.OwnFixes(served.Document, offset).Select(f => $"{f.Title} [quickfix]"),
             .. linted.Select(f => f.Action.Kind is { Length: > 0 } kind ? $"{f.Title} [{kind}]" : f.Title),
@@ -364,7 +391,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Applies the fix or refactoring with this title at a position (or over a selection to endLine:endColumn), as choosing " +
         "it from Alt+Enter does, and saves the files; of one that offers choices, choice names the one (as code_actions lists " +
         "them). XAML's Extract Resource and Extract Style take name as the new key or style's name (else their dialog's), " +
-        "replace every use of the value and extract the element's properties that are not bindings.")]
+        "replace every use of the value and extract the element's properties that are not bindings. An Aspire parameter's Set… " +
+        "takes name as its value.")]
     public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null,
         string? choice = null,
         string? name = null,
@@ -380,9 +408,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         ServerServed server = (ServerServed)served;
         int offset = Offset(served.Document, line, column);
+        await AspireMarked(served, cancel);
         if (window.Assist.OwnFixes(served.Document, offset).FirstOrDefault(f => f.Title == title) is { } own)
         {
-            return ApplyOwnFix(served.Document, own);
+            return await ApplyOwnFix(served.Document, own, patience, name);
         }
         IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         if (linted.FirstOrDefault(f => f.Title == title) is { } lint)
@@ -421,7 +450,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         int files = WorkspaceEdits.ApplyAsCommand(Editors, edit, title);
         Editors.SaveAll();
-        return $"Applied {what} to {files} file{(files == 1 ? "" : "s")}{unrun}";
+        return $"Applied {what} to {Plural.Of(files, "file")}{unrun}";
     }, cancel));
 
     /// <summary>A code action as code_actions lists it: its title, its kind, and the choices it offers.</summary>
@@ -578,21 +607,47 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "waitSeconds for it to end or an Avalonia or WPF app's UI to be up. Returns its output so far and its exit code once " +
         "it has one; a run refused (one running already, nothing to run, a failed build) is an error. A configuration that " +
         "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it. A container configuration " +
-        "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state.")]
+        "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state. " +
+        "With resource, that Aspire resource or running compose service alone, without the debugger.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
         int waitSeconds = 30,
         [Description("Under dotnet watch with Hot Reload (Settings' choice by default): hot_reload, or a save, applies the edits")] bool? hotReload = null,
+        string? resource = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            if (hotReload is not null)
+            {
+                throw new ArgumentException("resource uses Run Without Debugger; omit hotReload");
+            }
+            if (ComposeService(resource) is { } service)
+            {
+                AgentCall.Follow(window.Actions.Work, AppActions.ServiceRun);
+                await ComposeServiceActionAsync(AppActions.ServiceRun, service);
+                return new RunResult(true, null, $"{service} of {Builds.Containers?.Plan.Name} runs without the debugger", string.Empty);
+            }
+            AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
+            using LaunchBuild resourceBuild = new(Builds);
+            (Aspire.AspireSelection target, bool started) = await PrepareAspireResource(resource, configuration, RunStart.Run, arguments, cancel);
+            if (!started && await window.RunAspireToolResourceAsync(target, "run", cancel) is { } problem)
+            {
+                throw new InvalidOperationException(WithBuildErrors(problem, resourceBuild.Ended));
+            }
+            return new RunResult(true, null, $"Run requested for {target.AppHostPath}::{target.Resource.Name}", string.Empty);
+        }
         Choose(configuration);
         string name = Session.Configurations.Chosen?.Name ?? string.Empty;
         BuildRunController builds = Builds;
         AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
-        if (await Started(builds.RunAsync(arguments, hotReload), AppActions.RunProgram, cancel) is { } refused)
+        using (LaunchBuild built = new(builds))
         {
-            throw new InvalidOperationException(WithBuildErrors(refused));
+            if (await Started(builds.RunAsync(arguments, hotReload), AppActions.RunProgram, cancel) is { } refused)
+            {
+                throw new InvalidOperationException(WithBuildErrors(refused, built.Ended));
+            }
         }
         if (builds.Containers is { } running)
         {
@@ -609,16 +664,37 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         string status = code is int exit ? BuildRunController.RunEnded(name, exit)
             : app is { State: LiveTree.LiveAppState.Connected } ? $"Running {name}, its UI up: app_windows, app_screenshot and app_click look at it and use it"
             : $"Running {name}";
+        // What an Aspire run said of itself as it started (its HTTPS over HTTP), as a container run's notes are said.
+        if (Session.Configurations.Chosen is { } chosen && Session.Aspire.IsAspire(chosen) && Session.Aspire.FindApp(chosen.Project) is { } aspire)
+        {
+            status += string.Concat(aspire.Notes.Select(n => $"\nNote: {n}"));
+        }
         return new RunResult(code is null, code, status, output);
     });
 
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
         "The last lines the program Run runs (or last ran) has written: the Run window's console (under Hot Reload, dotnet " +
-        "watch's words too), or a terminal configuration's tab as it shows now.")]
-    public Task<string> RunOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, async () =>
-        Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines)
-        : Builds.Containers is { } running ? $"{await ServicesAsync(running, cancel)}\n{Tail(Session.Runner.Shown(), lines)}"
-        : Tail(Session.Runner.Shown(), lines));
+        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire service's own.")]
+    public Task<string> RunOutput(int lines = 200, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        if (resource is not null)
+        {
+            Aspire.AspireSelection target = (await window.ResolveOwnedAspireResourceAsync(resource, null, cancel))!;
+            Aspire.AspireResourceRun service = Session.Aspire.FindService(target)
+                ?? throw new InvalidOperationException($"{resource} is no .NET service Passenger runs for its AppHost; aspire_telemetry reads its logs");
+            service.Console.Flush();
+            return Tail(service.Console.Document.Snapshot, lines);
+        }
+        if (Session.Configurations.Chosen is { } configuration && Session.Aspire.IsAspire(configuration)
+            && (Session.Aspire.FindApp(configuration.Project)?.Console ?? Session.Aspire.LastAppConsole) is { } console)
+        {
+            console.Flush();
+            return Tail(console.Document.Snapshot, lines);
+        }
+        return Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines)
+            : Builds.Containers is { } running ? $"{await ServicesAsync(running, cancel)}\n{Tail(Session.Runner.Shown(), lines)}"
+            : Tail(Session.Runner.Shown(), lines);
+    });
 
     /// <summary>A container run's services as the engine has them now, one line each: its state, health and ports.</summary>
     private static async Task<string> ServicesAsync(global::Passenger.App.Containers.ContainerRun run, CancellationToken cancel)
@@ -637,25 +713,39 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
     }
 
-    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does; a container run's containers are taken down.")]
-    public Task<string> Stop(string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does; a container run's containers are taken down. " +
+        "With resource, that Aspire resource or compose service alone.")]
+    public Task<string> Stop(string? session = null, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            if (session is not null)
+            {
+                throw new ArgumentException("Name session or resource, not both");
+            }
+            if (ComposeService(resource) is { } service)
+            {
+                global::Passenger.App.Containers.ContainerRow row = await NamedContainer($"{Builds.Containers!.Plan.ProjectName}/{service}", cancel);
+                if (await window.ContainerActAsync(AppActions.ContainerStop, "stop", row) is { } refused)
+                {
+                    throw new InvalidOperationException(refused);
+                }
+                return $"Stopped {service}";
+            }
+            (Aspire.AspireSelection target, _) = await PrepareAspireResource(resource, null, null, null, cancel);
+            if (await window.RunAspireToolResourceAsync(target, "stop", cancel) is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            return $"Stopped {target.AppHostPath}::{target.Resource.Name}";
+        }
         if (session is not null)
         {
             ToolWindows.DebugTab tab = TabFor(session)!;
-            await Session.Debug.StopAsync(tab.Name);
+            await Session.Debug.StopAsync(tab);
             return $"Stopped {tab.Name}";
         }
-        // Any start under way ends as Stop All ends it (a container run's up among them, which would go on making containers),
-        // and a container run's containers are taken down, not left running as its log's end would leave them.
-        window.Actions.Work.Stop();
-        Task takingDown = Session.StopContainersAsync();
-        Session.Runner.Stop();
-        Session.InTerminal?.Stop();
-        Session.Profiled?.Run.Kill();
-        Session.Builder.Stop();
-        await Session.Debug.StopAllAsync();
-        await takingDown.WaitAsync(cancel);
+        await Builds.StopAllAsync().WaitAsync(cancel);
         return "Stopped";
     });
 
@@ -670,7 +760,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         [Description("Part of a test's full name (Namespace.Class.Method)")] string? filter = null,
         bool debug = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        string folder = Session.Folder ?? throw new InvalidOperationException("No folder is open");
+        string folder = Session.Folder ?? throw new InvalidOperationException(Refusals.NoFolder);
         Testing.TestController tests = Session.Tests;
         List<Testing.TestNode> Matching() =>
             [.. tests.Tree.Methods.Where(m => m.FullName is { } name && name.Contains(filter!, StringComparison.Ordinal))];
@@ -684,8 +774,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException($"No test's name contains '{filter}'");
         }
-        AgentCall.Say(chosen is null ? "Building and running every test" : $"Building and running {chosen.Count} test{(chosen.Count == 1 ? string.Empty : "s")}");
+        AgentCall.Say(chosen is null ? "Building and running every test" : $"Building and running {Plural.Of(chosen.Count, "test")}");
         AgentCall.Follow(window.Actions.Work, AppActions.Build);
+        using LaunchBuild built = new(Builds);
         Task<string?> run = tests.RunAsync(folder, chosen, debug);
         if (debug)
         {
@@ -699,7 +790,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         if (await run.WaitAsync(cancel) is { } problem)
         {
-            throw new InvalidOperationException(WithBuildErrors(problem));
+            throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
         }
         return TestInfo(tests);
     });
@@ -714,16 +805,24 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         int limit = 200,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        int named = state is null ? -1 : Array.FindIndex(TestStates, s => s.Name.Equals(state, StringComparison.OrdinalIgnoreCase));
         Testing.TestState? only = state is null ? null
-            : Enum.TryParse(state, ignoreCase: true, out Testing.TestState parsed) && Enum.IsDefined(parsed) ? parsed
+            : named >= 0 ? TestStates[named].State
             : throw new ArgumentException($"No state '{state}'; there are passed, failed, skipped and notRun");
         // Found from code as the folder opens: an agent's first look waits for that, as the window says it is looking.
         await Until(() => !Session.Tests.IsLooking, TestsLookLimit, cancel);
         return (IReadOnlyList<TestInfoRow>)[.. Session.Tests.Tree.Methods
             .Where(m => (filter is null || (m.FullName ?? m.Name).Contains(filter, StringComparison.Ordinal)) && (only is null || m.State == only))
             .Take(Math.Max(1, limit))
-            .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))];
+            .Select(m => new TestInfoRow(TestName(m), StateName(m.State), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))];
     });
+
+    /// <summary>The states tests_list says and takes, in its description's words.</summary>
+    private static readonly (Testing.TestState State, string Name)[] TestStates =
+        [(Testing.TestState.Passed, "passed"), (Testing.TestState.Failed, "failed"), (Testing.TestState.Skipped, "skipped"), (Testing.TestState.NotRun, "notRun")];
+
+    /// <summary>A test's state as tests_list says it: one of <see cref="TestStates"/>, else running.</summary>
+    private static string StateName(Testing.TestState state) => Array.FindIndex(TestStates, s => s.State == state) is int at and >= 0 ? TestStates[at].Name : "running";
 
     /// <summary>How long tests_list waits for the tests to be found from the test projects' code.</summary>
     private static readonly TimeSpan TestsLookLimit = TimeSpan.FromSeconds(60);
@@ -777,8 +876,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         if (control is { Length: > 0 } || property is { Length: > 0 })
         {
-            (long element, string described, string name) = await WatchedProperty(control, property, cancel);
-            PropertyBreakpoint watched = store.AddProperty(element, described, name);
+            (DebugSession debugged, long element, string described, string name) = await WatchedProperty(control, property, cancel);
+            PropertyBreakpoint watched = store.AddProperty(debugged, element, described, name);
             store.Update(watched, enabled: true, suspend, condition, hitCondition, logMessage);
             await InTheApp(cancel);
             return DataBreakpoints();
@@ -821,12 +920,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 throw new ArgumentException("A property breakpoint is named by its control and its property, both");
             }
             string wanted = property.Trim();
-            // By the id breakpoints shows, else the element the query finds now (the app paused answers no query).
-            PropertyBreakpoint? watched = store.Properties.FirstOrDefault(p => Id(p.Element) == control.Trim() && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase));
+            // By the id breakpoints shows (of the debugged app's elements), else the element the query finds now (the app
+            // paused answers no query).
+            DebugSession? app = DebugApp() is { } live ? Session.Debug.SessionOf(live) : null;
+            PropertyBreakpoint? watched = store.Properties.FirstOrDefault(p => (app is null || p.Session == app) && Id(p.Element) == control.Trim()
+                && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase));
             if (watched is null)
             {
-                (long element, _, _) = await WatchedElement(control, cancel);
-                watched = store.Properties.FirstOrDefault(p => p.Element == element && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase))
+                (DebugSession debugged, long element, _, _) = await WatchedElement(control, cancel);
+                watched = store.Properties.FirstOrDefault(p => p.Session == debugged && p.Element == element && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase))
                     ?? throw new ArgumentException($"No property breakpoint is on {wanted} of {control}; breakpoints lists those there are");
             }
             store.Remove(watched);
@@ -860,35 +962,37 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     /// <summary>The element of the debugged app a query names, as a property breakpoint describes it (Type#Name), with its
-    /// details' properties.</summary>
-    private async Task<(long Element, string Described, IReadOnlyList<Passenger.Inspector.PropertyValue> Properties)> WatchedElement(string control, CancellationToken cancel)
+    /// details' properties and the session debugging the app.</summary>
+    private async Task<(DebugSession Session, long Element, string Described, IReadOnlyList<Passenger.Inspector.PropertyValue> Properties)> WatchedElement(string control,
+        CancellationToken cancel)
     {
-        if (Session.LiveApp is null)
+        if (DebugApp() is null)
         {
             throw new InvalidOperationException(Session.Debug.IsDebugging
                 ? $"A property breakpoint watches an element of the app being debugged, and what is being debugged is not {Inspectable}"
                 : "A property breakpoint watches an element of the app being debugged: debug_start one first");
         }
         LiveTree.LiveApp live = await InspectedAsync("debug", cancel);
+        DebugSession debugged = Session.Debug.SessionOf(live) ?? throw new InvalidOperationException("A property breakpoint watches an element of the app being debugged: debug_start one first");
         (List<LiveTree.AppNode> nodes, _) = await TreeOf(live, null, cancel);
         Passenger.Inspector.Element element = LiveTree.AppQuery.One(nodes, control).Element;
         Passenger.Inspector.ElementDetails details = await live.DetailsAsync(element.Id);
-        return (element.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, details.Properties);
+        return (debugged, element.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, details.Properties);
     }
 
     /// <summary>A property breakpoint's element and property, the property by the name the element's details list it under.</summary>
-    private async Task<(long Element, string Described, string Property)> WatchedProperty(string? control, string? property, CancellationToken cancel)
+    private async Task<(DebugSession Session, long Element, string Described, string Property)> WatchedProperty(string? control, string? property, CancellationToken cancel)
     {
         if (control is not { Length: > 0 } || property is not { Length: > 0 })
         {
             throw new ArgumentException("A property breakpoint needs both control, the element, and property, the property of it to watch");
         }
-        (long element, string described, IReadOnlyList<Passenger.Inspector.PropertyValue> properties) = await WatchedElement(control, cancel);
+        (DebugSession debugged, long element, string described, IReadOnlyList<Passenger.Inspector.PropertyValue> properties) = await WatchedElement(control, cancel);
         string wanted = property.Trim();
         Passenger.Inspector.PropertyValue found = properties.FirstOrDefault(p => p.Name == wanted)
             ?? properties.FirstOrDefault(p => p.Name.Equals(wanted, StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException($"{described} has no property {wanted}; app_details lists the properties it has");
-        return (element, described, found.Name);
+        return (debugged, element, described, found.Name);
     }
 
     /// <summary>Waits for the debugger and the inspector in the app to take a property breakpoint's change, so the agent's next
@@ -925,17 +1029,26 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     [McpServerTool(Name = "debug_start", Title = "Debug a configuration", Destructive = true), Description(
         "Builds and launches a run configuration (the chosen one by default) under the debugger, as Debug does, and waits up " +
         "to waitSeconds for a stop at a breakpoint or exception, its end, or an Avalonia or WPF app's UI to be up. Returns " +
-        "where it is.")]
+        "where it is. With resource, that Aspire resource or compose service alone, restarted.")]
     public Task<DebugSnapshot> DebugStart(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
-        int waitSeconds = 60, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        int waitSeconds = 60, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            return ComposeService(resource) is { } service && configuration is null && arguments is null
+                ? await DebugComposeServiceAsync(service, attach: false, waitSeconds, cancel)
+                : await DebugAspireTarget(resource, configuration, arguments, attach: false, waitSeconds, cancel);
+        }
         Choose(configuration);
         AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
-        if (await Started(Builds.DebugAsync(arguments), AppActions.Debug, cancel) is { } problem)
+        using (LaunchBuild built = new(Builds))
         {
-            throw new InvalidOperationException(WithBuildErrors(problem));
+            if (await Started(Builds.DebugAsync(arguments), AppActions.Debug, cancel) is { } problem)
+            {
+                throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
+            }
         }
         return await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel);
     });
@@ -948,12 +1061,33 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return await start.WaitAsync(cancel);
     }
 
-    /// <summary>A run, debug, test or profile refused for a failed build, with the build's errors after it (path:line:column,
-    /// code and message, at most ten), so an agent fixes them without asking problems first.</summary>
-    private string WithBuildErrors(string refused)
+    /// <summary>The build a launch an agent waits on runs first, heard as it ends: a failed one is why the launch was refused,
+    /// and what it found is what the refusal names (<see cref="WithBuildErrors"/>).</summary>
+    private sealed class LaunchBuild : IDisposable
     {
-        List<Problem> errors = [.. window.BottomPanel.Problems.Problems.Where(p => p.Severity == ProblemSeverity.Error)];
-        if (errors.Count == 0 || !refused.Contains("failed", StringComparison.OrdinalIgnoreCase))
+        private readonly BuildRunController builds;
+
+        public LaunchBuild(BuildRunController builds)
+        {
+            this.builds = builds;
+            builds.BuildFinished += Heard;
+        }
+
+        /// <summary>The last build that ended since the launch began, or null.</summary>
+        public BuildOutcome? Ended { get; private set; }
+
+        private void Heard(object? sender, BuildOutcome outcome) => Ended = outcome;
+
+        public void Dispose() => builds.BuildFinished -= Heard;
+    }
+
+    /// <summary>A run, debug, test or profile refused for a failed build (the one it ran, <paramref name="built"/>), with that
+    /// build's errors after it (path:line:column, code and message, at most ten), so an agent fixes them without asking
+    /// problems first; a refusal for anything else as it is, whatever an earlier build left in Problems.</summary>
+    private string WithBuildErrors(string refused, BuildOutcome? built)
+    {
+        List<Problem> errors = built is { Status: BuildStatus.Failed } ? [.. built.Problems.Where(p => p.Severity == ProblemSeverity.Error)] : [];
+        if (errors.Count == 0)
         {
             return refused;
         }
@@ -983,7 +1117,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             await Until(() => !going(), Min(LaunchSettle, until - DateTime.UtcNow), cancel);
         }
         DebugSnapshot started = await AfterResume(TimeSpan.Zero, cancel);
-        return started.State == "running" && app is { State: LiveTree.LiveAppState.Connected }
+        return started.Debugged == DebugState.Running && app is { State: LiveTree.LiveAppState.Connected }
             ? started with { Status = $"{started.Status}, its UI up: app_windows, app_screenshot and app_click look at it and use it" }
             : started;
     }
@@ -1000,10 +1134,19 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Attaches the debugger to a running .NET program, as Attach to Process does: by processId, or by program when one " +
         "running program has that name (debug_processes lists them), in container when it runs in one. The breakpoints apply " +
         "at once; it waits up to waitSeconds for a stop or its end and returns where it is. debug_detach lets it go running " +
-        "on; stop ends it.")]
+        "on; stop ends it. With resource, that Aspire resource or compose service.")]
     public Task<DebugSnapshot> DebugAttach(int? processId = null, [Description("A program's name, as debug_processes gives it")] string? program = null,
-        string? container = null, int waitSeconds = 10, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        string? container = null, int waitSeconds = 10, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            if (processId is not null || program is not null || container is not null)
+            {
+                throw new ArgumentException("Name resource or a process target, not both");
+            }
+            return ComposeService(resource) is { } service ? await DebugComposeServiceAsync(service, attach: true, waitSeconds, cancel)
+                : await DebugAspireTarget(resource, null, null, attach: true, waitSeconds, cancel);
+        }
         IReadOnlyList<DotnetProcess> running = [.. (await window.AttachableAsync()).Where(p => p.Container == container)];
         List<DotnetProcess> named = processId is int id and not 0 ? [.. running.Where(p => p.Id == id)]
             : program is { Length: > 0 } name ? [.. running.Where(p => p.Program.Equals(name, StringComparison.OrdinalIgnoreCase) || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))]
@@ -1078,7 +1221,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException(problem);
         }
-        await Until(() => paused.StopReason == "goto", TimeSpan.FromSeconds(10), cancel);
+        await Until(() => paused.StopReason == StopReasons.Goto, TimeSpan.FromSeconds(10), cancel);
         return await DebugSnapshotAsync(paused);
     });
 
@@ -1171,7 +1314,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         if (Editors.Active is null)
         {
-            throw new InvalidOperationException("No file is open in the editor");
+            throw new InvalidOperationException(Refusals.NoFile);
         }
         Editors.CodeEditor.Type(text);
         return Task.FromResult($"Typed at {Editors.CodeEditor.CaretPosition.Line + 1}:{Editors.CodeEditor.CaretPosition.Column + 1}");
@@ -1208,14 +1351,22 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new ModelContextProtocol.McpException(error is DapException dap ? $"The debugger refused: {dap.Reason}" : error.Message, error);
         }
+        catch (OperationCanceledException error) when (!cancel.IsCancellationRequested)
+        {
+            // Given up inside the IDE, not by the agent (a folder left under the call): said, where the SDK would hide it.
+            throw new ModelContextProtocol.McpException($"{Faulted}{error.GetType().Name}: {error.Message}", error);
+        }
         catch (Exception error) when (error is not (OperationCanceledException or ModelContextProtocol.McpException))
         {
             // No answer but a fault of the IDE's: logged as one on the window's own thread is, and its words the agent's,
             // where the SDK would answer only "An error occurred invoking" the tool.
             IdeErrors.Report(error);
-            throw new ModelContextProtocol.McpException($"Passenger failed: {error.GetType().Name}: {error.Message}", error);
+            throw new ModelContextProtocol.McpException($"{Faulted}{error.GetType().Name}: {error.Message}", error);
         }
     }
+
+    /// <summary>How an answer begins when a tool met a fault of the IDE's own, never one of the refusals an agent can act on.</summary>
+    public const string Faulted = "Passenger failed: ";
 
     /// <summary>Sets the paused program going as the window's keys do, its tab chosen and the edits made while it was paused
     /// applied first.</summary>
@@ -1229,7 +1380,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             await resume(paused);
         }
         DebugSnapshot after = await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel, paused);
-        if (!testing || after.State != "not debugging")
+        if (!testing || after.Debugged is not null)
         {
             return after;
         }
@@ -1301,11 +1452,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         string? summary = session is null ? debugger.Summary : debugger.SummaryOf(session);
         if (session is null || session.State == DebugState.Ended)
         {
-            return new DebugSnapshot("not debugging", null, null, [], [], session?.ExitCode, summary);
+            return new DebugSnapshot(null, null, null, [], [], session?.ExitCode, summary);
         }
         if (session.State != DebugState.Paused || session.StoppedThread is null)
         {
-            return new DebugSnapshot(session.State.ToString().ToLowerInvariant(), null, null, [], [], null, summary);
+            return new DebugSnapshot(session.State, null, null, [], [], null, summary);
         }
         bool shown = debugger.Session == session;
         // The controller's stop is always the one paused at now, since every change drops it; before it is read, the session's.
@@ -1326,7 +1477,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
         }
         string? exception = null;
-        if (session.StopReason == "exception")
+        if (session.StopReason == StopReasons.Exception)
         {
             try
             {
@@ -1339,7 +1490,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
         }
         return new DebugSnapshot(
-            "paused",
+            DebugState.Paused,
             session.StopReason,
             top?.Source?.Path is { } path && debugger.PlaceOf(top, session) is { } at ? $"{Relative(path)}:{at.Line + 1}:{at.Column + 1}" : null,
             Frames(frames, session),
@@ -1687,7 +1838,10 @@ public sealed record Workspace(
     string LanguageServer,
     IReadOnlyList<string> OpenFiles,
     string? ActiveFile,
-    string Debugger);
+    string Debugger)
+{
+    public IReadOnlyList<AspireOwnedAppInfo> AspireApps { get; init; } = [];
+}
 
 public sealed record ProjectInfo(string Name, string Path, string? OutputType, IReadOnlyList<string> TargetFrameworks);
 
@@ -1719,8 +1873,10 @@ public sealed record VariableInfo(string Name, string Value, string? Type, int R
 /// <summary>A .NET program the debugger can attach to, as Attach to Process lists it.</summary>
 public sealed record ProcessInfo(int ProcessId, string Executable, string Program, string User, string CommandLine, string? Container = null);
 
+/// <summary>Where the debugger is in a program, as the debug tools answer: its session's state (<see cref="Debugged"/>, null
+/// with none debugged or once it ended), said as <see cref="State"/>, and while paused the stop.</summary>
 public sealed record DebugSnapshot(
-    string State,
+    [property: JsonIgnore] DebugState? Debugged,
     string? Reason,
     string? Location,
     IReadOnlyList<string> Frames,
@@ -1729,6 +1885,10 @@ public sealed record DebugSnapshot(
     string? Status,
     string? Exception = null)
 {
+    /// <summary>The state in an agent's words: starting, running or paused, else not debugging.</summary>
+    [JsonPropertyOrder(-1)]
+    public string State => Debugged is { } state ? state.ToString().ToLowerInvariant() : "not debugging";
+
     /// <summary>At a stop in a debugged Avalonia app, the binding values after the lines of the .axaml files the editors show,
     /// as the editor shows them (path:line: Property: value).</summary>
     public IReadOnlyList<string>? BindingValues { get; init; }

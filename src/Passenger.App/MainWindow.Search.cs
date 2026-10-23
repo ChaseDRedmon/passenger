@@ -101,7 +101,7 @@ public partial class MainWindow
                     return kept with { Kind = SearchScopeKind.Solution };
             }
         }
-        string name = rows.Count == 1 ? rows[0].Name : $"{rows[0].Name} and {rows.Count - 1} more item(s)";
+        string name = rows.Count == 1 ? rows[0].Name : $"{rows[0].Name} and {Plural.Of(rows.Count - 1, "more item")}";
         session.ChosenScope = (name, files, folders);
         return kept with { Kind = SearchScopeKind.Scope, Named = name };
     }
@@ -253,7 +253,7 @@ public partial class MainWindow
                 listed = listed.Where(p => FuzzyMatch.Score(query.Trim(), Path.GetFileName(p)) is not null);
             }
             return Task.FromResult<IReadOnlyList<Navigation.SymbolRow>>([.. listed.Select(p => new Navigation.SymbolRow(
-                Path.GetFileName(p), null, root.Length > 0 && PathNames.IsUnder(p, root) ? Path.GetDirectoryName(Path.GetRelativePath(root, p)) : Path.GetDirectoryName(p),
+                Path.GetFileName(p), null, Path.GetDirectoryName(PathNames.Shown(p, root)),
                 Navigation.SymbolRow.FileKind, p, new TextPosition(0, 0)))]);
         }, option: ("Show edited only", editedOnly));
         popup.OptionChanged += (_, on) => edited = on;

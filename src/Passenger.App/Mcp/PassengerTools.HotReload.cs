@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Passenger.App.Debugging;
+using Passenger.App.ToolWindows;
 
 namespace Passenger.App.Mcp;
 
@@ -36,51 +37,30 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"Hot Reload cannot apply changes: {why}");
         }
-        // As the window's Apply: a container run's services whenever they have edits to take, whatever else is debugged, and
-        // the program debugged with Hot Reload.
-        bool running = window.HotReloadRunning;
-        bool debugged = debugger.HotReload is not null && debugger.WhyNotApply() is null || !running;
+        // The window's Apply Hot Reload Changes, its restarts made as the agent asks (else as Settings say) and never asked.
         DebugSession? before = debugger.Session;
-        HotReloadOutcome? services = null;
-        if (running)
+        bool restarting = restart ?? window.Settings.RestartOnRudeEdit;
+        AgentCall.Follow(window.Actions.Work, AppActions.ApplyHotReloadChanges);
+        HotReloadApplied applied = await window.ApplyHotReloadAsync(async (rude, running) =>
         {
-            AgentCall.Say("Applying the edits to the container run's services");
-            services = await debugger.ApplyRunningAsync().WaitAsync(cancel);
-        }
-        HotReloadOutcome? program = null;
-        if (debugged)
-        {
-            AgentCall.Say("Applying the edits to the program being debugged");
-            program = await debugger.ApplyChangesAsync().WaitAsync(cancel);
-        }
-        HotReloadOutcome outcome = (services, program) switch
-        {
-            ({ } both, { } and) => DebugController.Together([("the run's services", both), (debugger.Chosen?.Name ?? "the program debugged", and)]),
-            _ => services ?? program!,
-        };
-        bool needed = outcome.Result == HotReloadResult.RestartNeeded;
-        bool restarted = false;
-        if (services is { Result: HotReloadResult.RestartNeeded })
-        {
-            AgentCall.Say($"Restarting {string.Join(", ", services.Restart)} for edits they cannot take running");
-            restarted = (restart ?? window.Settings.RestartOnRudeEdit) && await window.RestartForAgentAsync(services, running: true);
-        }
-        if (program is { Result: HotReloadResult.RestartNeeded } && (restart ?? window.Settings.RestartOnRudeEdit))
-        {
-            AgentCall.Say("Restarting the program for edits it cannot take running");
-            AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
-            restarted |= await window.RestartForAgentAsync(program, running: false);
-        }
-        else if (program is { Result: HotReloadResult.RestartNeeded } && debugger.HotReload is { } reload)
-        {
-            // Declined, as dotnet watch's No: the next resume goes on in the code it has rather than restarting for these edits.
-            reload.Changed = false;
-        }
+            if (!restarting)
+            {
+                return false;
+            }
+            AgentCall.Say(running ? $"Restarting {string.Join(", ", rude.Restart)} for edits they cannot take running" : "Restarting the program for edits it cannot take running");
+            if (!running)
+            {
+                AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
+            }
+            return await window.RestartForAgentAsync(rude, running);
+        }).WaitAsync(cancel) ?? throw new InvalidOperationException(window.Actions.Work.Of(AppActions.ApplyHotReloadChanges) is { } under
+            ? ActionWork.Busy(under) : "Apply Hot Reload Changes is under way");
+        HotReloadOutcome outcome = applied.Outcome;
         HotReloadInfo answer = new(Result(outcome.Result), outcome.Said, [.. outcome.Files.Select(Relative)], outcome.Modules, outcome.Methods,
             [.. outcome.Problems.Select(p => new Finding(p.Severity == Passenger.App.Run.ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message,
                 p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))],
-            needed, restarted);
-        if (restarted && Session.Debug.Session != before)
+            outcome.Result == HotReloadResult.RestartNeeded, applied.Restarted);
+        if (applied.Restarted && Session.Debug.Session != before)
         {
             return answer with { Debugger = await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel) };
         }

@@ -19,27 +19,27 @@ namespace Passenger.Tests;
 /// restart, Stop, a failed build, and Publish greyed with why for a project that does not publish.</summary>
 public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private const string ConsoleProject = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
+    private const string ConsoleProject = $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
         + "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n";
 
     private readonly string folder;
 
     public PublishTests(RestoredFolders folders) => folder = folders.Take("publish shop ", made =>
     {
-        Write(made, "Shop.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Site/Site.csproj\" />\n"
+        TestFolders.Write(made, "Shop.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Site/Site.csproj\" />\n"
             + "    <Project Path=\"src/Solo/Solo.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n    <Project Path=\"src/Checks/Checks.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write(made, "src/Hello/Hello.csproj", ConsoleProject);
-        Write(made, "src/Hello/Program.cs", "Console.WriteLine($\"Hello from the publish, {args.Length} given\");\n");
-        Write(made, "src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+        TestFolders.Write(made, "src/Hello/Hello.csproj", ConsoleProject);
+        TestFolders.Write(made, "src/Hello/Program.cs", "Console.WriteLine($\"Hello from the publish, {args.Length} given\");\n");
+        TestFolders.Write(made, "src/Site/Site.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
             + "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write(made, "src/Site/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
-        Write(made, "src/Site/appsettings.json", "{\n  \"Shop\": \"open\"\n}\n");
+        TestFolders.Write(made, "src/Site/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
+        TestFolders.Write(made, "src/Site/appsettings.json", "{\n  \"Shop\": \"open\"\n}\n");
         // At the tests' own target, whose runtime pack for this system the tests' project downloads for its self-contained publish.
-        Write(made, "src/Solo/Solo.csproj", ConsoleProject.Replace("net10.0", AvaloniaApp.Metadata("TargetFramework"), StringComparison.Ordinal));
-        Write(made, "src/Solo/Program.cs", "Console.WriteLine($\"Solo on {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}\");\n");
-        Write(made, "src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-        Write(made, "src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => 3;\n}\n");
-        Write(made, "src/Checks/Checks.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+        TestFolders.Write(made, "src/Solo/Solo.csproj", ConsoleProject.Replace(TestProjects.Framework, AvaloniaApp.Metadata("TargetFramework"), StringComparison.Ordinal));
+        TestFolders.Write(made, "src/Solo/Program.cs", "Console.WriteLine($\"Solo on {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}\");\n");
+        TestFolders.Write(made, "src/Tools/Tools.csproj", TestProjects.Library());
+        TestFolders.Write(made, "src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => 3;\n}\n");
+        TestFolders.Write(made, "src/Checks/Checks.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
             + "    <IsTestProject>true</IsTestProject>\n  </PropertyGroup>\n</Project>\n");
         return Path.Combine(made, "Shop.slnx");
     });
@@ -54,7 +54,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         {
             PublishDialog dialog = DialogButtonsTests.Check(Show(window, "Hello"));
             // A project with no profile is offered a new one, Release and portable, landing where MSBuild puts it.
-            string landing = PathNames.Canonical(Path.Combine(folder, "src", "Hello", "bin", "Release", "net10.0", "publish"));
+            string landing = PathNames.Canonical(Path.Combine(folder, "src", "Hello", "bin", "Release", TestProjects.Framework, "publish"));
             Assert.Equal((null, "FolderProfile", "Release", null, false), (dialog.Chosen, dialog.ProfileName, dialog.Configuration, dialog.Runtime, dialog.SelfContained));
             Assert.True(dialog.Destination is { } shown && PathNames.Same(shown, landing), $"The dialog says the app lands in {dialog.Destination}, not in {landing}");
             Assert.Equal($"dotnet publish {Path.Combine("src", "Hello", "Hello.csproj")} -c Release -p:PublishProfile=FolderProfile", dialog.Command);
@@ -71,11 +71,8 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal($"Published Hello (FolderProfile) to {Path.GetRelativePath(PathNames.Canonical(folder), landing)}", window.Status);
             Assert.Contains($"Published Hello (FolderProfile) to {landing}", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
             Button said = window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage");
-            Point middle = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(middle, MouseButton.Left);
-            window.MouseUp(middle, MouseButton.Left);
-            Ui.Settle();
-            Assert.Equal([landing], window.ShownFolders);
+            Ui.Click(said);
+            Assert.Equal([landing], window.ShownInFileManager);
         }
         finally
         {
@@ -120,7 +117,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal(("Nightly", "Debug", "../../out/nightly/"), (dialog.Chosen?.Name, dialog.Configuration, dialog.OutputFolder));
             BuildOutcome ended = Publish(window, dialog.PublishAsync);
             Assert.True(ended.Succeeded && ended.Published is { } at && PathNames.Same(at, nightly), $"The publish ended: {ended.Message}");
-            Assert.True(File.Exists(Path.Combine(folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll")), "The Debug profile published a build of another configuration");
+            Assert.True(File.Exists(Path.Combine(folder, "src", "Hello", "bin", "Debug", TestProjects.Framework, "Hello.dll")), "The Debug profile published a build of another configuration");
         }
         finally
         {
@@ -154,7 +151,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
     {
         // As Visual Studio writes a folder profile, with one for Azure beside it, which Passenger does not publish by yet.
         string vs = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<!--\r\nhttps://go.microsoft.com/fwlink/?LinkID=208121.\r\n-->\r\n<Project>\r\n  <PropertyGroup>\r\n"
-            + "    <Configuration>Release</Configuration>\r\n    <Platform>Any CPU</Platform>\r\n    <PublishDir>bin\\Release\\net10.0\\publish\\portable\\</PublishDir>\r\n"
+            + $"    <Configuration>Release</Configuration>\r\n    <Platform>Any CPU</Platform>\r\n    <PublishDir>bin\\Release\\{TestProjects.Framework}\\publish\\portable\\</PublishDir>\r\n"
             + "    <PublishProtocol>FileSystem</PublishProtocol>\r\n    <_TargetId>Folder</_TargetId>\r\n  </PropertyGroup>\r\n</Project>";
         string profile = Path.Combine(folder, "src", "Hello", "Properties", "PublishProfiles", "FolderProfile.pubxml");
         Write("src/Hello/Properties/PublishProfiles/FolderProfile.pubxml", vs);
@@ -164,8 +161,8 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         {
             PublishDialog dialog = Show(window, "Hello");
             Assert.Equal([("Azure", "ZipDeploy"), ("FolderProfile", null)], dialog.Profiles.Select(p => (p.Name, p.Remote)));
-            Assert.Equal(("FolderProfile", "Release", @"bin\Release\net10.0\publish\portable\"), (dialog.Chosen?.Name, dialog.Configuration, dialog.OutputFolder));
-            string portable = PathNames.Canonical(Path.Combine(folder, "src", "Hello", "bin", "Release", "net10.0", "publish", "portable"));
+            Assert.Equal(("FolderProfile", "Release", $@"bin\Release\{TestProjects.Framework}\publish\portable\"), (dialog.Chosen?.Name, dialog.Configuration, dialog.OutputFolder));
+            string portable = PathNames.Canonical(Path.Combine(folder, "src", "Hello", "bin", "Release", TestProjects.Framework, "publish", "portable"));
             Assert.True(dialog.Destination is { } shown && PathNames.Same(shown, portable), $"The dialog says the profile lands in {dialog.Destination}, not in {portable}");
 
             // Changed, it is saved only once the person agrees.
@@ -210,12 +207,12 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         Write("src/Site/Properties/PublishProfiles/FolderProfile.pubxml", "<Project>\n  <PropertyGroup>\n    <LastUsedBuildConfiguration>Release</LastUsedBuildConfiguration>\n"
             + "    <PublishProvider>FileSystem</PublishProvider>\n    <PublishUrl>../../site out/</PublishUrl>\n    <WebPublishMethod>FileSystem</WebPublishMethod>\n"
             + "    <_TargetId>Folder</_TargetId>\n  </PropertyGroup>\n</Project>\n");
-        string landing = PathNames.Canonical(Path.Combine(folder, "src", "Site", "bin", "Release", "net10.0", "publish"));
+        string landing = PathNames.Canonical(Path.Combine(folder, "src", "Site", "bin", "Release", TestProjects.Framework, "publish"));
         MainWindow window = Open();
         try
         {
             PublishDialog dialog = Show(window, "Site");
-            Assert.Equal(("FolderProfile", "Release", "bin/Release/net10.0/publish/"), (dialog.Chosen?.Name, dialog.Configuration, dialog.OutputFolder));
+            Assert.Equal(("FolderProfile", "Release", $"bin/Release/{TestProjects.Framework}/publish/"), (dialog.Chosen?.Name, dialog.Configuration, dialog.OutputFolder));
             Assert.Contains($"Visual Studio copies it on to {PathNames.Canonical(Path.Combine(folder, "site out"))}", dialog.DestinationSaid, StringComparison.Ordinal);
             BuildOutcome ended = Publish(window, dialog.PublishAsync);
             Assert.True(ended.Succeeded, $"The publish did not succeed: {ended.Message}\n{string.Join('\n', ended.Output)}");
@@ -273,7 +270,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal(BuildStatus.Failed, ended.Status);
             Assert.StartsWith("Publish failed: 1 error", window.Status, StringComparison.Ordinal);
             Assert.Contains(window.BottomPanel.Problems.Problems, p => p.Code == "CS0029");
-            Assert.True(ended.Published is null && window.ShownFolders.Count == 0, "A failed publish said where it landed");
+            Assert.True(ended.Published is null && window.ShownInFileManager.Count == 0, "A failed publish said where it landed");
             Assert.DoesNotContain("Published Hello", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
         }
         finally
@@ -321,10 +318,10 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal("Tools is a library: set IsPublishable to true in it to publish it", MenuItem(window, "Tools").Tip);
             Assert.Equal("Checks is a test project, which is run rather than published", MenuItem(window, "Checks").Tip);
             Assert.Equal((true, null), (MenuItem(window, "Hello").Enabled, MenuItem(window, "Hello").Tip));
-            Assert.Equal("Nothing has been published here yet: Publish... first", window.Actions.WhyNot(AppActions.PublishAgain, window.Actions.Context()));
+            Assert.Equal("Nothing has been published here yet: Publish… first", window.Actions.WhyNot(AppActions.PublishAgain, window.Actions.Context()));
 
             // A library that asks to be published is offered.
-            Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            Write("src/Tools/Tools.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
                 + "    <IsPublishable>true</IsPublishable>\n  </PropertyGroup>\n</Project>\n");
             Ui.WaitFor(() => MenuItem(window, "Tools").Enabled, "Tools to be offered once it asks to be published", TimeSpan.FromMinutes(1));
         }
@@ -337,24 +334,21 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
     /// <summary>A project's Publish... in its Explorer menu: whether it can be chosen, and its tip.</summary>
     private static (bool Enabled, string? Tip) MenuItem(MainWindow window, string project)
     {
-        Point at = Centre(window, project);
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
+        Ui.RightClick(Ui.Row(window.ExplorerView, ProjectRow(window, project)));
         ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException($"No menu opened on {project}");
-        Avalonia.Controls.MenuItem publish = menu.Items.OfType<Avalonia.Controls.MenuItem>().FirstOrDefault(i => (string?)i.Header == "Publish...")
-            ?? throw new InvalidOperationException($"{project}'s menu has no Publish...: [{string.Join(", ", menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header))}]");
+        Avalonia.Controls.MenuItem publish = menu.Items.OfType<Avalonia.Controls.MenuItem>().FirstOrDefault(i => (string?)i.Header == "Publish…")
+            ?? throw new InvalidOperationException($"{project}'s menu has no Publish…: [{string.Join(", ", menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header))}]");
         (bool, string?) found = (publish.IsEnabled, ToolTip.GetTip(publish) as string);
         menu.Close();
         Ui.Settle();
         return found;
     }
 
-    /// <summary>Where a project's row of the Explorer is, its solution folder opened: found again until it is drawn, since the
-    /// rows are made again as the projects' evaluations land (a restore's too, later on a slow machine).</summary>
-    private static Point Centre(MainWindow window, string project)
+    /// <summary>A project's row of the Explorer, its solution folder opened: found again until it is drawn, since the rows
+    /// are made again as the projects' evaluations land (a restore's too, later on a slow machine).</summary>
+    private static ExplorerNode ProjectRow(MainWindow window, string project)
     {
-        Control? item = null;
+        ExplorerNode? found = null;
         Ui.WaitFor(() =>
         {
             ExplorerTree tree = window.ExplorerView.Tree;
@@ -362,27 +356,20 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             {
                 tree.Expand(src);
             }
-            if (tree.Rows.FirstOrDefault(r => r.Kind == NodeKind.Project && r.Name == project) is not { } row
-                || window.ExplorerView.GetVisualDescendants().OfType<ListBox>().FirstOrDefault(l => ReferenceEquals(l.ItemsSource, tree.Rows)) is not { } rows)
+            if (tree.Rows.FirstOrDefault(r => r.Kind == NodeKind.Project && r.Name == project) is not { } row)
             {
                 return false;
             }
+            ListBox rows = window.ExplorerView.Rows();
             rows.ScrollIntoView(row);
-            item = rows.ContainerFromItem(row);
-            return item is not null;
+            found = rows.ContainerFromItem(row) is null ? null : row;
+            return found is not null;
         }, $"the Explorer to show the project {project}", TimeSpan.FromMinutes(1));
-        Control shown = item ?? throw new InvalidOperationException($"The Explorer does not show the project {project}");
-        return shown.TranslatePoint(new Point(shown.Bounds.Width / 2, shown.Bounds.Height / 2), window)!.Value;
+        return found ?? throw new InvalidOperationException($"The Explorer does not show the project {project}");
     }
 
     /// <summary>Clicks a project's row of the Explorer, as a person chooses one before pressing a key.</summary>
-    private static void Choose(MainWindow window, string project)
-    {
-        Point at = Centre(window, project);
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
+    private static void Choose(MainWindow window, string project) => Ui.ClickRow(window, ProjectRow(window, project));
 
     /// <summary>The Publish dialog over a project, its profile read.</summary>
     private PublishDialog Show(MainWindow window, string project)
@@ -421,19 +408,12 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         return result;
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(folder, languageServer: false);
 
     /// <summary>A window that keeps its state in a folder of the test's own, as the person's does.</summary>
     private MainWindow Keeping(string state)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = state };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = state, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.OpenFolder(folder);
@@ -441,12 +421,5 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         return window;
     }
 
-    private void Write(string relative, string text) => Write(folder, relative, text);
-
-    private static void Write(string folder, string relative, string text)
-    {
-        string path = Path.Combine(folder, relative);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
-    }
+    private void Write(string relative, string text) => TestFolders.Write(folder, relative, text);
 }

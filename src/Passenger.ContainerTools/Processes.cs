@@ -33,7 +33,7 @@ public static class Processes
         {
             listed.Add(process.Id);
             found.Add(new ContainerProcess(process.Id, process.Name, process.CommandLine, process.User,
-                Variable(process.Id, "DOTNET_MODIFIABLE_ASSEMBLIES") is { } modifiable && modifiable.Equals("debug", StringComparison.OrdinalIgnoreCase),
+                Variable(process.Id, RuntimeVariables.ModifiableAssemblies) is { } modifiable && modifiable.Equals("debug", StringComparison.OrdinalIgnoreCase),
                 Optimized(process.Id, process.CommandLine), null));
         }
         foreach (int id in Running())
@@ -44,9 +44,9 @@ public static class Processes
             }
             // Held at its start for a debugger (Passenger's Debug of a container run): no pipe yet, which the attach's
             // registration for its runtime's start and its diagnostic port's resume see to. Diagnostics off, nothing holds it.
-            bool held = Variable(id, "DOTNET_DefaultDiagnosticPortSuspend") == "1" && !DiagnosticsOff(id);
+            bool held = Variable(id, RuntimeVariables.DefaultDiagnosticPortSuspend) == "1" && !DiagnosticsOff(id);
             found.Add(new ContainerProcess(process.Id, process.Name, process.CommandLine, process.User,
-                held && Variable(id, "DOTNET_MODIFIABLE_ASSEMBLIES") is { } modifiable && modifiable.Equals("debug", StringComparison.OrdinalIgnoreCase),
+                held && Variable(id, RuntimeVariables.ModifiableAssemblies) is { } modifiable && modifiable.Equals("debug", StringComparison.OrdinalIgnoreCase),
                 Optimized(process.Id, process.CommandLine), held ? null : WhyUnreachable(id)));
         }
         return found;

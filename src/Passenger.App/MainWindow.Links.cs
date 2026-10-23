@@ -112,19 +112,19 @@ public partial class MainWindow
         _ = Launcher.LaunchUriAsync(address);
     }
 
-    private readonly List<string> shownFolders = [];
+    private readonly List<string> shownInFileManager = [];
 
-    /// <summary>Every folder the window opened in the file manager, in order (where a publish landed): what a test reads, as
-    /// the headless platform's launcher opens nothing.</summary>
-    public IReadOnlyList<string> ShownFolders => shownFolders;
+    /// <summary>Every file and folder the window showed in the file manager, in order (where a publish landed, the
+    /// Explorer's Reveal, the log): what a test reads, as the headless platform opens nothing.</summary>
+    public IReadOnlyList<string> ShownInFileManager => shownInFileManager;
 
-    /// <summary>Opens a folder in the person's file manager, showing what it holds, through the system's launcher as a link's
-    /// address opens: the file manager is the person's, never ended with the IDE.</summary>
-    public void ShowInFileManager(string folder)
+    /// <summary>Shows a file chosen in its folder, or a folder's contents, in the person's file manager: the only way the
+    /// IDE opens it (<see cref="FileManager"/>), the file manager the person's, never ended with the IDE.</summary>
+    public void ShowInFileManager(string path)
     {
         UiThread.Check();
-        shownFolders.Add(folder);
-        _ = Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(folder));
+        shownInFileManager.Add(path);
+        FileManager.Show(this, path);
     }
 
     /// <summary>Rider's Open browser after launch: the plan's browser URL opens once its program listens there, as

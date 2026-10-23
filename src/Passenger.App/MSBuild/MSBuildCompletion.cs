@@ -1,6 +1,7 @@
 using Passenger.Host;
 using Passenger.Text;
 using Passenger.Xaml.Syntax;
+using Passenger.Core;
 
 namespace Passenger.App.MSBuild;
 
@@ -229,7 +230,7 @@ public static class MSBuildCompletion
         {
             int count = context.Insight?.ItemType(name)?.Count ?? 0;
             string insert = !fresh ? name : definition ? $"{name}>$0</{name}>" : $"{name} Include=\"$0\" />";
-            yield return new MSBuildItem(name, MSBuildItemKind.Item, insert, count > 0 ? $"{count} item{(count == 1 ? "" : "s")}" : null,
+            yield return new MSBuildItem(name, MSBuildItemKind.Item, insert, count > 0 ? Plural.Of(count, "item") : null,
                 documentation, fresh, fresh && !definition)
             {
                 SortText = Ranked(CommonItems, name, documentation is null ? 2 : 1),
@@ -456,7 +457,7 @@ public static class MSBuildCompletion
             case '@':
                 IEnumerable<string> types = (insight?.ItemTypes.Select(t => t.Name) ?? []).Concat(context.Schema.Items.Keys);
                 items.AddRange(types.Distinct(StringComparer.OrdinalIgnoreCase).Select(t => new MSBuildItem(t, MSBuildItemKind.ItemReference, t + close,
-                    insight?.ItemType(t) is { } known ? $"{known.Count} item{(known.Count == 1 ? "" : "s")}" : null) { SortText = (t.StartsWith('_') ? "1" : "0") + t }));
+                    insight?.ItemType(t) is { } known ? Plural.Of(known.Count, "item") : null) { SortText = (t.StartsWith('_') ? "1" : "0") + t }));
                 break;
             case '%':
                 if (dot >= 0)

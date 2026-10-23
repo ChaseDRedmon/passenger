@@ -24,23 +24,9 @@ public partial class MainWindow
 
     private void AddContainers()
     {
-        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder));
-        containersView = view;
-        view.ActionRequested += (_, action) => Request(action);
-        view.LinkClicked += (_, link) => OpenLink(link);
-        view.StateRead += (_, state) => ShowEngine(state);
-        view.Files.Opened += (_, copy) => OpenCopy(copy);
-        view.Files.Problem += (_, problem) => status.Text = problem;
-        // The window's first use of it: Inspect's copies an earlier Passenger wrote unmasked go before anything reads them.
-        view.AttachedToVisualTree += (_, _) => _ = ForgetUnmaskedCopiesAsync();
-        Dock.Add(new Docking.ToolWindow("containers", "Containers", "Icon.Containers", view, Docking.ToolAnchor.BottomLeft)
-        {
-            Action = AppActions.ShowContainers,
-            Menus = [new MenuPlace("Tools", 0, 4)],
-            Chosen = () => view.Chosen,
-        });
-        ActionButtons.ShowMarked(view, actions!);
-        string? OneContainer(ActionContext _) => view.Chosen?.Container is null ? "No container is chosen in the Containers window" : null;
+        // The actions first: the window's toolbar and menu take their titles, and they act on its row chosen.
+        ContainerRow? Chosen() => containersView?.Chosen;
+        string? OneContainer(ActionContext _) => Chosen()?.Container is null ? "No container is chosen in the Containers window" : null;
         foreach ((string id, string title, string action) in (ReadOnlySpan<(string, string, string)>)[
             (AppActions.ContainerStart, "Start", "start"),
             (AppActions.ContainerStop, "Stop", "stop"),
@@ -49,28 +35,45 @@ public partial class MainWindow
             (AppActions.ContainerRemove, "Remove", "remove"),
             (AppActions.ContainerPull, "Pull", "pull")])
         {
-            actions!.Add(new IdeAction(id, title, "Containers", context => _ = id == AppActions.ContainerRemove ? RemoveAsync(view.Chosen!) : ContainerActAsync(id, action, view.Chosen!))
+            actions!.Add(new IdeAction(id, title, "Containers", context => _ = id == AppActions.ContainerRemove ? RemoveAsync(Chosen()!) : ContainerActAsync(id, action, Chosen()!))
             {
-                WhyNot = _ => ContainerCommands.For(action, view.Chosen) is { Words: null } refused ? refused.WhyNot ?? $"{view.Chosen?.Name} cannot {action}" : null,
+                WhyNot = _ => ContainerCommands.For(action, Chosen()) is { Words: null } refused ? refused.WhyNot ?? $"{Chosen()?.Name} cannot {action}" : null,
                 Works = id,
             });
         }
-        actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = view.RefreshAsync()));
-        actions.Add(new IdeAction(AppActions.ContainerScale, "Scale Service…", "Containers", context => _ = ScaleAsync(view.Chosen!))
+        actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = containersView!.RefreshAsync()));
+        actions.Add(new IdeAction(AppActions.ContainerScale, "Scale Service…", "Containers", context => _ = ScaleAsync(Chosen()!))
         {
-            WhyNot = _ => view.Chosen is { Kind: ContainerRowKind.Service, Project: not null } ? null : "No Compose service is chosen in the Containers window",
+            WhyNot = _ => Chosen() is { Kind: ContainerRowKind.Service, Project: not null } ? null : "No Compose service is chosen in the Containers window",
             Works = AppActions.ContainerScale,
         });
-        actions.Add(new IdeAction(AppActions.ContainerPrune, "Prune…", "Containers", context => _ = PruneAsync(view.Chosen))
+        actions.Add(new IdeAction(AppActions.ContainerPrune, "Prune…", "Containers", context => _ = PruneAsync(Chosen()))
         {
             WhyNot = _ => Engine.Known is { IsReady: true } ? null : "The container engine is not running",
             Works = AppActions.ContainerPrune,
         });
-        actions.Add(new IdeAction(AppActions.ContainerInspect, "Inspect", "Containers", context => _ = InspectAsync(view.Chosen!))
+        actions.Add(new IdeAction(AppActions.ContainerInspect, "Inspect", "Containers", context => _ = InspectAsync(Chosen()!))
         {
-            WhyNot = _ => view.Chosen is { Kind: not ContainerRowKind.Group and not ContainerRowKind.Project } ? null : "No container, image, volume or network is chosen in the Containers window",
+            WhyNot = _ => Chosen() is { Kind: not ContainerRowKind.Group and not ContainerRowKind.Project } ? null : "No container, image, volume or network is chosen in the Containers window",
         });
-        actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(view.Chosen!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
+        actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(Chosen()!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
+
+        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title));
+        containersView = view;
+        view.ActionRequested += (_, action) => Request(action);
+        view.LinkClicked += (_, link) => OpenLink(link);
+        view.StateRead += (_, state) => ShowEngine(state);
+        view.Files.Opened += (_, copy) => OpenCopy(copy);
+        view.Files.Problem += (_, problem) => status.Text = problem;
+        // The window's first use of it: Inspect's copies an earlier Passenger wrote unmasked go before anything reads them.
+        view.AttachedToVisualTree += (_, _) => _ = ForgetUnmaskedCopiesAsync();
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Containers, "Containers", "Icon.Containers", view, Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowContainers,
+            Menus = [new MenuPlace("Tools", 0, 4)],
+            Chosen = () => view.Chosen,
+        });
+        ActionButtons.ShowMarked(view, actions);
         AddServiceActions(view);
     }
 
@@ -98,23 +101,30 @@ public partial class MainWindow
     }
 
     /// <summary>The engine's state, said in the status bar while it cannot serve (with where a click starts it, or shows
-    /// what to do) and listed in Problems' Containers tab, which empties once it can.</summary>
-    private void ShowEngine(EngineState state)
+    /// what to do) and listed in Problems' Containers tab, which empties once it can; when a Dockerfile went unchecked, what
+    /// the engine cannot check of it too (Podman's missing BuildKit, while Settings would check with it).</summary>
+    private void ShowEngine(EngineState state, bool dockerfile = false)
     {
         UiThread.Check();
+        string where = state.Context ?? state.EngineName;
         if (state.Problem is not { } problem)
         {
-            Bottom.Problems.ShowContainers([]);
+            bool limited = dockerfile && settings.BuildKitChecks && state.Limit is not null;
+            Bottom.Problems.ShowContainers(limited ? [new Problem(ProblemSeverity.Warning, state.Limit!, null, null, new TextPosition(0, 0), where)] : []);
+            if (limited)
+            {
+                status.Say(state.Limit!, ProblemSeverity.Warning, StatusPlace.Problems(Dock, Bottom.Problems, ProblemsTab.Containers));
+            }
             return;
         }
-        Bottom.Problems.ShowContainers([new Problem(ProblemSeverity.Warning, problem, null, null, new TextPosition(0, 0), state.Context ?? "Docker")]);
+        Bottom.Problems.ShowContainers([new Problem(ProblemSeverity.Warning, problem, null, null, new TextPosition(0, 0), where)]);
         status.Say(problem, ProblemSeverity.Warning, EnginePlace(state));
     }
 
-    /// <summary>Where a click on the engine's problem goes: Docker Desktop started, where it is installed and the engine is
+    /// <summary>Where a click on the engine's problem goes: Docker Desktop started, where it is installed and Docker is
     /// not running; otherwise Problems' Containers tab, which says what to do.</summary>
     private StatusPlace EnginePlace(EngineState state) =>
-        state.Status == EngineStatus.NotRunning && EngineState.DesktopApp is { } desktop
+        state is { Status: EngineStatus.NotRunning, IsPodman: false } && EngineState.DesktopApp is { } desktop
             ? new StatusPlace("start Docker Desktop", () => StartDesktop(desktop))
             : StatusPlace.Problems(Dock, Bottom.Problems, ProblemsTab.Containers);
 
@@ -152,6 +162,13 @@ public partial class MainWindow
                 if (session == next)
                 {
                     Bottom.Problems.ShowContainerFiles(web.Checks.Problems);
+                }
+            };
+            web.Checks.Limited += (_, state) =>
+            {
+                if (session == next)
+                {
+                    ShowEngine(state, dockerfile: true);
                 }
             };
         }

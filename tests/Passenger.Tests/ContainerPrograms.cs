@@ -10,20 +10,53 @@ namespace Passenger.Tests;
 /// (artifacts/container-tools), as <c>just container-tools</c> makes them: some seconds when they are up to date.</summary>
 internal static class ContainerPrograms
 {
-    /// <summary>The engine's processor, as .NET names it (x64, arm64).</summary>
-    public static string Processor() => Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64";
+    /// <summary>The engine's processor, as .NET names it (x64, arm64): Podman's own docker has no server apart in its version,
+    /// and words it in its info.</summary>
+    public static string Processor() =>
+        (Docker.Said("version", "--format", "{{.Server.Arch}}") ?? Docker.Said("info", "--format", "{{.Host.Arch}}")) == "arm64" ? "arm64" : "x64";
 
     /// <summary>Each system's publish, once a run: a second, as another test's IDE copies the tools into a container, would
     /// rewrite them under it, and the IDE would then look for them elsewhere (a download from the run's dead address).</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<ChildResult>> Published = new(StringComparer.Ordinal);
 
-    /// <summary>Publishes the tools for a system into artifacts/container-tools, as tools/container-tools.sh does, once a run.</summary>
+    /// <summary>Publishes the tools for a system into artifacts/container-tools, as tools/container-tools.sh does, once a run,
+    /// and one run of the checkout at a time (<see cref="Publishing"/>): another's, beside it, finds them up to date and
+    /// writes nothing under a container that is reading them.</summary>
     public static void Publish(string rid)
     {
-        string output = Path.Combine(Debugging.Helpers.Debuggees.Root, "artifacts", "container-tools", rid);
-        ChildResult published = Published.GetOrAdd(rid, _ => new Lazy<ChildResult>(() => Dotnet(["publish", Path.Combine(Debugging.Helpers.Debuggees.Root, "src", "Passenger.ContainerTools"),
-            "-c", "Release", "-r", rid, "--self-contained", "-o", output, "-nologo", "-v:q"], Debugging.Helpers.Debuggees.Root), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+        string tools = Path.Combine(Debugging.Helpers.Debuggees.Root, "artifacts", "container-tools");
+        string output = Path.Combine(tools, rid);
+        ChildResult published = Published.GetOrAdd(rid, _ => new Lazy<ChildResult>(() =>
+        {
+            using FileStream held = Publishing(tools);
+            return Dotnet(["publish", Path.Combine(Debugging.Helpers.Debuggees.Root, "src", "Passenger.ContainerTools"),
+                "-c", "Release", "-r", rid, "--self-contained", "-o", output, "-nologo", "-v:q"], Debugging.Helpers.Debuggees.Root);
+        }, LazyThreadSafetyMode.ExecutionAndPublication)).Value;
         Assert.True(published.Succeeded, $"Passenger's container tools for {rid} did not publish: {published.Output}{published.Error}");
+    }
+
+    /// <summary>The checkout's lock on publishing the tools, held open by one process at a time (the system lets it go with
+    /// a process that ends without letting go), waited for while another test run of the checkout publishes.</summary>
+    private static FileStream Publishing(string tools)
+    {
+        Directory.CreateDirectory(tools);
+        string path = Path.Combine(tools, ".publishing");
+        FileStream? held = null;
+        Assert.True(Waiting.Until(() => (held = Open()) is not null, TimeSpan.FromMinutes(10), every: TimeSpan.FromMilliseconds(250)),
+            $"Another test run of this checkout held {path} for 10 minutes, publishing Passenger's container tools");
+        return held!;
+
+        FileStream? Open()
+        {
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+        }
     }
 
     /// <summary>A program's project in <paramref name="folder"/>, built in Debug into <paramref name="output"/>, its paths
@@ -58,7 +91,7 @@ internal static class ContainerPrograms
         dockerfile.Append($"ENTRYPOINT [\"dotnet\", \"/app/{assembly}.dll\"]\n");
         File.WriteAllText(Path.Combine(context, "Dockerfile"), dockerfile.ToString());
         string tag = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}-{assembly.ToLowerInvariant()}:{variant}";
-        Docker.Run("build", "-q", "--label", Docker.RunLabel, "-t", tag, context);
+        Docker.Run(["build", "-q", .. Docker.Load, "--label", Docker.RunLabel, "-t", tag, context]);
         return tag;
     }
 

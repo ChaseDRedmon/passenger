@@ -6,12 +6,12 @@ lists the whole suite (`list`, which runs `dotnet test --list-tests` again when 
 discovery failed, and fails quoting what it printed) and `split` deals its classes out by their seconds on that system in
 tests/Passenger.Tests/TestTimes.json, the longest first, each to the shard with the fewest seconds so far, so every
 shard of a commit deals the same; each runs its own hand with `dotnet test --settings shard-N.runsettings`, whose
-TestCaseFilter names its classes. A class the times lack weighs its budget in TestBudget.json. Before any test runs,
-`check` takes what each shard's settings list and fails unless every test of the suite is in exactly one. Once the
-shards have run, each system's summary job runs `cover`: every shard's job succeeded and every test of the suite has
-exactly one result across their .trx; and when dealing by that run's own times would end its slowest shard two minutes
-sooner or more, it says to deal again from them. `update` (`just test-times RUN`) rewrites TestTimes.json from one or
-more CI runs' results, for a person to commit.
+TestCaseFilter names its classes. A class the times lack weighs its budget in TestBudget.json. Before any test runs, the
+first shard's `check` takes what each shard's settings list and fails unless every test of the suite is in exactly
+one. Once the shards have run, each system's summary job runs `cover`: every shard's job succeeded and every test of the
+suite has exactly one result across their .trx; and when dealing by that run's own times would end its slowest shard
+two minutes sooner or more, it says to deal again from them. `update` (`just test-times RUN`) rewrites TestTimes.json
+from one or more CI runs' results, for a person to commit.
 """
 import argparse
 import importlib.util

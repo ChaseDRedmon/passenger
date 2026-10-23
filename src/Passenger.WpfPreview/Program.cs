@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Navigation;
 using System.Windows.Threading;
+using Passenger.Core;
 
 namespace Passenger.WpfPreview;
 
@@ -17,8 +18,9 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // Read once, as WPF's diagnostics start: set before anything of WPF's runs.
-        Environment.SetEnvironmentVariable(WpfPreviewJson.SourceInfoVariable, "1");
+        // Read once, as WPF's diagnostics start: set before anything of WPF's runs, so each element knows its place in the
+        // XAML (VisualDiagnostics.GetXamlSourceInfo), which is how a box knows its element.
+        Environment.SetEnvironmentVariable(RuntimeVariables.XamlDiagnosticsSourceInfo, "1");
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             // The whole of it, then one line that says it, which is what Passenger shows of a previewer that ended.

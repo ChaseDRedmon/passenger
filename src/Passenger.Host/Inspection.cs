@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Xml;
 using Microsoft.Build.Construction;
-using Microsoft.Build.Definition;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Evaluation.Context;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Framework;
+using Passenger.Core;
 
 namespace Passenger.Host;
 
@@ -25,8 +25,6 @@ internal static class Inspection
     private const int Kept = 16;
 
     private static readonly List<(string Key, ProjectInsight Insight)> Cache = [];
-
-    private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     public static ProjectInsight Run(InspectParams asked, CancellationToken cancel)
     {
@@ -96,7 +94,7 @@ internal static class Inspection
         List<Project> loaded = [];
         try
         {
-            Project project = Load(asked.Project, collection, context, global, null);
+            Project project = Evaluation.Load(asked.Project, collection, context, global, null);
             loaded.Add(project);
             string? framework = null;
             if (project.GetPropertyValue("TargetFramework").Length == 0
@@ -104,7 +102,7 @@ internal static class Inspection
             {
                 cancel.ThrowIfCancellationRequested();
                 framework = first;
-                project = Load(asked.Project, collection, context, global, first);
+                project = Evaluation.Load(asked.Project, collection, context, global, first);
                 loaded.Add(project);
             }
             return Read(project, framework, file, walked, [.. problems, .. logged.Found], Stopwatch.GetElapsedTime(began).TotalSeconds);
@@ -138,26 +136,10 @@ internal static class Inspection
         Project = asked.Project,
         Diagnostics = diagnostics,
         // The files the failure names among them, so a fix to one is evaluated.
-        Inputs = [file, .. asked.Texts.Keys.Concat(diagnostics.Select(d => d.File)).Where(p => p.Length > 0 && !p.Equals(asked.Project, PathComparison)).Select(Stamps.File)
+        Inputs = [file, .. asked.Texts.Keys.Concat(diagnostics.Select(d => d.File)).Where(p => p.Length > 0 && !PathNames.Same(p, asked.Project)).Select(Stamps.File)
             .Concat(Evaluation.LookedFor(asked.Project, null)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
         Seconds = Stopwatch.GetElapsedTime(began).TotalSeconds,
     };
-
-    private static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
-    {
-        Dictionary<string, string> global = new(properties, StringComparer.OrdinalIgnoreCase);
-        if (framework is not null)
-        {
-            global["TargetFramework"] = framework;
-        }
-        return WindowsTargeting.Load(given => Project.FromFile(path, new ProjectOptions
-        {
-            GlobalProperties = given,
-            ProjectCollection = collection,
-            EvaluationContext = context,
-            LoadSettings = Evaluation.Settings,
-        }), global, collection);
-    }
 
     /// <summary>An exception's place and words: MSBuild's own for a project that does not load, the reader's for XML that
     /// does not read.</summary>
@@ -172,7 +154,7 @@ internal static class Inspection
     private static ProjectInsight Read(Project project, string? framework, Stamp file, IReadOnlyList<Stamp> walked, List<InsightDiagnostic> diagnostics, double seconds)
     {
         List<string> roots = [.. Evaluation.OutsideRoots(project)];
-        bool Installed(string path) => roots.Any(root => path.StartsWith(root, PathComparison));
+        bool Installed(string path) => roots.Any(root => path.StartsWith(root, PathNames.Comparison));
         FileTable files = new();
         List<InsightProperty> properties = [];
         foreach (ProjectProperty property in project.Properties)
@@ -272,9 +254,8 @@ internal static class Inspection
             Imports = imports,
             Frameworks = frameworks,
             Installed = roots,
-            Inputs = [file, .. project.Imports.Select(i => i.ImportedProject.FullPath).Distinct(StringComparer.Ordinal).Where(i => !Installed(i)).Select(Stamps.File)
-                .Concat(Evaluation.LookedFor(project.FullPath, project)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
-            Folders = Evaluation.Folders(project.FullPath, walked, Evaluation.Items([project])),
+            Inputs = Evaluation.Inputs(file, [project], roots, Evaluation.LookedFor(project.FullPath, project)),
+            Folders = Evaluation.Folders(project.FullPath, walked, Evaluation.Items([project]).Select(i => i.Path)),
             Files = files.Paths,
             Seconds = seconds,
         };

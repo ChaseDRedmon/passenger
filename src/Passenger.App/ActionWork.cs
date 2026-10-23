@@ -50,7 +50,11 @@ public sealed class ActionWork
 
     internal void Said(Working work)
     {
-        under.Remove(work);
+        // A stage posted from a worker can land after its work has ended, which must leave it ended, not under way for good.
+        if (!under.Remove(work))
+        {
+            return;
+        }
         under.Add(work);
         Changed?.Invoke(this, new WorkChange(work, Ended: false));
     }

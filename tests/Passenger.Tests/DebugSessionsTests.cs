@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
@@ -17,8 +18,9 @@ namespace Passenger.Tests;
 
 /// <summary>Several programs debugged at once from one window, as a person does it: two programs that share a source file,
 /// each debugged with Alt+F5 in a tab of its own in the Debug window, a breakpoint in the shared file stopping each, the
-/// keys acting on the tab chosen while the other stays as it was, and Stop and Stop All ending one or every one. Debugged,
-/// so run alone.</summary>
+/// keys acting on the tab chosen while the other stays as it was, and Stop and Stop All ending one or every one. Only the
+/// windows whose tests apply an edit through Hot Reload, which the server works out, take up the class's warm C# language
+/// server. Debugged, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
 {
@@ -36,7 +38,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [AvaloniaFact]
     public void Two_programs_debugged_at_once_each_stop_in_the_file_they_share_and_step_stop_and_stop_all_act_on_the_tab_chosen()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         try
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
@@ -72,7 +74,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
 
             // Its tab chosen, the first program's frames, values, console and execution point are the window's, still at the
             // breakpoint it stopped at.
-            ClickOn(window, Tabs(window).Single(t => t.Name == "First").Button);
+            Ui.Click(Tabs(window).Single(t => t.Name == "First").Button);
             Assert.Same(first, window.Debugger.Session);
             Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0 && window.BottomPanel.Debug.Frames[0].Line == Pair.Next + 1, "the first program's frames");
             Ui.WaitFor(() => Value(window, "value") == "0", "the first program's values at its stop");
@@ -105,9 +107,9 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             Assert.DoesNotContain(editor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint);
 
             // A tab closed goes; the last closed leaves the window as before any program was debugged.
-            ClickOn(window, Tabs(window).Single(t => t.Name == "Second").Close);
+            Ui.Click(Tabs(window).Single(t => t.Name == "Second").Close);
             Assert.Equal(["First"], window.Debugger.Tabs.Select(t => t.Name));
-            ClickOn(window, Tabs(window).Single().Close);
+            Ui.Click(Tabs(window).Single().Close);
             Assert.Empty(window.Debugger.Tabs);
             Assert.Null(window.Debugger.Session);
         }
@@ -117,6 +119,115 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         }
     }
 
+    [AvaloniaFact]
+    public void Additional_launches_with_the_same_name_keep_separate_native_tabs_and_capture_output_from_the_start()
+    {
+        MainWindow window = pair.Open(Counter, languageServer: false);
+        try
+        {
+            Passenger.App.Run.LaunchPlan plan = LoopingPlan("Same name");
+            ConcurrentQueue<string> earlyOutput = new();
+            DebugTab? configured = null;
+            DebugLaunch first = Ui.Await(window.Debugger.StartAdditionalAsync(plan, configure: tab =>
+            {
+                configured = tab;
+                Assert.Null(tab.Session);
+                tab.ProgramOutput += (_, output) => earlyOutput.Enqueue(output.Output);
+            }), "the first additional program");
+            Assert.Same(configured, first.Tab);
+            Ui.WaitFor(() => string.Concat(earlyOutput).Contains("looping", StringComparison.Ordinal), "the output subscribed before launch");
+
+            DebugLaunch second = Ui.Await(window.Debugger.StartAdditionalAsync(plan), "another program with the same name");
+            Assert.Equal(["Same name", "Same name"], window.Debugger.Tabs.Select(tab => tab.Name));
+            Assert.NotSame(first.Tab, second.Tab);
+            Assert.NotSame(first.Tab.Session, second.Tab.Session);
+            Assert.NotSame(first.Tab.Console, second.Tab.Console);
+            Assert.NotEqual(first.ProcessId, second.ProcessId);
+            Assert.True(first.Tab.IsLive && second.Tab.IsLive);
+            Assert.True(Processes.IsRunning(first.ProcessId) && Processes.IsRunning(second.ProcessId));
+            Assert.Same(second.Tab, window.Debugger.Chosen);
+
+            Task choosing = window.Debugger.ChooseAsync(first.Tab);
+            Ui.WaitFor(() => choosing.IsCompleted, "choosing the first same-name program");
+            choosing.GetAwaiter().GetResult();
+            Assert.Same(first.Tab.Console, window.BottomPanel.Debug.Console);
+            Task stopping = window.Debugger.StopAsync(second.Tab);
+            Ui.WaitFor(() => stopping.IsCompleted, "stopping only the second same-name program");
+            stopping.GetAwaiter().GetResult();
+            Ui.WaitFor(() => !second.Tab.IsLive && !Processes.IsRunning(second.ProcessId), "the second program's exit");
+            Assert.True(first.Tab.IsLive && Processes.IsRunning(first.ProcessId));
+            Assert.Same(first.Tab, window.Debugger.Chosen);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Canceling_an_additional_start_before_or_during_adapter_start_cannot_stop_its_same_name_sibling(bool duringAdapterStart)
+    {
+        MainWindow window = pair.Open(Counter, languageServer: false);
+        using CancellationTokenSource cancel = new();
+        try
+        {
+            Passenger.App.Run.LaunchPlan plan = LoopingPlan("Sibling");
+            DebugLaunch sibling = Ui.Await(window.Debugger.StartAdditionalAsync(plan), "the sibling to keep running");
+            DebugTab? canceled = null;
+            DebugSession? startingSession = null;
+            Task<DebugLaunch> starting = window.Debugger.StartAdditionalAsync(plan, cancel.Token, tab =>
+            {
+                canceled = tab;
+                if (duringAdapterStart)
+                {
+                    tab.StateChanged += (_, _) =>
+                    {
+                        if (tab.Session is { State: DebugState.Starting } session)
+                        {
+                            startingSession = session;
+                            cancel.Cancel();
+                        }
+                    };
+                }
+                else
+                {
+                    cancel.Cancel();
+                }
+            });
+            Ui.WaitFor(() => starting.IsCompleted, "the canceled additional launch's cleanup");
+            Assert.ThrowsAny<OperationCanceledException>(() => starting.GetAwaiter().GetResult());
+            Assert.NotNull(canceled);
+            Assert.False(canceled.IsLive);
+            if (duringAdapterStart)
+            {
+                Assert.NotNull(startingSession);
+                Ui.WaitFor(() => startingSession.State == DebugState.Ended && !Processes.IsRunning(startingSession.AdapterProcessId), "the canceled adapter's exit");
+            }
+            else
+            {
+                Assert.Null(canceled.Session);
+            }
+            Assert.Contains(sibling.Tab, window.Debugger.Tabs);
+            Assert.Same(sibling.Tab, Assert.Single(window.Debugger.Tabs, tab => tab.IsLive));
+            Assert.True(Processes.IsRunning(sibling.ProcessId));
+            Assert.Equal(DebugState.Running, sibling.Tab.Session!.State);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static Passenger.App.Run.LaunchPlan LoopingPlan(string name) => new()
+    {
+        Name = name,
+        Program = Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"),
+        Arguments = ["sleep"],
+        WorkingDirectory = Path.GetDirectoryName(Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"))!,
+    };
+
     /// <summary>A program elsewhere (a container's) has its machine's process id, which may be another program's here: a
     /// session told so never ends a process of this machine by it. A launched program its adapter leaves running as it goes
     /// (let go here, as a crash leaves it) is ended by the IDE when the session is here; when the session is told its
@@ -124,7 +235,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [AvaloniaFact]
     public void A_session_whose_program_is_elsewhere_never_ends_a_process_here_by_its_programs_id()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         List<int> started = [];
         try
         {
@@ -132,13 +243,17 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             started.AddRange([here, hereAdapter]);
             // The IDE ends it on the window's thread as the adapter's end lands there: the wait runs that thread's loop.
             Ui.PumpUntil(() => !Processes.IsRunning(here), "a session here to end the program its adapter let go of, left running");
+            DebugSession placed = window.Debugger.SessionNamed("Here")!;
+            string endedHere = DebugSession.EndedLeftRunning(Path.GetFileName(placed.Program), here);
+            Ui.WaitFor(() => window.Debugger.Output(placed).ToString().Contains(endedHere, StringComparison.Ordinal), $"the session here to say \"{endedHere}\"");
 
             (int program, int adapter) = LeftRunning(window, "Elsewhere", elsewhere: true);
             started.AddRange([program, adapter]);
             Assert.True(Processes.Gone(adapter), "The adapter that let the program go did not end");
             Ui.Hold(TimeSpan.FromSeconds(3), "the adapter's end to reach the session, which ends a program left running");
             Assert.True(Processes.IsRunning(program), "A session whose program is elsewhere ended the process of this machine that has its program's id");
-            Assert.DoesNotContain("was left running by the debugger, and is ended with it", window.Debugger.Output(window.Debugger.SessionNamed("Elsewhere")).ToString(), StringComparison.Ordinal);
+            DebugSession elsewhere = window.Debugger.SessionNamed("Elsewhere")!;
+            Assert.DoesNotContain(DebugSession.EndedLeftRunning(Path.GetFileName(elsewhere.Program), program), window.Debugger.Output(elsewhere).ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -185,7 +300,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         {
             window.Build(Passenger.App.Run.BuildKind.Build);
             Ui.WaitFor(() => !window.IsBuilding, "the build");
-            string built = Path.Combine(pair.Folder, "First", "bin", "Debug", "net10.0", OperatingSystem.IsWindows() ? "First.exe" : "First");
+            string built = Path.Combine(pair.Folder, "First", "bin", "Debug", TestProjects.Framework, OperatingSystem.IsWindows() ? "First.exe" : "First");
             Assert.True(File.Exists(built), $"The build made no {built}: {Ui.Said(window)}");
             string main = Path.Combine(PathNames.Canonical(pair.Folder), "First", "Program.cs");
             window.Debugger.Breakpoints.Toggle(main, 3);
@@ -200,6 +315,8 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             Ui.WaitFor(() => attaching.IsCompleted, "the debugger to attach");
             Assert.Null(attaching.Result);
             Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Paused } && window.Debugger.Stop is not null, "the program to stop at the breakpoint");
+            // What a program attached to writes goes where it always went, as its tab's console says.
+            Assert.Contains(DebugController.AttachedConsole, window.Debugger.Output(window.Debugger.Session).ToString(), StringComparison.Ordinal);
             Assert.True(window.Debugger.HotReload is not null && window.Debugger.WhyNotApply() is null, $"Hot Reload was not offered for the attach: {window.Debugger.WhyNotApply()}");
 
             window.OpenFile(Counter);
@@ -239,7 +356,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             window.Debugger.Breakpoints.Toggle(secondMain, 3);
             DebugSession first = Debug(window, "First");
             DebugSession second = Debug(window, "Second");
-            ClickOn(window, Tabs(window).Single(t => t.Name == "First").Button);
+            Ui.Click(Tabs(window).Single(t => t.Name == "First").Button);
             Assert.Same(first, window.Debugger.Session);
 
             window.OpenFile(Counter);
@@ -266,13 +383,52 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         }
     }
 
+    /// <summary>An edit Hot Reload cannot apply restarts its own program, as Settings' always restart says, though another
+    /// program's stop takes the window while it is applied: its tab is chosen again and its program built and debugged anew,
+    /// stopping at its breakpoint, while the other stays paused where it was.</summary>
+    [AvaloniaFact]
+    public void A_rude_edit_restarts_its_own_program_though_another_programs_stop_takes_the_window_as_it_is_applied()
+    {
+        MainWindow window = pair.Open(Counter);
+        try
+        {
+            string folder = PathNames.Canonical(pair.Folder);
+            window.Debugger.Breakpoints.Toggle(Path.Combine(folder, "First", "Program.cs"), 3);
+            window.Debugger.Breakpoints.Toggle(Path.Combine(folder, "Second", "Program.cs"), 3);
+            DebugSession first = Debug(window, "First");
+            DebugSession second = Debug(window, "Second");
+            Ui.Click(Tabs(window).Single(t => t.Name == "First").Button);
+            Assert.Same(first, window.Debugger.Session);
+
+            window.OpenFile(Counter);
+            Ui.Settle();
+            // A parameter its callers leave out: their unchanged code would call the body the update deletes, so it restarts.
+            Typing.Replace(window, "Next(int value)", "Next(int value, int step = 1)");
+            Assert.True(window.Debugger.HotReload is { Changed: true }, "The edit was not taken for one the first program is to take");
+            Assert.True(window.Perform(AppActions.Resume), $"Resume could not run: {window.Status}");
+            // The second program's tab takes the window as the edit is applied, as its stop would.
+            _ = window.Debugger.ChooseAsync(window.Debugger.Tabs.Single(t => t.Name == "Second"));
+
+            Ui.WaitFor(() => window.LastHotReloadRestart is not null && window.Debugger.SessionNamed("First") is { State: DebugState.Paused } again && again != first,
+                $"the first program to restart for the edit and stop at its breakpoint (the status bar says \"{window.Status}\")", TimeSpan.FromMinutes(2));
+            Assert.True(window.Debugger.LastApplied?.Result == HotReloadResult.RestartNeeded, $"The edit was not told as needing a restart: {window.Debugger.LastApplied?.Said}");
+            Assert.Equal(DebugState.Ended, first.State);
+            Assert.Same(second, window.Debugger.SessionNamed("Second"));
+            Assert.Equal(DebugState.Paused, second.State);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A program's output followed from outside (as a container run's log is) ends with a start that fails, rather
     /// than run for the window's life; and a session whose place stops under it (its container) ends as its program's end,
     /// said so, never as the debugger failing.</summary>
     [AvaloniaFact]
     public void A_failed_start_ends_the_output_it_followed_and_a_place_that_stopped_is_said_as_the_programs_end()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         List<int> followers = [];
         EventHandler<ChildStart> started = (_, child) =>
         {
@@ -328,6 +484,44 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         }
     }
 
+    /// <summary>A program's output followed from outside, as a container service's log is into its Debug tab, shows to its
+    /// last word once what follows it ends, as the container's end ends docker logs: a last line ended by a carriage return
+    /// alone comes whole with it, the carriage return let go rather than held for good for a line feed that never comes.</summary>
+    [AvaloniaFact]
+    public void Output_followed_from_outside_shows_its_last_line_ended_by_a_carriage_return_once_it_ends()
+    {
+        MainWindow window = pair.Open(Counter, languageServer: false);
+        Process? looping = null;
+        try
+        {
+            ProcessStartInfo start = ChildProcesses.DotnetCommand([Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"), "sleep"]);
+            start.RedirectStandardOutput = true;
+            looping = ChildProcesses.Start(start);
+            // What a container's log ends with as the container ends: a line, then one ended by a carriage return alone.
+            AdapterPlace place = Here(follow: false) with
+            {
+                Output = () => OperatingSystem.IsWindows()
+                    ? ChildProcesses.Command("powershell", ["-NoProfile", "-Command", "[Console]::Out.Write('first words' + [char]10 + 'last words' + [char]13)"])
+                    : ChildProcesses.Command("/bin/sh", ["-c", "printf 'first words\\nlast words\\r'"]),
+            };
+            Assert.Null(Ui.Await(window.Debugger.AttachAsync(looping.Id, "Followed", place: place), "the attach in its place"));
+            DebugSession followed = window.Debugger.SessionNamed("Followed")!;
+            Ui.WaitFor(() => window.Debugger.Output(followed).ToString().Contains("first words\nlast words\r", StringComparison.Ordinal),
+                $"the followed output's last line in its console with the carriage return that ended it, not held for good: [{window.Debugger.Output(followed)}]");
+            Task letGo = followed.DetachAsync();
+            Ui.WaitFor(() => letGo.IsCompleted && followed.State == DebugState.Ended, "the session to let its program go and end");
+        }
+        finally
+        {
+            window.Close();
+            if (looping is not null)
+            {
+                Processes.Kill(looping.Id);
+                looping.Dispose();
+            }
+        }
+    }
+
     /// <summary>A place whose adapter runs here, as a container's runs over docker exec: the IDE's own adapter given the flags
     /// a place's adapter is given, a program's output followed from outside when asked (DebuggableConsoleApp, which writes on
     /// for good), and whether the place still runs as given.</summary>
@@ -362,7 +556,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     /// greyed, its button and its ×.</summary>
     private static List<(string Name, bool Chosen, bool Greyed, ToggleButton Button, Button Close)> Tabs(MainWindow window)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         Ui.Settle();
         return [.. window.BottomPanel.Debug.HeaderTools.GetVisualDescendants().OfType<ToggleButton>().Select(button =>
         {
@@ -381,15 +575,6 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         window.MouseMove(editor.TranslatePoint(editor.PointOf(at) + new Point(1, editor.LineHeight / 2), window)!.Value, Avalonia.Input.RawInputModifiers.None);
         Ui.WaitFor(() => window.Assist.HoverText is not null, $"the card on {text}");
         return window.Assist.HoverText!;
-    }
-
-    /// <summary>A click on a control of the window, where it is drawn.</summary>
-    private static void ClickOn(MainWindow window, Control control)
-    {
-        Point centre = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(centre, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(centre, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
     }
 
     /// <summary>Two programs, First and Second, each adding one three times with the Counter their projects share from
@@ -418,7 +603,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             {
                 Directory.CreateDirectory(Path.Combine(folder, name));
                 File.WriteAllText(Path.Combine(folder, name, $"{name}.csproj"),
-                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
+                    $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
                     + "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n"
                     + "    <Compile Include=\"../Shared/Counter.cs\" Link=\"Counter.cs\" />\n  </ItemGroup>\n</Project>\n");
                 File.WriteAllText(Path.Combine(folder, name, "Program.cs"),

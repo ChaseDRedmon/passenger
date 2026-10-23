@@ -215,12 +215,10 @@ public static class Extensions
 
     /// <summary>How long code the debugger runs in the program (a getter, a watch's call) may take before
     /// it is stopped, so one that never returns cannot hang the debugger (upstream #30). A static of the adapter's
-    /// process, one per debug session whichever window started it; the adapter takes PASSENGER_EVAL_TIMEOUT_MS
-    /// (the tests' run gives 1 s), and the waits for an abort to take scale with it.</summary>
-    public static TimeSpan EvaluationTimeout { get; set; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>The variable that gives <see cref="EvaluationTimeout"/> in milliseconds.</summary>
-    public const string EvaluationTimeoutVariable = "PASSENGER_EVAL_TIMEOUT_MS";
+    /// process, one per debug session whichever window started it; the adapter takes <see
+    /// cref="Dap.AdapterEnvironment.EvaluationTimeout"/> (the tests' run gives 3 s), and the waits for an abort to take scale
+    /// with it.</summary>
+    public static TimeSpan EvaluationTimeout { get; set; } = Dap.AdapterEnvironment.DefaultEvaluationTimeout;
 
     /// <summary>How long an evaluation past its time is looked at for a moment it runs managed code, and how long an abort
     /// asked then may take, before the evaluation is left to run on to its own end: 2 s of the 5 s.</summary>

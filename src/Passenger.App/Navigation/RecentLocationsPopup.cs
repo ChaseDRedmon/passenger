@@ -121,9 +121,7 @@ public sealed class RecentLocationsPopup : UserControl
     {
         switch (e.Key)
         {
-            case Key.Down or Key.Up when list.ItemCount > 0:
-                list.SelectedIndex = Math.Clamp(list.SelectedIndex + (e.Key == Key.Down ? 1 : -1), 0, list.ItemCount - 1);
-                list.ScrollIntoView(list.SelectedIndex);
+            case Key.Up or Key.Down or Key.PageUp or Key.PageDown when ListKeys.Move(list, e):
                 e.Handled = true;
                 break;
             case Key.Enter:

@@ -109,9 +109,6 @@ public sealed class PackageSourceSet
     public bool Allows(string feed, string id) =>
         mapping?.IsEnabled != true || mapping.GetConfiguredPackageSources(id).Contains(feed, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The user's own nuget.config, where NuGet keeps what a person adds without naming a file.</summary>
-    public ConfigFile? UserFile => Files.FirstOrDefault(f => f.Place == ConfigPlace.User);
-
     /// <summary>Reads the sources for a folder. NuGet makes the user's nuget.config, naming nuget.org, when there is
     /// none, as any restore would.</summary>
     public static PackageSourceSet Load(string root)

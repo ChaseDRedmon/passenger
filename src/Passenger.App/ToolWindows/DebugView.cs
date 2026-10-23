@@ -32,11 +32,29 @@ public sealed class DebugTab(string name, OutputView console) : Observable
     /// <summary>Its session, from its first moment; null until the debugger hands it over.</summary>
     public DebugSession? Session { get; internal set; }
 
+    /// <summary>Unformatted output from this program, on the debugger transport's callback thread.</summary>
+    public event EventHandler<OutputEvent>? ProgramOutput;
+
+    /// <summary>This session started, paused, ran on or ended.</summary>
+    public event EventHandler? StateChanged;
+
+    /// <summary>The owner's restart for edits Hot Reload cannot apply, instead of a configuration restart.</summary>
+    public Func<HotReloadOutcome, Task<bool>>? RestartFor { get; set; }
+
+    internal bool OpeningStopped { get; set; }
+    internal void OnProgramOutput(OutputEvent output) => ProgramOutput?.Invoke(this, output);
+    internal void OnStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
+
     /// <summary>The session's built lines, from its start to its end.</summary>
     internal BuiltLines? Lines { get; set; }
 
     /// <summary>The session's Hot Reload, when it has one.</summary>
     internal Debugging.HotReload? HotReload { get; set; }
+
+    /// <summary>Its program as an Avalonia or WPF app with Passenger's inspector in it, from its launch until the tab goes
+    /// (ended with its session, its failed bindings kept while the tab is); null for any other program. The Live Visual
+    /// Tree, binding values and agents' app tools follow the chosen tab's.</summary>
+    public LiveTree.LiveApp? App { get; internal set; }
 
     /// <summary>Whether its program was launched with its output in this console, rather than attached to or in the terminal.</summary>
     internal bool OwnsConsole { get; init; }
@@ -190,9 +208,8 @@ public sealed class DebugView : DockPanel
         topBar.Bind(Border.BorderBrushProperty, topBar.GetResourceObservable("Passenger.Divider"));
 
         // Rider's toggle under the program's own buttons: pressed while every breakpoint is muted.
-        mute = new ToggleButton { Classes = { "tool" }, Content = new PathIcon() };
+        mute = ToolButtons.Toggle("Icon.MuteBreakpoints", "Mute Breakpoints");
         ActionTips.Set(mute, AppActions.MuteBreakpoints, "Mute Breakpoints");
-        ((PathIcon)mute.Content).Bind(PathIcon.DataProperty, mute.GetResourceObservable("Icon.MuteBreakpoints"));
         mute.Click += (_, _) => ActionRequested?.Invoke(this, AppActions.MuteBreakpoints);
 
         // A Debug window too short for its buttons (at 1400 by 880 the last went under the status bar) puts the rest behind More.
@@ -506,10 +523,8 @@ public sealed class DebugView : DockPanel
 
     private Button Tool(string action, string icon, string tip)
     {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
+        Button button = ToolButtons.Of(icon, tip, () => ActionRequested?.Invoke(this, action));
         ActionTips.Set(button, action, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => ActionRequested?.Invoke(this, action);
         tools[action] = button;
         return button;
     }

@@ -42,7 +42,7 @@ public sealed class PublishDialog : Window
     private readonly ComboBox deploymentBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = new[] { FrameworkDependent, SelfContainedMode } };
     private readonly ComboBox runtimeBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox folderBox = new() { Classes = { "search" } };
-    private readonly Button browse = new() { Content = "Browse...", Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Button browse = new() { Content = "Browse…", Margin = new Thickness(8, 0, 0, 0) };
     private readonly TextBlock destination = new() { Classes = { "muted" }, FontSize = 12, TextTrimming = TextTrimming.PathSegmentEllipsis, Margin = new Thickness(LabelWidth, 4, 0, 0) };
     private readonly TextBlock copied = new() { Classes = { "muted" }, FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(LabelWidth, 2, 0, 0), IsVisible = false };
     private readonly CheckBox singleFileBox = new() { Content = "Produce a single file" };

@@ -11,17 +11,14 @@ namespace Passenger.App.Explorer;
 /// since MSBuild has nothing to say of it and one just made would otherwise vanish.</summary>
 internal sealed class ProjectFiles
 {
-    /// <summary>Never shown: the system's folder metadata, which no project means to hold.</summary>
-    private static readonly HashSet<string> Hidden = new(StringComparer.OrdinalIgnoreCase) { ".DS_Store", "Thumbs.db" };
-
     private readonly string root;
-    private readonly Dictionary<string, List<(string Name, string Path)>> files = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, HashSet<string>> folders = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<(string Name, string Path)>> files = new(PathNames.Comparer);
+    private readonly Dictionary<string, HashSet<string>> folders = new(PathNames.Comparer);
 
     public ProjectFiles(ProjectModel project)
     {
         root = project.Folder;
-        HashSet<string> seen = new(PathNames.Comparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+        HashSet<string> seen = new(PathNames.Comparer);
         foreach (EvaluatedItem item in project.Evaluated?.Items ?? [])
         {
             string logical = Logical(item);
@@ -33,7 +30,7 @@ internal sealed class ProjectFiles
             int slash = logical.LastIndexOf('/');
             string folder = slash < 0 ? string.Empty : logical[..slash];
             string name = logical[(slash + 1)..];
-            if (name.Length == 0 || Hidden.Contains(name) || !seen.Add(item.Path))
+            if (name.Length == 0 || PathNames.IsSystemFile(name) || !seen.Add(item.Path))
             {
                 continue;
             }
@@ -65,7 +62,7 @@ internal sealed class ProjectFiles
             string parent = slash < 0 ? string.Empty : relative[..slash];
             if (!folders.TryGetValue(parent, out HashSet<string>? names))
             {
-                folders[parent] = names = new(StringComparer.OrdinalIgnoreCase);
+                folders[parent] = names = new(PathNames.Comparer);
             }
             if (!names.Add(relative[(slash + 1)..]))
             {
@@ -81,7 +78,7 @@ internal sealed class ProjectFiles
     {
         foreach ((string folder, List<(string Name, string Path)> held) in files)
         {
-            if (held.FirstOrDefault(f => string.Equals(f.Path, path, PathNames.Comparison)) is { Name: { } name })
+            if (held.FirstOrDefault(f => PathNames.Same(f.Path, path)) is { Name: { } name })
             {
                 return folder.Length == 0 ? name : $"{folder}/{name}";
             }
@@ -95,7 +92,7 @@ internal sealed class ProjectFiles
     /// <summary>The folders at a place: those the project holds something in, and those on disk with nothing in them.</summary>
     public IEnumerable<string> FoldersIn(string relative)
     {
-        HashSet<string> names = folders.TryGetValue(relative, out HashSet<string>? held) ? new(held, StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> names = folders.TryGetValue(relative, out HashSet<string>? held) ? new(held, PathNames.Comparer) : new(PathNames.Comparer);
         try
         {
             foreach (DirectoryInfo folder in new DirectoryInfo(PathOf(relative)).EnumerateDirectories())

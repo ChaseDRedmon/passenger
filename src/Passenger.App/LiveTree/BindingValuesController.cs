@@ -99,22 +99,26 @@ public sealed class BindingValuesController
     public void Bind(ProjectSession next)
     {
         UiThread.Check();
+        if (session is { } previous)
+        {
+            previous.Debug.StateChanged -= OnDebugStateChanged;
+            previous.Debug.SelectionChanged -= OnSelectedAppChanged;
+            previous.LiveAppChanged -= OnSelectedAppChanged;
+        }
         session = next;
-        next.Debug.StateChanged += (_, _) =>
-        {
-            if (session == next)
-            {
-                Invalidate();
-            }
-        };
-        next.LiveAppChanged += (_, _) =>
-        {
-            if (session == next)
-            {
-                FollowApp(next.LiveApp);
-            }
-        };
+        next.Debug.StateChanged += OnDebugStateChanged;
+        next.Debug.SelectionChanged += OnSelectedAppChanged;
+        next.LiveAppChanged += OnSelectedAppChanged;
         FollowApp(next.LiveApp);
+        Invalidate();
+    }
+
+    private void OnDebugStateChanged(object? sender, EventArgs e) => Invalidate();
+
+    private void OnSelectedAppChanged(object? sender, EventArgs e)
+    {
+        UiThread.Check();
+        FollowApp(session?.LiveApp);
         Invalidate();
     }
 
@@ -334,9 +338,10 @@ public sealed class BindingValuesController
         try
         {
             IReadOnlyList<DapThread> threads = await debugged.ThreadsAsync();
+            // The thread running Main is known by the debugger's mark, as an app may name it anything; the first listed
+            // stands in only where the debugger knows none.
             List<int> tried = [stop.Thread];
-            tried.AddRange(threads.Where(t => t.Name == "Main Thread").Select(t => t.Id));
-            tried.AddRange(threads.Take(1).Select(t => t.Id));
+            tried.AddRange((threads.Any(t => t.IsMain == true) ? threads.Where(t => t.IsMain == true) : threads.Take(1)).Select(t => t.Id));
             foreach (int thread in tried.Distinct())
             {
                 if ((await debugged.StackTraceAsync(thread)).FirstOrDefault() is not { } top)

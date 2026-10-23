@@ -2,45 +2,175 @@ using System.Text.RegularExpressions;
 using Avalonia.Controls;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.App.Aspire;
 using Passenger.Editor;
+using Passenger.Roslyn.Extension;
 using Passenger.Text;
 
 namespace Passenger.App;
 
 /// <summary>Something a run configuration runs from a line of an open file: a Compose configuration's service on its line
 /// of a compose file the configuration reads, or a Dockerfile configuration's image on its Dockerfile's final FROM.</summary>
-public sealed record RunTarget(int Line, RunConfiguration Configuration, string? Service);
+public sealed record RunTarget(int Line, RunConfiguration Configuration, string? Service, AspireRunResource? Declaration = null);
 
-/// <summary>The gutter's run icons beside what the folder's container configurations run: each service of a compose
-/// file a Compose configuration reads, and the final FROM of a Dockerfile a Dockerfile configuration builds, only in files
-/// a configuration uses. A click opens the menu that runs or debugs it. They are
-/// read from the file's text as typed, once typing pauses, and again as the configurations change.</summary>
+/// <summary>The gutter's run icons beside what the folder's run configurations run: each service of a compose file a Compose
+/// configuration reads, the final FROM of a Dockerfile a Dockerfile configuration builds, only in files a configuration
+/// uses, and each project resource an open AppHost file declares. A click opens the menu that runs or debugs it. A compose
+/// file's and a Dockerfile's are read from the text as typed, once typing pauses, and again as the configurations change; an
+/// AppHost's are asked of the language server for that AppHost alone, as one of its open files opens or its text pauses,
+/// and stand while they were read from the text the file has (by its hash), so no other file's key costs them anything.</summary>
 public partial class MainWindow
 {
     private Debounce? runMarksLater;
+    private CancellationTokenSource? readingAspireMarks;
+
+    /// <summary>The project resources each AppHost declares, as last read, by the AppHost a configuration runs.</summary>
+    private readonly Dictionary<string, IReadOnlyList<AspireRunResource>> aspireRunMarks = new(Core.PathNames.Comparer);
+
+    /// <summary>The AppHosts whose resources are read once typing pauses: one whose open file's text changed or opened.</summary>
+    private readonly HashSet<string> aspireMarksToRead = new(Core.PathNames.Comparer);
+
+    /// <summary>Each open AppHost file's text hash, worked out once a version, which its resources are matched by.</summary>
+    private readonly Dictionary<OpenDocument, (int Version, string Hash)> aspireHashes = [];
+
+    /// <summary>The language server the AppHosts' resources were read from: one started again reads them again.</summary>
+    private CSharp.CSharpService? aspireMarksFrom;
 
     private void AddRunMarks()
     {
         runMarksLater = new Debounce(TimeSpan.FromMilliseconds(300), () =>
         {
-            ShowRunMarks();
+            _ = ReadRunMarksAsync();
             return Task.CompletedTask;
         });
+        Closed += (_, _) =>
+        {
+            runMarksLater.Stop();
+            readingAspireMarks?.Cancel();
+        };
         Editors.Opened += (_, document) =>
         {
             document.Text.Changed += (_, _) =>
             {
-                if (document.RunMarks.Count > 0 || IsRunFile(document.Path))
+                if (AspireAppHostOf(document) is { } appHost)
+                {
+                    aspireMarksToRead.Add(appHost);
+                    runMarksLater.Restart();
+                }
+                else if (document.RunMarks.Count > 0 || IsRunFile(document.Path))
                 {
                     runMarksLater.Restart();
                 }
             };
             ShowRunMarks(document);
+            if (AspireAppHostOf(document) is { } opened)
+            {
+                aspireMarksToRead.Add(opened);
+                runMarksLater.Restart();
+            }
+            else if (IsRunFile(document.Path))
+            {
+                runMarksLater.Restart();
+            }
         };
+        Editors.Closed += (_, document) => aspireHashes.Remove(document);
     }
 
-    /// <summary>Whether a file is one a run icon may stand in: a compose file or a Dockerfile.</summary>
+    /// <summary>Whether a file is a compose file or a Dockerfile, where a container configuration's run icon may stand.</summary>
     private static bool IsRunFile(string path) => Web.ComposeDeclarations.IsCompose(path) || Web.WebLanguages.IsDockerfile(Path.GetFileName(path));
+
+    /// <summary>The AppHost an open C# file is a source of, as a configuration names it; null for any other file, whose keys
+    /// read no AppHost's resources.</summary>
+    private string? AspireAppHostOf(OpenDocument document) =>
+        document.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? session.AspireFiles.AppHostOf(document.Path) : null;
+
+    /// <summary>The run configurations or the language server changed: the AppHosts of the open files whose resources were
+    /// never read (or, with <paramref name="again"/>, every one, the server being another) are read once typing pauses.</summary>
+    private void ReadOpenAspireMarks(bool again)
+    {
+        if (again)
+        {
+            aspireRunMarks.Clear();
+        }
+        foreach (OpenDocument document in Editors.Documents)
+        {
+            if (AspireAppHostOf(document) is { } appHost && !aspireRunMarks.ContainsKey(appHost))
+            {
+                aspireMarksToRead.Add(appHost);
+            }
+        }
+        runMarksLater?.Restart();
+    }
+
+    /// <summary>The marks as the open files' texts stand, then each AppHost waiting to be read, one at a time, by one read
+    /// that takes up those added meanwhile.</summary>
+    private async Task ReadRunMarksAsync()
+    {
+        ShowRunMarks();
+        ProjectSession current = session;
+        if (readingAspireMarks is not null || aspireMarksToRead.Count == 0 || current.IsEnded || current.CSharp is not { IsReady: true })
+        {
+            return;
+        }
+        using IDisposable held = BackgroundWork.Scope();
+        using CancellationTokenSource cancel = new();
+        readingAspireMarks = cancel;
+        try
+        {
+            while (aspireMarksToRead.FirstOrDefault() is { } appHost && session == current && !current.IsEnded && !cancel.IsCancellationRequested)
+            {
+                aspireMarksToRead.Remove(appHost);
+                RunConfiguration? configuration = Configurations.FirstOrDefault(c => Core.PathNames.Same(c.Project, appHost)
+                    && current.Aspire.IsAspire(c));
+                IReadOnlyList<AspireRunResource>? resources = null;
+                if (configuration is not null)
+                {
+                    try
+                    {
+                        resources = await ReadAspireConfigurationResourcesAsync(configuration, cancel.Token);
+                    }
+                    catch (Exception error) when (error is IOException or InvalidOperationException or Lsp.LanguageServerFailed)
+                    {
+                    }
+                }
+                if (session != current || cancel.IsCancellationRequested)
+                {
+                    return;
+                }
+                if (resources is null)
+                {
+                    aspireRunMarks.Remove(appHost);
+                }
+                else
+                {
+                    aspireRunMarks[appHost] = resources;
+                }
+                ShowRunMarks();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            readingAspireMarks = null;
+            // What another folder's files are waiting for, the read that held them out having stopped with its folder.
+            if (session != current && aspireMarksToRead.Count > 0)
+            {
+                runMarksLater?.Restart();
+            }
+        }
+    }
+
+    /// <summary>A new session's marks: none read yet, nor any waiting.</summary>
+    private void ForgetRunMarks()
+    {
+        readingAspireMarks?.Cancel();
+        aspireRunMarks.Clear();
+        aspireMarksToRead.Clear();
+        aspireHashes.Clear();
+        aspireMarksFrom = null;
+    }
 
     private void ShowRunMarks()
     {
@@ -63,7 +193,8 @@ public partial class MainWindow
     public IReadOnlyList<RunTarget> RunTargets(OpenDocument document)
     {
         string path = document.Path;
-        if (!IsRunFile(path))
+        string? appHost = AspireAppHostOf(document);
+        if (appHost is null && !IsRunFile(path))
         {
             return [];
         }
@@ -71,7 +202,18 @@ public partial class MainWindow
         List<RunTarget> targets = [];
         foreach (RunConfiguration configuration in Configurations)
         {
-            if (configuration.Kind == RunKind.Compose && configuration.ComposeFiles.Any(f => Core.PathNames.Same(f, path)))
+            if (appHost is not null)
+            {
+                if (Core.PathNames.Same(configuration.Project, appHost) && session.Aspire.IsAspire(configuration)
+                    && aspireRunMarks.TryGetValue(appHost, out IReadOnlyList<AspireRunResource>? resources)
+                    && resources.Any(resource => Core.PathNames.Same(resource.Source, path)))
+                {
+                    string hash = HashOf(document);
+                    targets.AddRange(resources.Where(resource => Core.PathNames.Same(resource.Source, path) && resource.SourceHash == hash)
+                        .Select(resource => new RunTarget(resource.At.Line, configuration, resource.Name, resource)));
+                }
+            }
+            else if (configuration.Kind == RunKind.Compose && configuration.ComposeFiles.Any(f => Core.PathNames.Same(f, path)))
             {
                 targets.AddRange(ServiceLines(text).Select(s => new RunTarget(s.Line, configuration, s.Service)));
             }
@@ -82,6 +224,19 @@ public partial class MainWindow
             }
         }
         return targets;
+    }
+
+    /// <summary>An open AppHost file's text hash, as the language server's reading of its resources names it.</summary>
+    private string HashOf(OpenDocument document)
+    {
+        int version = document.Text.Version;
+        if (aspireHashes.TryGetValue(document, out (int Version, string Hash) known) && known.Version == version)
+        {
+            return known.Hash;
+        }
+        string hash = TextHash.Of(document.Text.Snapshot.ToString());
+        aspireHashes[document] = (version, hash);
+        return hash;
     }
 
     /// <summary>The Dockerfile a Dockerfile configuration builds: its own, else its project's beside it.</summary>
@@ -150,7 +305,7 @@ public partial class MainWindow
         foreach (RunTarget target in here)
         {
             string what = target.Service ?? target.Configuration.Name;
-            if (target.Service is { } service && InRunNow(document.Path, service))
+            if (!target.Configuration.Aspire && target.Service is { } service && InRunNow(document.Path, service))
             {
                 if (joined.Add(service))
                 {
@@ -169,9 +324,9 @@ public partial class MainWindow
             MenuItem run = new() { Header = $"Run '{what}'{from}" };
             run.Click += (_, _) => RunTarget(target);
             MenuItem debug = new() { Header = $"Debug '{what}'{from}" };
-            debug.Click += (_, _) => RunTarget(target, Containers.ContainerStart.Debug);
+            debug.Click += (_, _) => RunTarget(target, RunStart.Debug);
             MenuItem profile = new() { Header = $"Profile '{what}'{from}" };
-            profile.Click += (_, _) => RunTarget(target, Containers.ContainerStart.Profile);
+            profile.Click += (_, _) => RunTarget(target, RunStart.Profile);
             menu.Items.Add(run);
             menu.Items.Add(debug);
             menu.Items.Add(profile);
@@ -187,8 +342,12 @@ public partial class MainWindow
     /// <summary>Runs (or debugs, or profiles) what a run icon stands beside: a Compose configuration's one service (with what
     /// it depends on, the service alone debugged or profiled), or a Dockerfile configuration; what stopped it, if anything,
     /// is in the status bar.</summary>
-    public Task<string?> RunTarget(RunTarget target, Containers.ContainerStart how = Containers.ContainerStart.Run)
+    public Task<string?> RunTarget(RunTarget target, RunStart how = RunStart.Run)
     {
+        if (target.Configuration.Aspire)
+        {
+            return RunAspireTargetAsync(target, how);
+        }
         RunConfiguration configuration = target.Service is { } service
             ? target.Configuration.Copied() with
             {
@@ -198,7 +357,58 @@ public partial class MainWindow
                 ServiceActions = new Dictionary<string, ServiceStart>(target.Configuration.ServiceActions) { [service] = ServiceStart.Debug },
             }
             : target.Configuration;
-        return how == Containers.ContainerStart.Profile ? ProfileAsync(configuration) : buildRun.RunContainersAsync(configuration, how);
+        return how == RunStart.Profile ? ProfileAsync(configuration) : buildRun.RunContainersAsync(configuration, how);
+    }
+
+    private async Task<string?> RunAspireTargetAsync(RunTarget target, RunStart how)
+    {
+        ProjectSession current = session;
+        if (target.Service is not { } name)
+        {
+            return "No Aspire project resource is selected";
+        }
+        IReadOnlyList<AspireRunResource> declared = await ReadAspireConfigurationResourcesAsync(target.Configuration, CancellationToken.None);
+        if (session != current || current.IsEnded || target.Declaration is not { } original
+            || !declared.Any(resource => resource == original)
+            || !Editors.Documents.Any(document => Core.PathNames.Same(document.Path, original.Source)
+                && TextHash.Of(document.Text.Snapshot.ToString()) == original.SourceHash))
+        {
+            return "The AppHost source changed; open its gutter action again";
+        }
+        if (current.Aspire.FindApp(target.Configuration.Project) is { } app)
+        {
+            IReadOnlyList<AspireResource> resources = await ReadAspireResourcesAsync(app.Configuration.Project);
+            if (session != current || current.IsEnded)
+            {
+                return "The solution was closed";
+            }
+            AspireResource[] matches = [.. resources.Where(resource => resource.Name == name || resource.DisplayName == name)];
+            if (matches.Length != 1)
+            {
+                return "The selected Aspire resource is unavailable or ambiguous";
+            }
+            AspireResource resource = matches[0];
+            return how switch
+            {
+                RunStart.Debug => await DebugAspireResourceAsync(app.Configuration.Project, resource.Name),
+                RunStart.Profile => await ProfileAspireResourceAsync(app.Configuration.Project, resource.Name),
+                _ => await RestartAspireServiceAsync(current, new(app.Configuration.Project, resource), debugging: false),
+            };
+        }
+        if (session != current || current.IsEnded || declared.Count(resource => resource.Name == name) != 1)
+        {
+            return "The selected AppHost resource changed";
+        }
+        RunConfiguration configuration = target.Configuration with
+        {
+            ServiceActions = declared.ToDictionary(resource => resource.Name,
+                resource => resource.Name == name && how is RunStart.Debug or RunStart.Profile ? ServiceStart.Debug : ServiceStart.Run,
+                StringComparer.Ordinal),
+            ServiceProjects = declared.ToDictionary(resource => resource.Name, resource => resource.Project, StringComparer.Ordinal),
+            LaunchService = name,
+        };
+        return how == RunStart.Profile ? await buildRun.ProfileAspireAsync(configuration)
+            : await buildRun.RunAspireAsync(configuration, null, RunStart.Run);
     }
 
     /// <summary>Whether a compose file's service is a .NET service of the container run under way, which reads that file.</summary>

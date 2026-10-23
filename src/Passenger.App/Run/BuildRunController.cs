@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Passenger.App.Aspire;
 using Passenger.App.Containers;
 using Passenger.App.CSharp;
 using Passenger.App.Debugging;
@@ -29,7 +30,8 @@ public sealed record BuildRunParts(
     Func<string, ProcessStartInfo, Task<TerminalRun>> InTerminal,
     Action<LaunchPlan, Task> OpenBrowser,
     Func<string> StateFolder,
-    ActionWork Work)
+    ActionWork Work,
+    Func<RunConfiguration, CancellationToken, Task<string?>>? PrepareAspire = null)
 {
     /// <summary>Shows a Compose project in the Containers window, chosen there, as a container run comes up.</summary>
     public Action<string>? Reveal { get; init; }
@@ -37,8 +39,9 @@ public sealed record BuildRunParts(
     /// <summary>Where the window's container tools come from, which Debug of a container configuration puts in each service.</summary>
     public Func<Containers.ContainerToolsSource>? Tools { get; init; }
 
-    /// <summary>The dotnet <c>dev-certs</c> runs through for a container run's HTTPS services: the machine's, or a test's stand-in.</summary>
-    public Containers.DotnetWords? DevCertificates { get; init; }
+    /// <summary>The dotnet <c>dev-certs</c> runs through for a run that serves HTTPS (containers' or Aspire's): the machine's,
+    /// or a test's stand-in.</summary>
+    public DotnetWords? DevCertificates { get; init; }
 
     /// <summary>Asks the person whether to make and trust the development certificate (true) or run over HTTP (false), given
     /// the configuration, the services that serve HTTPS and whether there is none at all; the question closed unanswered
@@ -56,6 +59,10 @@ public sealed record BuildRunParts(
     /// <summary>Whether nobody is at the window to ask (an agent's own IDE, <c>--mcp</c>): what would ask the person takes the
     /// way that asks nothing, saying so.</summary>
     public bool AsksNoOne { get; init; }
+
+    /// <summary>Has the window's profiler record a service of a run of services as it runs, where its kind runs it (in its
+    /// container, or on this machine): null once it records, else why not.</summary>
+    public Func<ServiceRun, IRunService, CancellationToken, Task<string?>>? ProfileService { get; init; }
 }
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of
@@ -103,6 +110,8 @@ public sealed partial class BuildRunController
     {
         this.session = session;
         this.parts = parts;
+        // A Debug tab that comes or goes brings its app's failed bindings to Problems, or takes them away.
+        session.InspectedChanged += (_, _) => ShowBindings();
         session.Builder.Line += (_, line) =>
         {
             if (reading is not null && BuildOutput.Continuing(reading, line) is { } longer)
@@ -125,11 +134,32 @@ public sealed partial class BuildRunController
             }
         };
         session.Builder.Exited += (_, code) => OnBuilt(code);
+        // An Aspire service held at its start is attached to as DCP starts it, through the run of services' one attach.
+        session.Aspire.AttachStart = async (app, service, purpose, stop) =>
+        {
+            List<string> notes = [];
+            string? refused = await AttachStartAsync(app, service, purpose, notes, stop);
+            foreach (string note in notes)
+            {
+                app.Console.Append($"{note}\n");
+            }
+            return refused;
+        };
+        session.Aspire.Chosen = (configuration, service) =>
+            chosenDebugged.TryGetValue(configuration, out Dictionary<string, bool>? choices) && choices.TryGetValue(service, out bool debugged) ? debugged : null;
+        session.Aspire.Changed += (_, _) =>
+        {
+            if (!session.IsEnded)
+            {
+                ShowBindings();
+                RunningChanged?.Invoke(this, EventArgs.Empty);
+            }
+        };
         session.Runner.Exited += (_, code) =>
         {
             parts.Views.Run.SetRunning(false);
             RunningChanged?.Invoke(this, EventArgs.Empty);
-            parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, "run"));
+            parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
         };
     }
 
@@ -146,7 +176,7 @@ public sealed partial class BuildRunController
     public bool IsBuilding => building is not null;
 
     /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
-    public bool IsRunning => session.Runner.IsRunning || session.InTerminal is { IsRunning: true };
+    public bool IsRunning => session.Aspire.IsRunning || session.Runner.IsRunning || session.InTerminal is { IsRunning: true };
 
     /// <summary>Whether the program Run started runs under dotnet watch (Settings' Hot Reload when running), which applies
     /// the edits of each file saved.</summary>
@@ -155,7 +185,9 @@ public sealed partial class BuildRunController
     private bool watching;
 
     /// <summary>The end of the program Run last started, in the Run window or the terminal, with its exit code.</summary>
-    public Task<int> RunEnd => session.InTerminal?.Ended ?? session.Runner.Ended;
+    public Task<int> RunEnd => aspireEnd ?? session.InTerminal?.Ended ?? session.Runner.Ended;
+
+    private Task<int>? aspireEnd;
 
     /// <summary>The project folder the Run window's program came from and the Debug window's, where a relative path in
     /// their output is looked for first.</summary>
@@ -251,7 +283,7 @@ public sealed partial class BuildRunController
         parts.Views.Build.SetRunning(true);
         if (OpensBuildWindow(cause))
         {
-            parts.Dock.Show("build");
+            parts.Dock.Show(ToolWindowIds.Build);
         }
         building = new TaskCompletionSource();
         BackgroundWork.Track(building.Task);
@@ -364,11 +396,11 @@ public sealed partial class BuildRunController
         int errors = problems.Count(p => p.Severity == ProblemSeverity.Error);
         int warnings = problems.Count - errors;
         string noun = buildKind switch { BuildKind.Rebuild => "Rebuild", BuildKind.Clean => "Clean", BuildKind.Publish => "Publish", _ => "Build" };
-        string warned = warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "";
+        string warned = warnings > 0 ? $" with {Plural.Of(warnings, "warning")}" : "";
         FinishBuild(session.Builder.WasStopped ? new BuildOutcome(BuildStatus.Stopped, $"{noun} stopped")
             : code == 0 && publishing is { } publish ? Published(publish, warned)
             : code == 0 ? new BuildOutcome(BuildStatus.Succeeded, $"{noun} succeeded{warned}")
-            : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}; "
+            : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {Plural.Of(errors, "error")}, {Plural.Of(warnings, "warning")}; "
                 + (errors > 0 ? "Problems lists them" : $"dotnet exited with code {code}, the Build window says why")));
     }
 
@@ -394,7 +426,7 @@ public sealed partial class BuildRunController
         parts.Say(outcome.Message, Place(outcome));
         if (ShowsBuildResults(outcome))
         {
-            parts.Dock.Show("build");
+            parts.Dock.Show(ToolWindowIds.Build);
         }
         try
         {
@@ -411,9 +443,9 @@ public sealed partial class BuildRunController
     /// output when it failed with none read; nowhere for a build that succeeded cleanly, was stopped or never started.</summary>
     private StatusPlace? Place(BuildOutcome ended) =>
         ended is { Succeeded: true, Published: { } folder } && parts.ShowFolder is { } show
-            ? new StatusPlace($"open {Path.GetFileName(folder)} in {ChildProcesses.FileManager}", () => show(folder))
+            ? new StatusPlace($"open {Path.GetFileName(folder)} in {FileManager.Name}", () => show(folder))
         : ended.Problems.Count > 0 ? StatusPlace.Problems(parts.Dock, parts.Views.Problems, ProblemsTab.Build, _ => true)
-        : ended.Status == BuildStatus.Failed ? StatusPlace.Window(parts.Dock, "build")
+        : ended.Status == BuildStatus.Failed ? StatusPlace.Window(parts.Dock, ToolWindowIds.Build)
         : null;
 
     /// <summary>The last build's problems in the Problems window, its title counting them.</summary>
@@ -421,7 +453,7 @@ public sealed partial class BuildRunController
     {
         List<Problem> problems = session.Problems;
         parts.Views.Problems.Show(problems);
-        if (parts.Dock["problems"] is { } problemsWindow)
+        if (parts.Dock[ToolWindowIds.Problems] is { } problemsWindow)
         {
             problemsWindow.Title = problems.Count == 0 ? "Problems" : $"Problems {problems.Count}";
         }
@@ -432,7 +464,7 @@ public sealed partial class BuildRunController
     {
         try
         {
-            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, session.Projects, parts.StateFolder(), stop), null);
+            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, session.Projects, session.Workspace, parts.StateFolder(), stop), null);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -475,16 +507,22 @@ public sealed partial class BuildRunController
     /// uses the terminal; under dotnet watch as Settings' Hot Reload says, or as <paramref name="hotReload"/> does (an agent's
     /// run, whose headless IDE keeps the default settings). Null once it runs (<see cref="RunEnd"/> is its end), else why it
     /// could not (a program Profile started has the Run console, say), which the status bar says too.</summary>
-    public async Task<string?> RunAsync(string? arguments = null, bool? hotReload = null)
+    public async Task<string?> RunAsync(string? arguments = null, bool? hotReload = null, CancellationToken cancellation = default)
     {
         if (session.Configurations.Chosen is not { } chosen)
         {
             return Said("Nothing to run: no executable project");
         }
+        if (session.Aspire.IsAspire(chosen))
+        {
+            RunStart mode = (hotReload ?? parts.Settings().HotReload) ? RunStart.HotReload : RunStart.Run;
+            return await RunAspireAsync(chosen, arguments, mode, cancellation);
+        }
         if (IsRunning)
         {
             return Said("Already running");
         }
+        aspireEnd = null;
         // The Run console is one program's: Profile's writes there too, from its start to its end.
         if (parts.Work.Of(AppActions.Profile) is { } profiling)
         {
@@ -503,7 +541,7 @@ public sealed partial class BuildRunController
             using (work)
             {
                 // With Hot Reload through the debugger in each service: dotnet watch would need the SDK in its image.
-                return await RunContainersAsync(chosen, work, hotReload ?? parts.Settings().HotReload ? ContainerStart.HotReload : ContainerStart.Run);
+                return await RunContainersAsync(chosen, work, hotReload ?? parts.Settings().HotReload ? RunStart.HotReload : RunStart.Run);
             }
         }
         using IDisposable held = BackgroundWork.Scope();
@@ -553,7 +591,7 @@ public sealed partial class BuildRunController
             }
             session.InTerminal = null;
             parts.Views.Run.SetRunning(true);
-            parts.Dock.Show("run");
+            parts.Dock.Show(ToolWindowIds.Run);
             parts.Say(running);
             WatchBindings(inspected, parts.Views.Run);
             string? notStarted = Started(watched
@@ -634,7 +672,7 @@ public sealed partial class BuildRunController
             RunningChanged?.Invoke(this, EventArgs.Empty);
             if (session.InTerminal == run)
             {
-                parts.Say(RunEnded(name, code), StatusPlace.Window(parts.Dock, "terminal"));
+                parts.Say(RunEnded(name, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Terminal));
             }
         }
     }
@@ -677,12 +715,133 @@ public sealed partial class BuildRunController
         return problem;
     }
 
+    public async Task<string?> RunAspireAsync(RunConfiguration chosen, string? arguments, RunStart mode, CancellationToken cancellation = default)
+    {
+        string action = mode == RunStart.Debug ? AppActions.Debug : AppActions.RunProgram;
+        if (parts.Work.Begin(action, $"Starting {chosen.Name}…") is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(action)!));
+        }
+        using (work)
+        using (BackgroundWork.Scope())
+        {
+            using CancellationTokenRegistration requestedStop = cancellation.Register(work.Cancel);
+            try
+            {
+                parts.Editors.SaveAll();
+                RunConfiguration configuration = arguments is null ? chosen : chosen with { Arguments = arguments };
+                // A start of the same AppHosts under way (Run's, as Debug begins) ends first, as a container start's does.
+                using StartTaken? taken = await TakeStartAsync([configuration.Project, .. configuration.LinkedAppHosts], work);
+                if (taken is null || session.IsEnded)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
+                if (parts.PrepareAspire is { } prepare && await prepare(configuration, work.Stopping) is { } notReady)
+                {
+                    return Said(notReady);
+                }
+                if (session.IsEnded || work.IsStopped)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
+                // Once, before any AppHost starts, as a container run's certificate is checked before its services come up.
+                HttpsChoice https = await CertificateAsync(chosen.Name, session.Aspire.ServingHttps(configuration), Path.GetDirectoryName(configuration.Project)!,
+                    ContainerPlans.StateOf(parts.StateFolder(), session.Folder ?? Path.GetDirectoryName(configuration.Project)!), export: false, work);
+                if (session.IsEnded || work.IsStopped)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
+                parts.Dock.Show(ToolWindowIds.Aspire);
+                string? problem = await session.Aspire.StartAsync(configuration, mode, BuildBeforeLaunchAsync, work.Stopping, https);
+                if (problem is not null)
+                {
+                    return Said(problem);
+                }
+                AspireAppRun[] running = session.Aspire.Apps.Where(app => !app.IsTest).ToArray();
+                aspireEnd = Ended(running);
+                parts.Say($"{mode switch { RunStart.Debug => "Debugging", RunStart.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}"
+                    + (https.OverHttp is { } overHttp ? $" ({overHttp})" : string.Empty), StatusPlace.Window(parts.Dock, ToolWindowIds.Aspire));
+                RunningChanged?.Invoke(this, EventArgs.Empty);
+                return null;
+            }
+            catch (OperationCanceledException) when (work.IsStopped)
+            {
+                return Said(StoppedStarting(chosen.Name));
+            }
+            catch (Exception error) when (error is LaunchException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                return Said(error.Message);
+            }
+        }
+
+        static async Task<int> Ended(IReadOnlyList<AspireAppRun> running)
+        {
+            int[] codes = await Task.WhenAll(running.Select(app => app.Runner.Ended));
+            return codes.FirstOrDefault(code => code != 0);
+        }
+    }
+
+    public Task<string?> ProfileAspireAsync(RunConfiguration configuration, string? arguments = null, CancellationToken cancellation = default) =>
+        RunAspireAsync(configuration, arguments, RunStart.Profile, cancellation);
+
+    public async Task<string?> RerunAspireAsync(CancellationToken cancellation = default)
+    {
+        if (session.Configurations.Chosen is not { } chosen || session.Aspire.FindApp(chosen.Project) is not { } main)
+        {
+            return "The chosen Aspire configuration is not running";
+        }
+        if (parts.Work.Begin(AppActions.RunProgram, $"Building {chosen.Name} again…") is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(AppActions.RunProgram)!));
+        }
+        using (work)
+        using (BackgroundWork.Scope())
+        using (cancellation.Register(work.Cancel))
+        {
+            try
+            {
+                parts.Editors.SaveAll();
+                AspireAppRun[] apps = session.Aspire.Apps.Where(app => app.Group == main.Group && !app.Stopping).ToArray();
+                BuildOutcome built = await BuildProjectsAsync(apps.Select(app => app.Configuration.Project).Distinct(StringComparer.Ordinal).ToArray());
+                if (!built.Succeeded)
+                {
+                    return Said(built.Message);
+                }
+                if (session.IsEnded || work.IsStopped)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
+                int changed = 0;
+                foreach (AspireAppRun app in apps)
+                {
+                    // Through the run of services, as a container run's Rerun restarts what changed: sessions first, held again.
+                    List<AspireResourceRun> changes = [.. app.Services.Where(resource => resource.BuildChanged)];
+                    if (changes.Count == 0)
+                    {
+                        continue;
+                    }
+                    if (await RestartServicesAsync(app, changes, work, "its build changed") is { } failed)
+                    {
+                        return Said($"Could not restart {string.Join(", ", changes.Select(resource => resource.Plan.Name))} after their build changed: {failed}");
+                    }
+                    changed += changes.Count;
+                }
+                parts.Say(changed == 0 ? "No service's build changed" : $"Restart requested for {changed} changed services");
+                return null;
+            }
+            catch (Exception error) when (error is IOException or InvalidOperationException or OperationCanceledException or TimeoutException)
+            {
+                return Said(error is OperationCanceledException ? StoppedStarting(chosen.Name) : error.Message);
+            }
+        }
+    }
+
     /// <summary>Resolves and builds the chosen configuration, then launches its plan under the debugger, as Rider's Debug
     /// does, with these arguments in place of its own if given; the Debug window opens on its Console until the program
     /// stops somewhere. Null once its session is open, or what stopped it (a failed build, no configuration, the adapter's
     /// refusal).</summary>
-    public Task<string?> DebugAsync(string? arguments = null) =>
-        session.Configurations.Chosen is { } chosen ? DebugAsync(chosen, arguments) : Task.FromResult<string?>("Nothing to debug: no executable project");
+    public Task<string?> DebugAsync(string? arguments = null, CancellationToken cancellation = default) =>
+        session.Configurations.Chosen is { } chosen ? DebugAsync(chosen, arguments, cancellation) : Task.FromResult<string?>("Nothing to debug: no executable project");
 
     /// <summary>Each configuration Debug launched, by its name, and the arguments it was given, which a restart for Hot
     /// Reload launches again.</summary>
@@ -703,8 +862,12 @@ public sealed partial class BuildRunController
         return await DebugAsync(configuration, arguments);
     }
 
-    private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments)
+    private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments, CancellationToken cancellation = default)
     {
+        if (session.Aspire.IsAspire(chosen))
+        {
+            return await RunAspireAsync(chosen, arguments, RunStart.Debug, cancellation);
+        }
         if (parts.Work.Begin(AppActions.Debug, $"Working out how to debug {chosen.Name}…") is not { } work)
         {
             return ActionWork.Busy(parts.Work.Of(AppActions.Debug)!);
@@ -720,7 +883,7 @@ public sealed partial class BuildRunController
         if (chosen.IsContainer)
         {
             // A session per service, each attached in its container as Compose brings the run up.
-            return await RunContainersAsync(chosen, work, ContainerStart.Debug);
+            return await RunContainersAsync(chosen, work, RunStart.Debug);
         }
         debugged[chosen.Name] = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();
@@ -734,16 +897,15 @@ public sealed partial class BuildRunController
             return why;
         }
         work.Say($"Starting {chosen.Name} under the debugger…");
-        parts.Dock.Show("debug");
+        parts.Dock.Show(ToolWindowIds.Debug);
         parts.Views.Debug.ShowTab(console: true);
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
         DebugProject = Path.GetDirectoryName(plan.Project);
         DebugController debug = session.Debug;
-        // An Avalonia or WPF app is launched with the Live Visual Tree's inspector in it, which ends with this debugging.
-        LaunchPlan launched = session.Inspected(plan);
-        LiveApp? inspected = session.LiveApp;
-        ShowBindings();
-        Task<string?> starting = debug.StartAsync(launched);
+        // An Avalonia or WPF app is launched with the Live Visual Tree's inspector in it, which its tab holds and which ends
+        // with this debugging.
+        (LaunchPlan launched, LiveApp? inspected) = session.Inspected(plan);
+        Task<string?> starting = debug.StartAsync(launched, app: inspected);
         // Its tab, chosen as the start began, has the console its failed bindings are written to.
         WatchBindings(inspected, debug.Chosen?.Console);
         string? refused = await starting;
@@ -823,9 +985,18 @@ public sealed partial class BuildRunController
         }
     }
 
-    /// <summary>The failed bindings of the apps Run and Debug launched last, and what each could not tell, in Problems' Bindings.</summary>
-    public void ShowBindings() => parts.Views.Problems.ShowBindings([.. session.FailedBindings.Select(b => Placed(b.App, b.Failure))],
-        [.. session.InspectedApps.SelectMany(BindingErrors.Untold)]);
+    /// <summary>The failed bindings of the apps Run and Debug launched last, in Problems' Bindings.</summary>
+    public void ShowBindings()
+    {
+        List<(LiveApp App, BindingFailure Failure)> bindings = [.. session.FailedBindings];
+        HashSet<LiveApp> showing = [.. bindings.Select(binding => binding.App)];
+        foreach ((LiveApp App, int Id) key in placed.Keys.Where(key => !showing.Contains(key.App)).ToArray())
+        {
+            placed.Remove(key);
+        }
+        parts.Views.Problems.ShowBindings([.. bindings.Select(binding => Placed(binding.App, binding.Failure))],
+            [.. session.InspectedApps.SelectMany(BindingErrors.Untold)]);
+    }
 
     /// <summary>A failure with its problem, which is placed once, when it first fails: at its misspelt member where its XAML
     /// has it, else at its control's element.</summary>
@@ -863,24 +1034,30 @@ public sealed partial class BuildRunController
     {
         parts.Work.Stop();
         _ = session.Debug.StopAsync();
-        StopRest();
+        _ = StopRest();
     }
 
-    /// <summary>Stop All: as Stop, every program debugged ended rather than the chosen one.</summary>
-    public void StopAll()
+    /// <summary>Stop All, the window's and an agent's stop: as Stop, every program debugged ended rather than the chosen one;
+    /// done once each has ended and a container run's containers are taken down (not left running as its log's end would
+    /// leave them).</summary>
+    public Task StopAllAsync()
     {
         parts.Work.Stop();
-        _ = session.Debug.StopAllAsync();
-        StopRest();
+        Task debugged = session.Debug.StopAllAsync();
+        return Task.WhenAll(debugged, StopRest());
     }
 
-    private void StopRest()
+    /// <summary>What every Stop ends besides the debugger's: a container run (done once its containers are down), Run's
+    /// program in the Run window or the terminal, Profile's, and the build.</summary>
+    private Task StopRest()
     {
-        _ = session.StopContainersAsync();
+        Task containers = session.StopContainersAsync();
+        Task aspire = session.Aspire.StopAllAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
         session.Profiled?.Run.Kill();
         session.Builder.Stop();
+        return Task.WhenAll(containers, aspire);
     }
 
     /// <summary>Rerun's stop: Run's own start under way and the program it started (in the Run window or the terminal), never
@@ -889,6 +1066,7 @@ public sealed partial class BuildRunController
     {
         parts.Work.Of(AppActions.RunProgram)?.Cancel();
         _ = session.StopContainersAsync();
+        BackgroundWork.Track(session.Aspire.StopAllAsync());
         session.Runner.Stop();
         session.InTerminal?.Stop();
     }

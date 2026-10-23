@@ -278,12 +278,12 @@ public sealed partial class PassengerTools
             if (describing)
             {
                 return new RefactorAnswer("safe_delete", $"Safe Delete would take {what} out of {Relative(doomed.Path)}, "
-                    + (uses.Count == 0 ? "used nowhere else" : $"leaving {uses.Count} usage{(uses.Count == 1 ? "" : "s")} that would no longer compile"), [], [], Usages: uses);
+                    + (uses.Count == 0 ? "used nowhere else" : $"leaving {Plural.Of(uses.Count, "usage")} that would no longer compile"), [], [], Usages: uses);
             }
             bool anyway = options is { } given && given.TryGetProperty("deleteAnyway", out JsonElement value) && value.ValueKind == JsonValueKind.True;
             if (uses.Count > 0 && !anyway)
             {
-                throw new InvalidOperationException($"Safe Delete left {what} where it is: it has {uses.Count} usage{(uses.Count == 1 ? "" : "s")} that would no longer compile "
+                throw new InvalidOperationException($"Safe Delete left {what} where it is: it has {Plural.Of(uses.Count, "usage")} that would no longer compile "
                     + $"once it is deleted ({string.Join("; ", uses.Select(u => $"{u.Path}:{u.Line}: {u.Text}"))}). Fix them first, or give deleteAnyway true");
             }
             return Applied("safe_delete", window.Assist.Delete(doomed)) with { Usages = uses.Count > 0 ? uses : null };
@@ -384,7 +384,7 @@ public sealed partial class PassengerTools
         IReadOnlyList<string> files = CodeFiles(scope, path);
         if (describe)
         {
-            return new RefactorAnswer(kind, $"{name} would tidy {files.Count} C# file{(files.Count == 1 ? "" : "s")} of the {scope}",
+            return new RefactorAnswer(kind, $"{name} would tidy {Plural.Of(files.Count, "C# file")} of the {scope}",
                 [.. files.Select(f => new RefactorFile(Relative(f), "unchanged", []))], []);
         }
         // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
@@ -419,7 +419,7 @@ public sealed partial class PassengerTools
                 }
             }
         }
-        return new RefactorAnswer(kind, $"{name} changed {tidied.Count} of the {files.Count} C# file{(files.Count == 1 ? "" : "s")} of the {scope}", tidied, left);
+        return new RefactorAnswer(kind, $"{name} changed {tidied.Count} of the {Plural.Of(files.Count, "C# file")} of the {scope}", tidied, left);
 
         async Task Tidied(OpenDocument document, LspDocument? lsp)
         {

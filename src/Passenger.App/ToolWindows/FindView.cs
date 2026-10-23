@@ -150,10 +150,10 @@ public sealed class FindView : DockPanel
                 continue;
             }
             List<FindRow> projects = [.. ofKind.GroupBy(u => u.Project).OrderBy(g => g.Key, StringComparer.Ordinal).Select(project =>
-                new FindRow(project.Key, Count(project.Count()), 1, null, [.. project.GroupBy(u => u.Path).OrderBy(g => g.Key, StringComparer.Ordinal).Select(file =>
-                    new FindRow(Path.GetFileName(file.Key), Count(file.Count()), 2, null, [.. file.OrderBy(u => u.Line).ThenBy(u => u.Column).Select(u =>
+                new FindRow(project.Key, Core.Plural.Of(project.Count(), "usage"), 1, null, [.. project.GroupBy(u => u.Path).OrderBy(g => g.Key, StringComparer.Ordinal).Select(file =>
+                    new FindRow(Path.GetFileName(file.Key), Core.Plural.Of(file.Count(), "usage"), 2, null, [.. file.OrderBy(u => u.Line).ThenBy(u => u.Column).Select(u =>
                         new FindRow(u.LineText.Trim(), (u.Line + 1).ToString(), 3, u, []))]))]))];
-            roots.Add(new FindRow(name, Count(ofKind.Count), 0, null, projects));
+            roots.Add(new FindRow(name, Core.Plural.Of(ofKind.Count, "usage"), 0, null, projects));
         }
         Search search = new(title, roots);
         searches.Add(search);
@@ -163,7 +163,6 @@ public sealed class FindView : DockPanel
         }
         ShowSearch(search);
 
-        static string Count(int count) => count == 1 ? "1 usage" : $"{count} usages";
     }
 
     /// <summary>Shows a kept search again, as a click on its tab does.</summary>

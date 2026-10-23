@@ -25,7 +25,7 @@ public partial class MainWindow
 
     private void AddPublishing()
     {
-        actions!.Add(new IdeAction(A.Publish, "Publish...", "Build", c => ShowPublish(PublishTarget(c).Project!))
+        actions!.Add(new IdeAction(A.Publish, "Publish…", "Build", c => ShowPublish(PublishTarget(c).Project!))
         {
             WhyNot = c => PublishTarget(c).Why,
             Menus = [new MenuPlace("Build", 2, 0)],
@@ -39,7 +39,6 @@ public partial class MainWindow
             Words = ["Republish", "dotnet publish"],
             Works = A.Publish,
         });
-        Explorer.WhyNotPublish = project => Projects.FirstOrDefault(p => PathNames.Same(p.Path, project)) is { } model ? PublishProfiles.WhyNot(model) : "It is not one of the folder's projects";
     }
 
     /// <summary>The project Publish publishes: the one chosen in the Explorer or holding the file shown, else the solution's
@@ -48,7 +47,7 @@ public partial class MainWindow
     {
         if (Folder is null)
         {
-            return (null, NoFolder);
+            return (null, Refusals.NoFolder);
         }
         IReadOnlyList<string> chosen = ChosenProjects(context) ?? SelectedProjects();
         if (chosen.Count > 1)
@@ -71,7 +70,7 @@ public partial class MainWindow
     {
         if (Folder is null)
         {
-            return (null, null, NoFolder);
+            return (null, null, Refusals.NoFolder);
         }
         PublishMemory memory = session.Publishing;
         if (PublishTarget(context).Project is { } chosen && memory.ProfileOf(chosen) is { } profile)
@@ -82,7 +81,7 @@ public partial class MainWindow
         {
             return (last, lastProfile, null);
         }
-        return (null, null, "Nothing has been published here yet: Publish... first");
+        return (null, null, $"Nothing has been published here yet: {actions![A.Publish]!.Title} first");
     }
 
     private async Task PublishAgainAsync(ActionContext context)

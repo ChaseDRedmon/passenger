@@ -15,7 +15,7 @@ public partial class MainWindow
     private void AddPackages()
     {
         nuget = new ToolWindows.NuGetView(() => Projects, () => Solution?.Path is { } solution ? Path.GetDirectoryName(solution) : Folder);
-        Dock.Add(new Docking.ToolWindow("nuget", "NuGet", "Icon.Package", nuget, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.NuGet, "NuGet", "Icon.Package", nuget, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowNuGet,
             HeaderTools = nuget.Tabs,
@@ -23,10 +23,10 @@ public partial class MainWindow
         });
         nuget.SaveFirst = () => Editors.SaveAll();
         nuget.Work = work;
-        nuget.Changed += (_, _) =>
+        nuget.Changed += (_, outcome) =>
         {
             // dotnet add package wrote the project, and Directory.Packages.props under central management.
-            FollowWritten(Editors.Documents.Select(d => d.Path).Where(MSBuild.MSBuildFiles.Is));
+            FollowWritten(outcome.Changed);
             ReloadSolution();
         };
         nuget.LinkClicked += (_, link) => Browse(link);

@@ -27,17 +27,13 @@ internal static class Evaluation
     /// <summary>The most folders stamped for one project, so a wildcard over a folder of thousands is not walked at length.</summary>
     private const int FolderLimit = 20_000;
 
-    private static StringComparer PathComparer => OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
-
-    private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
     /// <summary>Evaluates the projects asked, handing each over as it is done; cancelled, it starts no other project.</summary>
     public static void Run(EvaluateParams asked, Action<EvaluatedProject> evaluated, CancellationToken cancel)
     {
         using ProjectCollection collection = new(asked.Properties.ToDictionary(p => p.Key, p => p.Value), loggers: null, ToolsetDefinitionLocations.Default);
         EvaluationContext context = EvaluationContext.Create(EvaluationContext.SharingPolicy.Shared);
         ParallelOptions parallel = new() { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancel };
-        ConcurrentDictionary<string, (EvaluatedProject Outer, IReadOnlyList<string> Frameworks)> targeted = new(PathComparer);
+        ConcurrentDictionary<string, (EvaluatedProject Outer, IReadOnlyList<string> Frameworks)> targeted = new(PathNames.Comparer);
         // Load-balanced, so each worker takes the next project in the order asked: the active file's first.
         Parallel.ForEach(Partitioner.Create(asked.Projects.ToArray(), loadBalance: true), parallel, path =>
         {
@@ -49,7 +45,7 @@ internal static class Evaluation
             }
         });
         List<(EvaluatedProject Outer, IReadOnlyList<string> Frameworks)> inOrder =
-            [.. asked.Projects.Distinct(PathComparer).Where(targeted.ContainsKey).Select(p => targeted[p])];
+            [.. asked.Projects.Distinct(PathNames.Comparer).Where(targeted.ContainsKey).Select(p => targeted[p])];
         Parallel.ForEach(Partitioner.Create(inOrder.ToArray(), loadBalance: true), parallel,
             t => evaluated(Frameworks(t.Outer, t.Frameworks, collection, context, asked.Properties)));
     }
@@ -102,8 +98,8 @@ internal static class Evaluation
             EvaluatedProject inner = Read(outer.Path, loaded, frameworks, [.. frameworks], outer.Inputs[0], []);
             return inner with
             {
-                Inputs = [.. outer.Inputs.Concat(inner.Inputs).DistinctBy(s => s.Path, PathComparer)],
-                Folders = [.. outer.Folders.Concat(inner.Folders).DistinctBy(s => s.Path, PathComparer)],
+                Inputs = [.. outer.Inputs.Concat(inner.Inputs).DistinctBy(s => s.Path, PathNames.Comparer)],
+                Folders = [.. outer.Folders.Concat(inner.Folders).DistinctBy(s => s.Path, PathNames.Comparer)],
             };
         }
         catch (Exception error) when (error is InvalidProjectFileException or IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
@@ -134,35 +130,45 @@ internal static class Evaluation
             OutputType = NonEmpty(first.GetPropertyValue("OutputType")),
             TargetFrameworks = frameworks,
             IsTestProject = each.Any(p => p.GetPropertyValue("IsTestProject").Equals("true", StringComparison.OrdinalIgnoreCase)),
+            IsAspireHost = each.Any(p => p.GetPropertyValue("IsAspireHost").Equals("true", StringComparison.OrdinalIgnoreCase)),
             Dependencies = [.. each.Select((p, i) => Dependencies(p, named[i]))],
             Items = items,
             Properties = Carried(first, excluded),
-            Inputs = [file, .. each
-                .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
-                .Distinct(PathComparer)
-                .Where(i => !excluded.Any(root => i.StartsWith(root, PathComparison)))
-                .Select(Stamps.File)
-                .Concat(LookedFor(path, first))
-                .DistinctBy(s => s.Path, PathComparer)],
-            Folders = Folders(path, folders, items),
+            Inputs = Inputs(file, each, excluded, LookedFor(path, first)),
+            Folders = Folders(path, folders, items.Select(i => i.Path)),
         };
     }
+
+    /// <summary>The files evaluations of a project read, stamped, each once: the project file as it was read, the imports
+    /// outside the SDK and package folders (<see cref="OutsideRoots"/>), and <paramref name="also"/> (what else the caller
+    /// read, and what it looks for above the project, <see cref="LookedFor"/>). Evaluate's, a design-time build's and
+    /// inspect's alike.</summary>
+    internal static IReadOnlyList<Stamp> Inputs(Stamp file, IEnumerable<Project> evaluations, IReadOnlyCollection<string> outside, IEnumerable<Stamp> also) =>
+        [file, .. evaluations
+            .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
+            .Distinct(PathNames.Comparer)
+            .Where(i => !outside.Any(root => i.StartsWith(root, PathNames.Comparison)))
+            .Select(Stamps.File)
+            .Concat(also)
+            .DistinctBy(s => s.Path, PathNames.Comparer)];
 
     /// <summary>The folders a project's files come from, stamped: those under its own (<see cref="Walked"/>, stamped before
     /// it was evaluated), and the folder of each file it takes from elsewhere (../Shared/*.cs), not all under it: a file at
     /// the repository's top (a README packed with every project) would have the whole repository walked.</summary>
-    internal static IReadOnlyList<Stamp> Folders(string path, IReadOnlyList<Stamp> walked, IEnumerable<EvaluatedItem> items)
+    internal static IReadOnlyList<Stamp> Folders(string path, IReadOnlyList<Stamp> walked, IEnumerable<string> files)
     {
         string own = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
-        return [.. walked, .. items
-            .Where(i => !i.Path.StartsWith(own, PathComparison))
-            .Select(i => Path.GetDirectoryName(i.Path)!)
-            .Distinct(PathComparer)
-            .Where(d => !walked.Any(f => PathComparer.Equals(f.Path, d)) && Directory.Exists(d))
+        return [.. walked, .. files
+            .Where(f => !f.StartsWith(own, PathNames.Comparison))
+            .Select(f => Path.GetDirectoryName(f)!)
+            .Distinct(PathNames.Comparer)
+            .Where(d => !walked.Any(f => PathNames.Same(f.Path, d)) && Directory.Exists(d))
             .Select(Stamps.Folder)];
     }
 
-    private static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
+    /// <summary>One evaluation of a project, of one framework when <paramref name="framework"/> is given: evaluate's, a
+    /// design-time build's and inspect's alike.</summary>
+    internal static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
     {
         Dictionary<string, string> global = new(properties, StringComparer.OrdinalIgnoreCase);
         if (framework is not null)
@@ -191,7 +197,7 @@ internal static class Evaluation
             if (project.GetProperty(name) is { EvaluatedValue.Length: > 0 } property)
             {
                 string? file = property.Xml?.ContainingProject?.FullPath;
-                bool own = file is { Length: > 0 } && !excluded.Any(root => file.StartsWith(root, PathComparison));
+                bool own = file is { Length: > 0 } && !excluded.Any(root => file.StartsWith(root, PathNames.Comparison));
                 carried[name] = new EvaluatedProperty(property.EvaluatedValue, own);
             }
         }
@@ -216,7 +222,7 @@ internal static class Evaluation
                 NonEmpty(p.GetMetadataValue("VersionOverride")) ?? NonEmpty(p.GetMetadataValue("Version")) ?? central.GetValueOrDefault(p.EvaluatedInclude),
                 p.GetMetadataValue("IsImplicitlyDefined").Equals("true", StringComparison.OrdinalIgnoreCase)))
             .DistinctBy(p => p.Name, StringComparer.OrdinalIgnoreCase)];
-        List<string> projects = [.. project.GetItems("ProjectReference").Select(r => r.GetMetadataValue("FullPath")).Distinct(PathComparer)];
+        List<string> projects = [.. project.GetItems("ProjectReference").Select(r => r.GetMetadataValue("FullPath")).Distinct(PathNames.Comparer)];
         return new FrameworkDependencies(framework, packages, projects)
         {
             FrameworkReferences = [.. project.GetItems("FrameworkReference").Select(r => r.EvaluatedInclude).Distinct(StringComparer.OrdinalIgnoreCase)],
@@ -257,7 +263,7 @@ internal static class Evaluation
     /// SDK, its props and targets) and the NuGet package folders.</summary>
     internal static HashSet<string> OutsideRoots(Project project)
     {
-        HashSet<string> roots = new(PathComparer);
+        HashSet<string> roots = new(PathNames.Comparer);
         foreach (string property in new[] { "NetCoreRoot", "NetCoreTargetingPackRoot", "MSBuildBinPath", "MSBuildExtensionsPath", "NuGetPackageRoot" })
         {
             Add(project.GetPropertyValue(property));
@@ -318,11 +324,11 @@ internal static class Evaluation
     internal static IReadOnlyList<Stamp> Failed(string path, Stamp file, Exception error)
     {
         List<Stamp> read = [file];
-        if (error is InvalidProjectFileException { ProjectFile: { Length: > 0 } broken } && !PathComparer.Equals(broken, path))
+        if (error is InvalidProjectFileException { ProjectFile: { Length: > 0 } broken } && !PathNames.Same(broken, path))
         {
             read.Add(Stamps.File(broken));
         }
-        return [.. read.Concat(LookedFor(path, null)).DistinctBy(s => s.Path, PathComparer)];
+        return [.. read.Concat(LookedFor(path, null)).DistinctBy(s => s.Path, PathNames.Comparer)];
     }
 
     /// <summary>Every folder under a project's that a wildcard would enter, stamped: each once whatever links reach it, and

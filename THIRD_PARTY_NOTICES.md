@@ -3,8 +3,8 @@
 What Passenger uses that others made, and under what terms. Each package is named by its NuGet id, with the licence
 and the copyright its package states (its nuspec's licence expression or licence file and its copyright line, else its
 authors). `tools/check-notices.py`, which CI runs after its restore (`just notices` here), fails naming any package
-the solution restores, Roslyn's language server carries, or the tool manifest (`dotnet-tools.json`) pins, that is not
-named here.
+the solution restores, Roslyn's language server carries, the container tools carry, or the tool manifest
+(`dotnet-tools.json`) pins, that is not named here.
 
 ## In the app
 
@@ -16,11 +16,14 @@ HTML, CSS, JSON, Dockerfile and YAML language servers' npm packages under `web/`
 adds to it (`just package-win`), and in the Linux archive Passenger's own launcher, install script, desktop entry and
 file types beside it (`just package-linux`). The Linux build carries the Linux natives of SkiaSharp, HarfBuzzSharp and
 dbgshim for its processor (x64 or Arm64), each named below. Packages restored with these whose files no build carries
-(SkiaSharp's and HarfBuzzSharp's natives for the browser, dbgshim's for 32-bit Arm and musl Linux and for 32-bit
-Windows) are left out.
+(SkiaSharp's and HarfBuzzSharp's natives for the browser, dbgshim's for 32-bit Arm and for 32-bit Windows) are left
+out; dbgshim's musl Linux natives are the container tools' (below), which the app never carries.
 
 | Package | In Passenger | Licence | Copyright |
 |---|---|---|---|
+| `Google.Protobuf` | Aspire resource service protocol messages | BSD-3-Clause | Copyright 2015, Google Inc. |
+| `Grpc.Net.Client`, `Grpc.Net.Common`, `Grpc.Core.Api` | Native Aspire interactions and resource commands | Apache-2.0 | Copyright 2019 The gRPC Authors |
+| `Microsoft.Extensions.Logging.Abstractions` | gRPC client's logging contracts | MIT | © Microsoft Corporation. All rights reserved. |
 | The .NET runtime (`Microsoft.NETCore.App`) | the app and the debugger are self-contained; Roslyn's server runs on the installed .NET | MIT | © Microsoft Corporation. All rights reserved. |
 | `Avalonia`, `Avalonia.Desktop`, `Avalonia.Native`, `Avalonia.Win32`, `Avalonia.X11`, `Avalonia.FreeDesktop`, `Avalonia.FreeDesktop.AtSpi`, `Avalonia.Remote.Protocol`, `Avalonia.Themes.Fluent`, `Avalonia.Skia`, `Avalonia.HarfBuzz`, `Avalonia.Headless` | the UI, and the headless platform the screenshots draw on | MIT | Copyright 2013-2026 © The AvaloniaUI Project |
 | `Avalonia.Fonts.Inter` | the Inter typeface, itself under the SIL Open Font License 1.1, Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter) | MIT | Copyright 2013-2026 © The AvaloniaUI Project |
@@ -157,6 +160,31 @@ carry of their own. `tools/check-notices.py` fails naming any package the lock f
 | `fast-uri` | ajv's URIs | BSD-3-Clause | Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae |
 | `require-from-string` | ajv's | MIT | Copyright (c) Vsevolod Strukchinsky <floatdrop@gmail.com> (github.com/floatdrop) |
 
+## In the container tools
+
+What `just container-tools` makes and each release carries as `Passenger-container-tools-<rid>.tar.gz`
+(`src/Passenger.ContainerTools`, for linux-x64, linux-arm64, linux-musl-x64 and linux-musl-arm64): `passenger-tools`,
+which Passenger copies into or mounts in a Linux container to debug and profile the .NET programs there, self-contained,
+with `LICENSE.txt` and notices of its own beside it, `THIRD-PARTY-NOTICES.txt`, written at its build by
+`tools/Passenger.Notices` from the packages its `.deps.json` names (each one's copyright, licence text and own notices),
+then the debugger's copied source below (SharpDbg and ICorDebugSharp, ILSpy's and ClrDebug's code). The app never
+carries them. `tools/check-notices.py` fails naming any package they carry on one of their systems that is not named
+here.
+
+| Package | In the container tools | Licence | Copyright |
+|---|---|---|---|
+| The .NET runtime (`Microsoft.NETCore.App.Runtime.linux-x64`, `Microsoft.NETCore.App.Runtime.linux-arm64`, `Microsoft.NETCore.App.Runtime.linux-musl-x64`, `Microsoft.NETCore.App.Runtime.linux-musl-arm64`) | the runtime pack of the tools' system, which they run on whatever .NET the container has, or none | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.DbgShim`, `Microsoft.Diagnostics.DbgShim.linux-x64`, `Microsoft.Diagnostics.DbgShim.linux-arm64`, `Microsoft.Diagnostics.DbgShim.linux-musl-x64`, `Microsoft.Diagnostics.DbgShim.linux-musl-arm64` | the debugger's way into a runtime (`libdbgshim.so`), the tools' system's alone: on a musl system musl's own (`KeepMuslDbgShim` in the tools' project, since the glibc one needs ld-linux, which Alpine lacks) | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.NETCore.Client` | the diagnostic port: the debugger's attach and the profiler's recording, in the container | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.Runtime` | ClrMD, reading a heap snapshot in the container with its runtime's own DAC | MIT | © Microsoft Corporation. All rights reserved. |
+| `Azure.Identity`, `Azure.Core`, `System.ClientModel`, `System.Memory.Data`, `Microsoft.Identity.Client`, `Microsoft.Identity.Client.Extensions.Msal`, `Microsoft.IdentityModel.Abstractions`, `Microsoft.Security.AntiSSRF`, `Microsoft.Bcl.AsyncInterfaces` | ClrMD's, carried as the app carries them (above) | MIT | © Microsoft Corporation. All rights reserved. |
+| `System.Security.Cryptography.ProtectedData` (4.5.0) | the Azure sign-in's (MSAL's), which ClrMD never asks for | MIT (its package's `LICENSE.TXT`; its nuspec names only the licence's URL) | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.Tracing.TraceEvent` | the profiler's EventPipe providers and their events, with its COM interop assemblies `Dia2Lib.dll` and `TraceReloggerLib.dll`; no Windows native | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.CodeAnalysis.CSharp`, `Microsoft.CodeAnalysis.Common`, `Microsoft.DiaSymReader` | the debugger's expressions | MIT | © Microsoft Corporation. All rights reserved. |
+| `MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler`, `MP.Microsoft.CodeAnalysis.ExpressionEvaluator.ExpressionCompiler` | Roslyn's expression compiler, as in the app | MIT | no copyright line; its authors: .NET Foundation and contributors |
+| `ICSharpCode.Decompiler` | ILSpy's decompiler: the debugger's frames without source | MIT | Copyright 2011-2026 AlphaSierraPapa |
+| `ZLinq` | the debugger's queries | MIT | © Cysharp, Inc. |
+
 ## Building and testing only
 
 Packages the build or the tests use that no app carries.
@@ -171,6 +199,24 @@ Packages the build or the tests use that no app carries.
 | `xunit.v3`, `xunit.v3.assert`, `xunit.v3.common`, `xunit.v3.core.mtp-v1`, `xunit.v3.extensibility.core`, `xunit.v3.mtp-v1`, `xunit.v3.runner.common`, `xunit.v3.runner.inproc.console`, `xunit.analyzers`, `xunit.runner.visualstudio` | the tests | Apache-2.0 | Copyright (C) .NET Foundation |
 | `Avalonia.Headless.XUnit` | the tests on Avalonia's headless platform | MIT | Copyright 2013-2026 © The AvaloniaUI Project |
 | `Avalonia.Templates` | Avalonia's dotnet new templates, downloaded for the tests' local feed, from which they install them as New Solution does (`AvaloniaApp.Feed`); Passenger never carries them, and installs them only when asked. The package names no licence; its repository's (AvaloniaUI/Avalonia.Templates) is MIT | MIT | Copyright (c) 2023 .NET Foundation and Contributors All Rights Reserved |
+| `Aspire.ProjectTemplates` | Official Aspire starter templates, downloaded for the tests' private template hive; not shipped | MIT | © Microsoft Corporation. All rights reserved. |
+| `Aspire.Hosting`, `Aspire.Hosting.AppHost`, `Aspire.AppHost.Sdk`, `Aspire.Dashboard.Sdk.linux-x64`, `Aspire.Dashboard.Sdk.linux-arm64`, `Aspire.Dashboard.Sdk.osx-x64`, `Aspire.Dashboard.Sdk.osx-arm64`, `Aspire.Dashboard.Sdk.win-x64`, `Aspire.Dashboard.Sdk.win-arm64`, `Aspire.Hosting.Orchestration.linux-x64`, `Aspire.Hosting.Orchestration.linux-arm64`, `Aspire.Hosting.Orchestration.osx-x64`, `Aspire.Hosting.Orchestration.osx-arm64`, `Aspire.Hosting.Orchestration.win-x64`, `Aspire.Hosting.Orchestration.win-arm64`, `Aspire.Cli.linux-x64`, `Aspire.Cli.linux-arm64`, `Aspire.Cli.osx-x64`, `Aspire.Cli.osx-arm64` | official starters' hosting and build tools, restored for the tests' local feed, and the aspire CLI the tests run in a home of their own, never carried by Passenger | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.AspNetCore.OpenApi`, `Microsoft.Extensions.AmbientMetadata.Application`, `Microsoft.Extensions.Compliance.Abstractions`, `Microsoft.Extensions.DependencyInjection.AutoActivation`, `Microsoft.Extensions.Diagnostics.ExceptionSummarization`, `Microsoft.Extensions.Http.Diagnostics`, `Microsoft.Extensions.Http.Resilience`, `Microsoft.Extensions.Resilience`, `Microsoft.Extensions.ServiceDiscovery`, `Microsoft.Extensions.ServiceDiscovery.Abstractions`, `Microsoft.Extensions.Telemetry`, `Microsoft.Extensions.Telemetry.Abstractions`, `Microsoft.OpenApi`, `Microsoft.Win32.SystemEvents`, `System.IO.Hashing` | official starters' dependencies, restored for the tests' local feed | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Extensions.Caching.Abstractions`, `Microsoft.Extensions.Configuration.CommandLine`, `Microsoft.Extensions.Configuration.EnvironmentVariables`, `Microsoft.Extensions.Configuration.FileExtensions`, `Microsoft.Extensions.Configuration.Json`, `Microsoft.Extensions.Configuration.UserSecrets`, `Microsoft.Extensions.Diagnostics`, `Microsoft.Extensions.Diagnostics.Abstractions`, `Microsoft.Extensions.Diagnostics.HealthChecks`, `Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions`, `Microsoft.Extensions.FileProviders.Abstractions`, `Microsoft.Extensions.FileProviders.Physical`, `Microsoft.Extensions.Hosting`, `Microsoft.Extensions.Hosting.Abstractions`, `Microsoft.Extensions.Http`, `Microsoft.Extensions.Logging.Debug`, `Microsoft.Extensions.Logging.EventLog`, `Microsoft.Extensions.Logging.EventSource` | an AppHost's dependencies at the tests' target, which the test project's own restore prunes, restored for the tests' local feed (tests/AspireGraphs) | MIT | © Microsoft Corporation. All rights reserved. |
+| `Grpc.AspNetCore`, `Grpc.AspNetCore.Server`, `Grpc.AspNetCore.Server.ClientFactory`, `Grpc.Net.ClientFactory` | Aspire hosting's gRPC server dependencies, restored for the tests' local feed | Apache-2.0 | Copyright 2019 gRPC Authors |
+| `Grpc.Tools` | Aspire hosting's build-time protocol compiler, restored for the tests' local feed and never run; Passenger's own protocol C# is checked in (`just aspire-protocol`) | Apache-2.0 | Copyright 2018 The gRPC Authors |
+| `ModelContextProtocol` | Aspire hosting's MCP dependency, restored for the tests' local feed | Apache-2.0 | © Model Context Protocol a Series of LF Projects, LLC. |
+| `OpenTelemetry`, `OpenTelemetry.Api`, `OpenTelemetry.Api.ProviderBuilderExtensions`, `OpenTelemetry.Exporter.OpenTelemetryProtocol`, `OpenTelemetry.Extensions.Hosting`, `OpenTelemetry.Instrumentation.AspNetCore`, `OpenTelemetry.Instrumentation.Http`, `OpenTelemetry.Instrumentation.Runtime` | official starters' telemetry dependencies, restored for the tests' local feed | Apache-2.0 | Copyright OpenTelemetry Authors |
+| `AspNetCore.HealthChecks.Uris` | Aspire hosting's health checks, restored for the tests' local feed | Apache-2.0 | no copyright line; its authors: Xabaril Contributors |
+| `KubernetesClient` | Aspire hosting's DCP client, restored for the tests' local feed | Apache-2.0 | 2017 The Kubernetes Project Authors |
+| `Fractions` | Aspire hosting's dependency, restored for the tests' local feed | BSD-2-Clause (the package's license.txt) | Copyright (c) 2013-2022, Daniel Mueller; the nuspec states Copyright 2013-2023 Daniel Mueller |
+| `Hex1b` | Aspire hosting's terminal dependency, restored for the tests' local feed | MIT | Copyright (c) 2024 Mitch Denny |
+| `Polly.RateLimiting` | starters' resilience dependency, restored for the tests' local feed | BSD-3-Clause | Copyright (c) 2024, App vNext |
+| `Polly.Core` | starters' resilience dependency, restored for the tests' local feed | BSD-3-Clause | Copyright (c) 2015-2026, App vNext |
+| `Polly.Extensions` | starters' resilience dependency, restored for the tests' local feed | BSD-3-Clause | Copyright (c) 2024, App vNext |
+| `System.Drawing.Common` | Aspire hosting's dependency, restored for the tests' local feed | MIT | © Microsoft Corporation. All rights reserved. |
+| `QRCoder` | Aspire hosting's dependency, restored for the tests' local feed | MIT | Copyright © 2013-2025 Raffael Herrmann. Copyright © 2024-2025 Shane Krueger. All rights reserved. |
+| `YamlDotNet` | Aspire hosting's dependency, restored for the tests' local feed | MIT | Copyright (c) Antoine Aubry and contributors |
 | `Microsoft.WindowsDesktop.App.Ref` | WPF's reference assemblies, downloaded for the tests' local feed, from which the WPF app `WpfXamlTests` make restores off Windows (`WpfApp`); Passenger reads a WPF project's own copy, never carries one | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.NET.Test.Sdk`, `Microsoft.TestPlatform.TestHost`, `Microsoft.CodeCoverage` | the tests' host | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Testing.Platform`, `Microsoft.Testing.Platform.MSBuild`, `Microsoft.Testing.Extensions.Telemetry`, `Microsoft.Testing.Extensions.TrxReport.Abstractions`, `Microsoft.ApplicationInsights` | xunit.v3's test platform | MIT | © Microsoft Corporation. All rights reserved. |
@@ -236,9 +282,44 @@ licence its package.json states and the copyright line its licence file (else it
 `tools/Passenger.Notices/Licenses/` holds the texts of the licences packages name by SPDX identifier (`MIT.txt`,
 `Apache-2.0.txt`, `ISC.txt`), from the SPDX License List 3.29.0 (https://github.com/spdx/license-list-data), unchanged; its README
 says where each came from. The app's notices, `THIRD-PARTY-NOTICES.txt` beside it, are written from them, from the
-packages themselves and from this file: Roslyn's server's table above, and everything below.
+packages themselves and from this file: Roslyn's server's table above, and everything below; the container tools' carry
+the debugger's two sections below.
 
 <!-- The app's notices (THIRD-PARTY-NOTICES.txt) carry everything below this line as it is. -->
+
+## Aspire dashboard protocol
+
+`src/Passenger.App/Aspire/Protocol/dashboard_service.proto` is copied from
+https://github.com/microsoft/aspire, tag v13.6.2, commit af07e33,
+`src/Aspire.Hosting/Dashboard/proto/dashboard_service.proto`. Only the generated C# namespace is changed. The C# protoc
+generates from it, `DashboardService.cs` and `DashboardServiceGrpc.cs` beside it (`just aspire-protocol`), is under its
+licence too.
+
+```
+MIT License (MIT)
+
+Copyright (c) .NET Foundation and Contributors
+
+All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## SharpDbg and ICorDebugSharp
 

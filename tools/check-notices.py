@@ -3,7 +3,8 @@
 
 The packages are every one the solution's projects use, transitive ones included (`dotnet list package
 --include-transitive`, so the solution must be restored first), every one Roslyn's language server carries under
-roslyn/ (the .deps.json files in its restored package), every npm package the web language servers' lock file pins
+roslyn/ (the .deps.json files in its restored package), every one the container tools carry on one of their systems
+(their restore's files for it, and its runtime pack), every npm package the web language servers' lock file pins
 (src/Passenger.Lsp/WebServers/package-lock.json, carried under web/) and the tests' own does
 (tests/Passenger.Tests/NodePackages/package-lock.json), and every tool the repository's tool manifest pins
 (dotnet-tools.json). A package is named in the notices by its id in backticks. CI runs this after its restore;
@@ -20,17 +21,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOTICES = os.path.join(ROOT, "THIRD_PARTY_NOTICES.md")
 
 # Restored with the packages that use them, but in no app Passenger is published as (macOS, Windows, and Linux on x64
-# and Arm64, whose natives the notices name): their natives are for the browser, 32-bit Arm and musl Linux, and 32-bit
-# Windows. A system Passenger comes to ship for takes its own out of here and into the notices.
+# and Arm64, whose natives the notices name) nor in the container tools (glibc and musl Linux on x64 and Arm64): their
+# natives are for the browser, 32-bit Arm Linux and 32-bit Windows. A system Passenger comes to ship for takes its own
+# out of here and into the notices; one the container tools carry is checked whatever this says.
 NOT_SHIPPED = {
     "HarfBuzzSharp.NativeAssets.WebAssembly",
     "SkiaSharp.NativeAssets.WebAssembly",
     "Microsoft.Diagnostics.DbgShim.linux-arm",
     "Microsoft.Diagnostics.DbgShim.linux-musl-arm",
-    "Microsoft.Diagnostics.DbgShim.linux-musl-arm64",
-    "Microsoft.Diagnostics.DbgShim.linux-musl-x64",
     "Microsoft.Diagnostics.DbgShim.win-x86",
 }
+
+# The container tools' project and the systems they are published for (tools/container-tools.sh), each of which every
+# lock file holds.
+CONTAINER_TOOLS = os.path.join("src", "Passenger.ContainerTools", "Passenger.ContainerTools.csproj")
+CONTAINER_TOOLS_RIDS = ["linux-x64", "linux-arm64", "linux-musl-x64", "linux-musl-arm64"]
 
 
 def dotnet(*args):
@@ -73,6 +78,30 @@ def roslyn_packages():
     return used
 
 
+def container_tools_packages():
+    """Each package the container tools carry on one of their systems: those the tools' restore gives a file for that
+    system (project.assets.json, its runtime, native and resource files; dbgshim's musl natives among them), and the
+    runtime pack each self-contained publish carries."""
+    properties = json.loads(dotnet("msbuild", CONTAINER_TOOLS, "-getProperty:ProjectAssetsFile", "-getProperty:TargetFramework"))["Properties"]
+    assets = properties["ProjectAssetsFile"]
+    if not os.path.exists(assets):
+        sys.exit(f"check-notices: no {assets}; restore the solution first")
+    with open(assets, encoding="utf-8") as f:
+        targets = json.load(f).get("targets", {})
+    used = {}
+    for rid in CONTAINER_TOOLS_RIDS:
+        target = targets.get(f"{properties['TargetFramework']}/{rid}")
+        if target is None:
+            sys.exit(f"check-notices: the container tools' restore has nothing for {rid}; restore the solution first")
+        user = f"the container tools for {rid}"
+        used.setdefault(f"Microsoft.NETCore.App.Runtime.{rid}", set()).add(user)
+        for name, library in target.items():
+            files = [file for kind in ("runtime", "native", "resource") for file in library.get(kind, {}) if not file.endswith("/_._")]
+            if library.get("type") == "package" and files:
+                used.setdefault(name.split("/", 1)[0], set()).add(user)
+    return used
+
+
 def web_packages():
     """Each npm package the web language servers' lock file pins, carried under web/, and each the tests' own lock file
     pins (their project's own ESLint and Prettier)."""
@@ -103,8 +132,11 @@ def main():
     used = solution_packages()
     for package, users in [*roslyn_packages().items(), *web_packages().items(), *tool_packages().items()]:
         used.setdefault(package, set()).update(users)
+    carried = container_tools_packages()
+    for package, users in carried.items():
+        used.setdefault(package, set()).update(users)
     named = named_in_notices()
-    skipped = {package.lower() for package in NOT_SHIPPED}
+    skipped = {package.lower() for package in NOT_SHIPPED} - {package.lower() for package in carried}
     missing = sorted((package for package in used if package.lower() not in named and package.lower() not in skipped),
                      key=str.lower)
     if not missing:

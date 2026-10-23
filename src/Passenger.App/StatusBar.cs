@@ -19,12 +19,10 @@ public sealed record StatusPlace(string Name, Action Go)
     public static StatusPlace Problems(DockHost dock, ProblemsView problems, ProblemsTab tab, Func<Problem, bool>? which = null) =>
         new($"see it in Problems, {ProblemsView.TitleOf(tab)}", () =>
         {
-            dock.Show("problems");
+            dock.Show(ToolWindowIds.Problems);
             problems.Reveal(tab, which);
         });
 
-    /// <summary>Help, Show Log: the log chosen in the file manager.</summary>
-    public static StatusPlace Log { get; } = new($"show the log in {Core.ChildProcesses.FileManager}", ErrorsPopup.ShowLog);
 }
 
 /// <summary>Says something in the window's status bar, with where a click on it shows more (none when null).</summary>
