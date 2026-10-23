@@ -825,6 +825,10 @@ internal static class OwnFiles
 /// and why its image may not be debugged where it runs under emulation, or null.</summary>
 public sealed record ServiceInContainer(string Container, DotnetProcess Program, string Tools, string Started, string? Emulated);
 
+/// <summary>A service's container as the engine says it stands: its service, state, health, published ports, the
+/// container's name and its last exit code.</summary>
+public sealed record ServiceState(string Service, string State, string? Health, string Ports, string? Container, int? ExitCode);
+
 /// <summary>A container configuration running, a run of services (<see cref="ServiceRun"/>) whose services run in containers:
 /// its plan, Compose's watch of the services that ask for one, and each .NET service's build as it was when started, so
 /// Rerun restarts only those whose build changed. Brought up by <see cref="UpAsync"/> (its words in the Run console), taken
@@ -1324,12 +1328,14 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         }
     }
 
-    /// <summary>The services' state as the engine says it now (service, state, health, ports), for an agent.</summary>
-    public async Task<IReadOnlyList<(string Service, string State, string? Health, string Ports)>> StatesAsync(CancellationToken cancel)
+    /// <summary>The services' state as the engine says it now, for an agent.</summary>
+    public async Task<IReadOnlyList<ServiceState>> StatesAsync(CancellationToken cancel)
     {
         IReadOnlyList<JsonElement> rows = await engine.JsonLinesAsync([.. Plan.Compose, "ps", "--all", "--format", "json"], cancel);
-        return [.. rows.Select(r => (ContainerEngine.Text(r, "Service") ?? string.Empty, ContainerEngine.Text(r, "State") ?? string.Empty,
-            ContainerEngine.Text(r, "Health") is { Length: > 0 } health ? health : null, ContainerEngine.Text(r, "Publishers") is null ? ContainerEngine.Text(r, "Ports") ?? string.Empty : Ports(r)))];
+        return [.. rows.Select(r => new ServiceState(ContainerEngine.Text(r, "Service") ?? string.Empty, ContainerEngine.Text(r, "State") ?? string.Empty,
+            ContainerEngine.Text(r, "Health") is { Length: > 0 } health ? health : null,
+            ContainerEngine.Text(r, "Publishers") is null ? ContainerEngine.Text(r, "Ports") ?? string.Empty : Ports(r), ContainerEngine.Text(r, "Name"),
+            int.TryParse(ContainerEngine.Text(r, "ExitCode"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int code) ? code : null))];
 
         static string Ports(JsonElement row) => row.TryGetProperty("Publishers", out JsonElement publishers) && publishers.ValueKind == JsonValueKind.Array
             ? string.Join(", ", publishers.EnumerateArray().Where(p => ContainerEngine.Text(p, "PublishedPort") is not (null or "0"))

@@ -993,8 +993,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `run_output` with it reads a service's
   own console, `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
   ended, or that sends no resources within 30 s, with that as its state and none listed:
-  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation), and `telemetry` reads
-  their logs and traces.
+  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation) beside the container run, each
+  resource in one shape with what reaches its .NET service from here (its container's id too), and `telemetry` reads
+  their logs and traces (Mcp below).
 - `src/Passenger.App/Telemetry` (#405): a run's structured logs and traces, one implementation for every kind of run.
   `ServiceRun.Telemetry` is where a run's are read (`TelemetrySource`: an Aspire dashboard's telemetry API on this machine
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
@@ -1404,7 +1405,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   window's `SettingsRestart`, an agent's `RestartForAgentAsync`, which never asks; under dotnet watch, `SaveForWatchAsync`'s
   last word); the headless `--mcp` IDE
   starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
-  container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests`' actions
+  container configuration debugs each service in a session of its own, answering with them (`sessions`). An agent gets as much
+  from a container run's services as from an AppHost's resources (`PassengerTools.Services.cs`): `workspace` lists the
+  container run beside the AppHosts (`ContainerRunInfo`: its configuration, Compose project, how it was started, state),
+  every resource of either in one shape (`ResourceInfo`; for a .NET service `Reached`: what it is held at its start for,
+  the live Debug tab debugging it and its state, a quiet Hot Reload session, the profiler's recording).
+  `McpTests`' actions
   test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
@@ -2146,7 +2152,8 @@ method leads web's own (a web app's idle threads wait in the runtime's code). `C
 service of that solution's run from the Containers window's rows and the gutter, the others never restarted (web published on
 the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
 Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
-dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`);
+dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`
+and reads the run in `workspace`);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it

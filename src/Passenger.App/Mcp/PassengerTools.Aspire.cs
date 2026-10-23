@@ -145,7 +145,9 @@ public sealed partial class PassengerTools
             .FirstOrDefault();
     }
 
-    private async Task<Workspace> AspireWorkspace(Workspace snapshot, CancellationToken cancel)
+    /// <summary>The workspace with the runs of services under way: each AppHost the window started, with its resources, and
+    /// the container run, with its services, in the one shape (<see cref="ResourceInfo"/>).</summary>
+    private async Task<Workspace> RunsWorkspace(Workspace snapshot, CancellationToken cancel)
     {
         ProjectSession current = Session;
         List<AspireOwnedAppInfo> apps = [];
@@ -167,30 +169,66 @@ public sealed partial class PassengerTools
                 throw new InvalidOperationException("The workspace or owned AppHost changed");
             }
             apps.Add(new AspireOwnedAppInfo(app.Configuration.Project, app.ProcessId ?? 0, state, app.Group,
-                [.. resources.Select(resource => ResourceInfo(app, resource))]));
+                [.. resources.Select(resource => ResourceInfoOf(app, resource))]) { How = Words(app.How) });
         }
-        return snapshot with { AspireApps = apps };
+        ContainerRunInfo? containers = await ContainerRunInfoAsync(cancel);
+        if (Session != current || current.IsEnded)
+        {
+            throw new InvalidOperationException("The workspace changed");
+        }
+        return snapshot with { AspireApps = apps, ContainerRun = containers };
     }
 
     /// <summary>A resource as an agent's workspace has it, its state as the window says it (Not started for one its run
-    /// left unstarted, as its configuration says Don't start).</summary>
-    private static AspireResourceInfo ResourceInfo(AspireAppRun app, AspireResource resource) => new(resource.Name, resource.Generation,
-        resource.DisplayName, AspireJson.String(resource.Data, "resourceType"), app.StateOf(resource), resource.HealthStatus,
-        [.. AspireJson.Array(resource.Data, "urls").Select(url => JsonSerializer.SerializeToElement(new
+    /// left unstarted, as its configuration says Don't start), its container's id where it is one, and what reaches its .NET
+    /// service from here.</summary>
+    private ResourceInfo ResourceInfoOf(AspireAppRun app, AspireResource resource) => Reached(new ResourceInfo(resource.Name,
+        AspireJson.String(resource.Data, "resourceType"), app.StateOf(resource), resource.HealthStatus)
+    {
+        Target = $"{app.Configuration.Project}::{resource.Name}",
+        Generation = resource.Generation,
+        DisplayName = resource.DisplayName,
+        Urls = [.. AspireJson.Array(resource.Data, "urls").Select(url => JsonSerializer.SerializeToElement(new
         {
             name = AspireJson.String(url, "name"),
             url = SafeUrl(AspireJson.String(url, "url")),
-        }))], AspireJson.Array(resource.Data, "relationships"),
-        [.. resource.Commands.Where(command => command.Enabled).Select(command => command.Name)]) { Target = $"{app.Configuration.Project}::{resource.Name}" };
+        }))],
+        Relationships = AspireJson.Array(resource.Data, "relationships"),
+        Commands = [.. resource.Commands.Where(command => command.Enabled).Select(command => command.Name)],
+        Container = AspireJson.Properties(resource.Data, "properties").FirstOrDefault(property => property.Name == "container.id").Value
+            is { ValueKind: JsonValueKind.String } id ? id.GetString() : null,
+    }, app, Session.Aspire.FindService(new AspireSelection(app.Configuration.Project, resource)));
 
     private static string? SafeUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https"
         ? new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty, Query = string.Empty, Fragment = string.Empty }.Uri.AbsoluteUri : null;
 }
 
 public sealed record AspireAppInfo(string AppHostPath, int ProcessId, string State, bool Owned, string? Group);
-public sealed record AspireResourceInfo(string Name, string Generation, string DisplayName, string? Type, string? State,
-    string? Health, IReadOnlyList<JsonElement> Urls, IReadOnlyList<JsonElement> Relationships, IReadOnlyList<string> Commands)
+
+/// <summary>A resource of a run of services as an agent's workspace has it, an AppHost's resource and the container run's
+/// compose service alike: its name, type (Project for a .NET service), state and health, the target the tools' resource
+/// takes; an AppHost's generation, display name, addresses, relationships and enabled commands, a compose service's
+/// published ports; its container (an id, or a compose service's container's name); and for a
+/// .NET service what reaches it from here: what it is held at its start for, the Debug tab debugging it (debug tools'
+/// session) and that session's state, and whether the profiler records it.</summary>
+public sealed record ResourceInfo(string Name, string? Type, string? State, string? Health)
 {
     public string? Target { get; init; }
+    public string? Generation { get; init; }
+    public string? DisplayName { get; init; }
+    public IReadOnlyList<JsonElement>? Urls { get; init; }
+    public string? Ports { get; init; }
+    public IReadOnlyList<JsonElement>? Relationships { get; init; }
+    public IReadOnlyList<string>? Commands { get; init; }
+    public string? Container { get; init; }
+    public string? Held { get; init; }
+    public string? Session { get; init; }
+    public string? Debugger { get; init; }
+    public bool? Profiled { get; init; }
 }
-public sealed record AspireOwnedAppInfo(string AppHostPath, int ProcessId, string State, string Group, IReadOnlyList<AspireResourceInfo> Resources);
+
+public sealed record AspireOwnedAppInfo(string AppHostPath, int ProcessId, string State, string Group, IReadOnlyList<ResourceInfo> Resources)
+{
+    /// <summary>How its run was started: run, debug, hotReload or profile.</summary>
+    public string? How { get; init; }
+}

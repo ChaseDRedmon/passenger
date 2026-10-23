@@ -30,6 +30,9 @@ public sealed class McpContainerDebuggingTests : McpRig
         string? attached = null;
         try
         {
+            JsonElement opened = await Call(client, "workspace");
+            Assert.False(opened.TryGetProperty("containerRun", out _), $"workspace listed a container run before any: {opened}");
+
             JsonElement stop = await Call(client, "debug_start", new() { ["configuration"] = "Compose: compose.yaml", ["waitSeconds"] = 120 });
             Assert.True(stop.TryGetProperty("sessions", out JsonElement sessions), $"debug_start of two services answered no sessions: {stop}");
             string[] each = [.. sessions.EnumerateArray().Select(s => s.GetString()!)];
@@ -37,6 +40,22 @@ public sealed class McpContainerDebuggingTests : McpRig
                 $"debug_start answered: {stop}");
             Assert.Equal("paused", stop.GetProperty("state").GetString());
             Assert.Contains("Program.cs:1:", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
+
+            // workspace lists the run beside the AppHosts, each service as a resource: the .NET ones held for the debugger, each
+            // debugged in its session, and the cache as Compose runs it.
+            JsonElement run = (await Call(client, "workspace")).GetProperty("containerRun");
+            Assert.Equal(("Compose: compose.yaml", project, "debug"),
+                (run.GetProperty("configuration").GetString(), run.GetProperty("project").GetString(), run.GetProperty("how").GetString()));
+            Dictionary<string, JsonElement> services = run.GetProperty("resources").EnumerateArray().ToDictionary(r => r.GetProperty("name").GetString()!);
+            foreach (string service in (string[])["web", "api"])
+            {
+                JsonElement it = services[service];
+                Assert.True((it.GetProperty("type").GetString(), it.GetProperty("state").GetString(), it.GetProperty("held").GetString(), it.GetProperty("session").GetString(),
+                    it.GetProperty("target").GetString()) == ("Project", "running", "debug", service, service)
+                    && it.GetProperty("debugger").GetString() is "paused" or "running", $"workspace listed {service} as {it}");
+            }
+            Assert.True((services["cache"].GetProperty("type").GetString(), services["cache"].GetProperty("state").GetString(), services["cache"].TryGetProperty("held", out _))
+                == ("Container", "running", false), $"workspace listed the cache as {services["cache"]}");
 
             // Each let go from Main's breakpoint once it has stopped there.
             foreach (string service in (string[])["web", "api"])
@@ -60,6 +79,8 @@ public sealed class McpContainerDebuggingTests : McpRig
             // session go, its program running on, and debug_attach attaches to it again as it runs.
             JsonElement unheld = await Call(client, "run", new() { ["resource"] = "web" });
             Assert.Contains("runs without the debugger", unheld.GetProperty("status").GetString(), StringComparison.Ordinal);
+            JsonElement letGo = (await Call(client, "workspace")).GetProperty("containerRun").GetProperty("resources").EnumerateArray().Single(r => r.GetProperty("name").GetString() == "web");
+            Assert.False(letGo.TryGetProperty("held", out _) || letGo.TryGetProperty("session", out _), $"web, run without the debugger, is listed as {letGo}");
             JsonElement reattached = await Call(client, "debug_attach", new() { ["resource"] = "web", ["waitSeconds"] = 2 });
             Assert.True(reattached.GetProperty("state").GetString() is "running" or "paused", $"debug_attach of the compose service web answered: {reattached}");
 

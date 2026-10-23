@@ -96,14 +96,14 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         await Session.AspireFilesRead.WaitAsync(cancel);
         await Task.Yield();
         await Session.Models.Idle.WaitAsync(cancel);
-        return await AspireWorkspace(Snapshot(), cancel);
+        return await RunsWorkspace(Snapshot(), cancel);
     });
 
     [McpServerTool(Name = "workspace", Title = "The workspace", ReadOnly = true), Description(
         "The open folder and solution, its projects (output type, frameworks), the run configurations and the chosen one, " +
         "the language server's state, the open files (unsaved ones marked) and the active file with its caret, and the Aspire " +
-        "AppHosts it runs, each resource's target the tools' resource takes.")]
-    public Task<Workspace> GetWorkspace(CancellationToken cancel = default) => OnUi(cancel, () => AspireWorkspace(Snapshot(), cancel));
+        "AppHosts and container run under way: each resource's state, hold, debug session and the target the tools' resource takes.")]
+    public Task<Workspace> GetWorkspace(CancellationToken cancel = default) => OnUi(cancel, () => RunsWorkspace(Snapshot(), cancel));
 
     [McpServerTool(Name = "open_file", Title = "Show a file", Destructive = false), Description(
         "Opens a file in the editor, at a line and column if given, as the person sees it.")]
@@ -701,10 +701,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         try
         {
-            IReadOnlyList<(string Service, string State, string? Health, string Ports)> states = await run.StatesAsync(cancel);
-            return $"Running {run.Plan.Name} (Compose project {run.Plan.ProjectName}):\n" + string.Join('\n', states.Select(s =>
-                $"  {s.Service}: {s.State}{(s.Health is { } health ? $" ({health})" : string.Empty)}{(s.Ports.Length > 0 ? $", ports {s.Ports}" : string.Empty)}"
-                + (run.Plan.Dotnet.Any(d => d.Service == s.Service) ? ", from Passenger's build" : string.Empty)))
+            IReadOnlyList<global::Passenger.App.Containers.ServiceState> states = await run.StatesAsync(cancel);
+            return $"Running {run.Plan.Name} (Compose project {run.Plan.ProjectName}):\n" + string.Join('\n', ServiceStandings(run, states).Select(s => $"  {s}"))
                 + string.Concat(run.Notes.Select(n => $"\nNote: {n}"));
         }
         catch (Exception failed) when (failed is global::Passenger.App.Containers.ContainerCommandException or TimeoutException or System.Text.Json.JsonException)
@@ -1841,6 +1839,9 @@ public sealed record Workspace(
     string Debugger)
 {
     public IReadOnlyList<AspireOwnedAppInfo> AspireApps { get; init; } = [];
+
+    /// <summary>The container run under way, beside the AppHosts, its services as their resources are; null with none.</summary>
+    public ContainerRunInfo? ContainerRun { get; init; }
 }
 
 public sealed record ProjectInfo(string Name, string Path, string? OutputType, IReadOnlyList<string> TargetFrameworks);
