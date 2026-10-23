@@ -345,6 +345,34 @@ public sealed class McpLanguagesTests : McpRig
         }
     }
 
+    /// <summary>A web app's routes, read from its code: the workspace with routes lists each with its handler, parameters and
+    /// place, and without them says nothing of routes.</summary>
+    [Fact]
+    public async Task An_agent_lists_a_web_apps_routes_read_from_its_code()
+    {
+        string shop = Made("mcproutes-", made =>
+        {
+            WebRoutesTests.WriteShop(made, 5557);
+            Restore.Run(made);
+        });
+        await using McpClient client = await Start(["--mcp", shop]);
+
+        Assert.False((await Call(client, "workspace")).TryGetProperty("routes", out JsonElement unasked) && unasked.ValueKind != JsonValueKind.Null,
+            "The workspace listed routes unasked");
+        JsonElement routes = (await Call(client, "workspace", new() { ["routes"] = true })).GetProperty("routes");
+        string[] listed = [.. routes.EnumerateArray().Select(r => r.GetProperty("route").GetString()!)];
+        foreach (string route in new[] { "GET /api/todos/{id:int}", "PUT /orders/{id:guid}", "GET /api/Products/{id}", "POST /Orders/Edit/{id:int}?handler=Cancel", "GET /counter", "HUB /chat" })
+        {
+            Assert.True(listed.Contains(route), $"The agent's routes lack {route}: {string.Join(", ", listed)}");
+        }
+        JsonElement todo = routes.EnumerateArray().First(r => r.GetProperty("route").GetString() == "GET /api/todos/{id:int}");
+        Assert.Equal(("Minimal API", "lambda", "Program.cs", 11), (todo.GetProperty("kind").GetString(), todo.GetProperty("handler").GetString(),
+            todo.GetProperty("path").GetString(), todo.GetProperty("line").GetInt32()));
+        Assert.Equal(["id:int (route)"], Strings(todo.GetProperty("parameters")));
+        JsonElement order = routes.EnumerateArray().First(r => r.GetProperty("route").GetString() == "PUT /orders/{id:guid}");
+        Assert.Equal(("Orders.Update", "Order"), (order.GetProperty("handler").GetString(), order.GetProperty("body").GetString()));
+    }
+
     /// <summary>A folder of the test's own, written (and restored) by <paramref name="write"/>, removed with the class.</summary>
     private string Made(string name, Action<string> write)
     {

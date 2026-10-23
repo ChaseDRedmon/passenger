@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Passenger.App.ToolWindows;
 using Passenger.Editor;
+using Passenger.Roslyn.Extension;
 
 namespace Passenger.App.Endpoints;
 
@@ -33,12 +34,16 @@ public sealed class EndpointsView : DockPanel
     /// <summary>A file's heading in the list.</summary>
     public sealed record FileRow(string Path, string Name);
 
+    /// <summary>A web project's heading over the routes its code declares.</summary>
+    public sealed record ProjectRow(string Path, string Name);
+
     private readonly ListBox list;
     private readonly TextBlock placeholder;
     private readonly ComboBox environments;
     private readonly EndpointsParts parts;
     private readonly Dictionary<(string File, string Request), bool> outcomes = [];
     private IReadOnlyList<HttpFile> files = [];
+    private IReadOnlyList<WebRoute> routes = [];
     private string? root;
     private int reads;
     private bool shown;
@@ -54,14 +59,30 @@ public sealed class EndpointsView : DockPanel
             Classes = { "tree" },
             ItemTemplate = new FuncDataTemplate<object>((row, _) => row switch
             {
-                FileRow file => FileHeading(file),
+                FileRow file => FileHeading(file.Name, file.Path, "Icon.DocumentText"),
+                ProjectRow project => FileHeading(project.Name, project.Path, "Icon.Endpoints"),
                 EndpointRequest request => Row(request),
+                WebRoute route => RouteRow(route),
                 _ => new TextBlock(),
             }, supportsRecycling: false),
         };
-        list.DoubleTapped += (_, _) => GoToChosen();
+        list.DoubleTapped += (_, _) =>
+        {
+            if (list.SelectedItem is WebRoute route)
+            {
+                RouteGoToRequested?.Invoke(this, route);
+                return;
+            }
+            GoToChosen();
+        };
         list.KeyDown += (_, e) =>
         {
+            if (list.SelectedItem is WebRoute route && e.KeyModifiers == KeyModifiers.None && e.Key is Key.Enter or Key.F4)
+            {
+                (e.Key == Key.Enter ? RouteSendRequested : RouteGoToRequested)?.Invoke(this, route);
+                e.Handled = true;
+                return;
+            }
             if (list.SelectedItem is not EndpointRequest chosen)
             {
                 return;
@@ -77,7 +98,11 @@ public sealed class EndpointsView : DockPanel
                 e.Handled = true;
             }
         };
-        ListMenus.Attach(list, () => list.SelectedItem is not EndpointRequest chosen ? [] :
+        ListMenus.Attach(list, () => list.SelectedItem is WebRoute route ?
+        [
+            .. RouteRequests.Sendable(route) ? (IEnumerable<MenuItem>)[ListMenus.Item("Send Request", "Enter", () => RouteSendRequested?.Invoke(this, route))] : [],
+            ListMenus.Item("Go to Route", "F4", () => RouteGoToRequested?.Invoke(this, route)),
+        ] : list.SelectedItem is not EndpointRequest chosen ? [] :
         [
             ListMenus.Item("Test", "Enter", () => _ = TestAsync(chosen)),
             ListMenus.Item("Interactive Test…", null, () => InteractiveRequested?.Invoke(this, chosen)),
@@ -110,6 +135,23 @@ public sealed class EndpointsView : DockPanel
 
     /// <summary>A request to open in the editor at its request line.</summary>
     public event EventHandler<EndpointRequest>? GoToRequested;
+
+    /// <summary>A route whose request is to be sent, from its row.</summary>
+    public event EventHandler<WebRoute>? RouteSendRequested;
+
+    /// <summary>A route to open in the editor where its code declares it.</summary>
+    public event EventHandler<WebRoute>? RouteGoToRequested;
+
+    /// <summary>The web projects' routes listed, as their code declares them.</summary>
+    public IReadOnlyList<WebRoute> Routes => routes;
+
+    /// <summary>Lists the web projects' routes under the .http files' requests.</summary>
+    public void ShowRoutes(IReadOnlyList<WebRoute> found)
+    {
+        UiThread.Check();
+        routes = found;
+        Refresh();
+    }
 
     /// <summary>A request to test in the Interactive Test dialog.</summary>
     public event EventHandler<EndpointRequest>? InteractiveRequested;
@@ -210,20 +252,29 @@ public sealed class EndpointsView : DockPanel
             rows.Add(new FileRow(file.Path, Core.PathNames.Shown(file.Path, root)));
             rows.AddRange(file.Requests);
         }
+        foreach (IGrouping<string, WebRoute> project in routes.GroupBy(r => r.Project, Core.PathNames.Comparer))
+        {
+            rows.Add(new ProjectRow(project.Key, Path.GetFileNameWithoutExtension(project.Key)));
+            rows.AddRange(project);
+        }
         list.ItemsSource = rows;
-        list.SelectedItem = selected is EndpointRequest was ? rows.OfType<EndpointRequest>().FirstOrDefault(r => r.File == was.File && r.Line == was.Line) : null;
+        list.SelectedItem = selected is EndpointRequest was ? rows.OfType<EndpointRequest>().FirstOrDefault(r => r.File == was.File && r.Line == was.Line)
+            : selected is WebRoute chosen ? rows.OfType<WebRoute>().FirstOrDefault(r => r.Project == chosen.Project && RouteRequests.Title(r) == RouteRequests.Title(chosen) && r.Handler == chosen.Handler)
+            : null;
         placeholder.IsVisible = rows.Count == 0;
     }
 
     /// <summary>Test: the request sent as written, on a client of its own, its answer held to its criteria (an answer
-    /// below 400 when it has none).</summary>
-    public async Task TestAsync(EndpointRequest request)
+    /// below 400 when it has none); to <paramref name="address"/> in place of the host it names when given (the running
+    /// app's), its variables from <paramref name="file"/> as given (one just written) rather than as the list last read it.</summary>
+    public async Task TestAsync(EndpointRequest request, string? address = null, HttpFile? file = null)
     {
         UiThread.Check();
-        list.SelectedItem = request;
+        list.SelectedItem = Listed().FirstOrDefault(r => r.File == request.File && r.Line == request.Line);
         IReadOnlyList<Expectation> criteria = request.Expectations.Count > 0 ? request.Expectations : [Expectation.Answered];
-        EndpointDraft draft = new(request.Method, request.Url, request.Headers, request.Body);
-        switch (await SendAsync(request, draft, new SendOptions(), criteria, Response, TopLevel.GetTopLevel(this) as Window))
+        // Sent to the address given (the running app's), whatever host the file names.
+        EndpointDraft draft = new(request.Method, address is null ? request.Url : RouteRequests.WithHost(request.Url, address), request.Headers, request.Body);
+        switch (await SendAsync(request, draft, new SendOptions(), criteria, Response, TopLevel.GetTopLevel(this) as Window, file))
         {
             case EndpointSent.Answered:
                 Record(request, Response.Passed);
@@ -239,7 +290,7 @@ public sealed class EndpointsView : DockPanel
     /// asked first when it takes something from their computer to a host the folder has not allowed; its body's file is
     /// read only once it may go. What became of it shows in <paramref name="shown"/>.</summary>
     internal async Task<EndpointSent> SendAsync(EndpointRequest request, EndpointDraft draft, SendOptions options,
-        IReadOnlyList<Expectation> criteria, ResponseView shown, Window? owner)
+        IReadOnlyList<Expectation> criteria, ResponseView shown, Window? owner, HttpFile? written = null)
     {
         UiThread.Check();
         if (parts.Work.Begin(AppActions.TestEndpoint, $"Testing {draft.Method} {request.Title}…") is not { } testing)
@@ -252,7 +303,7 @@ public sealed class EndpointsView : DockPanel
         sending = mine;
         try
         {
-            HttpFile file = FileOf(request);
+            HttpFile file = written ?? FileOf(request);
             string? environment = Environment;
             string? folder = root;
             (EndpointCall? call, string? problem) = await BackgroundWork.Run(() => EndpointClient.Prepare(request, draft.Method, draft.Url,
@@ -323,6 +374,8 @@ public sealed class EndpointsView : DockPanel
     /// <summary>Stops a test under way, as the folder closes.</summary>
     public void Stop() => sending?.Cancel();
 
+    private IEnumerable<EndpointRequest> Listed() => (list.ItemsSource as IEnumerable<object> ?? []).OfType<EndpointRequest>();
+
     private HttpFile FileOf(EndpointRequest request) =>
         files.FirstOrDefault(f => f.Path == request.File) ?? new HttpFile(request.File, new Dictionary<string, string>(), []);
 
@@ -345,12 +398,12 @@ public sealed class EndpointsView : DockPanel
         }
     }
 
-    private static Control FileHeading(FileRow file)
+    private static Control FileHeading(string shown, string path, string iconKey)
     {
         PathIcon icon = new() { Width = 14, Height = 14, Margin = new Thickness(0, 0, 6, 0) };
-        icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable("Icon.DocumentText"));
-        TextBlock name = new() { Text = file.Name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-        ToolTip.SetTip(name, file.Path);
+        icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(iconKey));
+        TextBlock name = new() { Text = shown, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        ToolTip.SetTip(name, path);
         return new StackPanel { Orientation = Orientation.Horizontal, Height = ListRow.Height, Margin = new Thickness(8, 0), IsHitTestVisible = false, Children = { icon, name } };
     }
 
@@ -391,6 +444,32 @@ public sealed class EndpointsView : DockPanel
             row.Children.Add(title);
         }
         // The title takes what the row leaves, so a narrow window ends it in an ellipsis and keeps the buttons.
+        return row;
+    }
+
+    /// <summary>A route's row: its method, its template, what declares it (muted), and Send where a request can reach it.</summary>
+    private Control RouteRow(WebRoute route)
+    {
+        DockPanel row = new() { Height = ListRow.Height, Margin = new Thickness(22, 0, 4, 0) };
+        if (RouteRequests.Sendable(route))
+        {
+            Button send = ToolButtons.Of("Icon.Run", "Send Request", () => RouteSendRequested?.Invoke(this, route));
+            send.Name = "routeSend";
+            ((PathIcon)send.Content!).Bind(PathIcon.ForegroundProperty, send.GetResourceObservable("Passenger.Run"));
+            DockPanel.SetDock(send, Dock.Right);
+            row.Children.Add(send);
+        }
+        Border method = MethodTag(route.Kind == RouteKinds.SignalR ? "HUB" : route.Methods.Count == 0 ? "ANY" : route.Methods[0]);
+        DockPanel.SetDock(method, Dock.Left);
+        row.Children.Add(method);
+        // The template first: what declares it takes the room it leaves, and goes before the template ends in an ellipsis.
+        TextBlock template = new() { Text = route.Template + (route.Query is { } query ? "?" + query : string.Empty), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        DockPanel.SetDock(template, Dock.Left);
+        row.Children.Add(template);
+        TextBlock kind = new() { Text = route.Kind, VerticalAlignment = VerticalAlignment.Center, FontSize = 12, Margin = new Thickness(8, 0, 4, 0), TextAlignment = TextAlignment.Right, TextTrimming = TextTrimming.CharacterEllipsis };
+        kind.Bind(TextBlock.ForegroundProperty, kind.GetResourceObservable("Passenger.TextMuted"));
+        row.Children.Add(kind);
+        ToolTip.SetTip(row, $"{RouteRequests.Title(route)}: {route.Handler}");
         return row;
     }
 

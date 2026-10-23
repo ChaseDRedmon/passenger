@@ -85,6 +85,7 @@ public partial class MainWindow : Window
         AddBreadcrumbs();
         AddBookmarks();
         AddEndpoints();
+        AddRoutes();
         AddContainers();
         AddRunMarks();
         AddPlaces();
@@ -155,6 +156,12 @@ public partial class MainWindow : Window
                 ShowTestMenu(editor, active, click.Line);
                 return;
             }
+            if (!click.Context && editor.IsInMarkColumn(click.Position) && active.RouteMarks.Any(m => m.Line == click.Line))
+            {
+                // A web route's icon: the menu that sends its request.
+                ShowRouteMarkMenu(editor, active, click.Line);
+                return;
+            }
             if (!click.Context && editor.IsInMarkColumn(click.Position) && active.RunMarks.Any(m => m.Line == click.Line))
             {
                 // A compose service's or a Dockerfile's run icon: Run (and Debug) of the configurations that run it.
@@ -204,7 +211,9 @@ public partial class MainWindow : Window
         assist.Message += (_, message) => status.Text = message;
         assist.Browse += (_, page) => Browse(page);
         assist.FilesChanged += (_, _) => FilesChanged();
-        usages = new UsageHighlighting(Editors, () => session.CSharp);
+        assist.HttpRouteTargets = HttpRouteTargets;
+        assist.RouteCallers = RouteCallers;
+        usages =new UsageHighlighting(Editors, () => session.CSharp);
         usages.Message += (_, message) => status.Text = message;
         Bottom.Problems.Chosen += (_, problem) =>
         {

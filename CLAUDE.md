@@ -278,8 +278,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Passenger's own extension to the server (`src/Passenger.Roslyn.Extension`, compiled against the server package's own
   assemblies through `RoslynServer.targets`, carried under `roslyn-extension/` with none of them): the server loads it
   with `--extension`, `server/_vs_activateExtension` registers its handlers, and `LspDocument.ExtensionAsync` sends a
-  message through `textDocument/_vs_dipatchExtensionMessage`. A handler reads the server's solution and answers with
-  edits, never changing its workspace. Razor (.razor, .cshtml) is the server's own, cohosted in it: `LspDocument.IsRazor`
+  message through `textDocument/_vs_dipatchExtensionMessage` (`RoslynSession.ExtensionAsync` one about the whole
+  solution, as `ConnectionReads` and `WebRoutes` are). A handler reads the server's solution and answers with
+  edits or what it found, never changing its workspace. Razor (.razor, .cshtml) is the server's own, cohosted in it: `LspDocument.IsRazor`
   opens such a file as `aspnetcorerazor`, its colours take the legend Razor registers as it starts (why the client
   capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
   client of a file's HTML, through the HTML server (below; without Node.js, HTML's element names and global attributes
@@ -568,7 +569,32 @@ window or takes the focus; it shows everything but the system's own window chrom
   redirect is followed by hand: to another origin (scheme, host or port) without the request's headers, and not when it
   would carry the body there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
   variables filled in to `MostFilledIn`; a row's last outcome is kept by its name, else its method and URL. Tests send
-  only to `EndpointsTests`' stand-ins on loopback (its `localhost` name the other host, a second stand-in the other port).
+  only to `EndpointsTests`' stand-ins on loopback (its `localhost` name the other host, a second stand-in the other port),
+  and `WebRoutesTests`' shop on loopback.
+  The window also lists each web project's routes under it (#417), read from code by the extension's `WebRoutes`
+  (`Passenger.Roslyn.Extension/Routes.cs`, `RouteReading`: no build, no running app): minimal APIs (`MapGet` and the rest,
+  `MapMethods`, `Map`; a `MapGroup` prefix followed through a local assigned once, a convention that gives back its
+  builder, and every caller of the method that maps them when all give one prefix, else the route left out, never
+  guessed), controllers (`[Route]` with `[controller]`/`[action]`/`[area]`, `[Http*]` and `[AcceptVerbs]`, an `Async`
+  suffix dropped, conventional routes from `MapControllerRoute` and the default for those with no route of their own),
+  Razor Pages (`@page` under Pages or an area's, Index its folder's, a code-behind's `On{Verb}{Name}` handlers, a named
+  one as `handler=Name`), Blazor's `@page` and `@attribute [Route]` (both read from the server's additional documents),
+  SignalR's `MapHub<T>` (its methods) and gRPC's `MapGrpcService<T>` (each override a POST to `/package.Service/Method`,
+  the name from the generated base's `__ServiceName`, else the project's one .proto declaring it). Each `WebRoute` has its
+  methods, template, parameters with their constraints and source (route, query, body, header, form, services, as
+  ASP.NET Core binds them), handler and its place, the body's type and a JSON body shaped from it (`JsonSample`), and its
+  file's `TextHash`. `ProjectSession.Routes` (`RouteCatalog`) keeps them by project; `MainWindow.Routes.cs` reads them
+  through `BackgroundWork` once the server is ready, every project's again as it loads more (`CSharpService.ProjectsLoaded`)
+  and a project's whose .cs, .razor, .cshtml or .proto changes (typed, or the watcher's), only while the window shows or
+  such a file is open. Each route's line in an open file whose
+  text is the one it was read from has an icon (`OpenDocument.RouteMarks`, drawn as the run icons, `RunMark`) whose menu
+  sends it: the first request of the project's .http files that calls it (`RouteRequests.Calls`: a method it takes and a
+  path that fits its template, after a leading `{{variable}}` or host), else an entry `RouteRequests.Entry` writes at the
+  end of `<Project>.http` beside the project (its `@<Project>_HostAddress` from the first launch profile, a variable per
+  route value, the JSON body; one undo step), sent by `EndpointsView.TestAsync` to the running app's address (Run's
+  program, else Debug's: `ASPNETCORE_URLS`), else the file's; a gRPC method has no icon. Go to Declaration in an .http
+  file goes to the routes its request calls, Find Usages on a route's declaration lists the requests that call it
+  (`CodeAssist.Routes.cs`), and an agent's `workspace` with `routes` lists them (`RouteInfo`).
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot
