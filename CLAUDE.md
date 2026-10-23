@@ -760,7 +760,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   again), a project's merged one (a toggle a service), an AppHost row's its containers' (a toggle a container, a `docker logs -f` each under its name, `ContainerLogPane.Merge`, with their Stats), each the merged log every such console is (`ToolWindows/MergedLog`,
   the Aspire window's too) with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
-  streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
+  streamed only while its tab shows, its errors read as they come and the last said in its place once it ends, each
+  reading changing its container's line in place, the table laid out again only as a container comes),
   Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
   as it is chosen and as the window reads the engine again, in the framed tables every Details tab has, one column of
   names (`ToolWindows/DetailsTables`, the Aspire window's too; tables shown again that show what they showed stay,

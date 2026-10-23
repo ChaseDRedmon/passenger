@@ -53,6 +53,11 @@ public sealed class ContainerStatsPane : DockPanel
     private readonly HashSet<string> sinceLast = new(StringComparer.Ordinal);
     private string? key;
 
+    /// <summary>Each container's line of the table by its name, and the sum's: kept from one reading to the next, which
+    /// changes their words alone (docker stats writes a line a container a second).</summary>
+    private readonly Dictionary<string, (Grid Line, TextBlock[] Cells)> lines = new(StringComparer.Ordinal);
+    private (Grid Line, TextBlock[] Cells)? sum;
+
     public ContainerStatsPane(Func<ContainerEngine> engine)
     {
         this.engine = engine;
@@ -166,9 +171,16 @@ public sealed class ContainerStatsPane : DockPanel
         }
         latest.Clear();
         sinceLast.Clear();
-        table.Children.Clear();
+        ClearTable();
         waiting.Text = why;
         waiting.IsVisible = true;
+    }
+
+    private void ClearTable()
+    {
+        table.Children.Clear();
+        lines.Clear();
+        sum = null;
     }
 
     /// <summary>Stops the stream, the readings let go.</summary>
@@ -185,7 +197,7 @@ public sealed class ContainerStatsPane : DockPanel
         sinceLast.Clear();
         cpu.Clear();
         memory.Clear();
-        table.Children.Clear();
+        ClearTable();
     }
 
     private void Take(Process from, ContainerStatsSample[] read)
@@ -194,6 +206,7 @@ public sealed class ContainerStatsPane : DockPanel
         {
             return;
         }
+        bool came = false;
         foreach (ContainerStatsSample sample in read)
         {
             // docker stats writes each container a line a reading: a name read again begins the next, and the lines take
@@ -205,38 +218,78 @@ public sealed class ContainerStatsPane : DockPanel
                 sinceLast.Clear();
                 sinceLast.Add(sample.Name);
             }
+            came |= !latest.ContainsKey(sample.Name);
             latest[sample.Name] = sample;
         }
         waiting.IsVisible = false;
-        table.Children.Clear();
-        table.Children.Add(Line("Container", "CPU", "Memory", "Network I/O", "Disk I/O", "PIDs", heading: true));
-        if (latest.Count > 1)
+        // The table is laid out again only as a container comes; a reading changes its line's words and the sum's.
+        if (table.Children.Count == 0 || came)
         {
-            table.Children.Add(Line("All", Percent(latest.Values.Sum(s => s.Cpu)), Percent(latest.Values.Sum(s => s.MemoryPercent)), string.Empty, string.Empty,
-                latest.Values.Sum(s => int.TryParse(s.Processes, CultureInfo.InvariantCulture, out int n) ? n : 0).ToString(CultureInfo.InvariantCulture), heading: true));
+            Lay();
         }
-        foreach (ContainerStatsSample sample in latest.Values.OrderBy(s => s.Name, StringComparer.Ordinal))
+        if (sum is { } all)
         {
-            table.Children.Add(Line(sample.Name, Percent(sample.Cpu), $"{sample.Memory} ({Percent(sample.MemoryPercent)})", sample.Network, sample.Disk, sample.Processes, heading: false));
+            Say(all.Cells, "All", Percent(latest.Values.Sum(s => s.Cpu)), Percent(latest.Values.Sum(s => s.MemoryPercent)), string.Empty, string.Empty,
+                latest.Values.Sum(s => int.TryParse(s.Processes, CultureInfo.InvariantCulture, out int n) ? n : 0).ToString(CultureInfo.InvariantCulture));
+        }
+        foreach (ContainerStatsSample sample in read)
+        {
+            Say(lines[sample.Name].Cells, sample.Name, Percent(sample.Cpu), $"{sample.Memory} ({Percent(sample.MemoryPercent)})", sample.Network, sample.Disk, sample.Processes);
+        }
+    }
+
+    /// <summary>The table's heading, the sum's line when there are several containers, then each container's in name order,
+    /// a line kept for each container it had.</summary>
+    private void Lay()
+    {
+        table.Children.Clear();
+        (Grid heading, TextBlock[] titles) = Line(heading: true);
+        Say(titles, "Container", "CPU", "Memory", "Network I/O", "Disk I/O", "PIDs");
+        table.Children.Add(heading);
+        sum = latest.Count > 1 ? sum ?? Line(heading: true) : null;
+        if (sum is { } all)
+        {
+            table.Children.Add(all.Line);
+        }
+        foreach (string name in latest.Keys.Order(StringComparer.Ordinal))
+        {
+            if (!lines.TryGetValue(name, out (Grid Line, TextBlock[] Cells) line))
+            {
+                lines[name] = line = Line(heading: false);
+            }
+            table.Children.Add(line.Line);
         }
     }
 
     private static string Percent(double value) => value.ToString("0.00", CultureInfo.InvariantCulture) + "%";
 
-    private static Grid Line(string name, string cpu, string memory, string network, string disk, string processes, bool heading)
+    /// <summary>A line's words, each cell changed only where its words did.</summary>
+    private static void Say(TextBlock[] cells, params string[] words)
     {
-        Grid line = new() { ColumnDefinitions = new ColumnDefinitions("2*,*,2*,2*,2*,*"), Height = ListRow.Height };
-        string[] cells = [name, cpu, memory, network, disk, processes];
         for (int i = 0; i < cells.Length; i++)
         {
-            TextBlock cell = new() { Text = cells[i], VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, [Grid.ColumnProperty] = i, Margin = new Thickness(0, 0, 8, 0) };
+            if (cells[i].Text != words[i])
+            {
+                cells[i].Text = words[i];
+            }
+        }
+    }
+
+    private static (Grid Line, TextBlock[] Cells) Line(bool heading)
+    {
+        Grid line = new() { ColumnDefinitions = new ColumnDefinitions("2*,*,2*,2*,2*,*"), Height = ListRow.Height };
+        TextBlock[] cells = new TextBlock[6];
+        for (int i = 0; i < cells.Length; i++)
+        {
+            TextBlock cell = new() { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, [Grid.ColumnProperty] = i, Margin = new Thickness(0, 0, 8, 0) };
             if (heading)
             {
                 cell.FontWeight = FontWeight.SemiBold;
             }
+            cells[i] = cell;
             line.Children.Add(cell);
         }
-        return line;
+        return (line, cells);
     }
 
     private static Control Chart(string title, Sparkline line, int column)

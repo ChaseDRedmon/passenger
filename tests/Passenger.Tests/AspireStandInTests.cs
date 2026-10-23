@@ -1538,11 +1538,11 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         const string Queue = "5a5d0c0ffee7";
         static string Listed(string id, string name) =>
             $$"""{"ID":"{{id}}","Names":"{{name}}","Image":"redis:7","State":"running","Status":"Up 1 minute","Ports":"","Labels":"com.microsoft.developer.usvc-dev.uid=x"}""";
-        static string Numbers(string id, string name) =>
-            $$"""{"Container":"{{id}}","Name":"{{name}}","CPUPerc":"1.50%","MemPerc":"2.00%","MemUsage":"10MiB / 1GiB","NetIO":"1kB / 2kB","BlockIO":"0B / 0B","PIDs":"3"}""";
+        static string Numbers(string id, string name, string cpu = "1.50%") =>
+            $$"""{"Container":"{{id}}","Name":"{{name}}","CPUPerc":"{{cpu}}","MemPerc":"2.00%","MemUsage":"10MiB / 1GiB","NetIO":"1kB / 2kB","BlockIO":"0B / 0B","PIDs":"3"}""";
         (string cli, _) = ContainersTests.StandInEngine(TestFolders.Create("aspire-host-log-"), up: true,
             logs: "for word in \"$@\"; do last=$word; done; echo \"hello from $last\"; sleep 600",
-            stats: $"echo '{Numbers(Cache, "cache-abc")}'; echo '{Numbers(Queue, "queue-def")}'; sleep 600",
+            stats: $"echo '{Numbers(Cache, "cache-abc")}'; echo '{Numbers(Queue, "queue-def")}'; sleep 1; echo '{Numbers(Cache, "cache-abc", "4.25%")}'; sleep 600",
             more: [Listed(Cache, "cache-abc"), Listed(Queue, "queue-def")]);
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
         foreach ((string name, string id) in (ReadOnlySpan<(string, string)>)[("cache-abc", Cache), ("queue-def", Queue)])
@@ -1599,6 +1599,11 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Ui.Click(view.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.ToggleButton>().Single(tab => tab.Name == "containersStatsTab"));
             Ui.WaitFor(() => view.Stats.Latest.Count == 2, $"both containers' numbers, not [{string.Join(", ", view.Stats.Latest.Select(sample => sample.Name))}] ({view.Stats.Said})");
             Assert.Equal(["cache-abc", "queue-def"], view.Stats.Latest.Select(sample => sample.Name).Order(StringComparer.Ordinal));
+            // A reading changes its container's line in place: the table is not laid out again at each line the engine writes.
+            Grid cache = (Grid)view.Stats.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Text == "cache-abc").Parent!;
+            Ui.WaitFor(() => view.Stats.Latest.Any(sample => sample.Name == "cache-abc" && sample.Cpu == 4.25), "the cache's second reading");
+            Assert.Contains(cache.Children.OfType<TextBlock>(), cell => cell.Text == "4.25%");
+            Assert.Same(cache, view.Stats.GetVisualDescendants().OfType<TextBlock>().Single(text => text.Text == "cache-abc").Parent);
             Assert.Empty(backend.Errors);
         }
         finally
