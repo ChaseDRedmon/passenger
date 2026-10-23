@@ -180,7 +180,7 @@ encode() {
     local png=$1 webp=$2
     cwebp -quiet -q "$quality" -m 6 "$png" -o "$webp"
     if (($(wc -c < "$webp") > most)); then
-        cwebp -quiet -size "$most" -pass 6 -m 6 "$png" -o "$webp"
+        cwebp -quiet -size "$most" -pass 10 -m 6 "$png" -o "$webp"
     fi
     echo "site-shots: $webp ($(($(wc -c < "$webp") / 1024)) KB)"
 }
