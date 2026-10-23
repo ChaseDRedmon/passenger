@@ -21,6 +21,22 @@ internal sealed record ComposeConnection(string Service, string Name, string Pro
     public string Variable => $"ConnectionStrings__{Name}";
 }
 
+/// <summary>A connection string a .NET service of an open compose file reads that its environment does not set, as the
+/// file's check last found it, which the service's code is marked with where it reads it: the compose file, the service, the
+/// name, the service's project and the files of its code that read the name (the extension's ConnectionReads answer), what
+/// the check says of it and whether that is the weaker warning (its settings give it at localhost).</summary>
+public sealed record ComposeGap(string Compose, string Service, string Name, string Project, IReadOnlyList<string> ReadIn, string Said, bool Weak)
+{
+    public string Variable => $"ConnectionStrings__{Name}";
+
+    /// <summary>What its fix sets the variable to (null for a value the person fills in) and what that value is; none where
+    /// it has no fix (a localhost one of a kind the file does not run).</summary>
+    public (string? Value, string Detail)? Fix { get; init; }
+
+    /// <summary>Whether two say the same, the files they are read in compared as paths.</summary>
+    public bool Same(ComposeGap other) => this with { ReadIn = [] } == other with { ReadIn = [] } && ReadIn.SequenceEqual(other.ReadIn, PathNames.Comparer);
+}
+
 /// <summary>The connection strings a compose file's .NET services read that their environments do not set, as Compose's
 /// own model has their environments (environment, env_file, what it interpolated) and as the Roslyn extension reads what
 /// each service's project reads (<see cref="Handlers.ConnectionReads"/>, Aspire's one reading of them), each marked on the
@@ -29,18 +45,19 @@ internal sealed record ComposeConnection(string Service, string Name, string Pro
 /// give at this machine's own host (<see cref="BackingService.LocalHost"/>), which in the container is the container
 /// itself, a weaker one; one they give elsewhere, nothing. Passenger's own fix sets the variable in its environment
 /// (<see cref="ComposeFixes.SetVariable"/>): to the backing service's connection string where the file runs the one it
-/// reaches, else, for one never given, to a value the person fills in. A service is .NET when its build's Dockerfile
-/// builds one of the solution's projects (<see cref="Web.ComposeDeclarations.Built"/>).</summary>
+/// reaches, else, for one never given, to a value the person fills in. Each is also a <see cref="ComposeGap"/>, whose reads
+/// the service's code is marked at, from the same answer. A service is .NET when its build's Dockerfile builds one of the
+/// solution's projects (<see cref="Web.ComposeDeclarations.Built"/>).</summary>
 internal static class ComposeConnections
 {
     /// <summary>The missing connection strings of the services the file declares, from Compose's model of it
     /// (<c>config --format json --no-path-resolution</c>, paths the folder's); none while the language server has not
-    /// loaded the projects, or when it cannot answer.</summary>
-    public static async Task<IReadOnlyList<Finding>> FindAsync(ComposeCode code, string folder, string path, TextSnapshot text, string model, CancellationToken cancel)
+    /// loaded the projects, or when it cannot answer: the file's findings, and the same as gaps for the code.</summary>
+    public static async Task<(IReadOnlyList<Finding> Findings, IReadOnlyList<ComposeGap> Gaps)> FindAsync(ComposeCode code, string folder, string path, TextSnapshot text, string model, CancellationToken cancel)
     {
         if (code.Roslyn is not { } roslyn || code.Projects.Count == 0)
         {
-            return [];
+            return ([], []);
         }
         List<(string Name, string Project, IReadOnlyDictionary<string, string?> Environment)> services = [];
         List<(string Name, BackingService Kind)> backing = [];
@@ -49,7 +66,7 @@ internal static class ComposeConnections
             using JsonDocument read = JsonDocument.Parse(model);
             if (!read.RootElement.TryGetProperty("services", out JsonElement all) || all.ValueKind != JsonValueKind.Object)
             {
-                return [];
+                return ([], []);
             }
             foreach (JsonProperty service in all.EnumerateObject())
             {
@@ -65,11 +82,11 @@ internal static class ComposeConnections
         }
         catch (JsonException)
         {
-            return [];
+            return ([], []);
         }
         if (services.Count == 0)
         {
-            return [];
+            return ([], []);
         }
         ConnectionReadsFound reads;
         try
@@ -80,11 +97,12 @@ internal static class ComposeConnections
         catch (LanguageServerFailed failed)
         {
             IdeErrors.Write($"The connection strings the projects of {path} read could not be asked of the C# language server: {failed.Reason}");
-            return [];
+            return ([], []);
         }
         string written = text.ToString();
         ComposeText declared = ComposeText.Of(written);
         List<Finding> found = [];
+        List<ComposeGap> gaps = [];
         foreach ((string service, string project, IReadOnlyDictionary<string, string?> environment) in services)
         {
             if (declared.At(["services", service]) is not { } entry)
@@ -96,7 +114,7 @@ internal static class ComposeConnections
             // The settings files the app reads in its container, by the environment it runs in there.
             string environmentName = new[] { "ASPNETCORE_ENVIRONMENT", "DOTNET_ENVIRONMENT" }
                 .Select(key => environment.GetValueOrDefault(key)).FirstOrDefault(v => !string.IsNullOrEmpty(v)) ?? "Development";
-            TextRange range = KeyName(written, entry);
+            TextRange range = ComposeFixes.KeyName(written, entry);
             string projectName = Path.GetFileNameWithoutExtension(project);
             foreach (string name in reads.Reads.Where(r => PathNames.Same(r.Project, project)).Select(r => r.Name).Distinct(StringComparer.OrdinalIgnoreCase))
             {
@@ -105,7 +123,9 @@ internal static class ComposeConnections
                     continue;
                 }
                 string variable = $"ConnectionStrings__{name}";
-                if (Configured(runs, name, environmentName) is { } given)
+                string[] readIn = [.. reads.Reads.Where(r => PathNames.Same(r.Project, project) && r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    .Select(r => r.Path).Distinct(PathNames.Comparer)];
+                if (runs is not null && BackingService.Configured(runs.Folder, name, environmentName) is { } given)
                 {
                     // Given by its settings, which its build carries: worth saying only when it names this machine, which in
                     // the container is the container itself.
@@ -121,36 +141,19 @@ internal static class ComposeConnections
                         Weak = true,
                         Fixes = to is null ? null : now => ComposeFixes.SetVariable(now, to.Service, to.Variable, to.Value, to.Detail),
                     });
+                    gaps.Add(new ComposeGap(path, service, name, project, readIn, said, Weak: true) { Fix = to is null ? null : (to.Value, to.Detail) });
                     continue;
                 }
                 ComposeConnection missing = Reach(service, name, project, string.Empty, runs, backing) ?? new ComposeConnection(service, name, project, null, "to a value you fill in");
-                found.Add(new Finding(ProblemSeverity.Warning,
-                    $"{service} runs {projectName}, which reads the connection string {name}: the service's environment never sets {missing.Variable}",
-                    path, text.GetPosition(range.Start), range)
+                string never = $"{service} runs {projectName}, which reads the connection string {name}: the service's environment never sets {missing.Variable}";
+                found.Add(new Finding(ProblemSeverity.Warning, never, path, text.GetPosition(range.Start), range)
                 {
                     Fixes = now => ComposeFixes.SetVariable(now, missing.Service, missing.Variable, missing.Value, missing.Detail),
                 });
+                gaps.Add(new ComposeGap(path, service, name, project, readIn, never, Weak: false) { Fix = (missing.Value, missing.Detail) });
             }
         }
-        return found;
-    }
-
-    /// <summary>A connection string the project's own settings give, which its build carries into the container: its
-    /// appsettings.{environment}.json's, else its appsettings.json's, with the file's name; null where neither gives one.</summary>
-    private static (string File, string Value)? Configured(ProjectModel? project, string name, string environment)
-    {
-        if (project is null)
-        {
-            return null;
-        }
-        foreach (string file in (string[])[$"appsettings.{environment}.json", "appsettings.json"])
-        {
-            if (BackingService.ConnectionStrings(project.Folder, file).FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Value is { Length: > 0 } value)
-            {
-                return (file, value);
-            }
-        }
-        return null;
+        return (found, gaps);
     }
 
     /// <summary>The project a service runs: the one its build's Dockerfile builds, its context and Dockerfile the folder's.</summary>
@@ -216,8 +219,4 @@ internal static class ComposeConnections
             ? new ComposeConnection(service, name, project, reach.Kind.ConnectionString(name, configured, reach.Name), $"to {reach.Name}'s connection string")
             : null;
     }
-
-    /// <summary>A key's name as written, without its quotes.</summary>
-    private static TextRange KeyName(string text, ComposeEntry entry) =>
-        text[entry.KeyStart] is '"' or '\'' ? TextRange.FromBounds(entry.KeyStart + 1, entry.KeyEnd - 1) : TextRange.FromBounds(entry.KeyStart, entry.KeyEnd);
 }

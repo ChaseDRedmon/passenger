@@ -368,10 +368,11 @@ public sealed class McpLanguagesTests : McpRig
     private static string[] Strings(JsonElement list) => [.. list.EnumerateArray().Select(e => e.GetString()!)];
 
     /// <summary>An agent on a compose file and a Dockerfile: their servers' outline and problems, Passenger's own declarations
-    /// in the compose file (a service's, a build's Dockerfile), an image's registry page said, and the YAML server's layout,
-    /// saved. Skipped, as DockerFilesTests' are, without a Node.js that runs the YAML server.</summary>
+    /// in the compose file (a service's, a build's Dockerfile), an image's registry page said, Passenger's own Rename of a
+    /// service (a name taken refused) and the YAML server's layout, saved. Skipped, as DockerFilesTests' are, without a
+    /// Node.js that runs the YAML server.</summary>
     [Fact]
-    public async Task An_agent_reads_a_compose_files_declarations_and_problems_and_formats_it_through_the_yaml_server()
+    public async Task An_agent_reads_a_compose_files_declarations_and_problems_renames_a_service_and_formats_it_through_the_yaml_server()
     {
         DockerFilesTests.Shop.SkipWithoutNode(yaml: true);
         const string Compose = "services:\n  web:\n    image:   nginx:1.27\n    ports: [ \"8080:80\" ]\n    depends_on:   [api]\n  api:\n    build: .\n";
@@ -396,8 +397,16 @@ public sealed class McpLanguagesTests : McpRig
         JsonElement problem = Assert.Single((await Call(client, "diagnostics", new() { ["path"] = "Dockerfile" })).EnumerateArray());
         Assert.Contains("Unknown instruction: FROMM", problem.GetProperty("message").GetString(), StringComparison.Ordinal);
 
+        // Passenger's own Rename of a service, where the file declares and uses it, saved; a name taken refused, saying why.
+        string renamed = (await Call(client, "rename", new(At(Compose, "compose.yaml", "[ap")) { ["newName"] = "backend" })).GetString()!;
+        Assert.Equal("Renamed the service api to backend in 1 file: compose.yaml", renamed);
+        string written = Compose.Replace("api", "backend", StringComparison.Ordinal);
+        Assert.Equal(written, File.ReadAllText(Path.Combine(compose, "compose.yaml")));
+        CallToolResult taken = await Result(client, "rename", new(At(written, "compose.yaml", "  back")) { ["newName"] = "web" });
+        Assert.True(taken.IsError == true && Text(taken).EndsWith(": compose.yaml has a service named web already", StringComparison.Ordinal), $"A rename to a name taken answered: {Text(taken)}");
+
         // The YAML server's layout, saved.
         Assert.StartsWith("Reformatted", (await Call(client, "format", new() { ["path"] = "compose.yaml" })).GetString(), StringComparison.Ordinal);
-        Assert.Equal("services:\n  web:\n    image: nginx:1.27\n    ports: [\"8080:80\"]\n    depends_on: [api]\n  api:\n    build: .\n", File.ReadAllText(Path.Combine(compose, "compose.yaml")));
+        Assert.Equal("services:\n  web:\n    image: nginx:1.27\n    ports: [\"8080:80\"]\n    depends_on: [backend]\n  backend:\n    build: .\n", File.ReadAllText(Path.Combine(compose, "compose.yaml")));
     }
 }

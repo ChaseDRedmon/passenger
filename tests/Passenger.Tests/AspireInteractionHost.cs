@@ -60,11 +60,16 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
         {
             byte[] frame = await ReadFrameAsync(context.Request.Body, context.RequestAborted)
                 ?? throw new InvalidDataException("Missing resource command request");
-            commands.Enqueue(ResourceCommandRequest.Parser.ParseFrom(frame));
+            ResourceCommandRequest request = ResourceCommandRequest.Parser.ParseFrom(frame);
+            commands.Enqueue(request);
+            OnCommand?.Invoke(request);
             await WriteFrameAsync(context, new ResourceCommandResponse { Kind = ResourceCommandResponseKind.Succeeded });
             context.Response.AppendTrailer("grpc-status", "0");
         }));
     }
+
+    /// <summary>What a test has a command do before it is answered (on the stand-in's own thread), as an AppHost's command acts.</summary>
+    public Action<ResourceCommandRequest>? OnCommand { get; set; }
 
     /// <summary>Where the stand-in AppHost writes the resource service key the IDE gave it.</summary>
     public string KeyFile { get; }

@@ -75,8 +75,15 @@ public sealed record AspireFixRequest(Place At, string Service, string Resource)
 /// <summary>A proven absent AppHost reference, with its source range and proposed workspace change.</summary>
 public sealed record AspireMissingReference(Place Start, Place End, string Service, string Resource, Refactored Fix);
 
-/// <summary>Names valid at the caret's string argument and references missing from this service's AppHost.</summary>
-public sealed record AspireHelp(Place? Start, Place? End, IReadOnlyList<string> Names, IReadOnlyList<AspireMissingReference> Missing, string? Evidence = null);
+/// <summary>A connection string a service reads by a name no resource of its AppHost has: where the name is (its characters
+/// within the string when it is written plainly, <paramref name="Exact"/>, else the whole expression), the name, the
+/// service's project, whose settings may give it, and the names of the AppHost's resources that give connection strings.</summary>
+public sealed record AspireUnknownConnection(Place Start, Place End, string Name, bool Exact, string Project, IReadOnlyList<string> Declared);
+
+/// <summary>Names valid at the caret's string argument, references missing from this service's AppHost, and the connection
+/// strings it reads that no resource of the AppHost is named.</summary>
+public sealed record AspireHelp(Place? Start, Place? End, IReadOnlyList<string> Names, IReadOnlyList<AspireMissingReference> Missing, string? Evidence = null,
+    IReadOnlyList<AspireUnknownConnection>? Unknown = null);
 
 /// <summary>Rename of the resource whose name is at a place: described (no new name), or made with the new name.</summary>
 public sealed record AspireRenameRequest([property: JsonPropertyName("at")] Place At, [property: JsonPropertyName("newName")] string? NewName = null);
@@ -97,13 +104,14 @@ public sealed record AspireParametersFound(IReadOnlyList<AspireParameter> Parame
 /// <summary>The projects whose code's connection-string reads are asked for, by their project files' paths.</summary>
 public sealed record ConnectionReadsRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
 
-/// <summary>A connection string a project's code reads: the project's file, the name it reads, and the file and place
-/// where the name is written.</summary>
+/// <summary>A connection string a project's code reads: the project's file, the name it reads, and the file and the stretch
+/// where the name is written (the string or constant naming it).</summary>
 public sealed record ConnectionRead(
     [property: JsonPropertyName("project")] string Project,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("path")] string Path,
-    [property: JsonPropertyName("at")] Place At);
+    [property: JsonPropertyName("at")] Place At,
+    [property: JsonPropertyName("end")] Place End);
 
 /// <summary>The connection strings the projects asked for read, each where it is read; none of a project the server has not loaded.</summary>
 public sealed record ConnectionReadsFound([property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads);

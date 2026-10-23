@@ -1016,6 +1016,14 @@ public sealed class CSharpService : IAsyncDisposable
         }
     });
 
+    /// <summary>The connection strings the open compose files' .NET services read that their environments do not set (the
+    /// session's <see cref="Containers.EngineChecks.Gaps"/>), whose reads in the code are marked too; none without a session.</summary>
+    public Func<IReadOnlyList<Containers.ComposeGap>>? ComposeGaps { get; init; }
+
+    /// <summary>What the open compose files find missing changed: each open file that reads such a name, or was marked for one,
+    /// pulls its diagnostics again; no other file.</summary>
+    internal void ComposeGapsChanged() => Each(document => document.ComposeChanged());
+
     private void RefreshAll() => Each(document => document.Refresh());
 
     private void Each(Action<CSharpDocument> act)

@@ -357,7 +357,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   services of the file an extends names), its volumes under a service's volumes (a short entry's source, a long one's),
   its networks, secrets and configs under theirs; never the service itself nor a name its list holds on another line.
   `CodeAssist.ComposeCompletionAsync` lists them before the server's items, which are kept but for one of the same label
-  or one that would replace another stretch than the name's. The Structure window shows the web servers'
+  or one that would replace another stretch than the name's. `ComposeRename` is Rename of the file's own service,
+  volume, network, secret or config, from the same reading (what the place names is `ComposeDeclarations.Named`'s, or a
+  declaration's key; where each file writes it `ComposeText` and `ComposeFixes.References`, an extends of it too): where
+  it is declared and every use, in the file, the one Compose reads with it (`ComposeCheck.ReadWith`: a base and its
+  override) and, for a service an extends names in another file, that file and the compose files beside it
+  (`ComposeCheck.Unasked`), worked out again as it is made and applied through `ApplyFileChanges` as one command of
+  global undo; a name its kind has in those files, or one Compose's schema refuses, is refused, saying why. Rename tries
+  it before the YAML server's own (an anchor's), and MCP's `rename` takes it (`CodeAssist.RenameComposeAsync`). The
+  Structure window shows the web servers'
   outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
   The Dockerfile server completes a FROM image's tags by asking Docker Hub itself, only while Settings' Complete image
   tags from Docker Hub (its Docker page) is on: it runs with Passenger's preload (`node --require` of `Web/docker-hub.cjs`,
@@ -550,15 +558,22 @@ window or takes the focus; it shows everything but the system's own window chrom
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot
   Reload, or unheld), the sessions that reach it from here (`Debugged`, by `SessionName`; `AttachedRunning`) and the one
-  the profiler records (`Profiled`, `EndProfiling`); `EndSessionsAsync` is Stop's order, every session and recording ended
-  before the programs go, which a container run's Stop and an AppHost's (`StopAppAsync`; the window's close and the
-  folder's end in `CloseAsync`) take. What is done to a service is written once over it (`BuildRunController.Services.cs`,
+  the profiler records (`Profiled`, `EndProfiling`); `EndSessionsAsync` is Stop's order, written once, every session and
+  recording ended before the programs go (a recording that cannot end logged, never Passenger's error), which every stop of
+  a service or a run takes: a container run's Stop, an AppHost's (`StopAppAsync`), one service's (`StopResourceAsync`, as
+  DCP stops it), a restart, a program's own end (`Finished`) and the folder's end (`CloseAsync`, its `closing`: each session
+  closed, the recording the folder's profiler's to let go); a kind ends a service's session its own way (`EndSessionAsync`:
+  by name, or an Aspire start's own). The profiler records a service of either kind one way, held at its start by its run's
+  Profile or as it runs (the window's and an agent's Profile of a service, Attach Profiler with one to profile):
+  `ProfilerCommands.RecordServiceAsync`, given the program `ProgramAsync` found through `BuildRunParts.ProfileService`,
+  which sets `Profiled` and `EndProfiling`, so Stop, a restart and Rerun read its snapshot first. What is done to a service is written once over it (`BuildRunController.Services.cs`,
   each action given its run): the held start's attach (`AttachAllAsync` as a container run comes up, `AttachStartAsync` as
   DCP starts an Aspire service), Debug, Attach, Run without Debugger, Restart and Profile (`DebugServiceAsync`,
   `AttachServiceAsync`, `RunServiceAsync`, `RestartServiceAsync`, `ProfileServiceAsync`, under `OnServiceAsync`), the
   person's choice kept by configuration for the run's restarts and a run that brings it up again (`chosenDebugged`; an
   AppHost's first start of a service asks it, `AspireController.Chosen`), a restart's attach again and a service held that
-  no debugger reached made anew unheld (`RestartServicesAsync`), and the restart for an edit Hot Reload cannot apply, of
+  no debugger reached made anew unheld (`RestartServicesAsync`, which says a failure its kind says, a command refused or a
+  time limit, as the restart's refusal in words, whoever asked), and the restart for an edit Hot Reload cannot apply, of
   only the services whose project holds it, in the run whose sessions the edit names (`RestartServicesForEditAsync`). The
   window's service rows (the Containers window's and the Aspire window's), the gutter's menus and an agent's `resource` (an
   Aspire resource, or the container run's compose service, on run, debug_start, debug_attach, profile and stop:
@@ -576,7 +591,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   started (`RunStart`: Run, Debug, Run with Hot Reload, Profile), its certificate (`BuildRunController.Certificate.cs`) and
   one start at a time of what it starts (`TakeStartAsync`, a `StartUnderWay` in `ProjectSession.Starting`, which the
   folder's end ends): a start of a container configuration, or of an AppHost a start under way also starts, ends that one
-  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has.
+  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has. Rerun follows the configuration chosen
+  (`BuildRunController.RerunAsync`): its AppHost's when it runs (what changed restarted), else its container run in fast mode
+  (the services whose build changed restarted), else what the Run console has stopped and the chosen run again, another
+  configuration's AppHost running on; what changed is read by one stamp of a build's output (`BuiltInputs.Stamp`, a file
+  gone as it is read left out) and `BuiltInputs.ChangedSince`, and a refusal is said.
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
@@ -672,7 +691,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   connection string of the backing service the file runs that it reaches (`BackingService.OfImage`, the service of the
   name read, else the one of the kind its settings' value, name or packages point to, `ConnectionString`'s
   `host`), else, for one never given, a value left for the person to fill in (a localhost one of a kind the file does
-  not run gets no fix). Each `${VAR}` gets a hint of
+  not run gets no fix). Each such warning is also a `ComposeGap` (`EngineChecks.Gaps`, with the files the same
+  ConnectionReads answer has read it in), and while the compose file is open the service's code is marked where it reads
+  it, with the compose file's warning (`CSharpDocument.Compose.cs`: the places asked of the same handler in the file's own
+  pull, so they are the text's as it stands, pulled again as `GapsChanged`), its fix the compose file's, made there as one
+  edit (`CodeAssist.ComposeReadFixes`, `SetInCompose`, worked out again as chosen). Each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one
@@ -789,11 +812,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
   at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
   first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for
-  changing; the run's `ServiceProfiler` has the tools' `trace --resume` record it there, which lets it go, and the run is
-  handed over only once up (a failed start disposes the recording). Get Snapshot ends the recording and the containers run
-  on; Stop ends it first (`ServiceRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach
-  Profiler with a container run up (and nothing debugged) records that service as it runs (`ServiceInContainerAsync`,
-  `ContainerRun.ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
+  changing; the one recording of a service (`ProfilerCommands.RecordServiceAsync`) has the tools' `trace --resume` record it
+  there, which lets it go, the profiler window following it from then (a start that fails after takes its containers down
+  with Stop's order, its snapshot read). Get Snapshot ends the recording and the containers run on; Stop ends it first
+  (`ServiceRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach Profiler with a container
+  run up (and nothing debugged) records that service as it runs, through its run (`ProfileServiceAsync`, the place
+  `ContainerRun.ProgramAsync` gives, `ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
   modifiable)`), and the run keeps what each service is held for (`ServiceRun.HeldFor`, `HoldAsync`) and which containers
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
   no debugger to let it go; one restarted held that the debugger then cannot reach is made anew unheld, its hold let go and
@@ -922,9 +946,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   commands (`MainWindow.RestartAspireCommandAsync`: restart, or stop, its project's build here and start for an edit), the
   service found by its name and project whether its program still runs, its program gone before its build; Run without
   Debugger restarts it unheld. Profile of a configuration holds the chosen service at its start through the model, no code
-  made changeable, and the run's profiler records it from there (`ProfilerCommands.RecordHeldServiceAsync`,
+  made changeable, and the one recording of a service records it from there (`ProfilerCommands.RecordServiceAsync`,
   `ProfilingSession.AttachAsync`'s `resume`), letting it go once recording, Stop reading its snapshot before the programs go
-  (`ProfileAspireAsync`, `AspireServiceDialog` when several run). Rerun reads, before anything is built, what changed since
+  (`ProfileAspireAsync`, `AspireServiceDialog` when several run); the start waits as long as the AppHost takes to ask for
+  that service (Stop ends the wait, its hold on what is drawn let go meanwhile), then `AspireController.ProfileLimit` (a
+  minute) from DCP's ask, past which it is given up as the time limit it is. A service Profiled as it runs (the Aspire
+  window's Profile, Attach Profiler with it chosen) is recorded the same way, so Stop reads its snapshot first too. Rerun reads, before anything is built, what changed since
   the build each program runs began (`BuiltInputs.ChangedSince`: code, project, XAML and settings files under its folder and
   those it references, never what a running program writes beside them, as DCP's `.dcp.json`): the services changed are
   stopped, built and started again through their restart, the rest left running, and an AppHost whose own folder changed
@@ -960,7 +987,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   a `ConnectionStrings:` key) or service its AppHost never gives
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
-  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
+  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`); a connection string read by a
+  name no resource has (`AspireUnknownConnection`; none for a service whose environment the AppHost sets by hand,
+  WithEnvironment) and that its appsettings.json or appsettings.Development.json do not give (`BackingService.Configured`,
+  a compose file's check's reading too) is marked on the name, its fix Change to the declared name near it (Compose's
+  rule, `Spelling.Near`), one edit worked out again as it is chosen (`CodeAssist.ConnectionFix`); resource names complete in a
   string literal, `AddProject` goes to its project (`AspireProjectDeclaration`) and a resource's name a service reads (a
   connection string's, by GetConnectionString, a client integration's connectionName or a `ConnectionStrings:` key; a
   service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one
@@ -1167,8 +1198,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   has no place for (the framework, console, building first, a variable its application URL gives) stays the folder's.
   `LaunchPlan.ResolveAsync` works one out once, in one request of the project host, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
-  Configurations. While a run of a configuration is up (Run's program or container run, a session Debug launched for it,
-  Profile's program: `BuildRunController.IsRunningConfiguration`), the toolbar, its chooser and Edit Configurations' row say
+  Configurations. While a run of a configuration is up (Run's program or container run while the Run console or the
+  terminal has it, `ran` forgotten as it ends, a session Debug launched for it, Profile's program:
+  `BuildRunController.IsRunningConfiguration`; an AppHost's by its own run), the toolbar, its chooser and Edit Configurations' row say
   "(running)" after its name (`MainWindow.Shown`), the toolbar following as Stop does (`ShowStop`). A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
   the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
   brings the Build window forward as Showing build results says (errors only by default). Every build holds the host's

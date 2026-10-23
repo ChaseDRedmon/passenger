@@ -63,7 +63,10 @@ internal static class AspireSource
 
     private sealed record Resource(ILocalSymbol Symbol, string Name, string? ProjectPath, bool Connection, bool Discovery, VariableDeclaratorSyntax Declaration,
         ExpressionSyntax NameExpression);
-    private sealed record Graph(Document Document, SourceText Text, IReadOnlyList<Resource> Resources, HashSet<(string Service, string Target)> Edges);
+    /// <summary>An AppHost's proven graph: its resources, which reads which, and those whose environment it sets by hand
+    /// (WithEnvironment), which may give a connection string by a name no resource has.</summary>
+    private sealed record Graph(Document Document, SourceText Text, IReadOnlyList<Resource> Resources, HashSet<(string Service, string Target)> Edges,
+        HashSet<string> Environed);
     private sealed record Use(ExpressionSyntax Expression, string Name, bool Connection);
 
     public static async Task<AspireRunResourcesResult> RunResourcesAsync(Solution solution, string appHost, CancellationToken cancel)
@@ -155,6 +158,7 @@ internal static class AspireSource
         }
         SourceText text = await document.GetTextAsync(cancel).ConfigureAwait(false);
         List<AspireMissingReference> missing = [];
+        List<AspireUnknownConnection> unknown = [];
         if (service is not null && !root.ContainsDiagnostics)
         {
             foreach (Use use in Uses(root, model, evidence, cancel))
@@ -162,6 +166,16 @@ internal static class AspireSource
                 evidence?.Add($"Semantic resource use: {use.Name}; connection: {use.Connection}");
                 Resource? target = host.Resources.SingleOrDefault(r => string.Equals(r.Name, use.Name, StringComparison.OrdinalIgnoreCase)
                     && (use.Connection ? r.Connection : r.Discovery && !r.Connection));
+                if (target is null && use.Connection && !host.Environed.Contains(service.Name)
+                    && !host.Resources.Any(r => string.Equals(r.Name, use.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    // A name no resource has: the service's own settings may give it, which the IDE reads.
+                    Read? read = use.Expression is LiteralExpressionSyntax written ? ReadOf(written, model, cancel) : null;
+                    TextSpan name = read is { Exact: true } ? read.Name : use.Expression.Span;
+                    unknown.Add(new AspireUnknownConnection(PlaceAt(text, name.Start), PlaceAt(text, name.End), use.Name, read is { Exact: true },
+                        document.Project.FilePath, [.. host.Resources.Where(r => r.Connection).Select(r => r.Name)]));
+                    continue;
+                }
                 if (target is null || target == service || host.Edges.Contains((service.Name, target.Name)))
                 {
                     continue;
@@ -176,7 +190,7 @@ internal static class AspireSource
         }
         if (at is null)
         {
-            return new AspireHelp(null, null, [], missing);
+            return new AspireHelp(null, null, [], missing, Unknown: unknown);
         }
         int offset = await Changes.OffsetAsync(document, at, cancel).ConfigureAwait(false);
         LiteralExpressionSyntax? literal = root.FindToken(Math.Clamp(offset, 0, Math.Max(0, root.FullSpan.End - 1))).Parent?.AncestorsAndSelf()
@@ -186,12 +200,12 @@ internal static class AspireSource
             || literal.Parent is not ArgumentSyntax argument || argument.Parent?.Parent is not InvocationExpressionSyntax call
             || model.GetSymbolInfo(call, cancel).Symbol is not IMethodSymbol called)
         {
-            return new AspireHelp(null, null, [], missing);
+            return new AspireHelp(null, null, [], missing, Unknown: unknown);
         }
         int contentEnd = literal.Token.Text.Length > 1 && literal.Token.Text.EndsWith('"') ? literal.Span.End - 1 : literal.Span.End;
         if (offset > contentEnd)
         {
-            return new AspireHelp(null, null, [], missing);
+            return new AspireHelp(null, null, [], missing, Unknown: unknown);
         }
         bool connection = NamesConnection(called, call, argument);
         bool resourceName = called.ContainingType.ToDisplayString() == "Aspire.Hosting.ApplicationModel.ResourceNotificationService"
@@ -200,7 +214,7 @@ internal static class AspireSource
         string[] names = connection && service is not null
             ? [.. host.Resources.Where(r => r.Connection && host.Edges.Contains((service.Name, r.Name))).Select(r => r.Name).Order(StringComparer.Ordinal)]
             : resourceName ? [.. host.Resources.Select(r => r.Name).Order(StringComparer.Ordinal)] : [];
-        return new AspireHelp(PlaceAt(text, literal.SpanStart + 1), PlaceAt(text, contentEnd), names, missing);
+        return new AspireHelp(PlaceAt(text, literal.SpanStart + 1), PlaceAt(text, contentEnd), names, missing, Unknown: unknown);
     }
 
     /// <summary>The one AppHost whose proven graph a document's project is in, with the resource the project is (null for the
@@ -372,6 +386,7 @@ internal static class AspireSource
             return null;
         }
         HashSet<(string Service, string Target)> edges = [];
+        HashSet<string> environed = new(StringComparer.Ordinal);
         HashSet<string> declaredNames = new(StringComparer.OrdinalIgnoreCase);
         foreach (InvocationExpressionSyntax call in calls)
         {
@@ -414,8 +429,13 @@ internal static class AspireSource
             {
                 return null;
             }
+            else if (method.Name.StartsWith("WithEnvironment", StringComparison.Ordinal) && call.Expression is MemberAccessExpressionSyntax set
+                && Receiver(set.Expression, call, resources, model, cancel) is { } environment)
+            {
+                environed.Add(environment.Name);
+            }
         }
-        return new Graph(document, await document.GetTextAsync(cancel).ConfigureAwait(false), resources, edges);
+        return new Graph(document, await document.GetTextAsync(cancel).ConfigureAwait(false), resources, edges, environed);
     }
 
     private static Resource? Receiver(ExpressionSyntax expression, InvocationExpressionSyntax call, IReadOnlyList<Resource> resources, SemanticModel model, CancellationToken cancel)
@@ -555,7 +575,8 @@ internal static class AspireSource
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<ProjectId, (VersionStamp Version, IReadOnlyList<ConnectionRead> Reads)> ConnectionsRead = new();
 
     /// <summary>The connection strings the projects' code reads (<see cref="ConnectionUses"/>), each where its name is
-    /// written: every target framework's build of a project, each read once.</summary>
+    /// written: every target framework's build of a project, each read once. A compose file's check reads them, and each read
+    /// of one a service's environment lacks is marked in the code with that file's warning.</summary>
     public static async Task<ConnectionReadsFound> ConnectionReadsAsync(Solution solution, IReadOnlyList<string> projects, CancellationToken cancel)
     {
         List<ConnectionRead> reads = [];
@@ -576,7 +597,8 @@ internal static class AspireSource
                             continue;
                         }
                         SourceText text = await document.GetTextAsync(cancel).ConfigureAwait(false);
-                        found.AddRange(ConnectionUses(root, model, cancel).Select(use => new ConnectionRead(path, use.Name, document.FilePath!, PlaceAt(text, use.Expression.SpanStart))));
+                        found.AddRange(ConnectionUses(root, model, cancel).Select(use =>
+                            new ConnectionRead(path, use.Name, document.FilePath!, PlaceAt(text, use.Expression.SpanStart), PlaceAt(text, use.Expression.Span.End))));
                     }
                     known = (version, found);
                     ConnectionsRead[project.Id] = known;

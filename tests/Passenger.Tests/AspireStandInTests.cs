@@ -554,6 +554,195 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>Profile of an Aspire service as it runs (the stand-in's API, started by the IDE as DCP asks) records it through
+    /// its AppHost's run, as a container run's service is recorded through its run: Stop reads its snapshot before the API's
+    /// program goes, so the trace keeps its rundown and names the API's own code, which ran before the recording began.</summary>
+    [AvaloniaFact]
+    public void Stop_reads_the_profile_of_an_Aspire_service_as_it_runs_before_its_program_goes()
+    {
+        project.Reset();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the run session: {answer}");
+            int api = Api(window);
+            backend.PushResource(ApiResource());
+            FindAction(window, "Show Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Rows.Any(row => row.Resource.Name == "apiservice"), "the API's row");
+            Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
+            FindAction(window, "Profile Aspire Resource");
+            Ui.WaitFor(() => window.Profiling?.ProcessId == api, $"Profile to record the API as it runs ({window.Status})");
+            Ui.Hold(TimeSpan.FromSeconds(1), "the profiler to sample the API as it runs");
+
+            Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+            Ui.WaitFor(() => window.ProfilerView.Snapshot is not null || (window.Status ?? string.Empty).StartsWith("The snapshot could not be read", StringComparison.Ordinal),
+                "Stop to read the API's snapshot", TimeSpan.FromMinutes(2));
+            Passenger.Profiler.Snapshot snapshot = window.ProfilerView.Snapshot ?? throw new Xunit.Sdk.XunitException($"Stop read no snapshot of the API: {window.Status}");
+            Assert.True(Named(snapshot.All), "Stop took the API's program before reading its recording: the trace lost its rundown, and the API's own code is unnamed");
+            Ui.WaitFor(() => !Processes.IsRunning(api) && window.AspireRuntime.Apps.Count == 0, "Stop to end the API and its AppHost once its snapshot was read");
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        static bool Named(Passenger.Profiler.CallNode node) =>
+            node.Module.Contains(StandInAppHost.Api, StringComparison.Ordinal) || node.Children.Any(Named);
+    }
+
+    /// <summary>"(running)" says only what runs, and Rerun follows the configuration chosen: a plain run that ended is not
+    /// "(running)" once an AppHost runs; with the API's configuration chosen while the AppHost runs, Rerun runs the API beside
+    /// it, then stops it and runs it again, the AppHost running on as another configuration's run.</summary>
+    [AvaloniaFact]
+    public void Running_and_Rerun_follow_the_configuration_chosen_while_an_AppHost_runs()
+    {
+        project.Reset();
+        File.Delete(project.KeyFile);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration)
+                && window.Configurations.Any(configuration => !configuration.Aspire && PathNames.Same(configuration.Project, PathNames.Canonical(project.ApiProject))),
+                "the AppHost's and the API's configurations");
+            RunConfiguration api = window.Configurations.First(configuration => !configuration.Aspire && PathNames.Same(configuration.Project, PathNames.Canonical(project.ApiProject)));
+            Assert.True(window.SelectConfiguration(api.Name));
+            Ui.Launched(window, window.RunAsync(), "the API to run", TimeSpan.FromMinutes(3));
+            Assert.Equal($"{api.Name} (running)", window.Shown(api));
+            Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+            Ui.WaitFor(() => !window.IsRunning, "Stop to end the API");
+
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1, $"the stand-in AppHost's start ({window.Status})");
+            int host = Assert.Single(window.AspireRuntime.Apps).ProcessId!.Value;
+            Assert.Equal(api.Name, window.Shown(api));
+
+            Assert.True(window.SelectConfiguration(api.Name));
+            Ui.Run(window, AppActions.Rerun);
+            Ui.WaitFor(() => window.Shown(api) == $"{api.Name} (running)" && window.Session.Runner.ProcessId is not null,
+                $"Rerun to run the API chosen while the AppHost runs ({window.Status})", TimeSpan.FromMinutes(3));
+            int first = window.Session.Runner.ProcessId!.Value;
+            Ui.Run(window, AppActions.Rerun);
+            Ui.WaitFor(() => window.Session.Runner.ProcessId is int again && again != first && window.Session.Runner.IsRunning,
+                $"Rerun to run the API again ({window.Status})", TimeSpan.FromMinutes(3));
+            Assert.False(Processes.IsRunning(first), "The API that ran before Rerun still runs");
+            Assert.True(Processes.IsRunning(host) && window.AspireRuntime.Apps.Count == 1, "Rerun of the API stopped the AppHost, another configuration's run");
+            Assert.Equal($"{api.Name} (running)", window.Shown(api));
+            Assert.Equal(StandInAppHost.Configuration + " (running)", window.Shown(window.Configurations.First(c => c.Name == StandInAppHost.Configuration)));
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>A restart that fails is said as the restart's refusal, in words, whoever asked for it: Rerun after the API's
+    /// code changed has its AppHost stop it (the stand-in's stop command ends its program), builds it, and finds the resource
+    /// to start again made anew under another identity, which it says rather than a sequence's raw complaint.</summary>
+    [AvaloniaFact]
+    public void A_restart_that_fails_is_said_as_its_refusal_in_words()
+    {
+        project.Reset();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the run session: {answer}");
+            int api = Api(window);
+            Resource resource = ApiResource();
+            resource.Commands.Add(new ResourceCommand { Name = "resource-stop", DisplayName = "Stop", State = ResourceCommandState.Enabled });
+            resource.Commands.Add(new ResourceCommand { Name = "resource-start", DisplayName = "Start", State = ResourceCommandState.Enabled });
+            backend.PushResource(resource);
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(shown => shown.Name == "apiservice" && shown.Commands.Count == 2), "the API's resource and its commands");
+            backend.OnCommand = command =>
+            {
+                if (command.CommandName == "resource-stop")
+                {
+                    Processes.Kill(api);
+                    resource.Uid = "made-anew";
+                    backend.PushResource(resource);
+                }
+            };
+
+            File.AppendAllText(project.PathOf($"{StandInAppHost.Api}/Program.cs"), "// changed since it started\n");
+            Ui.Run(window, AppActions.Rerun);
+            string config = StandInAppHost.Configuration;
+            Ui.WaitFor(() => window.Status?.Contains("could not be restarted", StringComparison.Ordinal) == true, $"Rerun to say the API's restart failed ({window.Status})", TimeSpan.FromMinutes(3));
+            Assert.Equal($"apiservice of {config} could not be restarted: apiservice is no longer one resource of {config} to start again after its build", window.Status);
+            Assert.Equal(["resource-stop"], backend.Commands.Select(command => command.CommandName));
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>Profile of an AppHost waits as long as the AppHost takes to ask for the service it records, then gives that
+    /// service its time to reach the profiler, counted from the ask: past it, the start is given up as the time limit it is,
+    /// never as a stop nobody pressed, and the AppHost is stopped. Here the window's limit is a moment, which no start meets.</summary>
+    [AvaloniaFact]
+    public void Profile_of_an_AppHost_gives_up_on_a_service_past_its_time_saying_so()
+    {
+        project.Reset();
+        File.Delete(project.KeyFile);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            window.AspireRuntime.ProfileLimit = TimeSpan.FromMilliseconds(10);
+            Task<string?> profiling = window.ProfileAsync();
+            Ui.PumpUntil(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1 || profiling.IsCompleted,
+                "the AppHost to come up for Profile", TimeSpan.FromMinutes(2));
+            Assert.False(profiling.IsCompleted, $"Profile ended before its AppHost asked for a service: {(profiling.IsCompleted ? profiling.Result : null)}");
+            Ui.Hold(TimeSpan.FromSeconds(1), "Profile to wait on with no service asked for, however long its AppHost takes");
+            Assert.False(profiling.IsCompleted, $"Profile gave up before its AppHost asked for a service: {(profiling.IsCompleted ? profiling.Result : null)}");
+
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode _) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            string? why = Ui.Await(profiling, "Profile to give up on the API");
+            Assert.True(why?.StartsWith("apiservice did not start under the profiler within ", StringComparison.Ordinal) == true
+                && why.EndsWith(" s of its AppHost asking for it", StringComparison.Ordinal), $"Profile's time limit was said as {why}");
+            Assert.Equal(why, window.Status);
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Count == 0, "the AppHost to stop as Profile gave up");
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>The stand-in API's program, once the IDE has started it as DCP asked.</summary>
+    private static int Api(MainWindow window)
+    {
+        Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.Any(service => service.ProcessId is > 0), "the API started as DCP asked");
+        return window.AspireRuntime.Apps.Single().Services.Single().ProcessId!.Value;
+    }
+
+    /// <summary>The stand-in API as its AppHost's resource service says it runs.</summary>
+    private Resource ApiResource() => new()
+    {
+        Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running",
+        Properties = { new ResourceProperty { Name = "project.path", Value = Google.Protobuf.WellKnownTypes.Value.ForString(PathNames.Canonical(project.ApiProject)) } },
+    };
+
     /// <summary>A service its run configuration says not to start is Not started, never a failure: the IDE refuses DCP's first
     /// start of it, and the resource DCP then calls FailedToStart has a muted dot and a tip saying why and how it runs, in its
     /// row and in its Details.</summary>
@@ -1253,12 +1442,22 @@ public sealed class StandInAppHost : SharedProject
 
     public string ApiProject => PathOf($"{Api}/{Api}.csproj");
 
-    /// <summary>Builds the stand-in's service, which the IDE starts as it is built.</summary>
+    /// <summary>Builds the stand-in's service, which the IDE starts as it is built, from a clean folder: after an IDE's build of
+    /// it in an earlier test (a restart's, with its framework given), an incremental build here wrote no runtimeconfig.json or
+    /// deps.json and its IncrementalClean deleted those the IDE's had written, so the service could not start.</summary>
     internal void BuildApi()
     {
-        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", ApiProject, "-nologo", "-v:q"]),
+        string folder = Path.GetDirectoryName(ApiProject)!;
+        foreach (string built in (string[])["bin", "obj"])
+        {
+            if (Directory.Exists(Path.Combine(folder, built)))
+            {
+                Directory.Delete(Path.Combine(folder, built), recursive: true);
+            }
+        }
+        ChildResult result = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", ApiProject, "-nologo", "-v:q"]),
             limit: TimeSpan.FromMinutes(3).Scaled()), "the stand-in API's build");
-        Assert.True(built.Succeeded, $"The stand-in API did not build: {built.Output}{built.Error}");
+        Assert.True(result.Succeeded, $"The stand-in API did not build: {result.Output}{result.Error}");
     }
 
     /// <summary>Asks the IDE to start the stand-in's service as a resource of that name, as DCP starts a project resource: the
@@ -1290,8 +1489,16 @@ public sealed class StandInAppHost : SharedProject
         };
         start.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session[1]);
         start.Headers.Add("Microsoft-Developer-DCP-Instance-ID", Instance);
-        using HttpResponseMessage answered = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
-        return (notified, answered.StatusCode);
+        try
+        {
+            using HttpResponseMessage answered = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
+            return (notified, answered.StatusCode);
+        }
+        catch (HttpRequestException)
+        {
+            // The IDE closed its endpoint as it stopped the AppHost, the request unanswered: no status at all.
+            return (notified, 0);
+        }
     }
 
     /// <summary>The stand-in AppHost's configuration with its service, apiservice, marked Don't start.</summary>

@@ -46,14 +46,11 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
             return Outcome.None;
         }
         string folder = Path.GetDirectoryName(path)!;
-        string? first = Found(folder, Bases);
-        string? second = first is null ? null : Found(folder, Overrides);
-        bool isBase = first is not null && PathNames.Same(first, path);
-        if (!isBase && !(second is not null && PathNames.Same(second, path)))
+        if (ReadWith(path) is not { } readWith)
         {
             return Outcome.None;
         }
-        string? partner = isBase ? second : first;
+        (bool isBase, string? partner) = readWith;
         string[] files = partner is null ? ["-"] : isBase ? ["-", partner] : [partner, "-"];
         ComposeText read = ComposeText.Of(text);
         IReadOnlyList<(int Start, int End, string Expression)> interpolations = read.Interpolations(text);
@@ -85,9 +82,11 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
             bool own = PathNames.Same(owner, path);
             found.Add(Place($"Compose: {message}", owner, own, message, own ? snapshot : Disk(owner)));
         }
+        IReadOnlyList<ComposeGap> gaps = [];
         if (model.Succeeded && code is { } reading)
         {
-            found.AddRange(await ComposeConnections.FindAsync(reading, folder, path, snapshot, model.Output, cancel));
+            (IReadOnlyList<Finding> connections, gaps) = await ComposeConnections.FindAsync(reading, folder, path, snapshot, model.Output, cancel);
+            found.AddRange(connections);
         }
         IReadOnlyDictionary<string, string> resolved = values.Result;
         foreach ((int start, int end, string expression) in interpolations)
@@ -102,8 +101,23 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         {
             hints.AddRange(Overridden(read, self.Output, model.Output, Path.GetFileName(partner)));
         }
-        return new Outcome(found, [.. hints.OrderBy(h => h.Offset)]);
+        return new Outcome(found, [.. hints.OrderBy(h => h.Offset)]) { Gaps = gaps };
     }
+
+    /// <summary>Whether Compose reads a file unasked in its folder (the first base there, or the first override beside it),
+    /// and the other file it reads with it (canonical); null for a file it reads only when named with -f.</summary>
+    internal static (bool IsBase, string? Partner)? ReadWith(string path)
+    {
+        string folder = Path.GetDirectoryName(path)!;
+        string? first = Found(folder, Bases);
+        string? second = first is null ? null : Found(folder, Overrides);
+        bool isBase = first is not null && PathNames.Same(first, path);
+        return isBase || (second is not null && PathNames.Same(second, path)) ? (isBase, isBase ? second : first) : null;
+    }
+
+    /// <summary>The files Compose reads unasked in a folder: its first base, and the first override beside that.</summary>
+    internal static IReadOnlyList<string> Unasked(string folder) =>
+        Found(folder, Bases) is { } first ? Found(folder, Overrides) is { } second ? [first, second] : [first] : [];
 
     /// <summary>The first of the names a folder has, as the disk names it.</summary>
     private static string? Found(string folder, string[] names) =>

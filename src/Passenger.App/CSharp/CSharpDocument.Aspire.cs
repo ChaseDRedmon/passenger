@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Roslyn.Extension;
@@ -38,6 +40,25 @@ public sealed partial class CSharpDocument
             }
         }
         return missing;
+    }
+
+    /// <summary>The connection strings the file's Aspire warnings say it reads by a name no resource of its AppHost has, on a
+    /// server's line of the text as it stands (any line for null): each with where its name is, the name and the names of the
+    /// AppHost's resources near it, nearest first (none where the name is not written plainly, so cannot be changed).</summary>
+    internal IReadOnlyList<(TextRange Range, string Name, IReadOnlyList<string> Near)> AspireUnknownOn(int? line)
+    {
+        List<(TextRange, string, IReadOnlyList<string>)> unknown = [];
+        foreach ((Diagnostic diagnostic, TextRange range) in diagnostics.PlacedRanges)
+        {
+            if (diagnostic.Source == AspireDiagnosticSource
+                && (line is not { } on || diagnostic.Range.Start.Line <= on && on <= diagnostic.Range.End.Line)
+                && diagnostic.Data is { ValueKind: JsonValueKind.Object } data
+                && data.TryGetProperty("connection", out JsonElement connection) && connection.GetString() is { } name)
+            {
+                unknown.Add((range, name, data.TryGetProperty("near", out JsonElement near) && near.GetString() is { Length: > 0 } names ? names.Split('\n') : []));
+            }
+        }
+        return unknown;
     }
 
     /// <summary>The parameters the file's Aspire warnings say have no value in its AppHost's configuration, on a server's line
@@ -105,7 +126,11 @@ public sealed partial class CSharpDocument
         try
         {
             AspireHelp help = await lsp.ExtensionAsync<AspireHelp>(Handlers.AspireCodeHelp, new AspireHelpRequest(null), cancel);
-            return [.. help.Missing.Select(m => new Diagnostic
+            // The service's own settings may give a name no resource has, in the environment an AppHost runs its services in.
+            AspireUnknownConnection[] unknown = help.Unknown is { Count: > 0 } named
+                ? await BackgroundWork.Run(() => named.Where(u => BackingService.Configured(Path.GetDirectoryName(u.Project)!, u.Name, "Development") is null).ToArray())
+                : [];
+            return [.. unknown.Select(Unknown), .. help.Missing.Select(m => new Diagnostic
             {
                 Range = new LspRange(new LspPosition(m.Start.Line, m.Start.Character), new LspPosition(m.End.Line, m.End.Character)),
                 Severity = 2,
@@ -118,5 +143,21 @@ public sealed partial class CSharpDocument
         {
             return [];
         }
+    }
+
+    /// <summary>The warning of a connection string a service reads by a name no resource of its AppHost has and its settings do
+    /// not give, with the declared names near it, which its fix changes it to (Compose's Change to rule, <see cref="Spelling.Near"/>).</summary>
+    private static Diagnostic Unknown(AspireUnknownConnection read)
+    {
+        IReadOnlyList<string> near = Spelling.Near(read.Name, read.Declared);
+        return new Diagnostic
+        {
+            Range = new LspRange(new LspPosition(read.Start.Line, read.Start.Character), new LspPosition(read.End.Line, read.End.Character)),
+            Severity = 2,
+            Source = AspireDiagnosticSource,
+            Message = $"No resource of the AppHost is named '{read.Name}', and the service's appsettings give no connection string of that name."
+                + (near.Count > 0 ? $" Did you mean '{near[0]}'?" : string.Empty),
+            Data = JsonSerializer.SerializeToElement(new Dictionary<string, string> { ["connection"] = read.Name, ["near"] = read.Exact ? string.Join('\n', near) : string.Empty }),
+        };
     }
 }

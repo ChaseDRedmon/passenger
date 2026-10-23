@@ -19,8 +19,9 @@ namespace Passenger.Tests;
 
 /// <summary>Dockerfiles and compose files through the window, on a solution of an ASP.NET Core app using Npgsql, a worker
 /// and a library: a Dockerfile completes and is checked by the Dockerfile server, a compose file by the YAML server with
-/// the Compose specification's schema, completes the names the file declares where a service names them, and Go to
-/// Declaration in a compose file goes where Passenger finds each name leads;
+/// the Compose specification's schema, completes the names the file declares where a service names them, Go to
+/// Declaration in a compose file goes where Passenger finds each name leads, and Rename renames one where it is declared
+/// and used, its override's too;
 /// Add > Docker Support writes a project's Dockerfile and the context's .dockerignore, or sets the SDK's container
 /// properties, and Add > Docker Compose the solution's compose.yaml, each one command Undo takes back. The servers' tests
 /// skip, saying why, without a Node.js that runs them; the folder is never restored (its nuget.config names no feed that
@@ -268,6 +269,132 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             app.Reset();
         }
     }
+
+    /// <summary>Rename on a compose file's own name renames it where it is declared and everywhere the file and its override
+    /// use it, as one command global undo takes back in both: a service from a depends_on of it (depends_on as a list and a
+    /// mapping, links, volumes_from, network_mode's service:, an extends of it, the override's entry and its depends_on); a
+    /// volume from its declaration (a short entry, a long one's source, the override's); a service another file declares,
+    /// from an extends naming it, there, here and in the compose file beside it that extends it too. A name its kind has
+    /// already, or one Compose would not take, is refused, saying why, and nothing changes.</summary>
+    [AvaloniaFact]
+    public void Rename_in_a_compose_file_renames_a_service_or_volume_where_it_is_declared_and_used_with_its_override_as_one_undo()
+    {
+        Shop.SkipWithoutNode(yaml: true);
+        string compose = app.PathOf("ops2/compose.yaml");
+        string overrides = app.PathOf("ops2/compose.override.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(compose)!);
+        File.WriteAllText(compose, Renamed);
+        File.WriteAllText(overrides, Overridden);
+        MainWindow window = app.Open("ops2/compose.yaml");
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        try
+        {
+            // A service, from where a service depends on it.
+            Rename(window, "depends_on:\n      - d", "db", "postgres", "Renamed the service db to postgres in 2 files");
+            Assert.Equal(Renamed.Replace("db", "postgres", StringComparison.Ordinal), editor.Document.Snapshot.ToString());
+            Assert.Equal(Overridden.Replace("db", "postgres", StringComparison.Ordinal), File.ReadAllText(overrides));
+            Undone(window, compose, overrides);
+
+            // A volume, from its declaration.
+            Rename(window, "\nvolumes:\n  da", "data", "pgdata", "Renamed the volume data to pgdata in 2 files");
+            Assert.Equal(Renamed.Replace("      - data:", "      - pgdata:", StringComparison.Ordinal).Replace("source: data", "source: pgdata", StringComparison.Ordinal)
+                .Replace("\n  data:\n", "\n  pgdata:\n", StringComparison.Ordinal), editor.Document.Snapshot.ToString());
+            Assert.Equal(Overridden.Replace("      - data:", "      - pgdata:", StringComparison.Ordinal), File.ReadAllText(overrides));
+            Undone(window, compose, overrides);
+
+            // A service another file declares, from the extends naming it: there, here, and in the compose file beside it.
+            Rename(window, "service: ba", "base", "redis", "Renamed the service base to redis in 3 files");
+            Assert.Equal(Renamed.Replace("service: base", "service: redis", StringComparison.Ordinal), editor.Document.Snapshot.ToString());
+            Assert.Equal("services:\n  redis:\n    image: redis:7\n", File.ReadAllText(app.PathOf("ops/common.yaml")));
+            Assert.Equal(Shop.ComposeFile.Replace("service: base", "service: redis", StringComparison.Ordinal), File.ReadAllText(app.PathOf("ops/compose.yaml")));
+            Undone(window, compose, overrides);
+            Assert.Equal("services:\n  base:\n    image: redis:7\n", File.ReadAllText(app.PathOf("ops/common.yaml")));
+            Assert.Equal(Shop.ComposeFile, File.ReadAllText(app.PathOf("ops/compose.yaml")));
+
+            // Refused, saying why: a name its kind has already, one Compose would not take.
+            Rename(window, "services:\n  w", "web", "worker", "compose.yaml has a service named worker already");
+            Rename(window, "services:\n  w", "web", "my web", "A service's name has only letters, digits, dots, dashes and underscores");
+            Assert.Equal(Renamed, editor.Document.Snapshot.ToString());
+            Assert.Equal(Overridden, File.ReadAllText(overrides));
+        }
+        finally
+        {
+            window.Close();
+            app.Reset();
+        }
+
+        static void Rename(MainWindow window, string after, string old, string name, string said)
+        {
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
+            Ui.Run(window, AppActions.Rename);
+            Ui.WaitFor(() => window.Assist.Renaming == old, $"Rename's box on {old}");
+            window.KeyTextInput(name);
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Status == said, $"the rename of {old} to {name} to say '{said}', not '{window.Status}'");
+        }
+
+        // Global undo, from outside the editor, takes the rename back in every file; the open one keeps its text unsaved.
+        static void Undone(MainWindow window, string compose, string overrides)
+        {
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.WaitFor(() => window.EditorArea.CodeEditor.Document.Snapshot.ToString() == Renamed && File.ReadAllText(overrides) == Overridden,
+                $"undo to take the rename back in {Path.GetFileName(compose)} and its override");
+            window.OpenFile(compose);
+            Ui.Settle();
+        }
+    }
+
+    /// <summary>A compose file whose services name a service and a volume in each way they can be, with an override that
+    /// names them too, for Rename.</summary>
+    private const string Renamed = """
+        services:
+          web:
+            image: nginx:1.27
+            depends_on:
+              - db
+            links: [db]
+            volumes_from:
+              - db:ro
+            volumes:
+              - data:/srv
+          worker:
+            extends: db
+            network_mode: service:db
+            depends_on:
+              db:
+                condition: service_started
+            volumes:
+              - type: volume
+                source: data
+                target: /cache
+          db:
+            image: postgres:17
+            volumes:
+              - data:/var/lib/postgresql/data
+          cache:
+            extends:
+              file: ../ops/common.yaml
+              service: base
+        volumes:
+          data:
+          logs:
+
+        """;
+
+    private const string Overridden = """
+        services:
+          db:
+            environment:
+              POSTGRES_PASSWORD: example
+          web:
+            depends_on:
+              - db
+            volumes:
+              - data:/data
+
+        """;
 
     /// <summary>A compose file whose services name each kind of thing it declares, for completion to be asked in.</summary>
     private const string Names = """
@@ -1069,7 +1196,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
 
         /// <summary>What the tests' Adds write, and the files a test writes beside the fixture's, taken away again.</summary>
         private static readonly string[] Made = ["Api/Dockerfile", "Worker/Dockerfile", "Lib/Dockerfile", ".dockerignore", "compose.yaml",
-            "ops2/compose.yaml", "ops2/.env", "ops2/web.env", "ops2/earlier.Dockerfile", "ops2/commented.Dockerfile"];
+            "ops2/compose.yaml", "ops2/compose.override.yaml", "ops2/.env", "ops2/web.env", "ops2/earlier.Dockerfile", "ops2/commented.Dockerfile"];
 
         public Shop()
         {

@@ -85,7 +85,8 @@ public sealed partial class BuildRunController
     /// <summary>One service, held at its start or running: its program, once its run has started it, where its kind runs it
     /// (<see cref="ServiceRun.ProgramAsync"/>), and a session attached to it, which lets it go: one with its tab in the Debug
     /// window, or, under Run with Hot Reload, a quiet one; or the profiler recording it. Null once attached, else why not.</summary>
-    private async Task<string?> AttachAsync(ServiceRun run, IRunService service, Task up, List<string> notes, CancellationToken stop, RunStart? given = null)
+    private async Task<string?> AttachAsync(ServiceRun run, IRunService service, Task up, List<string> notes, CancellationToken stop, RunStart? given = null,
+        bool asItRuns = false)
     {
         UiThread.Check();
         // Held for the debugger (in a tab, or quietly for Hot Reload), held for the profiler, or attached to as it runs.
@@ -113,7 +114,13 @@ public sealed partial class BuildRunController
         }
         if (program.WhyNot is { } why)
         {
-            notes.Add($"{service.Name} runs without the {(purpose == RunStart.Profile ? "profiler" : "debugger")}: {why}");
+            // Held at its start, it runs on; asked for as it runs, the profiler that cannot reach it refuses.
+            string without = $"{service.Name} runs without the {(purpose == RunStart.Profile ? "profiler" : "debugger")}: {why}";
+            if (asItRuns && purpose == RunStart.Profile)
+            {
+                return without;
+            }
+            notes.Add(without);
             return null;
         }
         foreach (string note in program.Notes)
@@ -124,8 +131,8 @@ public sealed partial class BuildRunController
         string name = run.SessionName(service);
         if (purpose == RunStart.Profile)
         {
-            run.Profiled = service.Name;
-            refused = await run.Profiler!(service, program, stop);
+            // The one recording of a service of either kind, held or running, which sets what Stop reads first.
+            refused = parts.ProfileService is { } profile ? await profile(run, service, program, asItRuns, stop) : "The profiler is not available";
         }
         else
         {
@@ -146,7 +153,8 @@ public sealed partial class BuildRunController
     /// recording, so the profiler's trace keeps its rundown), their projects built again between their stop and start where
     /// <paramref name="build"/> asks it of a kind that builds then, and attaches again to those held for the debugger, which
     /// the restart holds again (a kind that attaches its starts itself having done so as they started), and to those
-    /// attached to as they ran. Null once done, else why not.</summary>
+    /// attached to as they ran. Null once done, else why not: a failure its kind says (a command refused, a time limit) is
+    /// said as the restart's refusal, whoever asked (Hot Reload's restart and Rerun no less than a window's action).</summary>
     private async Task<string?> RestartServicesAsync(ServiceRun run, IReadOnlyList<IRunService> services, Working work, string? why = null, bool build = false)
     {
         List<IRunService> held = run.AttachesItsStarts ? [] : [.. run.Held.Where(h => services.Any(s => s.Name == h.Name))];
@@ -182,6 +190,10 @@ public sealed partial class BuildRunController
         catch (OperationCanceledException)
         {
             return $"{run.Name}'s restart was stopped";
+        }
+        catch (Exception failed) when (run.Refused(failed))
+        {
+            return $"{string.Join(", ", services.Select(s => s.Name))} of {run.Name} could not be restarted: {failed.Message}";
         }
     }
 
@@ -270,10 +282,12 @@ public sealed partial class BuildRunController
     public Task<string?> RestartServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ContainerRestart, $"Restarting {name}…", async (run, service, work) =>
         Done(await RestartServicesAsync(run, [service], work, "restarted from its window"), $"{run.Name}: restarted {name}"));
 
-    /// <summary>Profile of one .NET service of a run as it runs, the profiler recording its program where its kind runs it
-    /// (<see cref="BuildRunParts.ProfileService"/>). Null once it records, else why not.</summary>
+    /// <summary>Profile of one .NET service of a run as it runs: its program where its kind runs it, recorded by the one
+    /// recording of a service (<see cref="BuildRunParts.ProfileService"/>), which Stop, a restart and Rerun read first. Null
+    /// once it records, else why not (said).</summary>
     public Task<string?> ProfileServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ServiceProfile, $"Attaching the profiler to {name}…",
-        (run, service, work) => parts.ProfileService is { } profile ? profile(run, service, work.Stopping) : Task.FromResult<string?>("The profiler is not available"));
+        async (run, service, work) => await AttachAsync(run, service, Task.CompletedTask, [], work.Stopping, RunStart.Profile, asItRuns: true) is { } refused
+            ? Said(refused) : null);
 
     /// <summary>Ends what reaches one .NET service of the container run from here (its session, the profiler's recording),
     /// before something takes its program from under it (the Containers window's Stop or Remove).</summary>
