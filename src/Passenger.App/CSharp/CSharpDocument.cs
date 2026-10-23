@@ -234,7 +234,8 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         }
     }
 
-    /// <summary>The server's diagnostics and Aspire's shown for the text as it stands; false when they no longer answer it.</summary>
+    /// <summary>The server's diagnostics, Aspire's and the open compose files' shown for the text as it stands; false when they
+    /// no longer answer it.</summary>
     private async Task<bool> ShowPulledAsync(LspDocument lsp, CancellationToken cancel)
     {
         if (await diagnostics.PulledAsync(lsp, cancel) is not { } found)
@@ -243,11 +244,12 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         }
         int version = document.Text.Version;
         IReadOnlyList<Diagnostic> aspire = await AspireFindingsAsync(lsp, cancel);
+        IReadOnlyList<Diagnostic> compose = await ComposeFindingsAsync(cancel);
         if (cancel.IsCancellationRequested || version != document.Text.Version || Lsp != lsp)
         {
             return false;
         }
-        document.Markers = diagnostics.Take([.. found, .. aspire], DiagnosticMarks.Marker);
+        document.Markers = diagnostics.Take([.. found, .. aspire, .. compose], DiagnosticMarks.Marker);
         service.FileProblemsChanged(document);
         return true;
     }

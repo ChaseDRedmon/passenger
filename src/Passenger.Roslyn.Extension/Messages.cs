@@ -104,13 +104,14 @@ public sealed record AspireParametersFound(IReadOnlyList<AspireParameter> Parame
 /// <summary>The projects whose code's connection-string reads are asked for, by their project files' paths.</summary>
 public sealed record ConnectionReadsRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
 
-/// <summary>A connection string a project's code reads: the project's file, the name it reads, and the file and place
-/// where the name is written.</summary>
+/// <summary>A connection string a project's code reads: the project's file, the name it reads, and the file and the stretch
+/// where the name is written (the string or constant naming it).</summary>
 public sealed record ConnectionRead(
     [property: JsonPropertyName("project")] string Project,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("path")] string Path,
-    [property: JsonPropertyName("at")] Place At);
+    [property: JsonPropertyName("at")] Place At,
+    [property: JsonPropertyName("end")] Place End);
 
 /// <summary>The connection strings the projects asked for read, each where it is read; none of a project the server has not loaded.</summary>
 public sealed record ConnectionReadsFound([property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads);

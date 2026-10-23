@@ -575,7 +575,8 @@ internal static class AspireSource
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<ProjectId, (VersionStamp Version, IReadOnlyList<ConnectionRead> Reads)> ConnectionsRead = new();
 
     /// <summary>The connection strings the projects' code reads (<see cref="ConnectionUses"/>), each where its name is
-    /// written: every target framework's build of a project, each read once.</summary>
+    /// written: every target framework's build of a project, each read once. A compose file's check reads them, and each read
+    /// of one a service's environment lacks is marked in the code with that file's warning.</summary>
     public static async Task<ConnectionReadsFound> ConnectionReadsAsync(Solution solution, IReadOnlyList<string> projects, CancellationToken cancel)
     {
         List<ConnectionRead> reads = [];
@@ -596,7 +597,8 @@ internal static class AspireSource
                             continue;
                         }
                         SourceText text = await document.GetTextAsync(cancel).ConfigureAwait(false);
-                        found.AddRange(ConnectionUses(root, model, cancel).Select(use => new ConnectionRead(path, use.Name, document.FilePath!, PlaceAt(text, use.Expression.SpanStart))));
+                        found.AddRange(ConnectionUses(root, model, cancel).Select(use =>
+                            new ConnectionRead(path, use.Name, document.FilePath!, PlaceAt(text, use.Expression.SpanStart), PlaceAt(text, use.Expression.Span.End))));
                     }
                     known = (version, found);
                     ConnectionsRead[project.Id] = known;

@@ -82,9 +82,11 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
             bool own = PathNames.Same(owner, path);
             found.Add(Place($"Compose: {message}", owner, own, message, own ? snapshot : Disk(owner)));
         }
+        IReadOnlyList<ComposeGap> gaps = [];
         if (model.Succeeded && code is { } reading)
         {
-            found.AddRange(await ComposeConnections.FindAsync(reading, folder, path, snapshot, model.Output, cancel));
+            (IReadOnlyList<Finding> connections, gaps) = await ComposeConnections.FindAsync(reading, folder, path, snapshot, model.Output, cancel);
+            found.AddRange(connections);
         }
         IReadOnlyDictionary<string, string> resolved = values.Result;
         foreach ((int start, int end, string expression) in interpolations)
@@ -99,7 +101,7 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         {
             hints.AddRange(Overridden(read, self.Output, model.Output, Path.GetFileName(partner)));
         }
-        return new Outcome(found, [.. hints.OrderBy(h => h.Offset)]);
+        return new Outcome(found, [.. hints.OrderBy(h => h.Offset)]) { Gaps = gaps };
     }
 
     /// <summary>Whether Compose reads a file unasked in its folder (the first base there, or the first override beside it),

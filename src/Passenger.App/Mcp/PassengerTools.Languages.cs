@@ -183,11 +183,13 @@ public sealed partial class PassengerTools
             && await CodeAssist.AspireDeclarationAsync(csharp.Lsp, offset, ServerPlaces.Texts(Editors)) is { } place
             ? await PlacesOf([place], cancel) : null;
 
-    /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, so the fixes Passenger offers on
-    /// Aspire's warnings stand on the text as the agent wrote it, not on a pull still to come.</summary>
+    /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, a file reading what an open compose
+    /// file's service lacks too, so the fixes Passenger offers on Aspire's and Compose's warnings stand on the text as the
+    /// agent wrote it, not on a pull still to come.</summary>
     private async Task AspireMarked(Served served, CancellationToken cancel)
     {
-        if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { AspireRole: not Aspire.AspireRole.None } csharp)
+        if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { } csharp
+            && (csharp.AspireRole != Aspire.AspireRole.None || csharp.ReadsForCompose))
         {
             await csharp.PullNowAsync(cancel);
         }

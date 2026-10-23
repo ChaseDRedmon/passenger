@@ -22,8 +22,9 @@ namespace Passenger.Tests;
 /// BuildKit's build checks marked beside the Dockerfile server's and listed by file in Problems' Containers tab, gone once
 /// a fix is saved; a compose file's <c>${VAR}</c>s showing what Compose makes of them with the .env beside it, the base
 /// file's values its override changes showing the value Compose ends with, and Compose's error marked where it names it
-/// and listed in Problems, a name the file does not declare fixed by Passenger's own fixes; and with no engine running,
-/// nothing of it per file. The engine's tests skip, saying why, where
+/// and listed in Problems, a name the file does not declare fixed by Passenger's own fixes, a connection string a .NET
+/// service's environment never sets marked on the service and where its code reads it, and set by their fixes; and with no
+/// engine running, nothing of it per file. The engine's tests skip, saying why, where
 /// no Linux engine runs (no Node.js is needed: the markers stand without the files' servers).</summary>
 public sealed class EngineChecksTests
 {
@@ -520,6 +521,71 @@ public sealed class EngineChecksTests
             Assert.Equal(compose.Replace("      - ASPNETCORE_ENVIRONMENT=Production\n", "      - ASPNETCORE_ENVIRONMENT=Production\n"
                 + "      - ConnectionStrings__shop=Host=db;Port=5432;Database=shop;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}\n", StringComparison.Ordinal),
                 File.ReadAllText(PathOf(folder, "compose.yaml")));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>The connection strings a .NET service reads that its compose file's environment does not set are marked in the
+    /// service's own code too, where it reads each (GetConnectionString's name, a ConnectionStrings: key), with the compose
+    /// file's warning, the one its settings give at localhost more softly. Show Context Actions on a read offers the compose
+    /// file's own fix first, made in the compose file as one undo step there, the code left as it was, and the read's mark
+    /// goes with the compose file's. An agent's code_actions on a read lists the same fix first, and
+    /// apply_code_action makes it in the compose file, saved.</summary>
+    [AvaloniaFact]
+    public void A_services_reads_of_connection_strings_its_compose_environment_never_sets_are_marked_in_its_code_and_set_from_there()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string folder = ConnectionsFolder(Connections);
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument compose = window.EditorArea.Active!;
+            Unset(window, compose, "db");
+            window.OpenFile(PathOf(folder, "Api/Program.cs"));
+            Ui.Settle();
+            OpenDocument program = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            const string Db = "compose.yaml: api runs Api, which reads the connection string db: the service's environment never sets ConnectionStrings__db";
+            Ui.WaitFor(() => program.Markers.Any(m => m.Message == Db), $"db's read marked with the compose file's warning, not [{string.Join(", ", program.Markers.Select(m => m.Message))}]");
+            Marker read = program.Markers.First(m => m.Message == Db);
+            Assert.Equal((MarkerKind.Warning, "\"db\""), (read.Kind, Under(program, read)));
+            Assert.Contains(program.Markers, m => m.Message == "compose.yaml: api runs Api, which reads the connection string cache: the service's environment never sets ConnectionStrings__cache"
+                && Under(program, m) == "\"ConnectionStrings:cache\"");
+            Assert.Contains(program.Markers, m => m.Kind == MarkerKind.Info && Under(program, m) == "\"shop\""
+                && m.Message.StartsWith("compose.yaml: api runs Api, whose appsettings.json gives the connection string shop at localhost", StringComparison.Ordinal));
+
+            editor.Selections = SelectionSet.Single(read.Range.Start + 1);
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes of db's read");
+            Assert.Equal(("Set ConnectionStrings__db in api's environment", "in compose.yaml, to db's connection string"), (window.Assist.Offered[0], window.Assist.OfferedDetails[0]));
+            string code = editor.Document.Snapshot.ToString();
+            Ui.Press(window, "ENTER");
+            string set = Connections.Replace("      - db\n", "      - db\n    environment:\n"
+                + "      ConnectionStrings__db: \"Host=db;Port=5432;Database=db;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}\"\n", StringComparison.Ordinal);
+            Ui.WaitFor(() => compose.Text.Snapshot.ToString() == set, $"the compose file to set db's connection string in api's environment ({window.Status})");
+            Assert.Equal(("Set ConnectionStrings__db in api's environment in compose.yaml", code), (window.Status, editor.Document.Snapshot.ToString()));
+            Ui.WaitFor(() => !program.Markers.Any(m => m.Message == Db) && program.Markers.Any(m => m.Message.EndsWith("never sets ConnectionStrings__cache", StringComparison.Ordinal)),
+                $"db's read's mark to go once the compose file sets it, cache's kept ({string.Join(", ", program.Markers.Select(m => m.Message))})");
+            // The compose file open, the change is its own undo step there.
+            window.OpenFile(PathOf(folder, "compose.yaml"));
+            Ui.Settle();
+            Ui.Run(window, EditorActions.Undo);
+            Assert.Equal(Connections, compose.Text.Snapshot.ToString());
+            Ui.WaitFor(() => program.Markers.Any(m => m.Message == Db), "db's read marked again once the compose file no longer sets it");
+
+            Passenger.App.Mcp.PassengerTools agent = new(window);
+            int at = code.IndexOf("GetConnectionString(\"d", StringComparison.Ordinal) + "GetConnectionString(\"d".Length;
+            int line = code[..at].Count(c => c == '\n') + 1;
+            int column = at - code.LastIndexOf('\n', at - 1);
+            IReadOnlyList<string> actions = Ui.Await(agent.CodeActions(Path.Combine("Api", "Program.cs"), line, column), "the code actions an agent asks for");
+            Assert.Equal("Set ConnectionStrings__db in api's environment [quickfix]", actions[0]);
+            string applied = Ui.Await(agent.ApplyCodeAction(Path.Combine("Api", "Program.cs"), line, column, "Set ConnectionStrings__db in api's environment"), "the agent's fix made");
+            Assert.Equal("Applied 'Set ConnectionStrings__db in api's environment' to compose.yaml", applied);
+            Assert.Equal(set, File.ReadAllText(PathOf(folder, "compose.yaml")));
+            Assert.Equal(code, File.ReadAllText(PathOf(folder, "Api/Program.cs")));
         }
         finally
         {

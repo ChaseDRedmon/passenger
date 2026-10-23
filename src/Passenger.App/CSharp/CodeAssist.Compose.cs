@@ -195,6 +195,50 @@ public sealed partial class CodeAssist
         return new RefactorOutcome($"Renamed the {renaming.Kind} {old} to {name} in {Passenger.Core.Plural.Of(changes.Count, "file")}", null, files, []);
     }
 
+    /// <summary>The fixes of a C# file's warnings, on an offset's line, that an open compose file's .NET service reads a connection
+    /// string its environment does not set (<see cref="CSharpDocument.ComposeGapsOn"/>), Passenger's own and listed first: the
+    /// compose file's own fix, setting the variable in the service's environment, made in that file
+    /// (<see cref="SetInCompose"/>) as it is chosen.</summary>
+    public IReadOnlyList<EditorFix> ComposeReadFixes(OpenDocument file, int offset)
+    {
+        if (service()?.For(file) is not { Lsp: { } lsp } features)
+        {
+            return [];
+        }
+        return [.. features.ComposeGapsOn(lsp.PositionOf(offset).Line).DistinctBy(m => (m.Gap.Compose, m.Gap.Service, m.Gap.Name))
+            .Where(m => m.Gap.Fix is not null).Select(m => ReadFix(file, m.Range, m.Gap))];
+
+        EditorFix ReadFix(OpenDocument file, TextRange range, Containers.ComposeGap gap) =>
+            new($"Set {gap.Variable} in {gap.Service}'s environment", $"in {Path.GetFileName(gap.Compose)}, {gap.Fix!.Value.Detail}", range, string.Empty)
+            {
+                // Its warning as it stands when chosen, refused once the compose file's check no longer finds the gap.
+                Again = _ => service()?.For(file)?.ComposeGapsOn(null).FirstOrDefault(m => m.Gap.Same(gap)) is { } now ? ReadFix(file, now.Range, now.Gap) : null,
+                Elsewhere = (_, _) => Task.FromResult(SetInCompose(gap)),
+            };
+    }
+
+    /// <summary>A connection string's variable set in a compose file's service's environment, as the compose file's own fix sets
+    /// it (<see cref="Containers.ComposeFixes.SetVariable"/>), worked out on the file's text as it is now, open or not, as one
+    /// undo step (the open file's own, else one of global undo); refused once the file no longer has the service or sets the
+    /// variable already.</summary>
+    private RefactorOutcome SetInCompose(Containers.ComposeGap gap)
+    {
+        string title = $"Set {gap.Variable} in {gap.Service}'s environment";
+        IReadOnlyList<TextEdit> Edits(string text) =>
+            gap.Fix is { } fix && Containers.ComposeFixes.SetVariable(TextSnapshot.From(text), gap.Service, gap.Variable, fix.Value, fix.Detail) is [{ } made]
+                ? [new TextEdit(made.Range.Start, made.Range.Length, made.Text)] : [];
+        string compose = Path.GetFileName(gap.Compose);
+        if (Edits(ReadOpenOrDisk(gap.Compose)).Count == 0)
+        {
+            return RefactorOutcome.Refused($"{title} was not made: {compose} no longer has the service {gap.Service}, or sets {gap.Variable} already");
+        }
+        if (ApplyFileChanges(title, [new XamlFileChange(gap.Compose, Edits)]) is { } refused)
+        {
+            return RefactorOutcome.Refused(refused);
+        }
+        return new RefactorOutcome($"{title} in {compose}", null, [new RefactoredFile(gap.Compose, "changed", [])], []);
+    }
+
     /// <summary>The kind a compose file's own names are listed as: a variable's, the file's own declarations.</summary>
     private const int ComposeItemKind = 6;
 

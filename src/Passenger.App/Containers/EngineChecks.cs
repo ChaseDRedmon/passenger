@@ -95,10 +95,15 @@ public sealed class EngineChecks : IDisposable
         if (checks.Remove(document, out EngineCheck? check))
         {
             bool had = check.Problems.Count > 0;
+            bool gapped = check.Gaps.Count > 0;
             check.Dispose();
             if (had)
             {
                 Changed?.Invoke(this, EventArgs.Empty);
+            }
+            if (gapped)
+            {
+                GapsTold();
             }
         }
     }
@@ -133,6 +138,15 @@ public sealed class EngineChecks : IDisposable
     }
 
     internal void Told() => Changed?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>The connection strings the open compose files' .NET services read that their environments do not set, as
+    /// their checks last found them; the services' code is marked where it reads them (<see cref="CSharp.CSharpDocument"/>).</summary>
+    public IReadOnlyList<ComposeGap> Gaps => [.. checks.Values.SelectMany(c => c.Gaps)];
+
+    /// <summary><see cref="Gaps"/> changed, on the UI thread.</summary>
+    public event EventHandler? GapsChanged;
+
+    internal void GapsTold() => GapsChanged?.Invoke(this, EventArgs.Empty);
 
     /// <summary>Raised once, on the UI thread, when a Dockerfile is left unchecked for what the engine cannot do
     /// (<see cref="EngineState.Limit"/>), for the window to say.</summary>
@@ -235,6 +249,9 @@ internal sealed record Finding(ProblemSeverity Severity, string Message, string 
 internal sealed record Outcome(IReadOnlyList<Finding> Findings, IReadOnlyList<InlayHint> Hints)
 {
     public static readonly Outcome None = new([], []);
+
+    /// <summary>A compose file's connection strings its .NET services' environments do not set, for their code's marks.</summary>
+    public IReadOnlyList<ComposeGap> Gaps { get; init; } = [];
 }
 
 /// <summary>One open file's check by the engine: run as it opens, as it is saved and (<see cref="Later"/>) once typing
@@ -277,6 +294,9 @@ internal abstract class EngineCheck : IDisposable
     public string Folder => Path.GetDirectoryName(Document.Path)!;
 
     public IReadOnlyList<Problem> Problems { get; private set; } = [];
+
+    /// <summary>The connection strings a compose file's .NET services read that their environments do not set, as last found.</summary>
+    public IReadOnlyList<ComposeGap> Gaps { get; private set; } = [];
 
     /// <summary>What the check found that Passenger's own fixes take, each where it is marked with its fixes, carried with the
     /// text typed after, as the markers are.</summary>
@@ -382,6 +402,11 @@ internal abstract class EngineCheck : IDisposable
             Document.InlayHints = found.Hints;
         }
         Faults = [.. found.Findings.Where(f => f is { Range: not null, Fixes: not null }).Select(f => (f.Range!.Value, f.Fixes!))];
+        if (found.Gaps.Count != Gaps.Count || found.Gaps.Zip(Gaps).Any(g => !g.First.Same(g.Second)))
+        {
+            Gaps = found.Gaps;
+            Owner.GapsTold();
+        }
         IReadOnlyList<Problem> problems = [.. found.Findings.Select(f => f.Problem)];
         if (!problems.SequenceEqual(Problems))
         {
@@ -431,6 +456,7 @@ internal abstract class EngineCheck : IDisposable
         }
         Problems = [];
         Faults = [];
+        Gaps = [];
     }
 
     /// <summary>A stretch of a line as a marker spans it: from its first character that is no space to its end.</summary>

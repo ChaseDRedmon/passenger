@@ -145,8 +145,10 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
         session.Web = new Web.WebLanguages(folder, setup.Settings, setup.Engine) { DockerHub = setup.DockerHub };
-        // A compose file's check reads what each .NET service's project reads through the language server, once it is loaded.
+        // A compose file's check reads what each .NET service's project reads through the language server, once it is loaded,
+        // and the reads of what a service's environment lacks are marked in its code.
         session.Web.Checks.Code = () => new Containers.ComposeCode(session.Projects, session.CSharp is { IsReady: true } csharp ? csharp.Session : null);
+        session.Web.Checks.GapsChanged += (_, _) => session.CSharp?.ComposeGapsChanged();
         return session;
     }
 
@@ -731,6 +733,7 @@ public sealed class ProjectSession : IAsyncDisposable
                 AspireAppHostOf = path => AspireFiles.AppHostOf(path) is { } host
                     ? new AspireAppHostSettings(host, Projects.FirstOrDefault(p => PathNames.Same(p.Path, host))?.Property(Passenger.Host.CarriedProperties.UserSecretsId))
                     : null,
+                ComposeGaps = () => Web?.Checks.Gaps ?? [],
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharpService started = CSharp;

@@ -679,7 +679,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   connection string of the backing service the file runs that it reaches (`BackingService.OfImage`, the service of the
   name read, else the one of the kind its settings' value, name or packages point to, `ConnectionString`'s
   `host`), else, for one never given, a value left for the person to fill in (a localhost one of a kind the file does
-  not run gets no fix). Each `${VAR}` gets a hint of
+  not run gets no fix). Each such warning is also a `ComposeGap` (`EngineChecks.Gaps`, with the files the same
+  ConnectionReads answer has read it in), and while the compose file is open the service's code is marked where it reads
+  it, with the compose file's warning (`CSharpDocument.Compose.cs`: the places asked of the same handler in the file's own
+  pull, so they are the text's as it stands, pulled again as `GapsChanged`), its fix the compose file's, made there as one
+  edit (`CodeAssist.ComposeReadFixes`, `SetInCompose`, worked out again as chosen). Each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one
