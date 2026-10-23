@@ -810,11 +810,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         app.Execution?.NotifyProcessTerminated(resource.InstanceId, resource.Id, exitCode is int code ? unchecked((uint)code) : null);
         resource.Stopping.Cancel();
-        // Its own session alone: a later start of its service has its own, of the same name.
-        if (resource.Debugged is { State: not DebugState.Ended } debugged)
-        {
-            BackgroundWork.Track(workspace.Debug.DetachAsync(debugged));
-        }
+        // Its own session and recording, as Stop's order ends them: the program has gone by itself.
+        BackgroundWork.Track(app.EndSessionsAsync(workspace.Debug, [resource]));
         resource.Inspection?.Dispose();
         resource.Runner?.Dispose();
         app.Resources.Remove(resource.Id);
@@ -837,27 +834,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         async Task StopOwnedAsync()
         {
             resource.Stopping.Cancel();
-            // Its recording before its program, its snapshot read, as Stop's order has it.
-            if (app.Profiled == ((IRunService)resource).Name && app.EndProfiling is { } endProfiling)
-            {
-                try
-                {
-                    await endProfiling();
-                }
-                catch (Exception error) when (error is IOException or InvalidOperationException or TimeoutException or OperationCanceledException)
-                {
-                    IdeErrors.Report(error);
-                }
-            }
-            // Its session before its program, its own alone: a later start of its service has its own, of the same name.
-            if (resource.DebugTab is { } tab)
-            {
-                await workspace.Debug.StopAsync(tab);
-            }
-            else if (resource.Debugged is { State: not DebugState.Ended } debugged)
-            {
-                await workspace.Debug.DetachAsync(debugged);
-            }
+            // Stop's order: its session (its own alone) and its recording, its snapshot read, before its program.
+            await app.EndSessionsAsync(workspace.Debug, [resource]);
             if (resource.Runner is { } runner)
             {
                 if (runner.IsRunning)
@@ -950,18 +928,17 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         {
             app.Lifetime.Cancel();
             AspireResourceRun[] resources = app.Resources.Values.ToArray();
-            HashSet<DebugSession> sessions = [];
             foreach (AspireResourceRun resource in resources)
             {
                 resource.Stopping.Cancel();
-                // Its own session (in its tab, or quietly for Hot Reload) ends before its program, as Stop's order has it.
-                if ((resource.DebugTab?.Session ?? resource.Debugged) is { } debugged)
-                {
-                    sessions.Add(debugged);
-                }
+            }
+            // Stop's order: each start's own session (in its tab, or quietly for Hot Reload) ends before its program.
+            Task debuggers = app.EndSessionsAsync(workspace.Debug, resources, closing: true);
+            foreach (AspireResourceRun resource in resources)
+            {
                 resource.Inspection?.Dispose();
             }
-            captured.Add((app, resources, Task.WhenAll(sessions.Select(session => session.CloseAsync()))));
+            captured.Add((app, resources, debuggers));
             app.Resources.Clear();
             app.Interactions?.Dispose();
             app.Console.SetRunning(false);
@@ -1138,6 +1115,21 @@ public sealed class AspireAppRun : ServiceRun
 
     public override bool Refused(Exception failure) => failure is IOException or InvalidOperationException or TimeoutException or LaunchException or InvalidDataException
         or System.ComponentModel.Win32Exception;
+
+    /// <summary>A start's own session, never another start's of the same name: in its tab, stopped; quiet (for Hot Reload),
+    /// let go; closed as the folder ends.</summary>
+    protected override Task EndSessionAsync(DebugController debug, IRunService service, bool closing)
+    {
+        if (service is not AspireResourceRun start)
+        {
+            return base.EndSessionAsync(debug, service, closing);
+        }
+        DebugSession? own = start.DebugTab?.Session ?? start.Debugged;
+        return own is not { State: not DebugState.Ended } ? Task.CompletedTask
+            : closing ? own.CloseAsync()
+            : start.DebugTab is { } tab ? debug.StopAsync(tab)
+            : debug.DetachAsync(own);
+    }
 
     /// <summary>Nothing to write: a service's next start reads its hold.</summary>
     protected override Task HoldsChangedAsync(CancellationToken cancel) => Task.CompletedTask;

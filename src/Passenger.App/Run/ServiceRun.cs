@@ -150,18 +150,46 @@ public abstract class ServiceRun
     public virtual IRunService? ServiceNamed(string name) => Services.FirstOrDefault(s => s.Name == name);
 
     /// <summary>Ends what reaches services of the run from here (every one, given none): their debugging sessions (in a tab
-    /// or for Hot Reload) and the profiler's recording, its snapshot read; done once they have. Stop's order: these end before
-    /// the programs do, so no debugger loses its program under it and the profiler's trace keeps its rundown.</summary>
-    public Task EndSessionsAsync(DebugController debug, IEnumerable<IRunService>? services = null)
+    /// or for Hot Reload) and the profiler's recording, its snapshot read; done once they have. Stop's order, written once for
+    /// every stop of a service or a run (Stop, a restart, a service's own end, the folder's end): these end before the
+    /// programs do, so no debugger loses its program under it and the profiler's trace keeps its rundown. As the folder ends
+    /// (<paramref name="closing"/>) each session is closed, needing no UI thread once begun, and the recording is the
+    /// folder's profiler's to let go, read by no one.</summary>
+    public Task EndSessionsAsync(DebugController debug, IEnumerable<IRunService>? services = null, bool closing = false)
     {
         List<IRunService>? given = services?.ToList();
-        List<string>? named = given?.Select(SessionName).ToList();
-        List<Task> ending = [.. (named ?? [.. Debugged]).Where(Debugged.Contains).Select(debug.StopAsync)];
-        if ((given is null || Profiled is { } profiled && given.Any(s => s.Name == profiled)) && EndProfiling is { } end)
+        IReadOnlyList<IRunService> each = given ?? Services;
+        HashSet<string> named = [.. each.Select(SessionName)];
+        // The whole run's: a session left of a service no longer among its services ends too.
+        List<Task> ending = [.. each.Select(s => EndSessionAsync(debug, s, closing)),
+            .. given is null && !closing ? Debugged.Where(name => !named.Contains(name)).Select(debug.StopAsync) : []];
+        if (!closing && (given is null || Profiled is { } profiled && given.Any(s => s.Name == profiled)) && EndProfiling is { } end)
         {
-            ending.Add(end());
+            ending.Add(EndRecordingAsync(end));
         }
         return Task.WhenAll(ending);
+    }
+
+    /// <summary>Ends one service's session in Stop's order: by its name (its Debug tab's), unless its kind keeps each start's
+    /// own (an Aspire service, a later start of which has its own of the same name).</summary>
+    protected virtual Task EndSessionAsync(DebugController debug, IRunService service, bool closing) =>
+        Debugged.Contains(SessionName(service)) ? debug.StopAsync(SessionName(service)) : Task.CompletedTask;
+
+    /// <summary>The recording ended and its snapshot read, which says itself what came of it: one that could not end (its
+    /// program gone, the folder left as it ended) is logged, never Passenger's error, and never holds up Stop's order.</summary>
+    private static async Task EndRecordingAsync(Func<Task> end)
+    {
+        try
+        {
+            await end();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception unended) when (unended is IOException or InvalidOperationException or TimeoutException or Profiler.ProfilingException)
+        {
+            IdeLog.Write(IdeLog.Ide, $"The profiler's recording of a service did not end cleanly: {unended.Message}");
+        }
     }
 
     /// <summary>The Debug tabs' group of the run's sessions, which Hot Reload's changes reach together: its name, unless its
