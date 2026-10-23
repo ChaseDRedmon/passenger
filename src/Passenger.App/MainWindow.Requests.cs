@@ -30,6 +30,9 @@ public partial class MainWindow
     /// windowless IDE's never does.</summary>
     private bool requestsAsked;
 
+    /// <summary>The debugged programs' starts waited for, each once.</summary>
+    private readonly HashSet<Task<int>> waitedStarts = [];
+
     /// <summary>Whether someone looks at the requests: the window shows, or an agent asked for them.</summary>
     private bool RequestsLooked => requestsView is { IsShown: true } || requestsAsked;
 
@@ -73,6 +76,7 @@ public partial class MainWindow
     {
         // Another folder: an agent asks again for its requests.
         requestsAsked = false;
+        waitedStarts.Clear();
         buildRun.RunningChanged += (_, _) =>
         {
             if (session == next)
@@ -110,9 +114,18 @@ public partial class MainWindow
         {
             targets.Add(new RequestTarget("profile", profiled.Name, null, profiled.Run.ProcessId, null));
         }
-        foreach (ToolWindows.DebugTab tab in session.Debug.Tabs.Where(t => t.IsLive && t.Session is { IsLocal: true } debugged && debugged.ProcessStarted.IsCompletedSuccessfully))
+        foreach (ToolWindows.DebugTab tab in session.Debug.Tabs.Where(t => t.IsLive && t.Session is { IsLocal: true }))
         {
-            targets.Add(new RequestTarget($"debug:{tab.Name}", tab.Name, null, await tab.Session!.ProcessStarted, null));
+            Task<int> started = tab.Session!.ProcessStarted;
+            if (started.IsCompletedSuccessfully)
+            {
+                targets.Add(new RequestTarget($"debug:{tab.Name}", tab.Name, null, await started, null));
+            }
+            else if (!started.IsCompleted && waitedStarts.Add(started))
+            {
+                // Its program is followed once the debugger says it has started.
+                _ = started.ContinueWith(_ => UiThread.Post(() => _ = FollowRequestsAsync()), TaskScheduler.Default);
+            }
         }
         foreach (ServiceRun services in buildRun.ServiceRuns.Where(r => !r.IsStopped).ToArray())
         {
