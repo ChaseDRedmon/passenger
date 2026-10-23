@@ -2,6 +2,7 @@ using Passenger.App.Web;
 using Passenger.App.Workspace;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Xaml.Features;
 
 namespace Passenger.App.CSharp;
 
@@ -107,6 +108,91 @@ public sealed partial class CodeAssist
             // Before the server's items alike matched, which sort by their own words.
             SortText = " " + n.Name,
         })]);
+    }
+
+    /// <summary>Rename's box for the compose file's own name at the caret (<see cref="ComposeRename"/>), placed at it; once a new
+    /// one is typed, <see cref="RenameComposeAsync"/>. False where no such name is, or the text moved on as the outline came,
+    /// for the server's rename (an anchor's).</summary>
+    private async Task<bool> ShowComposeRename(WebDocument web, OpenDocument document, int caret)
+    {
+        if (web.Lsp is not { } lsp)
+        {
+            return false;
+        }
+        int version = document.Text.Version;
+        ComposeRenaming? renaming = await ComposeRenamingAsync(lsp, document, caret);
+        if (renaming is null || editors.Active != document || document.Text.Version != version)
+        {
+            return false;
+        }
+        RenameBox box = new(renaming.Name);
+        ChangeTracker opened = new(Editor.Document);
+        ShowModal(box, renaming.At.Start, async name =>
+        {
+            int now = opened.MapOffset(renaming.At.Start);
+            if (name is null || name == renaming.Name)
+            {
+                return;
+            }
+            RefactorOutcome made = await RenameComposeAsync(document, now, renaming.Name, name);
+            Message?.Invoke(this, made.Problem ?? made.Said);
+        });
+        modalClosed = opened.Dispose;
+        return true;
+    }
+
+    /// <summary>What Rename renames at an offset of a compose file, the outline asked of the YAML server for the text as it
+    /// stands now; null where no name of the file's own is.</summary>
+    internal static async Task<ComposeRenaming?> ComposeRenamingAsync(LspDocument lsp, OpenDocument document, int offset)
+    {
+        TextSnapshot text = document.Text.Snapshot;
+        return ComposeRename.At(document.Path, text, await lsp.OutlineAsync(), offset);
+    }
+
+    /// <summary>A compose file's own name renamed from a place of it, worked out again on the text as it stands: refused when
+    /// the place no longer names <paramref name="old"/>, for a name Compose would not take or one its kind has already,
+    /// else made in every file that writes it (<see cref="ComposeRename.Files"/>), open or not, as one command of global
+    /// undo; shared with the agents' rename.</summary>
+    internal async Task<RefactorOutcome> RenameComposeAsync(OpenDocument document, int offset, string old, string name)
+    {
+        if (WebOf(document) is not { Lsp: { } lsp })
+        {
+            return RefactorOutcome.Refused($"{old} was not renamed: the YAML language server does not run for {document.Name}");
+        }
+        ComposeRenaming? renaming;
+        try
+        {
+            renaming = await ComposeRenamingAsync(lsp, document, offset);
+        }
+        catch (LanguageServerFailed failed)
+        {
+            return RefactorOutcome.Refused($"{old} was not renamed: {failed.Reason}");
+        }
+        if (renaming is null || renaming.Name != old)
+        {
+            return RefactorOutcome.Refused($"{old} was not renamed: the file no longer names it there");
+        }
+        if (ComposeRename.Problem(renaming, name, ReadOpenOrDisk) is { } problem)
+        {
+            return RefactorOutcome.Refused(problem);
+        }
+        List<XamlFileChange> changes = [];
+        List<RefactoredFile> files = [];
+        foreach (string file in ComposeRename.Files(document.Path, renaming))
+        {
+            string text = ReadOpenOrDisk(file);
+            if (ComposeRename.Edits(file, text, renaming, name) is { Count: > 0 } edits)
+            {
+                changes.Add(new XamlFileChange(file, now => ComposeRename.Edits(file, now, renaming, name)));
+                TextSnapshot written = TextSnapshot.From(text);
+                files.Add(new RefactoredFile(file, "changed", [.. edits.Select(e => written.GetLineFromOffset(e.Start) + 1).Distinct()]));
+            }
+        }
+        if (ApplyFileChanges($"Rename {old} to {name}", changes) is { } refused)
+        {
+            return RefactorOutcome.Refused(refused);
+        }
+        return new RefactorOutcome($"Renamed the {renaming.Kind} {old} to {name} in {Passenger.Core.Plural.Of(changes.Count, "file")}", null, files, []);
     }
 
     /// <summary>The kind a compose file's own names are listed as: a variable's, the file's own declarations.</summary>

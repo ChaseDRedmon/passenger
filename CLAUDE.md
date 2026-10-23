@@ -357,7 +357,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   services of the file an extends names), its volumes under a service's volumes (a short entry's source, a long one's),
   its networks, secrets and configs under theirs; never the service itself nor a name its list holds on another line.
   `CodeAssist.ComposeCompletionAsync` lists them before the server's items, which are kept but for one of the same label
-  or one that would replace another stretch than the name's. The Structure window shows the web servers'
+  or one that would replace another stretch than the name's. `ComposeRename` is Rename of the file's own service,
+  volume, network, secret or config, from the same reading (what the place names is `ComposeDeclarations.Named`'s, or a
+  declaration's key; where each file writes it `ComposeText` and `ComposeFixes.References`, an extends of it too): where
+  it is declared and every use, in the file, the one Compose reads with it (`ComposeCheck.ReadWith`: a base and its
+  override) and, for a service an extends names in another file, that file and the compose files beside it
+  (`ComposeCheck.Unasked`), worked out again as it is made and applied through `ApplyFileChanges` as one command of
+  global undo; a name its kind has in those files, or one Compose's schema refuses, is refused, saying why. Rename tries
+  it before the YAML server's own (an anchor's), and MCP's `rename` takes it (`CodeAssist.RenameComposeAsync`). The
+  Structure window shows the web servers'
   outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
   The Dockerfile server completes a FROM image's tags by asking Docker Hub itself, only while Settings' Complete image
   tags from Docker Hub (its Docker page) is on: it runs with Passenger's preload (`node --require` of `Web/docker-hub.cjs`,

@@ -247,11 +247,11 @@ public static partial class ComposeFixes
     private static bool IsIndex(string step) => step.Length > 0 && step.All(char.IsAsciiDigit);
 
     /// <summary>A stretch of a scalar as written, past its opening quote.</summary>
-    private static TextRange ScalarPart(string text, ComposeEntry entry, int skip, int length) =>
+    internal static TextRange ScalarPart(string text, ComposeEntry entry, int skip, int length) =>
         new(entry.ValueStart + (text[entry.ValueStart] is '"' or '\'' ? 1 : 0) + skip, length);
 
     /// <summary>A key's name as written, without its quotes.</summary>
-    private static TextRange KeyName(string text, ComposeEntry entry) =>
+    internal static TextRange KeyName(string text, ComposeEntry entry) =>
         text[entry.KeyStart] is '"' or '\'' ? TextRange.FromBounds(entry.KeyStart + 1, entry.KeyEnd - 1) : TextRange.FromBounds(entry.KeyStart, entry.KeyEnd);
 
     /// <summary>The items of a flow sequence written on a key's line after it; null when the line holds none (a flow
