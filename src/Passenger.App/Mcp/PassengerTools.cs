@@ -608,7 +608,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "it has one; a run refused (one running already, nothing to run, a failed build) is an error. A configuration that " +
         "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it. A container configuration " +
         "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state. " +
-        "With resource, that Aspire resource or running compose service alone, without the debugger.")]
+        "With resource, that Aspire resource (answering once it is up) or running compose service alone, without the debugger.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -636,7 +636,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             {
                 throw new InvalidOperationException(WithBuildErrors(problem, resourceBuild.Ended));
             }
-            return new RunResult(true, null, $"Run requested for {target.AppHostPath}::{target.Resource.Name}", string.Empty);
+            return await AspireResourceUpAsync(target, waitSeconds, cancel);
         }
         Choose(configuration);
         string name = Session.Configurations.Chosen?.Name ?? string.Empty;

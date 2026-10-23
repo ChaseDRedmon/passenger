@@ -18,8 +18,11 @@ public sealed partial class AspireInteractions
     private readonly Dictionary<string, ResourceCommand[]> resourceTypeCommands = new(StringComparer.Ordinal);
     private readonly Dictionary<CancellationTokenSource, (string Name, string Generation)> consoleWatches = [];
     private TaskCompletionSource resourcesLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource resourcesMoved = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly SemaphoreSlim resourceReading = new(1, 1);
     private CancellationTokenSource? resourceWatch;
+    private bool displayWatching;
+    private int following;
     private Task resourceListening = Task.CompletedTask;
     private IOException? resourceFailure;
 
@@ -31,25 +34,107 @@ public sealed partial class AspireInteractions
     {
         lock (resourceSync)
         {
-            if ((watching && resourceWatch is not null) || cancellation.IsCancellationRequested)
+            if (cancellation.IsCancellationRequested)
             {
                 return;
             }
+            displayWatching = watching;
             if (!watching)
             {
-                resourceWatch?.Cancel();
-                resourceWatch = null;
                 foreach (CancellationTokenSource source in consoleWatches.Keys.ToArray())
                 {
                     source.Cancel();
                 }
-                return;
             }
+            Listen();
+        }
+    }
+
+    /// <summary>Keeps one resource stream open while held, shown or not, for a caller that waits on what the resources become
+    /// (<see cref="FollowedAsync"/>) rather than asking again: the display's own stream while it watches.</summary>
+    public IDisposable Follow()
+    {
+        lock (resourceSync)
+        {
+            following++;
+            Listen();
+        }
+        return new Following(this);
+    }
+
+    /// <summary>The resources as the followed stream (<see cref="Follow"/>) has them once it has its first batch, and what
+    /// completes at its next batch or its end; its failure, or its end, is thrown.</summary>
+    public async Task<(IReadOnlyList<AspireResource> Resources, Task Moved)> FollowedAsync(CancellationToken cancel)
+    {
+        using CancellationTokenSource request = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellation);
+        Task loaded;
+        lock (resourceSync)
+        {
+            loaded = resourcesLoaded.Task;
+        }
+        try
+        {
+            await loaded.WaitAsync(request.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!request.IsCancellationRequested)
+        {
+        }
+        request.Token.ThrowIfCancellationRequested();
+        lock (resourceSync)
+        {
+            if (resourceFailure is not null)
+            {
+                throw resourceFailure;
+            }
+            if (resourceWatch is null || !loaded.IsCompletedSuccessfully)
+            {
+                throw new IOException("The AppHost resource stream ended.");
+            }
+            return (ResourceSnapshot(), resourcesMoved.Task);
+        }
+    }
+
+    private sealed class Following(AspireInteractions interactions) : IDisposable
+    {
+        private int disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                lock (interactions.resourceSync)
+                {
+                    interactions.following--;
+                    interactions.Listen();
+                }
+            }
+        }
+    }
+
+    /// <summary>Opens the resource stream while the display watches or a caller follows it, and closes it once neither does.
+    /// Called under <see cref="resourceSync"/>.</summary>
+    private void Listen()
+    {
+        bool wanted = (displayWatching || following > 0) && !cancellation.IsCancellationRequested;
+        if (wanted && resourceWatch is null)
+        {
             resourceFailure = null;
             resourcesLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             resourceWatch = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             resourceListening = WatchResourcesAsync(resourceWatch, resourcesLoaded);
         }
+        else if (!wanted && resourceWatch is not null)
+        {
+            resourceWatch.Cancel();
+            resourceWatch = null;
+        }
+    }
+
+    /// <summary>Wakes whoever follows the resources: a batch came, or the stream ended. Called under <see cref="resourceSync"/>.</summary>
+    private void Moved()
+    {
+        resourcesMoved.TrySetResult();
+        resourcesMoved = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private async Task WatchResourcesAsync(CancellationTokenSource source, TaskCompletionSource loaded)
@@ -79,6 +164,7 @@ public sealed partial class AspireInteractions
                     resourceWatch = null;
                 }
                 source.Dispose();
+                Moved();
             }
         }
     }
@@ -224,6 +310,7 @@ public sealed partial class AspireInteractions
                     }
                     snapshot = ResourceSnapshot();
                     loaded.TrySetResult();
+                    Moved();
                 }
                 if (singleSnapshot)
                 {
@@ -264,6 +351,7 @@ public sealed partial class AspireInteractions
                     source.Cancel();
                 }
                 loaded.TrySetResult();
+                Moved();
             }
             if (singleSnapshot)
             {

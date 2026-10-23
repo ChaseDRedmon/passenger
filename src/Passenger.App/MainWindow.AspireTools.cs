@@ -119,70 +119,89 @@ public partial class MainWindow
         return true;
     }
 
-    private async Task<AspireResourceRun> WaitForAspireToolServiceAsync(ProjectSession current, AspireAppRun app,
+    private Task<AspireResourceRun> WaitForAspireToolServiceAsync(ProjectSession current, AspireAppRun app,
         string name, string project, CancellationToken cancel, AspireResourceRun? previous = null, bool debugging = false,
         string? resourceName = null)
     {
+        AspireResourceRun? service = null;
+        ToolWindows.DebugTab? debugTab = null;
+        return FollowAspireAsync(current, app, resources =>
+        {
+            if (service is null)
+            {
+                AspireResourceRun[] services = app.Services.Where(candidate => candidate != previous && candidate.ResourceName == name
+                    && PathNames.Same(candidate.Project, project) && !candidate.Stopping.IsCancellationRequested).ToArray();
+                if (services.Length > 1)
+                {
+                    throw new InvalidOperationException("The proven AppHost project identifies more than one native service");
+                }
+                if (services is not [{ ProcessId: > 0 } started]
+                    || debugging && started.DebugTab is not { IsLive: true, Session: { State: not Debugging.DebugState.Ended } })
+                {
+                    return Task.FromResult<AspireResourceRun?>(null);
+                }
+                (service, debugTab) = (started, started.DebugTab);
+            }
+            if (!app.Services.Contains(service) || service.Stopping.IsCancellationRequested
+                || debugging && (service.DebugTab != debugTab || debugTab is not { IsLive: true, Session: { State: not Debugging.DebugState.Ended } }))
+            {
+                throw new InvalidOperationException("The requested owned service ended before its native resource became ready");
+            }
+            AspireSelection[] matches = resources.Where(resource => resourceName is null || resource.Name == resourceName)
+                .Select(resource => new AspireSelection(app.Configuration.Project, resource))
+                .Where(selection => current.Aspire.FindService(selection) == service).ToArray();
+            return Task.FromResult(matches.Length == 1 ? service : null);
+        }, Waits.Of(TimeSpan.FromSeconds(60)), "The requested owned service did not establish its native resource within 60 seconds", cancel);
+    }
+
+    /// <summary>Waits until <paramref name="found"/> answers, asking it again at each batch of the AppHost's resource stream
+    /// (one WatchResources call held for the whole wait, the Aspire window's own while it shows) and each change of the
+    /// folder's Aspire runs or their services' sessions, never on a timer; past <paramref name="limit"/> it says <paramref name="late"/>.</summary>
+    internal async Task<T> FollowAspireAsync<T>(ProjectSession current, AspireAppRun app, Func<IReadOnlyList<AspireResource>, Task<T?>> found,
+        TimeSpan limit, string late, CancellationToken cancel) where T : class
+    {
         using CancellationTokenSource waiting = CancellationTokenSource.CreateLinkedTokenSource(cancel, current.Aspire.ClosingToken, app.Lifetime.Token);
-        waiting.CancelAfter(Waits.Of(TimeSpan.FromSeconds(60)));
-        TaskCompletionSource<AspireResourceRun> ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        current.Aspire.Changed += CheckStarted;
+        waiting.CancelAfter(limit);
+        TaskCompletionSource changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler wake = (_, _) => changed.TrySetResult();
+        current.Aspire.Changed += wake;
+        app.SessionsChanged += wake;
+        AspireInteractions? followed = null;
+        IDisposable? following = null;
         try
         {
-            CheckStarted(null, EventArgs.Empty);
-            AspireResourceRun service = await ready.Task.WaitAsync(waiting.Token);
-            ToolWindows.DebugTab? debugTab = service.DebugTab;
             while (true)
             {
-                waiting.Token.ThrowIfCancellationRequested();
+                changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 CheckAspireToolTarget(current, app);
-                IReadOnlyList<AspireResource> resources = await (app.Interactions
-                    ?? throw new InvalidOperationException("The AppHost resource connection is still starting")).GetResourcesAsync(waiting.Token);
-                waiting.Token.ThrowIfCancellationRequested();
-                CheckAspireToolTarget(current, app);
-                if (!app.Services.Contains(service) || service.Stopping.IsCancellationRequested
-                    || debugging && (service.DebugTab != debugTab || debugTab is not { IsLive: true, Session: { State: not Debugging.DebugState.Ended } }))
+                if (followed is null && app.Interactions is { } connection)
                 {
-                    throw new InvalidOperationException("The requested owned service ended before its native resource became ready");
+                    (followed, following) = (connection, connection.Follow());
                 }
-                AspireSelection[] matches = resources.Where(resource => resourceName is null || resource.Name == resourceName)
-                    .Select(resource => new AspireSelection(app.Configuration.Project, resource))
-                    .Where(selection => current.Aspire.FindService(selection) == service).ToArray();
-                if (matches.Length == 1)
+                IReadOnlyList<AspireResource> resources = [];
+                Task moved = changed.Task;
+                if (followed is not null)
                 {
-                    return service;
+                    (resources, moved) = await followed.FollowedAsync(waiting.Token);
+                    CheckAspireToolTarget(current, app);
                 }
-                await Task.Delay(100, waiting.Token);
+                if (await found(resources) is { } answer)
+                {
+                    return answer;
+                }
+                await Task.WhenAny(moved, changed.Task).WaitAsync(waiting.Token);
             }
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested && !current.Aspire.ClosingToken.IsCancellationRequested
             && !app.Lifetime.IsCancellationRequested)
         {
-            throw new TimeoutException("The requested owned service did not establish its native resource within 60 seconds");
+            throw new TimeoutException(late);
         }
         finally
         {
-            current.Aspire.Changed -= CheckStarted;
-        }
-
-        void CheckStarted(object? sender, EventArgs args)
-        {
-            if (session != current || current.IsEnded || app.Stopping || current.Aspire.FindApp(app.Configuration.Project) != app)
-            {
-                ready.TrySetException(new InvalidOperationException("The workspace or owned AppHost changed"));
-                return;
-            }
-            AspireResourceRun[] services = app.Services.Where(service => service != previous && service.ResourceName == name
-                && PathNames.Same(service.Project, project) && !service.Stopping.IsCancellationRequested).ToArray();
-            if (services.Length > 1)
-            {
-                ready.TrySetException(new InvalidOperationException("The proven AppHost project identifies more than one native service"));
-            }
-            else if (services is [{ ProcessId: > 0 } service]
-                && (!debugging || service.DebugTab is { IsLive: true, Session: { State: not Debugging.DebugState.Ended } }))
-            {
-                ready.TrySetResult(service);
-            }
+            current.Aspire.Changed -= wake;
+            app.SessionsChanged -= wake;
+            following?.Dispose();
         }
     }
 

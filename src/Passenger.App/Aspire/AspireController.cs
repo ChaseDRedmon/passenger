@@ -1187,6 +1187,7 @@ public sealed class AspireAppRun : ServiceRun
         }
         run.DebugTab = tab;
         run.Debugged = debugged;
+        SessionsChanged?.Invoke(this, EventArgs.Empty);
         if (tab is not null)
         {
             tab.StateChanged += (_, _) =>
@@ -1194,10 +1195,14 @@ public sealed class AspireAppRun : ServiceRun
                 if (run.DebugTab == tab && tab.Session is { State: DebugState.Ended })
                 {
                     run.DebugTab = null;
+                    SessionsChanged?.Invoke(this, EventArgs.Empty);
                 }
             };
         }
     }
+
+    /// <summary>A service's start was attached to, or its session ended: what an agent's wait for a resource's session wakes on.</summary>
+    public event EventHandler? SessionsChanged;
 }
 
 /// <summary>One start of a service DCP asked the IDE for, a service of its AppHost's run (<see cref="IRunService"/>, by its

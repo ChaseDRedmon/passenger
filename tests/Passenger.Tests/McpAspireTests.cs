@@ -245,7 +245,12 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         Assert.True(await Waiting.UntilAsync(async () =>
             (await Call(client, "workspace")).GetProperty("runConfigurations").EnumerateArray().Any(item => item.GetString() == configuration),
             TimeSpan.FromMinutes(2), Cancel), $"The official starter's HTTP configuration was not discovered.{Said()}");
-        await Call(client, "run", new() { ["configuration"] = configuration, ["resource"] = "apiservice" });
+        // The run answers once the resource is up, as a container run answers once its services are: no waiting after it.
+        string up = (await Call(client, "run", new() { ["configuration"] = configuration, ["resource"] = "apiservice" })).GetProperty("status").GetString()!;
+        Assert.True(up.StartsWith("apiservice", StringComparison.Ordinal) && up.Contains(" is up\n", StringComparison.Ordinal),
+            $"The agent's run answered before its resource was up: {up}");
+        Assert.Contains((await Call(client, "workspace")).GetProperty("aspireApps")[0].GetProperty("resources").EnumerateArray(),
+            resource => resource.GetProperty("displayName").GetString() == "apiservice" && resource.GetProperty("state").GetString() == "Running");
         JsonElement app = default;
         Assert.True(await Waiting.UntilAsync(async () =>
         {
@@ -276,7 +281,9 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         Assert.Equal(apiId, await Processes.WrittenIdAsync(apiPid, "the attached API PID"));
         Assert.True(Processes.IsRunning(hostId) && Processes.IsRunning(webId));
 
-        await Call(client, "run", new() { ["resource"] = target });
+        JsonElement rerun = await Call(client, "run", new() { ["resource"] = target });
+        Assert.True(rerun.GetProperty("stillRunning").GetBoolean() && rerun.GetProperty("status").GetString()!.Contains(" is up\n", StringComparison.Ordinal),
+            $"Run Without Debugger answered before the API was up again: {rerun}");
         await Until(() => !Processes.IsRunning(apiId) && ReadPid(apiPid) != apiId, "Run Without Debugger to restart only the API");
         apiId = await Processes.WrittenIdAsync(apiPid, "the run API PID");
         Assert.True(Processes.IsRunning(hostId) && Processes.IsRunning(webId));
