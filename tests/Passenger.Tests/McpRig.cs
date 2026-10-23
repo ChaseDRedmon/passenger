@@ -165,13 +165,15 @@ public abstract class McpRig : IDisposable
     private static readonly Implementation Agent = new() { Name = "test-agent", Title = "Test Agent", Version = "1.0" };
 
     /// <summary>The SDK's stream transport over a Passenger's input and output; the agent going closes the input, as the
-    /// SDK's process transport does, and Passenger ends on its own.</summary>
+    /// SDK's process transport does, and Passenger ends on its own. What it tells a Passenger that has gone (killed, as a
+    /// test may) is dropped, as the IDE's own connections drop it (<see cref="PeerTransport"/>): the SDK sends a call's
+    /// cancellation unawaited, and its failure was the next window test's caught error.</summary>
     private sealed class PassengerTransport(Process passenger) : IClientTransport
     {
         public string Name => "passenger";
 
         public async Task<ITransport> ConnectAsync(CancellationToken cancellationToken = default) =>
-            new Session(await new StreamClientTransport(passenger.StandardInput.BaseStream, passenger.StandardOutput.BaseStream).ConnectAsync(cancellationToken), passenger);
+            new Session(new PeerTransport(await new StreamClientTransport(passenger.StandardInput.BaseStream, passenger.StandardOutput.BaseStream).ConnectAsync(cancellationToken)), passenger);
 
         private sealed class Session(ITransport inner, Process passenger) : ITransport
         {

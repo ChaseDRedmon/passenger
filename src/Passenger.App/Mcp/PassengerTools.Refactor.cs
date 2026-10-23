@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using Passenger.App.CSharp;
 using Passenger.App.Workspace;
 using Passenger.Core;
+using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Roslyn.Extension;
 using Passenger.Text;
@@ -357,7 +358,7 @@ public sealed partial class PassengerTools
             if (cleanup && Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
             {
                 // XAML's Code Cleanup is its reformatting, by the window's XAML code style.
-                OpenDocument markup = Document(path);
+                OpenDocument markup = await DocumentAsync(path, cancel);
                 if (describe)
                 {
                     return new RefactorAnswer(kind, $"Code Cleanup would reformat {Relative(markup.Path)}", [], []);
@@ -371,36 +372,38 @@ public sealed partial class PassengerTools
             {
                 return new RefactorAnswer(kind, $"{name} would tidy {Relative(document.Path)}", [], []);
             }
-            string before = document.Text.Snapshot.ToString();
+            int before = document.Text.Version;
             string done = await TidyOne(lsp, document, cleanup);
             document.Save();
             return new RefactorAnswer(kind, $"{Relative(document.Path)}: {done}",
-                document.Text.Snapshot.ToString() == before ? [] : [new RefactorFile(Relative(document.Path), "changed", [], done)], []);
+                document.Text.Version == before ? [] : [new RefactorFile(Relative(document.Path), "changed", [], done)], []);
         }
         if (scope is not ("project" or "solution"))
         {
             throw new ArgumentException($"No scope '{scope}'; there are file, project and solution");
         }
-        IReadOnlyList<string> files = CodeFiles(scope, path);
+        IReadOnlyList<string> files = await CodeFilesAsync(scope, path, cancel);
+        HashSet<string> named = new(files, StringComparer.Ordinal);
         if (describe)
         {
             return new RefactorAnswer(kind, $"{name} would tidy {Plural.Of(files.Count, "C# file")} of the {scope}",
                 [.. files.Select(f => new RefactorFile(Relative(f), "unchanged", []))], []);
         }
         // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
-        await Until(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel);
+        await When(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel, ServerState());
         CSharpService service = Session.CSharp is { IsReady: true } ready ? ready : throw new TimeoutException($"The language server has not loaded the workspace ({Session.CSharp?.State ?? "none"})");
         List<RefactorFile> tidied = [];
         List<string> left = [];
         // Those open are the person's, each with its own undo; the others are one command.
-        foreach (OpenDocument open in Editors.Documents.Where(d => files.Contains(d.Path)).ToList())
+        foreach (OpenDocument open in Editors.Documents.Where(d => named.Contains(d.Path)).ToList())
         {
             cancel.ThrowIfCancellationRequested();
             await Tidied(open, service.For(open)?.Lsp);
         }
         using (Passenger.App.Editors.CommandHistory.Recording recording = Editors.Commands.Record(name))
         {
-            foreach (string file in files.Where(f => !Editors.Documents.Any(d => d.Path == f)))
+            HashSet<string> shown = new(Editors.Documents.Select(d => d.Path), StringComparer.Ordinal);
+            foreach (string file in files.Where(f => !shown.Contains(f)))
             {
                 cancel.ThrowIfCancellationRequested();
                 recording.Watch(file);
@@ -428,9 +431,10 @@ public sealed partial class PassengerTools
                 left.Add($"{Relative(document.Path)}: the language server does not read it");
                 return;
             }
-            string before = document.Text.Snapshot.ToString();
+            // Its text's version says whether the tidy changed it, never the text made into a string twice.
+            int before = document.Text.Version;
             string done = await TidyOne(lsp, document, cleanup);
-            if (document.Text.Snapshot.ToString() != before)
+            if (document.Text.Version != before)
             {
                 tidied.Add(new RefactorFile(Relative(document.Path), "changed", [], done));
             }
@@ -449,8 +453,9 @@ public sealed partial class PassengerTools
     }
 
     /// <summary>The C# files of a project (the one a path names or holds) or of the solution, as Find in Files' scopes
-    /// have them: under each project's folder, not a nested project's, nor what builds write.</summary>
-    private IReadOnlyList<string> CodeFiles(string scope, string? path)
+    /// have them: under each project's folder, not a nested project's, nor what builds write. Taken off the UI thread from
+    /// the folder's index (a project outside the folder, or a folder still being walked, walked there as the index walks).</summary>
+    private async Task<IReadOnlyList<string>> CodeFilesAsync(string scope, string? path, CancellationToken cancel)
     {
         IReadOnlyList<ProjectModel> projects = Session.Projects;
         if (projects.Count == 0)
@@ -464,20 +469,35 @@ public sealed partial class PassengerTools
             chosen = [projects.Where(p => p.Path == full || PathNames.IsUnder(full, p.Folder)).OrderByDescending(p => p.Folder.Length).FirstOrDefault()
                 ?? throw new ArgumentException($"{Relative(full)} is in none of the solution's projects")];
         }
-        SortedSet<string> files = new(StringComparer.Ordinal);
-        foreach (ProjectModel project in chosen.Where(p => Directory.Exists(p.Folder)))
+        (string Folder, string[] Nested)[] wanted = [.. chosen.Select(project => (project.Folder,
+            (string[])[.. projects.Where(p => p.Folder != project.Folder && PathNames.IsUnder(p.Folder, project.Folder)).Select(p => p.Folder)]))];
+        string? root = Session.Index.IsWalking ? null : Session.Index.Root;
+        IReadOnlyList<string> indexed = Session.Index.Files;
+        return await BackgroundWork.Run(() =>
         {
-            string[] nested = [.. projects.Where(p => p.Folder != project.Folder && PathNames.IsUnder(p.Folder, project.Folder)).Select(p => p.Folder)];
-            foreach (string file in Directory.EnumerateFiles(project.Folder, "*.cs", SearchOption.AllDirectories))
+            SortedSet<string> files = new(StringComparer.Ordinal);
+            foreach ((string folder, string[] nested) in wanted)
             {
-                string relative = Path.GetRelativePath(project.Folder, file);
-                if (!relative.Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj") && !nested.Any(n => PathNames.IsUnder(file, n)))
+                cancel.ThrowIfCancellationRequested();
+                if (!Directory.Exists(folder))
                 {
-                    files.Add(PathNames.Canonical(file));
+                    continue;
+                }
+                IEnumerable<string> under = root is not null && PathNames.IsUnder(folder, root)
+                    ? indexed.Select(relative => Path.Combine(root, relative)).Where(file => PathNames.IsUnder(file, folder))
+                    : FileIndex.Walk(folder).Select(relative => Path.Combine(folder, relative));
+                foreach (string file in under)
+                {
+                    if (file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+                        && !Path.GetRelativePath(folder, file).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj")
+                        && !nested.Any(n => PathNames.IsUnder(file, n)))
+                    {
+                        files.Add(PathNames.Canonical(file));
+                    }
                 }
             }
-        }
-        return [.. files];
+            return (IReadOnlyList<string>)[.. files];
+        }, cancel);
     }
 
     /// <summary>A refactoring's outcome as the agent reads it: refused with why, or each file it changed and what it left.</summary>

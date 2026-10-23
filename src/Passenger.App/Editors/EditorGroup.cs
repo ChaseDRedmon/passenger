@@ -58,8 +58,9 @@ public sealed class EditorGroup : DockPanel
     /// <summary>The table over the editor for a CSV or workbook, made as the group first shows one.</summary>
     private TableViewer? tables;
 
-    /// <summary>This group's view of the active asset; its bitmap or face belongs to the document, not this control.</summary>
-    private AssetPreviewControl? preview;
+    /// <summary>This group's view of the active asset (its bitmap or face belongs to the document, not this control) or of
+    /// release notes the app carries, rendered, in the editor's place.</summary>
+    private Control? preview;
 
     public EditorGroup(EditorArea area)
     {
@@ -230,18 +231,35 @@ public sealed class EditorGroup : DockPanel
         tabs.Move(tabs.IndexOf(tab), tabs.Count(t => t.IsPinned && t != tab));
     }
 
-    /// <summary>A hidden tab's kept carets follow what changes its text meanwhile (a reload, a rename), as the shown one's do.</summary>
+    /// <summary>A hidden tab's kept carets follow what changes its text meanwhile (a reload, a rename), as the shown one's do;
+    /// release notes shown are drawn again from their new text (a build that carries others).</summary>
     private void OnTabTextChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (tabs.FirstOrDefault(t => t.Document.Text == sender) is { } tab && tab != active
-            && views.TryGetValue(tab.Document, out (SelectionSet Selections, Vector Scroll) view))
+        if (tabs.FirstOrDefault(t => t.Document.Text == sender) is not { } tab)
+        {
+            return;
+        }
+        if (tab == active && tab.Document.IsReleaseNotes && preview is not null)
+        {
+            ClearPreview();
+            preview = PreviewOf(tab.Document);
+            body.Children.Add(preview);
+        }
+        else if (tab != active && views.TryGetValue(tab.Document, out (SelectionSet Selections, Vector Scroll) view))
         {
             views[tab.Document] = (TextEditing.MapThrough(view.Selections, e.Edits).Clamp(e.After.Length), view.Scroll);
         }
     }
 
-    /// <summary>Shows a file's text or asset preview, keeping the carets and scroll of the text it replaces. An asset
-    /// detaches the hidden text editor so editing commands cannot change the previous file.</summary>
+    /// <summary>What shows in the editor's place for a file that is no text to edit: an asset's preview, or release notes rendered.</summary>
+    private Control PreviewOf(OpenDocument document) =>
+        document.Asset is { } asset ? new AssetPreviewControl(asset) : new ReleaseNotesView(document, area.Browse);
+
+    /// <summary>Whether the editor shows the file, rather than a view of its own in the editor's place.</summary>
+    private static bool InEditor(OpenDocument document) => document.Asset is null && !document.IsReleaseNotes;
+
+    /// <summary>Shows a file's text, or its asset preview or rendered release notes, keeping the carets and scroll of the
+    /// text it replaces. A preview detaches the hidden text editor so editing commands cannot change the previous file.</summary>
     public void Show(OpenDocument document)
     {
         Add(document);
@@ -259,7 +277,7 @@ public sealed class EditorGroup : DockPanel
         active.IsActive = true;
         document.PropertyChanged += OnDocumentChanged;
         ClearPreview();
-        if (document.Asset is { } asset)
+        if (document.Asset is not null || document.IsReleaseNotes)
         {
             Find.Detach();
             Editor.Detach();
@@ -267,7 +285,7 @@ public sealed class EditorGroup : DockPanel
             Editor.IsVisible = false;
             Side = null;
             tables?.Hide();
-            preview = new AssetPreviewControl(asset);
+            preview = PreviewOf(document);
             body.Children.Add(preview);
             ShowBanner(document);
             tabBar.IsVisible = true;
@@ -424,11 +442,11 @@ public sealed class EditorGroup : DockPanel
 
     /// <summary>Where a tab's carets are in this group: the editor's for the one shown, else as it was left.</summary>
     public SelectionSet SelectionsOf(OpenDocument document) =>
-        active?.Document == document && document.Asset is null ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
+        active?.Document == document && InEditor(document) ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
 
     /// <summary>Where a tab's editor was scrolled in this group: the editor's for the one shown, else as it was left.</summary>
     public Vector ScrollOf(OpenDocument document) =>
-        active?.Document == document && document.Asset is null ? Editor.ScrollOffset : views.TryGetValue(document, out var view) ? view.Scroll : document.Scroll;
+        active?.Document == document && InEditor(document) ? Editor.ScrollOffset : views.TryGetValue(document, out var view) ? view.Scroll : document.Scroll;
 
     /// <summary>Puts a tab's carets (and scroll) where they were kept, for when it is shown.</summary>
     public void Remember(OpenDocument document, SelectionSet selections, Vector scroll = default) => views[document] = (selections, scroll);
@@ -436,7 +454,7 @@ public sealed class EditorGroup : DockPanel
     /// <summary>The carets and scroll of the text shown, kept for when its tab is shown again; an asset has no editor state.</summary>
     public void Keep()
     {
-        if (active is not null && active.Document.Asset is null)
+        if (active is not null && InEditor(active.Document))
         {
             views[active.Document] = (Editor.Selections, Editor.ScrollOffset);
             active.Document.Selections = Editor.Selections;
@@ -544,7 +562,7 @@ public sealed class EditorGroup : DockPanel
         if (preview is not null)
         {
             body.Children.Remove(preview);
-            preview.Dispose();
+            (preview as IDisposable)?.Dispose();
             preview = null;
         }
     }
@@ -591,7 +609,7 @@ public sealed class EditorGroup : DockPanel
         };
         void Paint()
         {
-            name.Text = document.Name;
+            name.Text = document.Title;
             icon.Data = document.Icon;
             icon.Foreground = document.IconBrush;
             ToolTip.SetTip(border, document.Path);

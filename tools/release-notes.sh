@@ -1,9 +1,12 @@
 #!/bin/sh
 # A release's notes (#56), for `gh release create --notes-file`: `tools/release-notes.sh [vX.Y.Z]` writes to standard
-# output the tag's own message when it is an annotated tag that says more than its name, else the first line of each
-# commit since the previous vX.Y.Z tag (every commit, for the first release). With no tag, as in a dry run from a
-# branch, the commits since the last tag up to HEAD. GitHub keeps at most 125,000 characters of notes, so a longer list
-# is cut, ending with a link to the rest.
+# output the version's own notes, docs/release-notes/X.Y.Z.md, which the app carries and shows as What's New (#416), so
+# the release and the app say the same; the version is the tag's, else VERSION's (a dry run from a branch). A version
+# with none takes the tag's own message when it is an annotated tag that says more than its name, else the first line of
+# each commit since the previous vX.Y.Z tag (every commit, for the first release); with no tag, the commits since the
+# last tag up to HEAD. GitHub keeps at most 125,000 characters of notes, so a longer list is cut, ending with a link to
+# the rest. Notes that are still the stand-in (their "<!-- Stand-in" line) fail a release PUBLISH=true publishes, and
+# only warn otherwise.
 set -eu
 fail() {
     echo "release-notes: $*" >&2
@@ -12,6 +15,7 @@ fail() {
 tag=${1:-}
 root=$(cd "$(dirname "$0")/.." && pwd)
 repository=${GITHUB_REPOSITORY:-Zaneris/passenger}
+
 if [ -n "$tag" ]; then
     git -C "$root" rev-parse -q --verify "refs/tags/$tag" > /dev/null || fail "there is no tag $tag"
     # The tag, even where a branch has the same name.
@@ -19,6 +23,19 @@ if [ -n "$tag" ]; then
 else
     head=HEAD
 fi
+
+version=${tag#v}
+[ -n "$version" ] || version=${VERSION:-}
+notes=$root/docs/release-notes/$version.md
+if [ -n "$version" ] && [ -f "$notes" ]; then
+    if grep -q '^<!-- Stand-in' "$notes"; then
+        [ "${PUBLISH:-}" != true ] || fail "docs/release-notes/$version.md is still the stand-in: write the notes before publishing $version"
+        echo "release-notes: docs/release-notes/$version.md is still the stand-in, which a published release refuses" >&2
+    fi
+    cat "$notes"
+    exit 0
+fi
+
 if [ "$(git -C "$root" rev-parse --is-shallow-repository)" = true ]; then
     fail "a shallow clone has neither every tag nor every commit since the last; fetch the whole history"
 fi

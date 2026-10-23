@@ -95,10 +95,11 @@ public abstract class SharedProject : IDisposable
         return path;
     }
 
-    /// <summary>The project as written for the test about to run: what a test before it changed on disk written back, what
-    /// it added removed. The shared server is ended if a file came or went, or a file it holds no document of changed (a
-    /// project file); one whose documents a test only rewrote is kept once it holds them as written again, which it reads
-    /// through its own watcher (<see cref="WarmServer.HoldsAsync"/>), and ended if it does not within <see cref="Rereading"/>.</summary>
+    /// <summary>The project as written for the test about to run: what a test before it changed on disk written back with
+    /// the time it was written at, what it added removed. The shared server is ended if a file came or went, or a file it
+    /// holds no document of changed (a project file); one whose documents a test only rewrote is kept once it holds them as
+    /// written again, which it reads through its own watcher (<see cref="WarmServer.HoldsAsync"/>), and ended if it does
+    /// not within <see cref="Rereading"/>.</summary>
     public void Reset()
     {
         bool structure = changed;
@@ -148,6 +149,12 @@ public abstract class SharedProject : IDisposable
                     retimed.Add(path);
                 }
             }
+        }
+        // A file put back keeps the time it was written at, as a project untouched for a while has it: the IDE refuses a
+        // server's edit to a file not open written a moment before (WorkspaceEdits.Catching), which the next test's would be.
+        foreach (string file in written.Keys.Where(file => File.GetLastWriteTimeUtc(file) != stamps[file]))
+        {
+            File.SetLastWriteTimeUtc(file, stamps[file]);
         }
         // A folder's time is a file that came or went there, but for the temporary file a save writes beside a file and
         // renames over it (AtomicFile), which no project globs: a folder none of whose files was rewritten had one come and go.

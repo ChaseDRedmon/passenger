@@ -156,31 +156,32 @@ public static partial class McpHost
         }
     }
 
-    /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>).</summary>
-    public static McpServerOptions Options(MainWindow window, AgentConnection connection)
-    {
-        PassengerTools tools = new(window, connection);
-        McpServerPrimitiveCollection<McpServerTool> collection = [];
-        foreach (MethodInfo method in ToolMethods())
-        {
-            collection.Add(new ConnectedTool(Lean(McpServerTool.Create(method, tools, ToolCreateOptions())), window, connection));
-        }
-        return new McpServerOptions
-        {
-            ServerInfo = ServerInfo,
-            ServerInstructions = Instructions,
-            ToolCollection = collection,
-        };
-    }
+    /// <summary>The <see cref="PassengerTools"/> a call reaches: its connection's, which <see cref="ConnectedTool"/> gives the
+    /// call it serves.</summary>
+    internal static readonly AsyncLocal<PassengerTools?> Serving = new();
+
+    /// <summary>The build's tools, each made once a process (its schema read by reflection and trimmed, <see cref="Lean"/>),
+    /// on whichever thread first asks, never the UI thread: every connection shares them, each call reaching its own
+    /// connection's tools through <see cref="Serving"/>, and <c>--mcp-attach</c> lists them.</summary>
+    internal static IReadOnlyList<McpServerTool> Tools => made.Value;
+
+    private static readonly Lazy<McpServerTool[]> made = new(() => [.. ToolMethods().Select(method =>
+        Lean(McpServerTool.Create(method, _ => Serving.Value ?? throw new InvalidOperationException("A Passenger tool ran outside an agent's call"), ToolCreateOptions())))]);
+
+    /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>), made of <see cref="Tools"/>: call off
+    /// the UI thread, which the first connection's would hold while every tool's schema is made.</summary>
+    public static McpServerOptions Options(MainWindow window, AgentConnection connection) =>
+        Options(Task.FromResult(new PassengerTools(window, connection)), window, connection);
 
     /// <summary>--mcp's server, its tools' list answered at once and each call waiting for the IDE it acts on.</summary>
-    private static McpServerOptions Options(Task<PassengerTools> ready, AgentConnection connection)
+    private static McpServerOptions Options(Task<PassengerTools> ready, AgentConnection connection) => Options(ready, null, connection);
+
+    private static McpServerOptions Options(Task<PassengerTools> tools, MainWindow? window, AgentConnection connection)
     {
         McpServerPrimitiveCollection<McpServerTool> collection = [];
-        foreach (MethodInfo method in ToolMethods())
+        foreach (McpServerTool tool in Tools)
         {
-            // Asked for only once the call has waited for the IDE.
-            collection.Add(new ConnectedTool(Lean(McpServerTool.Create(method, _ => ready.Result, ToolCreateOptions())), null, connection, ready));
+            collection.Add(new ConnectedTool(tool, window, connection, tools));
         }
         return new McpServerOptions
         {
@@ -231,7 +232,7 @@ public static partial class McpHost
         TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // The agent's own IDE: nobody else is at it to ask.
         AgentConnection connection = new(done.Token, attached: false);
-        McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(ready.Task, connection));
+        McpServer server = McpServer.Create(new PeerTransport(new StreamServerTransport(input, output, "passenger")), Options(ready.Task, connection));
         // Not held: it serves for as long as the agent stays, and each tool holds what it starts.
         _ = Task.Run(async () =>
         {

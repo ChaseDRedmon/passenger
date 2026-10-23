@@ -184,6 +184,7 @@ public sealed partial class PassengerTools
         int limit = 200, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (SearchQuery query, SearchScope chosen) = Search(text, matchCase, wholeWords, regex, scope, project, directory, recursive, mask);
+        // Looked at every 50 ms: an index cleared as its folder closes, or another folder's, says nothing to this wait.
         await Until(() => !Session.Index.IsWalking, IndexLimit, cancel);
         IReadOnlyList<SearchMatch> found = await window.FindInFilesAsync(query, chosen, cancel);
         return new FindInFilesResult(found.Count, found.Count >= FileSearch.MostMatches,
@@ -204,6 +205,7 @@ public sealed partial class PassengerTools
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (SearchQuery query, SearchScope chosen) = Search(text, matchCase, wholeWords, regex, scope, project, directory, recursive, mask);
+        // Looked at every 50 ms: an index cleared as its folder closes, or another folder's, says nothing to this wait.
         await Until(() => !Session.Index.IsWalking, IndexLimit, cancel);
         IReadOnlyList<SearchMatch> found = await window.FindInFilesAsync(query, chosen, cancel);
         if (found.Count == 0)
@@ -248,13 +250,13 @@ public sealed partial class PassengerTools
         string oldText,
         string newText,
         bool all = false,
-        CancellationToken cancel = default) => OnUi(cancel, () =>
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (string.IsNullOrEmpty(oldText))
         {
             throw new ArgumentException("Give oldText, the text to replace as the file has it; to add text, give the line before it as oldText and that line with the new text after it as newText");
         }
-        OpenDocument document = Textual(path);
+        OpenDocument document = await TextualAsync(path, cancel);
         TextSnapshot text = document.Text.Snapshot;
         string eol = document.Text.LineEnding;
         string needle = LineEndings.In(oldText, eol);
@@ -302,7 +304,7 @@ public sealed partial class PassengerTools
         {
             said.Append("\n…");
         }
-        return Task.FromResult(said.ToString());
+        return said.ToString();
     });
 
     /// <summary>How many changed lines edit shows back.</summary>
@@ -352,6 +354,7 @@ public sealed partial class PassengerTools
         OnUi(cancel, async () =>
     {
         (History.LocalHistory history, string full) = HistoryOf(path);
+        // Looked at every 50 ms: Local History's queue, drained off the UI thread, raises nothing as it empties.
         await Until(() => !history.IsRecording, HistoryLimit, cancel);
         (IReadOnlyList<HistoryEvent> events, IReadOnlyDictionary<string, string?> known) = history.Snapshot();
         bool isFolder = Directory.Exists(full);
@@ -390,6 +393,7 @@ public sealed partial class PassengerTools
         OnUi(cancel, async () =>
     {
         (History.LocalHistory history, string full) = HistoryOf(path);
+        // Looked at every 50 ms: Local History's queue, drained off the UI thread, raises nothing as it empties.
         await Until(() => !history.IsRecording, HistoryLimit, cancel);
         if (await window.RevertLocalHistoryAsync(full, set) is { } problem)
         {
@@ -410,6 +414,7 @@ public sealed partial class PassengerTools
             throw new ArgumentException("A label needs a name");
         }
         history.Label(label);
+        // Looked at every 50 ms: Local History's queue, drained off the UI thread, raises nothing as it empties.
         await Until(() => !history.IsRecording, HistoryLimit, cancel);
         return $"Label {label} put";
     });
@@ -436,6 +441,7 @@ public sealed partial class PassengerTools
         {
             // Its first answers come once the server has loaded the solution and analysed it.
             await Server(cancel);
+            // Looked at every 50 ms: the server's solution-wide pulls raise nothing as the last is answered.
             await Until(() => Session.CSharp is not { IsAnalysing: true }, ServerLimit, cancel);
         }
         ToolWindows.ProblemsView view = window.BottomPanel.Problems;

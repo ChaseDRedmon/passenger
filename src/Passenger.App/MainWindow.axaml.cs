@@ -102,6 +102,7 @@ public partial class MainWindow : Window
         AddErrors();
         AddAbout();
         AddUpdates();
+        AddWhatsNew();
         AddAgents();
         AddDiscord();
         AddShutdown();

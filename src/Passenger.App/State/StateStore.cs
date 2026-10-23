@@ -41,7 +41,14 @@ public sealed class StateStore
         Updates = new(Path.Combine(root, "updates.json"));
         Find = new(Path.Combine(root, "find.json"));
         Refactorings = new(Path.Combine(root, "refactorings.json"));
+        // Before this process writes any: a change is written a moment after it is made, and only through this store.
+        UsedBefore = new[] { Path.Combine(root, SettingsFile), Layout.Path, Recent.Path, Updates.Path }.Any(File.Exists)
+            || Directory.Exists(Path.Combine(root, "workspaces"));
     }
+
+    /// <summary>Whether a Passenger kept its state here before this process opened the store: one of the app's documents,
+    /// or a folder's, was there already (the logs, which every start writes, are none).</summary>
+    public bool UsedBefore { get; }
 
     /// <summary>The variable that names the folder in the user's local application data's place.</summary>
     public const string Variable = "PASSENGER_SETTINGS";

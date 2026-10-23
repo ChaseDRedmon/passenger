@@ -1,0 +1,43 @@
+using System.Net.Sockets;
+using System.Threading.Channels;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+
+namespace Passenger.App.Mcp;
+
+/// <summary>An MCP connection whose other end may go at any moment, an agent or a window: an answer or a notification its
+/// stream can no longer carry is dropped as the connection's ordinary end. The SDK sends some without awaiting them (a
+/// call's error answer after its answer failed, a request given up by its token), whose failure was an unobserved error,
+/// an internal error of the IDE's. A request still fails to the sender awaiting it, and a message that cannot be written
+/// for another reason than a broken stream still throws.</summary>
+public sealed class PeerTransport(ITransport inner) : ITransport
+{
+    public string? SessionId => inner.SessionId;
+
+    public ChannelReader<JsonRpcMessage> MessageReader => inner.MessageReader;
+
+    public async Task SendMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await inner.SendMessageAsync(message, cancellationToken).ConfigureAwait(false);
+        }
+        catch (IOException failed) when (message is not JsonRpcRequest && failed.InnerException is IOException or SocketException or ObjectDisposedException)
+        {
+            // The other end went: nobody is left to tell.
+        }
+    }
+
+    public ValueTask DisposeAsync() => inner.DisposeAsync();
+
+    /// <summary>A client's connection, each session it makes a <see cref="PeerTransport"/>.</summary>
+    public static IClientTransport Of(IClientTransport transport) => new Client(transport);
+
+    private sealed class Client(IClientTransport inner) : IClientTransport
+    {
+        public string Name => inner.Name;
+
+        public async Task<ITransport> ConnectAsync(CancellationToken cancellationToken = default) =>
+            new PeerTransport(await inner.ConnectAsync(cancellationToken).ConfigureAwait(false));
+    }
+}

@@ -76,7 +76,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 await window.OpenFolder(Path.GetDirectoryName(full)!, connection).WaitAsync(cancel);
             }
             // Its disk's text taken first, as every tool naming a file does, then shown.
-            OpenDocument document = Document(full);
+            OpenDocument document = await DocumentAsync(full, cancel);
             if (window.OpenFile(full) is { } problem)
             {
                 throw new InvalidOperationException(problem);
@@ -116,7 +116,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException("No C# language server runs for this folder, and routes are read from code through it");
         }
-        await Until(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel);
+        await When(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel, ServerState());
         IReadOnlyList<Roslyn.Extension.WebRoute> found = await window.RoutesAsync(cancel);
         return answered with
         {
@@ -139,12 +139,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "editor_text", Title = "A file's text in the editor", ReadOnly = true), Description(
         "A file's text as the editor holds it, unsaved changes included, its lines numbered; opened if it is not.")]
-    public Task<string> EditorText(string path, int? from = null, int? to = null, CancellationToken cancel = default) => OnUi(cancel, () =>
+    public Task<string> EditorText(string path, int? from = null, int? to = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        TextSnapshot text = Textual(path).Text.Snapshot;
+        TextSnapshot text = (await TextualAsync(path, cancel)).Text.Snapshot;
         int first = Math.Clamp((from ?? 1) - 1, 0, text.LineCount - 1);
         int last = Math.Clamp((to ?? text.LineCount) - 1, first, text.LineCount - 1);
-        return Task.FromResult(string.Join('\n', Enumerable.Range(first, last - first + 1).Select(i => $"{i + 1,6}\t{text.GetLineText(i)}")));
+        return string.Join('\n', Enumerable.Range(first, last - first + 1).Select(i => $"{i + 1,6}\t{text.GetLineText(i)}"));
     });
 
     // Not ide_action's app.saveAll: never asked on a person's window (#278), and its answer names what was left unsaved.
@@ -171,11 +171,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "and ESLint).")]
     public Task<IReadOnlyList<Finding>> Diagnostics(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        if (Document(path) is { Language.Name: not ("C#" or "Razor") } marked)
+        if (await DocumentAsync(path, cancel) is { Language.Name: not ("C#" or "Razor") } marked)
         {
             // Its own checks run after it opens or changes, its markers set as they end; the rest of the IDE's work (a build,
             // a test run, a busy console) is not waited for.
-            await Until(() => !marked.IsChecking, MarkersLimit, cancel);
+            await When(() => !marked.IsChecking, MarkersLimit, cancel, On(h => marked.Checked += h, h => marked.Checked -= h));
             List<Finding> missing = [];
             if (Session.Web is { } web && web.For(marked) is { Lsp: null })
             {
@@ -482,7 +482,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         if (Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
         {
-            return await FormatXamlAsync(Document(path));
+            return await FormatXamlAsync(await DocumentAsync(path, cancel));
         }
         Served file = await Serve(path, cancel);
         ServerServed served = file as ServerServed ?? throw Lacks(file, "Reformat Code", MSBuildHas);
@@ -668,7 +668,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         AgentCall.Say($"Running {name}: waiting up to {Math.Max(0, waitSeconds)} s for it to end or its UI to be up");
         // An app with a window never ends by itself: the wait is over once its UI is up, which the app_ tools look at.
         LiveTree.LiveApp? app = Session.RunApp;
-        await Until(() => ended.IsCompleted || app is { State: not LiveTree.LiveAppState.Waiting }, TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
+        await When(() => ended.IsCompleted || app is { State: not LiveTree.LiveAppState.Waiting }, TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel,
+            Ends(ended), app is null ? _ => () => { } : On(h => app.StateChanged += h, h => app.StateChanged -= h));
         int? code = ended.IsCompletedSuccessfully ? ended.Result : null;
         string output = Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(Session.Runner.Shown(), 200);
         string status = code is int exit ? BuildRunController.RunEnded(name, exit)
@@ -809,10 +810,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         Task<string?> run = tests.RunAsync(folder, chosen, debug);
         if (debug)
         {
-            // A debugged test that stops is the agent's to look at: the stop comes back, the run goes on after it.
+            // A debugged test that stops is the agent's to look at: the stop comes back, the run goes on after it. Looked at
+            // every 50 ms: the test host's session is made as the run goes, and the debugger tells of no session's pause.
             await Until(() => run.IsCompleted || Session.Debug.Session is { State: DebugState.Paused }, TimeSpan.FromMinutes(5), cancel);
             if (!run.IsCompleted)
             {
+                // Looked at every 50 ms: a stop's reading raises nothing as it lands.
                 await Until(() => Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
                 return TestInfo(tests) with { Debugger = await DebugSnapshotAsync() };
             }
@@ -837,7 +840,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         Testing.TestState? only = state is null ? null
             : named >= 0 ? TestStates[named].State
             : throw new ArgumentException($"No state '{state}'; there are passed, failed, skipped and notRun");
-        // Found from code as the folder opens: an agent's first look waits for that, as the window says it is looking.
+        // Found from code as the folder opens: an agent's first look waits for that, as the window says it is looking; looked
+        // at every 50 ms, the finder raising nothing as it is done.
         await Until(() => !Session.Tests.IsLooking, TestsLookLimit, cancel);
         return (IReadOnlyList<TestInfoRow>)[.. Session.Tests.Tree.Methods
             .Where(m => (filter is null || (m.FullName ?? m.Name).Contains(filter, StringComparison.Ordinal)) && (only is null || m.State == only))
@@ -1135,11 +1139,13 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         DateTime until = DateTime.UtcNow + limit;
         AgentCall.Say($"Debugging: waiting up to {limit.TotalSeconds:0} s for a stop, the program's end or its UI");
         Func<bool> going = () => Session.Debug.Session is { State: DebugState.Running or DebugState.Starting };
+        // Looked at every 50 ms: the session the launch makes can come after the wait begins, and the debugger tells of none.
         await Until(() => !going() || app is { State: not LiveTree.LiveAppState.Waiting }, limit, cancel);
         if (going() && app is { State: LiveTree.LiveAppState.Connected })
         {
             // The inspector says hello as the app's dispatcher first runs, a moment before the first layout, where a breakpoint
             // or a failed binding may stop it: that stop is waited for too.
+            // Looked at every 50 ms, as the wait before it is.
             await Until(() => !going(), Min(LaunchSettle, until - DateTime.UtcNow), cancel);
         }
         DebugSnapshot started = await AfterResume(TimeSpan.Zero, cancel);
@@ -1231,7 +1237,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         DebugSession debugged = await Debugged(session);
         await debugged.PauseAsync();
-        await Until(() => debugged.State != DebugState.Running, TimeSpan.FromSeconds(waitSeconds), cancel);
+        await When(() => debugged.State != DebugState.Running, TimeSpan.FromSeconds(waitSeconds), cancel, StateOf(debugged));
         return await DebugSnapshotAsync(debugged);
     });
 
@@ -1245,7 +1251,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException(problem);
         }
-        await Until(() => paused.StopReason == StopReasons.Goto, TimeSpan.FromSeconds(10), cancel);
+        await When(() => paused.StopReason == StopReasons.Goto, TimeSpan.FromSeconds(10), cancel, StateOf(paused));
         return await DebugSnapshotAsync(paused);
     });
 
@@ -1386,6 +1392,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             return after;
         }
         // The runner reports the host's results a moment after it ends, or starts the next project's host.
+        // Looked at every 50 ms: another test host's session is made as the run goes, which the debugger tells of nowhere.
         await Until(() => !Session.Tests.IsBusy || Session.Debug.Session is { State: not DebugState.Ended }, TestsTallyLimit, cancel);
         return Session.Tests.IsBusy ? await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel) : after with { Tests = TestInfo(Session.Tests) };
     });
@@ -1401,8 +1408,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             AgentCall.Say($"The program runs: waiting up to {limit.TotalSeconds:0} s for it to stop or end");
         }
         DebugSession? going = session ?? Session.Debug.Session;
-        await Until(() => going is not { State: DebugState.Running or DebugState.Starting }, limit, cancel);
-        // A stop is read (its frames, the exception it is on) a moment after the state says paused, once its tab is chosen.
+        await When(() => going is not { State: DebugState.Running or DebugState.Starting }, limit, cancel, StateOf(going));
+        // A stop is read (its frames, the exception it is on) a moment after the state says paused, once its tab is chosen;
+        // looked at every 50 ms, the stop's reading raising nothing as it lands.
         await Until(() => going is not { State: DebugState.Paused } || Session.Debug.Session == going && Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
         return await DebugSnapshotAsync(going);
     }
@@ -1552,6 +1560,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         LiveTree.BindingValuesController values = window.BindingValues;
         values.CatchUp();
+        // Looked at every 50 ms: the binding values' reads raise nothing as they end.
         await Until(() => !values.IsReading, BindingValuesLimit, CancellationToken.None);
         List<string> shown = [.. Editors.Groups.Select(g => g.Active).OfType<OpenDocument>().Distinct()
             .SelectMany(d => d.LiveValues.OrderBy(a => a.Line).Select(a => $"{Relative(d.Path)}:{a.Line + 1}: {a.Text}"))];
@@ -1669,7 +1678,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         if (Session.CSharp is { IsReady: false })
         {
             AgentCall.Say("Waiting for the C# language server to load the solution");
-            await Until(() => Session.CSharp?.IsReady != false, ServerLimit, cancel);
+            await When(() => Session.CSharp?.IsReady != false, ServerLimit, cancel, ServerState());
             AgentCall.Say(null);
         }
         return Session.CSharp is { IsReady: true, Session: { } server }
@@ -1681,7 +1690,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     /// server has loaded the workspace.</summary>
     private async Task<(OpenDocument Document, LspDocument Lsp)> Code(string path, CancellationToken cancel)
     {
-        OpenDocument document = Document(path);
+        OpenDocument document = await DocumentAsync(path, cancel);
         if (Session.CSharp is null)
         {
             throw new InvalidOperationException("No C# language server runs for this folder");
@@ -1691,24 +1700,24 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException($"This is the C# language server's, which answers for C# and Razor files, not {LanguageOf(document)} ones such as {Path.GetFileName(document.Path)}");
         }
-        // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
+        // Answers before the server has loaded the solution come from a file it knows alone, and are wrong. Looked at every
+        // 50 ms: a file's server document comes as it opens there, which raises nothing.
         await Until(() => Session.CSharp is not { } csharp || csharp.IsReady && csharp.For(document)?.Lsp is not null, ServerLimit, cancel);
         return (document, Session.CSharp?.For(document)?.Lsp
             ?? throw new TimeoutException($"The language server has not loaded {Path.GetFileName(document.Path)} ({Session.CSharp?.State ?? "none"})"));
     }
 
-    private OpenDocument Document(string path)
+    /// <summary>A file opened as the editor would. An agent's own file tools write to disk and ask about the file at once,
+    /// before the folder's watcher has told the editor: an open file it has not changed takes the disk's text first, so no
+    /// answer is about the text before, reading the disk off the UI thread and only once its length or time changed since
+    /// the editor read it (<see cref="OpenDocument.TakeDiskTextAsync"/>). A preview has no text to take, and is decoded
+    /// again only when the watcher hears its file change.</summary>
+    private async Task<OpenDocument> DocumentAsync(string path, CancellationToken cancel)
     {
         string full = Resolve(path);
         if (Editors.Documents.FirstOrDefault(d => d.Path == full) is { } open)
         {
-            // An agent's own file tools write to disk and ask about the file at once, before the folder's watcher has told
-            // the editor: an open file it has not changed takes the disk's text first, so no answer is about the text before.
-            // A preview has no text to take, and is decoded again only when the watcher hears its file change.
-            if (!open.IsModified && open.HoldsText)
-            {
-                open.Reload();
-            }
+            await open.TakeDiskTextAsync(cancel);
             return open;
         }
         if (window.OpenFile(full) is { } problem)
@@ -1719,11 +1728,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             ?? throw new FileNotFoundException($"{full} is not open in the editor");
     }
 
-    /// <summary>A file opened as <see cref="Document"/> opens it, refused when its tab holds no text of the file's (an
+    /// <summary>A file opened as <see cref="DocumentAsync"/> opens it, refused when its tab holds no text of the file's (an
     /// image's or a font's preview, a workbook's cells), so no tool reads or edits that empty stand-in as the file.</summary>
-    private OpenDocument Textual(string path)
+    private async Task<OpenDocument> TextualAsync(string path, CancellationToken cancel)
     {
-        OpenDocument document = Document(path);
+        OpenDocument document = await DocumentAsync(path, cancel);
         return document.HoldsText ? document
             : throw new InvalidOperationException($"{Relative(document.Path)} is {document.ShownAs}: it has no text to read or edit");
     }
@@ -1819,7 +1828,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }
 
     /// <summary>Waits on the UI thread, letting it run, until something holds, the time is up, or the agent no longer
-    /// wants the answer.</summary>
+    /// wants the answer, looking again every 50 ms: only where what it waits on raises nothing as it changes, each such
+    /// place saying why; everywhere else <see cref="When"/>.</summary>
     private static async Task Until(Func<bool> condition, TimeSpan limit, CancellationToken cancel)
     {
         DateTime until = DateTime.UtcNow + limit;
@@ -1828,6 +1838,68 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             await Task.Delay(50, cancel);
         }
     }
+
+    /// <summary>What can make a wait's condition hold, told to look again (an event of what the condition reads,
+    /// <see cref="On"/>, or a task's end, <see cref="Ends"/>), giving back how it lets go.</summary>
+    private delegate Action Wake(Action look);
+
+    /// <summary>An event that may make a wait's condition hold, looked at again on the UI thread as it is raised.</summary>
+    private static Wake On(Action<EventHandler> add, Action<EventHandler> remove) => look =>
+    {
+        EventHandler heard = (_, _) => UiThread.Post(look);
+        add(heard);
+        return () => remove(heard);
+    };
+
+    /// <summary>A task whose end may make a wait's condition hold, however it ends.</summary>
+    private static Wake Ends(Task task) => look =>
+    {
+        _ = task.ContinueWith(_ => UiThread.Post(look), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        return () => { };
+    };
+
+    /// <summary>Waits on the UI thread until something holds, the time is up, or the agent no longer wants the answer: its
+    /// condition looked at again only as what can change it says so (<paramref name="wakes"/>), never on a timer, so the
+    /// window spends nothing on the wait and the answer comes as the condition holds.</summary>
+    private static async Task When(Func<bool> condition, TimeSpan limit, CancellationToken cancel, params Wake[] wakes)
+    {
+        if (condition() || limit <= TimeSpan.Zero)
+        {
+            return;
+        }
+        TaskCompletionSource held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Look()
+        {
+            if (!held.Task.IsCompleted && condition())
+            {
+                held.TrySetResult();
+            }
+        }
+        Action[] letGo = [.. wakes.Select(wake => wake(Look))];
+        try
+        {
+            // What changed between the first look and the events' subscription is looked at once more.
+            Look();
+            await held.Task.WaitAsync(limit, cancel);
+        }
+        catch (TimeoutException)
+        {
+            // The time is up: the caller says what never came, as it reads the condition again.
+        }
+        finally
+        {
+            foreach (Action go in letGo)
+            {
+                go();
+            }
+        }
+    }
+
+    /// <summary>The C# server's state changing, as its load lands or it stops: what a wait for the workspace's load wakes on.</summary>
+    private Wake ServerState() => Session.CSharp is { } csharp ? On(h => csharp.StateChanged += h, h => csharp.StateChanged -= h) : _ => () => { };
+
+    /// <summary>A debugged program's state changing: running, paused (a stop's reason with it), ended.</summary>
+    private static Wake StateOf(DebugSession? session) => session is null ? _ => () => { } : On(h => session.StateChanged += h, h => session.StateChanged -= h);
 }
 
 public sealed record Workspace(

@@ -9,7 +9,7 @@ public partial class MainWindow
     private void AddAbout() =>
         actions!.Add(new IdeAction(AppActions.About, "About", "Help", _ => ShowAbout())
         {
-            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 1)],
+            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 2)],
         });
 
     /// <summary>About, over this window until it is closed; its links close it and open the notices or the licence in

@@ -75,6 +75,11 @@ public sealed partial class EditorArea : UserControl
     /// <summary>A folder another program moved, which open files followed (<see cref="FollowMove"/>).</summary>
     public event EventHandler<FileMove>? Followed;
 
+    /// <summary>A link clicked in a rendered page (release notes), for the window to open the one way the IDE opens a browser.</summary>
+    public event EventHandler<Uri>? BrowseRequested;
+
+    internal void Browse(Uri address) => BrowseRequested?.Invoke(this, address);
+
     /// <summary>The commands that changed several files at once or moved one (a rename), which Undo takes back whole.</summary>
     public CommandHistory Commands { get; }
 
