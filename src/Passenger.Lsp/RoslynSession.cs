@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Passenger.Roslyn.Extension;
 using Passenger.Text;
@@ -440,10 +441,10 @@ public sealed class LspDocument : IDisposable
     {
         int version = Text.Version;
         CompletionContext context = incomplete ? new CompletionContext(3) : trigger is null ? new CompletionContext(1) : new CompletionContext(2, trigger);
-        // Sent now, in order with the changes before it; read where the answer came, or on the thread pool should it be in
-        // already, never on the caller's thread: a statement's list is every type in reach, each with the server's data.
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/completion",
-            new CompletionParams(Identifier, PositionOf(offset), context), cancel).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        // Sent now, in order with the changes before it; read on the thread pool, never on the caller's thread: a statement's
+        // list is every type in reach, each with the server's data.
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/completion",
+            new CompletionParams(Identifier, PositionOf(offset), context), cancel));
         return (Shapes.CompletionList(result), version);
     }
 
@@ -456,24 +457,32 @@ public sealed class LspDocument : IDisposable
     public async Task<SignatureHelp?> SignatureHelpAsync(int offset, CancellationToken cancel = default) =>
         await Server.RequestAsync<SignatureHelp>("textDocument/signatureHelp", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel);
 
+    /// <summary>Where the symbol at an offset is declared. Like every answer that grows with the solution or the file, read
+    /// on the thread pool before the caller resumes (<see cref="Read"/>).</summary>
     public async Task<IReadOnlyList<LspLocation>> DefinitionAsync(int offset, CancellationToken cancel = default) =>
-        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/definition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
+        Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/definition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel)));
 
     /// <summary>Where the type of the symbol at an offset (a variable's, a member's, a parameter's) is declared.</summary>
     public async Task<IReadOnlyList<LspLocation>> TypeDefinitionAsync(int offset, CancellationToken cancel = default) =>
-        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/typeDefinition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
+        Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/typeDefinition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel)));
 
+    /// <summary>The implementations of the symbol at an offset: an interface's in a solution may be thousands.</summary>
     public async Task<IReadOnlyList<LspLocation>> ImplementationAsync(int offset, CancellationToken cancel = default) =>
-        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/implementation", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
+        Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/implementation", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel)));
 
     /// <summary>Every place the symbol at an offset is used, its declaration included, each once: Roslyn names a place
     /// once for each symbol declared there (a type and its primary constructor, a record's positional property and its
     /// parameter), so such a declaration came twice. Told apart by the server's own URI text, never a path made
     /// canonical, which asks the disk once a place and held the UI thread through ten thousand usages.</summary>
     public async Task<IReadOnlyList<LspLocation>> ReferencesAsync(int offset, CancellationToken cancel = default) =>
-        [.. Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/references",
-                new ReferenceParams(Identifier, PositionOf(offset), new ReferenceContext(true)), cancel))
+        [.. Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/references",
+                new ReferenceParams(Identifier, PositionOf(offset), new ReferenceContext(true)), cancel)))
             .DistinctBy(place => (place.Uri, place.Range.Start))];
+
+    /// <summary>A request's answer awaited so that what follows the await, reading it into records, runs on the thread pool
+    /// however it came (in already, or where it arrived), never on the caller's thread: the UI thread gets the records made,
+    /// as completion's list is (thousands of usages, a file's hints, a project's code actions).</summary>
+    private static ConfiguredTaskAwaitable<T?> Read<T>(Task<T?> answer) => answer.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
 
     public async Task<IReadOnlyList<DocumentHighlight>> HighlightsAsync(int offset, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<DocumentHighlight>>("textDocument/documentHighlight", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel) ?? [];
@@ -489,8 +498,8 @@ public sealed class LspDocument : IDisposable
     /// call, joining the statement after it onto the call's line.</summary>
     public async Task<IReadOnlyList<CodeAction>> CodeActionsAsync(TextRange range, IReadOnlyList<Diagnostic> diagnostics, CancellationToken cancel = default)
     {
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/codeAction",
-            new CodeActionParams(Identifier, RangeOf(Trimmed(Text.Snapshot, range)), new CodeActionContext(diagnostics, TriggerKind: 1)), cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/codeAction",
+            new CodeActionParams(Identifier, RangeOf(Trimmed(Text.Snapshot, range)), new CodeActionContext(diagnostics, TriggerKind: 1)), cancel));
         return Shapes.CodeActions(result);
     }
 
@@ -515,8 +524,8 @@ public sealed class LspDocument : IDisposable
     public async Task<IReadOnlyList<CodeAction>> SourceActionsAsync(string kind, CancellationToken cancel = default)
     {
         LspRange whole = new(new LspPosition(0, 0), PositionOf(Text.Snapshot.Length));
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/codeAction",
-            new CodeActionParams(Identifier, whole, new CodeActionContext([], [kind], TriggerKind: 2)), cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/codeAction",
+            new CodeActionParams(Identifier, whole, new CodeActionContext([], [kind], TriggerKind: 2)), cancel));
         return Shapes.CodeActions(result);
     }
 
@@ -561,7 +570,7 @@ public sealed class LspDocument : IDisposable
     /// (the Dockerfile server's instructions, as <see cref="SymbolInformation"/>) gives each as a symbol with no children.</summary>
     public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default)
     {
-        JsonElement found = await Server.RequestAsync<JsonElement>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel).ConfigureAwait(false);
+        JsonElement found = await Read(Server.RequestAsync<JsonElement>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel));
         if (found.ValueKind != JsonValueKind.Array)
         {
             return [];
@@ -625,7 +634,7 @@ public sealed class LspDocument : IDisposable
     {
         int version = Text.Version;
         LspRange whole = new(new LspPosition(0, 0), PositionOf(Text.Snapshot.Length));
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/inlayHint", new InlayHintParams(Identifier, whole), cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/inlayHint", new InlayHintParams(Identifier, whole), cancel));
         return (Shapes.InlayHints(result), version);
     }
 
@@ -633,8 +642,8 @@ public sealed class LspDocument : IDisposable
     /// says nothing.</summary>
     public async Task<string> InlayHintTooltipAsync(LspInlayHint hint, CancellationToken cancel = default)
     {
-        JsonElement result = await Server.RequestAsync<JsonElement>("inlayHint/resolve",
-            new { position = hint.Position, label = hint.Label, kind = hint.Kind, data = hint.Data }, cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("inlayHint/resolve",
+            new { position = hint.Position, label = hint.Label, kind = hint.Kind, data = hint.Data }, cancel));
         return result.ValueKind == JsonValueKind.Object && result.TryGetProperty("tooltip", out JsonElement tooltip) ? Shapes.Text(tooltip) : string.Empty;
     }
 
@@ -648,20 +657,24 @@ public sealed class LspDocument : IDisposable
             return Pushed;
         }
         int version = Text.Version;
+        TextSnapshot text = Text.Snapshot;
+        TextDocumentIdentifier identifier = Identifier;
         long asked = System.Diagnostics.Stopwatch.GetTimestamp();
         List<Diagnostic> all = [];
         IReadOnlyList<string?> sources = IsRazor || session is not RoslynSession ? [null] : Server.DiagnosticSources;
+        // Gathered and told apart on the thread pool, from the text and project asked for: a file's thousands of warnings
+        // reach the caller as one list.
         foreach (string? source in sources)
         {
-            DocumentDiagnosticReport? report = await Server.RequestAsync<DocumentDiagnosticReport>("textDocument/diagnostic",
-                new DocumentDiagnosticParams(Identifier, source), cancel);
+            DocumentDiagnosticReport? report = await Read(Server.RequestAsync<DocumentDiagnosticReport>("textDocument/diagnostic",
+                new DocumentDiagnosticParams(identifier, source), cancel));
             all.AddRange(report?.Items ?? []);
         }
         if (IsRazor && Server.HtmlServer is not null)
         {
             // Razor makes the file's HTML as a question needs it: a fold's, the cheapest, has the HTML server's copy current.
-            await Server.RequestAsync<JsonElement>("textDocument/foldingRange", new FoldingRangeParams(new TextDocumentIdentifier(Uri)), cancel);
-            all.AddRange(await Server.RazorHtmlDiagnosticsAsync(DocumentUris.ToPath(Uri), Text.Snapshot.ToString(), cancel));
+            await Read(Server.RequestAsync<JsonElement>("textDocument/foldingRange", new FoldingRangeParams(new TextDocumentIdentifier(Uri)), cancel));
+            all.AddRange(await Server.RazorHtmlDiagnosticsAsync(DocumentUris.ToPath(Uri), text.ToString(), cancel).ConfigureAwait(false));
         }
         List<Diagnostic> distinct = all
             .DistinctBy(d => (d.Range, d.Message, d.Code?.ToString()))

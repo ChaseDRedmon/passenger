@@ -9,10 +9,10 @@ using Passenger.Text;
 namespace Passenger.Tests;
 
 /// <summary>The language server's help in a file of 20,000 lines costs a key what the key changed, never the file: its
-/// colours, squiggles and completion as you type, held to what the UI thread allocates and what reaches the server. The
-/// files are the project's from the start, so the class's windows share one warm server, which compiles them once
-/// (<see cref="SharedProject"/>); each test still opens its own window on them as written. Allocations counted, so run
-/// alone.</summary>
+/// colours, squiggles, hints and completion as you type, held to what the UI thread allocates and what reaches the server;
+/// and an answer as large as the solution (usages by the thousand) is read off the UI thread. The files are the project's
+/// from the start, so the class's windows share one warm server, which compiles them once (<see cref="SharedProject"/>);
+/// each test still opens its own window on them as written. Allocations counted, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Project>
 {
@@ -301,10 +301,76 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         }
     }
 
-    /// <summary>A small console project on disk with two files of 20,000 lines, restored once for every test, and the warm
-    /// server they share on it, which loads and compiles the files once.</summary>
+    /// <summary>Find Usages' answer, like every answer that grows with the solution, is read into places off the UI thread,
+    /// before what asked resumes there: a method called four thousand times answers as many places, and no frame while its
+    /// answer lands allocates on the UI thread a quarter of what reading that answer takes, nor much past the most a frame
+    /// does while a local's two usages land or while nothing is asked (the caret's blink draws the editor again). What the
+    /// window allocates is the count, not a time a busy machine stretches.</summary>
+    [AvaloniaFact]
+    public void The_usages_of_a_method_called_thousands_of_times_are_read_off_the_UI_thread()
+    {
+        MainWindow window = project.Open("Calls.cs");
+        (int few, long fewLanding, _) = Usages(window, "int total =");
+        (int many, long manyLanding, long read) = Usages(window, "int Of(");
+        long idle = Frames(() => false, 120);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"{few} usages landed in frames of at most {fewLanding / 1024} KB on the UI thread; {many} in {manyLanding / 1024} KB, reading them taking {read / 1024} KB; "
+            + $"a frame with nothing asked allocates up to {idle / 1024} KB");
+        Assert.True(many > 4000, $"The method called four thousand times had {many} usages");
+        Assert.True(manyLanding < read / 4,
+            $"A frame while {many} usages landed allocated {manyLanding / 1024} KB on the UI thread, a quarter or more of the {read / 1024} KB reading them takes: they were read there");
+        Assert.True(manyLanding <= Math.Max(fewLanding, idle) + (64 * 1024),
+            $"A frame while {many} usages landed allocated {manyLanding / 1024} KB on the UI thread, against {fewLanding / 1024} KB for {few} and {idle / 1024} KB with nothing asked");
+        window.Close();
+    }
+
+    /// <summary>The usages of what the shown file declares in <paramref name="declaration"/> (its own among them): how
+    /// many, the most a frame on the UI thread allocated while they were asked for there and landed, and what reading the
+    /// answer allocates (the same asked for from the thread pool, the window's thread waiting).</summary>
+    private static (int Usages, long Landing, long Read) Usages(MainWindow window, string declaration)
+    {
+        Ui.Settle();
+        OpenDocument document = window.EditorArea.Active!;
+        Passenger.Lsp.LspDocument lsp = window.CSharpService!.For(document)!.Lsp!;
+        int declared = document.Text.Snapshot.ToString().IndexOf(declaration, StringComparison.Ordinal) + "int ".Length;
+        long read = GC.GetTotalAllocatedBytes(precise: true);
+        int usages = Task.Run(() => lsp.ReferencesAsync(declared)).GetAwaiter().GetResult().Count;
+        read = GC.GetTotalAllocatedBytes(precise: true) - read;
+        // What the wait above put off, done before the frames are counted.
+        Ui.Settle();
+        Task<IReadOnlyList<Passenger.Lsp.LspLocation>> asking = lsp.ReferencesAsync(declared);
+        long landing = Frames(() => asking.IsCompleted, int.MaxValue);
+        Assert.True(asking.IsCompletedSuccessfully, $"The usages in {document.Name} never came");
+        Assert.Equal(usages, asking.Result.Count);
+        return (usages, landing, read);
+    }
+
+    /// <summary>The most one frame allocated on the UI thread, of those run until <paramref name="done"/> or
+    /// <paramref name="most"/> frames have run (a minute at most).</summary>
+    private static long Frames(Func<bool> done, int most)
+    {
+        long largest = 0;
+        DateTime limit = DateTime.UtcNow + TimeSpan.FromSeconds(60).Scaled();
+        for (int frame = 0; frame < most && !done() && DateTime.UtcNow < limit; frame++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "one frame, whose allocations are measured");
+            largest = Math.Max(largest, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+        return largest;
+    }
+
+    /// <summary>A small console project on disk with two files of 20,000 lines and two of calls, restored once for every
+    /// test, and the warm server they share on it, which loads and compiles the files once.</summary>
     public sealed class Project : SharedProject
     {
+        /// <summary>Calls.cs: a method of two parameters called by four thousand members with literal arguments, each
+        /// argument with its parameter's name hint before it; Few.cs the same, but for the first sixty, a screen of them,
+        /// the rest naming their parameters, which shows none.</summary>
+        public static readonly string Calls = Called("Calls", 4000, 4000);
+
+        public static readonly string Few = Called("Few", 4000, 60);
+
         /// <summary>Long.cs: two hundred methods of a hundred lines and more, every fiftieth with an error, a string given a number.</summary>
         public static readonly string Long = TwentyThousandLines(errors: true, "Long", "}\n");
 
@@ -319,7 +385,21 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
             File.WriteAllText(PathOf("Long.cs"), Long);
             File.WriteAllText(PathOf("Dotted.cs"), Dotted);
+            File.WriteAllText(PathOf("Calls.cs"), Calls);
+            File.WriteAllText(PathOf("Few.cs"), Few);
             Prepare();
+        }
+
+        /// <summary>A method of two parameters and members calling it, each in one of its own, the first
+        /// <paramref name="hinted"/> with literal arguments, which show their parameters' names, the rest naming them.</summary>
+        private static string Called(string name, int calls, int hinted)
+        {
+            StringBuilder text = new($"static class {name}\n{{\n    public static int Of(int width, int height) => width * height;\n\n    public static int Typed()\n    {{\n        int total = 0;\n        return total;\n    }}\n\n");
+            for (int i = 0; i < calls; i++)
+            {
+                text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    public static int Call{i}() => {(i < hinted ? "Of(3, 4)" : "Of(width: 3, height: 4)")};\n");
+            }
+            return text.Append("}\n").ToString();
         }
 
         /// <summary>Two hundred methods of a hundred lines and more: 20,000 lines, as many as Roslyn parses fresh every time.</summary>

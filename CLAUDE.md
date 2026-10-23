@@ -287,8 +287,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   client of a file's HTML, through the HTML server (below; without Node.js, HTML's element names and global attributes
   alone). A request nothing waits on, sent as a window closes,
   goes through `LanguageServer.Tell`, never awaited on the closing window's thread. Requests resume off the caller's
-  thread inside Passenger.Lsp (`ConfigureAwait(false)`), and a large answer (completion's list) is read in
-  `LspDocument` before its caller resumes, so the UI thread never decodes it. `CountedMessages` notes each of the
+  thread inside Passenger.Lsp (`ConfigureAwait(false)`), and every answer that grows with the solution or the file
+  (completion's list, usages, definitions, implementations, code actions, inlay hints, the outline, a pull's diagnostics)
+  is read into records in `LspDocument` on the thread pool before its caller resumes (`LspDocument.Read`, which forces the
+  await off the caller's thread), so the UI thread never decodes it. `CountedMessages` notes each of the
   server's `workspace/semanticTokens/refresh` as it is read off the connection, before the one-at-a-time dispatch handles
   it, with how many messages had then crossed to the server's input whole (`TracedStream.Crossed`: StreamJsonRpc copies
   what it writes there on the thread pool); `SemanticHighlighter` asks again only for a word read once its request had
