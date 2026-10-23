@@ -43,14 +43,14 @@ public sealed partial class BuildRunController
     }
 
     /// <summary>Profile of a container configuration: brought up as Run brings it up, the one .NET service it profiles
-    /// (<see cref="ContainerPlan.Profiled"/>) held at its start until <paramref name="profile"/> has the profiler recording
-    /// it in its container, which lets it go; the rest run as Run runs them. Null once it records, else why not.</summary>
-    public Task<string?> ProfileContainersAsync(RunConfiguration chosen, Working work, ServiceProfiler profile) =>
-        RunContainersAsync(chosen, work, RunStart.Profile, profile);
+    /// (<see cref="ContainerPlan.Profiled"/>) held at its start until the window's profiler records it in its container
+    /// (<see cref="BuildRunParts.ProfileService"/>), which lets it go; the rest run as Run runs them. Null once it records,
+    /// else why not.</summary>
+    public Task<string?> ProfileContainersAsync(RunConfiguration chosen, Working work) => RunContainersAsync(chosen, work, RunStart.Profile);
 
     /// <summary>One container start at a time, as one container run is up at a time (<see cref="TakeStartAsync"/>): one under
     /// way (Run's, as Debug begins) is ended first, as Stop ends it, and this one goes on once it has.</summary>
-    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, RunStart how = RunStart.Run, ServiceProfiler? profile = null)
+    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, RunStart how = RunStart.Run)
     {
         using IDisposable held = BackgroundWork.Scope();
         using StartTaken? taken = await TakeStartAsync([ContainerStarts], work);
@@ -62,13 +62,13 @@ public sealed partial class BuildRunController
         {
             return Left;
         }
-        return await StartContainersAsync(chosen, work, how, profile);
+        return await StartContainersAsync(chosen, work, how);
     }
 
     /// <summary>What every container start starts, so one ends another under way: the folder's one container run.</summary>
     private const string ContainerStarts = "the folder's container run";
 
-    private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, RunStart how, ServiceProfiler? profile)
+    private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, RunStart how)
     {
         parts.Editors.SaveAll();
         parts.Views.Run.Clear();
@@ -248,7 +248,6 @@ public sealed partial class BuildRunController
         ContainerRun run = new(plan, engine, parts.Views.Run.Sink)
         {
             How = how,
-            Profiler = profile,
             LabelledFor = session.Folder,
             Certificate = certificate,
             ToolsFrom = () => parts.Tools?.Invoke() ?? ContainerToolsSource.Default(Updates.ReleaseFeed.Default),
@@ -389,19 +388,6 @@ public sealed partial class BuildRunController
         }
         work.Stopping.ThrowIfCancellationRequested();
         return replace ? null : $"{chosen.Name} was not run: {named} of {plan.ProjectName}, which Passenger did not make, were left as they are";
-    }
-
-    /// <summary>A service of the container run under way as it runs now, for the debugger or the profiler to reach: its
-    /// container, Passenger's tools in it and its program there. Throws a <see cref="ContainerToolsException"/> saying why
-    /// not (its container not running among them).</summary>
-    public async Task<ServiceInContainer> ServiceInContainerAsync(DotnetService service, CancellationToken stop)
-    {
-        UiThread.Check();
-        if (Containers is not { } run || run.Plan.Dotnet.All(d => d.Service != service.Service))
-        {
-            throw new ContainerToolsException($"{service.Service} is not a .NET service of a container run under way");
-        }
-        return await run.ThereAsync(service, Task.CompletedTask, stop) ?? throw new ContainerToolsException($"{service.Service} has no container running");
     }
 
     /// <summary>What the CLI is told in the Run console: no colours, no hints.</summary>

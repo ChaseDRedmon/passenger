@@ -39,6 +39,31 @@ public static class BuiltInputs
         return false;
     }
 
+    /// <summary>A build's output as it stands, which a run of services compares to know which service's build changed since it
+    /// started: each assembly's, symbols' and settings' name, length and time. A file gone as it is read is left out, and a
+    /// folder gone, never made or unreadable stamps empty. On any thread.</summary>
+    public static string Stamp(string? output)
+    {
+        if (output is null)
+        {
+            return string.Empty;
+        }
+        try
+        {
+            return string.Join('|', Directory.EnumerateFiles(output)
+                .Where(file => Path.GetExtension(file).ToLowerInvariant() is ".dll" or ".pdb" or ".json")
+                .Order(StringComparer.Ordinal)
+                .Select(file => new FileInfo(file))
+                // Exists reads the file's state once, which Length then gives, whatever comes of the file after.
+                .Where(file => file.Exists)
+                .Select(file => $"{file.Name}:{file.Length}:{file.LastWriteTimeUtc.Ticks}"));
+        }
+        catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
     /// <summary>What a build reads that its program could not take in while it runs: code, project files, resources, XAML and
     /// settings. Not what a running program writes beside its project (DCP's <c>.dcp.json</c>, a SQLite database), nor
     /// static web assets, served from where they are.</summary>

@@ -895,6 +895,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     public override bool Refused(Exception failure) => failure is IOException or UnauthorizedAccessException or ContainerToolsException or ContainerCommandException
         or TimeoutException;
 
+    /// <summary>A run that starts one service (a gutter icon's configuration) is named for it already.</summary>
+    public override string NameOf(IRunService service) => Plan.Start is [{ } only] && only == service.Name ? Name : base.NameOf(service);
+
     /// <summary>The run's .NET service by its name in the run.</summary>
     private DotnetService Dotnet(IRunService service) => Plan.Dotnet.First(d => d.Service == service.Name);
 
@@ -1192,7 +1195,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
     /// <summary>The .NET services whose build changed since they started (or were last restarted), Rerun's to restart.</summary>
     public IReadOnlyList<DotnetService> Changed() =>
-        [.. Plan.Restartable.Where(d => !stamps.TryGetValue(d.Service, out string? was) || was != Stamp(d.Output))];
+        [.. Plan.Restartable.Where(d => !stamps.TryGetValue(d.Service, out string? was) || was != BuiltInputs.Stamp(d.Output))];
 
     /// <summary>Restarts services (their containers kept, the same mount reading the new build), saying so in the console
     /// (<paramref name="why"/>, else that their build changed). A service whose container was made held, or unheld, other
@@ -1293,7 +1296,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     {
         foreach (DotnetService service in services ?? Plan.Restartable)
         {
-            stamps[service.Service] = Stamp(service.Output);
+            stamps[service.Service] = BuiltInputs.Stamp(service.Output);
         }
     }
 
@@ -1306,23 +1309,6 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             ChildResult restarted = await StreamAsync([.. Plan.Compose, "restart", "--", .. services], restartEnding.Token);
             return restarted.Succeeded ? null : $"{Plan.Name}'s services did not restart: docker compose restart ended with exit code {restarted.ExitCode}";
         });
-
-    /// <summary>A build's output as it stands: each assembly's, symbols' and settings' name, length and time.</summary>
-    private static string Stamp(string output)
-    {
-        try
-        {
-            return string.Join('|', Directory.EnumerateFiles(output)
-                .Where(f => Path.GetExtension(f).ToLowerInvariant() is ".dll" or ".pdb" or ".json")
-                .Order(StringComparer.Ordinal)
-                .Select(f => new FileInfo(f))
-                .Select(f => $"{f.Name}:{f.Length}:{f.LastWriteTimeUtc.Ticks}"));
-        }
-        catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException)
-        {
-            return string.Empty;
-        }
-    }
 
     /// <summary>The services' state as the engine says it now (service, state, health, ports), for an agent.</summary>
     public async Task<IReadOnlyList<(string Service, string State, string? Health, string Ports)>> StatesAsync(CancellationToken cancel)
