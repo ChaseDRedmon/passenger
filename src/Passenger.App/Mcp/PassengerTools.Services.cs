@@ -102,9 +102,11 @@ public sealed partial class PassengerTools
     }
 
     /// <summary>A service the container run under way brings up, by its name: a .NET service it starts from Passenger's build,
-    /// or one Compose starts as its files say (a backing service, a .NET one it only depends on).</summary>
+    /// one it left unstarted (marked Don't start), which run, debug_start and profile start later from that build, or one
+    /// Compose starts as its files say (a backing service).</summary>
     private static ComposeTarget? OfRun(ContainerRun run, string name) =>
-        run.Plan.Touched.Count > 0 && !run.Plan.Touched.Contains(name) ? null
+        run.ServiceNamed(name) is { } dotnet && run.LeftUnstarted(dotnet) ? new ComposeTarget(name, null, true)
+        : run.Plan.Touched.Count > 0 && !run.Plan.Touched.Contains(name) ? null
             : run.Plan.Dotnet.Any(d => d.Service == name) ? new ComposeTarget(name, null, run.Plan.Starts(name))
             : run.Plan.Backing.Contains(name) ? new ComposeTarget(name, null, false)
             : null;

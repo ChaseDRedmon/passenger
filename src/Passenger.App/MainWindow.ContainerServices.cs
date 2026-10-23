@@ -55,7 +55,7 @@ public partial class MainWindow
         {
             actions!.Add(new IdeAction(id, title, "Containers", context => _ = ServiceActionAsync(id, ServiceOfRow(view.Chosen)))
             {
-                WhyNot = _ => buildRun.ServiceOfRun(ServiceOfRow(view.Chosen)).WhyNot,
+                WhyNot = _ => buildRun.WhyNotOnService(id, ServiceOfRow(view.Chosen)),
                 Works = id,
                 Words = ["Debug container service", "Profile container service"],
             });
@@ -105,7 +105,8 @@ public partial class MainWindow
         }
         if (ServiceOfRow(row) is { } service && buildRun.ServiceOfRun(service).Service is not null)
         {
-            if (action == "restart")
+            // One the run left unstarted has no container to start: the run starts it, as its Restart does.
+            if (action == "restart" || action == "start" && buildRun.LeftUnstarted(service))
             {
                 return await buildRun.RestartServiceAsync(service);
             }

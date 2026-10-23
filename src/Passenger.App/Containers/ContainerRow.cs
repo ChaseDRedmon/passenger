@@ -43,6 +43,10 @@ public sealed class ContainerRow(ContainerRowKind kind, int depth, string key, s
     /// <summary>A service row's name, with its project in <see cref="Project"/>.</summary>
     public string? Service { get; init; }
 
+    /// <summary>Whether it is a .NET service the folder's container run left unstarted, as its configuration says Don't
+    /// start: no container yet, which its Start, Run, Debug or Profile starts.</summary>
+    public bool LeftUnstarted { get; init; }
+
     public EngineObject? Object { get; init; }
 
     /// <summary>An AppHost row's containers.</summary>

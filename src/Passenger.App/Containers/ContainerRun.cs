@@ -23,6 +23,10 @@ public sealed record DotnetService(string Service, string Project, string Assemb
     /// <summary>Whether this run starts it.</summary>
     public bool Starts => Action != ServiceStart.DontStart;
 
+    /// <summary>Why fast mode cannot run it (built for one runtime, a Dockerfile with no runtime stage), kept for a service
+    /// marked Don't start, which its run refuses only when a start of it is asked later; null when it can run.</summary>
+    public string? Unfit { get; init; }
+
     string IRunService.Name => Service;
 }
 
@@ -46,8 +50,27 @@ public sealed record ContainerPlan(string Name, string Folder, string ProjectNam
     /// <summary>Writes Passenger's override into the state, which <see cref="Compose"/> names: after the host's build, with the
     /// services held at their start (for the debugger or the profiler), and those of them whose code the debugger may change
     /// (DOTNET_MODIFIABLE_ASSEMBLIES=debug, which a profiled service goes without, since it would measure code built for
-    /// changing).</summary>
-    public Func<IReadOnlyCollection<string>, IReadOnlyCollection<string>, DevelopmentCertificate.Exported?, CancellationToken, Task> WriteOverride { get; init; } = (_, _, _, _) => Task.CompletedTask;
+    /// changing); each .NET service as the plan has it now (one started later run from Passenger's build).</summary>
+    public Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken cancel) =>
+        Writer(Dotnet, held, modifiable, certificate, cancel);
+
+    /// <summary>What <see cref="WriteOverride"/> writes with, given the plan's .NET services.</summary>
+    public Func<IReadOnlyList<DotnetService>, IReadOnlyCollection<string>, IReadOnlyCollection<string>, DevelopmentCertificate.Exported?, CancellationToken, Task> Writer { get; init; } =
+        (_, _, _, _, _) => Task.CompletedTask;
+
+    /// <summary>The plan with .NET services it left unstarted (marked Don't start) started from now, run from Passenger's build
+    /// as the rest are: the override gives them fast mode's stage and mounts, Rerun builds and restarts them, Stop takes them.</summary>
+    public ContainerPlan StartingLater(IReadOnlyCollection<string> later) => this with
+    {
+        Dotnet = [.. Dotnet.Select(d => d.Action == ServiceStart.DontStart && later.Contains(d.Service) ? d with { Action = ServiceStart.Run } : d)],
+        Start = Start.Count == 0 ? Start : [.. Start.Concat(later).Distinct(StringComparer.Ordinal)],
+        Touched = [.. Touched.Concat(later).Distinct(StringComparer.Ordinal)],
+        Notes = [.. Notes.Where(note => !later.Any(service => note == DependedOn(service)))],
+    };
+
+    /// <summary>What the run says of a .NET service marked Don't start that a service it starts depends on.</summary>
+    public static string DependedOn(string service) =>
+        $"{service} is marked Don't start, but a service it starts depends on it: Compose starts it from its own image, as its files build it";
 
     /// <summary>The .NET services Debug debugs: those the configuration marks Debug, else every .NET service it starts (Run
     /// with Hot Reload: every one it starts).</summary>
@@ -177,23 +200,28 @@ public static class ContainerPlans
             ServiceStart action = configuration.ServiceActions.GetValueOrDefault(service.Name, ServiceStart.Run);
             DockerfileStages? stages = service.DockerfilePath is { } dockerfile && File.Exists(dockerfile) ? DockerfileStages.Read(File.ReadAllText(dockerfile)) : null;
             string? stage = null;
-            if (mode == ContainerMode.Fast && action != ServiceStart.DontStart)
+            string? unfit = null;
+            if (mode == ContainerMode.Fast)
             {
-                if (its.GetValueOrDefault("RuntimeIdentifier") is { Length: > 0 } rid || string.Equals(its.GetValueOrDefault("SelfContained"), "true", StringComparison.OrdinalIgnoreCase))
+                if (its.GetValueOrDefault("RuntimeIdentifier") is { Length: > 0 } || string.Equals(its.GetValueOrDefault("SelfContained"), "true", StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new LaunchException($"{configuration.Name} cannot run {service.Name} in fast mode: {project.Name} is built for one runtime"
+                    unfit = $"{configuration.Name} cannot run {service.Name} in fast mode: {project.Name} is built for one runtime"
                         + $"{(its.GetValueOrDefault("RuntimeIdentifier") is { Length: > 0 } r ? $" ({r})" : string.Empty)}, and fast mode runs a framework-dependent build with dotnet; "
-                        + "choose Build images, as deployed in Run > Edit Configurations");
+                        + "choose Build images, as deployed in Run > Edit Configurations";
                 }
-                if (stages is not null)
+                else if (stages is not null && (stage = stages.FastStage(its.GetValueOrDefault("DockerfileFastModeStage"))?.Name) is null)
                 {
-                    stage = stages.FastStage(its.GetValueOrDefault("DockerfileFastModeStage"))?.Name
-                        ?? throw new LaunchException($"{configuration.Name} cannot run {service.Name} in fast mode: its Dockerfile has no runtime stage to run Passenger's build in "
-                            + "(a stage named base, or one its final stage is FROM); choose Build images, as deployed in Run > Edit Configurations");
+                    unfit = $"{configuration.Name} cannot run {service.Name} in fast mode: its Dockerfile has no runtime stage to run Passenger's build in "
+                        + "(a stage named base, or one its final stage is FROM); choose Build images, as deployed in Run > Edit Configurations";
+                }
+                // One marked Don't start is refused only when a start of it is asked, later in the run.
+                if (unfit is not null && action != ServiceStart.DontStart)
+                {
+                    throw new LaunchException(unfit);
                 }
             }
             ContainerPaths paths = stages is not null && service.Context is { } context ? ContainerPaths.For(stages, context) : ContainerPaths.None;
-            dotnet.Add(new DotnetService(service.Name, project.Path, assembly, output, action, stage, paths));
+            dotnet.Add(new DotnetService(service.Name, project.Path, assembly, output, action, stage, paths) { Unfit = unfit });
         }
         HashSet<string> dotnetNames = [.. dotnet.Select(d => d.Service)];
         bool dontStarts = configuration.ServiceActions.Values.Any(a => a == ServiceStart.DontStart);
@@ -208,8 +236,7 @@ public static class ContainerPlans
         List<string> touched = start.Count == 0 ? [.. model.Services.Select(s => s.Name)] : Needed(model, start);
         List<string> backing = [.. model.Services.Select(s => s.Name).Where(s => !dotnetNames.Contains(s))];
         List<string> watched = [.. model.Services.Where(s => s.Watches && !dotnetNames.Contains(s.Name) && (start.Count == 0 || start.Contains(s.Name))).Select(s => s.Name)];
-        List<string> notes = [.. dotnet.Where(d => !d.Starts && touched.Contains(d.Service))
-            .Select(d => $"{d.Service} is marked Don't start, but a service it starts depends on it: Compose starts it from its own image, as its files build it")];
+        List<string> notes = [.. dotnet.Where(d => !d.Starts && touched.Contains(d.Service)).Select(d => ContainerPlan.DependedOn(d.Service))];
         // As deployed, the image's own user could not read what is kept for the person alone (OverrideAsync's owner).
         if (mode == ContainerMode.Images && OperatingSystem.IsLinux() && DotnetProcesses.UserAndGroup is { } owner)
         {
@@ -238,11 +265,12 @@ public static class ContainerPlans
         bool keepId = engineState is { IsPodman: true, Rootless: true };
         // Each port Passenger pins is chosen once for the plan: every override it writes after (a hold, a restart) keeps it.
         Dictionary<(string Service, int Port), int> pinned = [];
-        async Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken stop) =>
-            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, keepId, telemetry, stop), overriding: true);
+        async Task WriteOverride(IReadOnlyList<DotnetService> now, IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate,
+            CancellationToken stop) =>
+            WriteJson(overrideFile, await OverrideAsync(model, projectName, now, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, keepId, telemetry, stop), overriding: true);
         if (mode == ContainerMode.Images || dotnet.Count == 0)
         {
-            await WriteOverride([], [], null, cancel);
+            await WriteOverride(dotnet, [], [], null, cancel);
         }
 
         DotnetService? launched = dotnet.FirstOrDefault(d => d.Service == configuration.LaunchService) ?? dotnet.FirstOrDefault(d => d.Starts && (start.Count == 0 || start.Contains(d.Service)));
@@ -256,7 +284,7 @@ public static class ContainerPlans
         return new ContainerPlan(configuration.Name, runsIn, projectName, compose, start, dotnet, backing, watched, mode, configuration.KeepBackingServices,
             configuration.LaunchBrowser && configuration.BrowserUrl.Length > 0 ? configuration.BrowserUrl : null, launchService, launchPort, all)
         {
-            WriteOverride = WriteOverride,
+            Writer = WriteOverride,
             Publish = publish,
             State = state,
             Https = [.. model.Services.Where(s => dotnet.Any(d => d.Service == s.Name) && Serves(s)).Select(s => s.Name)],
@@ -886,11 +914,63 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
     protected override void MadeHeld(string service) => madeHeld.Add(service);
 
+    /// <summary>The .NET services it left unstarted (marked Don't start) and has started since, which a Rerun or a start of its
+    /// configuration that takes its place starts again with the rest.</summary>
+    public IReadOnlyCollection<string> StartedLater
+    {
+        get => startedLater;
+        init => startedLater.UnionWith(value);
+    }
+
+    private readonly HashSet<string> startedLater = new(StringComparer.Ordinal);
+
+    /// <summary>Services started later whose container no <c>up</c> has made yet: their next restart makes it.</summary>
+    private readonly HashSet<string> unmade = new(StringComparer.Ordinal);
+
+    /// <summary>Services held at their next start for the profiler alone (a later start's Profile), whose recording lets them go.</summary>
+    private readonly HashSet<string> heldOnce = new(StringComparer.Ordinal);
+
+    /// <summary>A .NET service marked Don't start, not started since.</summary>
+    public override bool LeftUnstarted(IRunService service) => Dotnet(service).Action == ServiceStart.DontStart;
+
+    /// <summary>The .NET services it left unstarted, by name, which the Containers window lists as not started.</summary>
+    public IReadOnlyList<string> Unstarted => [.. Plan.Dotnet.Where(d => d.Action == ServiceStart.DontStart).Select(d => d.Service)];
+
+    public override string? WhyNotStartedLater(IRunService service) => LeftUnstarted(service) ? Dotnet(service).Unfit : null;
+
+    /// <summary>A service it left unstarted started from now by its next restart (<c>up --detach --no-deps</c>, its image built
+    /// first as deployed): the plan runs it from Passenger's build, which in fast mode must be there to run.</summary>
+    public override string? StartLater(IRunService service, bool profiled)
+    {
+        DotnetService dotnet = Dotnet(service);
+        if (!LeftUnstarted(service))
+        {
+            return null;
+        }
+        if (dotnet.Unfit is { } unfit)
+        {
+            return unfit;
+        }
+        if (Plan.Mode == ContainerMode.Fast && !File.Exists(Path.Combine(dotnet.Output, dotnet.Assembly + ".dll")))
+        {
+            return $"Could not start {service.Name}: {dotnet.Assembly}.dll has not been built in {dotnet.Output}";
+        }
+        Plan = Plan.StartingLater([service.Name]);
+        startedLater.Add(service.Name);
+        unmade.Add(service.Name);
+        if (profiled)
+        {
+            heldOnce.Add(service.Name);
+        }
+        return null;
+    }
+
     /// <summary>A hold chosen takes effect as the override, written again, says it at the service's next restart.</summary>
     protected override Task HoldsChangedAsync(CancellationToken cancel) => WriteOverrideAsync(cancel);
 
-    /// <summary>The override as the holds chosen say, each held service's code open to Hot Reload.</summary>
-    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. HeldNames], [.. HeldNames], Certificate, cancel);
+    /// <summary>The override as the holds chosen say, each held service's code open to Hot Reload (one held for the profiler
+    /// alone, not).</summary>
+    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. HeldNames.Union(heldOnce)], [.. HeldNames], Certificate, cancel);
 
     /// <summary>In fast mode a service's container runs the build here, which an edit's restart builds first; as deployed,
     /// its restart builds its image.</summary>
@@ -1250,8 +1330,11 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             console.Write("No service's build changed: nothing restarted\n");
             return null;
         }
-        console.Write($"Restarting {string.Join(", ", services.Select(s => s.Name))}: {why ?? (services.Count == 1 ? "its build changed" : "their builds changed")}\n");
-        List<string> made = [.. services.Select(s => s.Name).Where(s => Plan.Mode == ContainerMode.Images || madeHeld.Contains(s) != HeldFor(s) is not null)];
+        console.Write($"{(services.All(s => unmade.Contains(s.Name)) ? "Starting" : "Restarting")} {string.Join(", ", services.Select(s => s.Name))}: "
+            + $"{why ?? (services.Count == 1 ? "its build changed" : "their builds changed")}\n");
+        // One started later has no container yet: made, as one whose hold changed since it was made is made anew.
+        List<string> made = [.. services.Select(s => s.Name).Where(s => Plan.Mode == ContainerMode.Images || unmade.Contains(s)
+            || madeHeld.Contains(s) != (HeldFor(s) is not null || heldOnce.Contains(s)))];
         List<string> kept = [.. services.Select(s => s.Name).Except(made)];
         if (made.Count > 0)
         {
@@ -1282,7 +1365,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
                 }
                 foreach (string service in named)
                 {
-                    if (HeldFor(service) is not null)
+                    // Held for the profiler alone, once: its recording lets it go, and its next restart makes it anew unheld.
+                    bool forProfiler = heldOnce.Remove(service);
+                    if (forProfiler || HeldFor(service) is not null)
                     {
                         madeHeld.Add(service);
                     }
@@ -1290,6 +1375,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
                     {
                         madeHeld.Remove(service);
                     }
+                    unmade.Remove(service);
                 }
             }
             return null;

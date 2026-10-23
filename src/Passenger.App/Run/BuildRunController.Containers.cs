@@ -69,6 +69,10 @@ public sealed partial class BuildRunController
     /// <summary>What every container start starts, so one ends another under way: the folder's one container run.</summary>
     private const string ContainerStarts = "the folder's container run";
 
+    /// <summary>The container run Rerun runs again whole (in images mode, or its log ended), until its start has ended: what
+    /// it started later is started again.</summary>
+    private ContainerRun? rerun;
+
     private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, RunStart how)
     {
         parts.Editors.SaveAll();
@@ -88,6 +92,9 @@ public sealed partial class BuildRunController
         {
             return Said($"{chosen.Name} cannot run: {state.Problem}");
         }
+        // A Rerun, or a start of this configuration that takes its run's place, starts again what that run started later.
+        IReadOnlyCollection<string> later = session.ContainerRun is { } previous && previous.Name == chosen.Name && (!previous.IsStopped || previous == rerun)
+            ? previous.StartedLater : [];
         if (session.ContainerRun is { } before)
         {
             // Another configuration's run (or this one's, its backing services kept) goes first, wholly down before this one
@@ -110,6 +117,8 @@ public sealed partial class BuildRunController
         try
         {
             plan = await ContainerPlans.ResolveAsync(chosen, session.Projects, session.Workspace, parts.StateFolder(), engine, session.Containers.Labels, work.Stopping);
+            later = [.. later.Where(s => plan.Dotnet.Any(d => d.Service == s && d.Action == ServiceStart.DontStart && d.Unfit is null))];
+            plan = later.Count > 0 ? plan.StartingLater(later) : plan;
             parts.Views.Problems.ShowContainers([]);
         }
         catch (ComposeModelException unread)
@@ -129,7 +138,7 @@ public sealed partial class BuildRunController
         }
         try
         {
-            if (await ReplacesOthersAsync(chosen, plan, engine, work) is { } kept)
+            if (await ReplacesOthersAsync(chosen.Name, plan, engine, work) is { } kept)
             {
                 return session.IsEnded ? Left : Said(kept);
             }
@@ -248,6 +257,7 @@ public sealed partial class BuildRunController
         parts.Say($"Bringing {chosen.Name} up…");
         ContainerRun run = new(plan, engine, parts.Views.Run.Sink)
         {
+            StartedLater = later,
             How = how,
             LabelledFor = session.Folder,
             Certificate = certificate,
@@ -344,7 +354,7 @@ public sealed partial class BuildRunController
     /// settings, and Stop would then remove them. The person is asked first (Replace Them, after which they are this run's,
     /// or Cancel); an agent's run, and an IDE with nobody to ask, replaces none and refuses, saying why. Null when it may go
     /// on, else what it says.</summary>
-    private async Task<string?> ReplacesOthersAsync(RunConfiguration chosen, ContainerPlan plan, ContainerEngine engine, Working work)
+    private async Task<string?> ReplacesOthersAsync(string starting, ContainerPlan plan, ContainerEngine engine, Working work)
     {
         ChildResult listed;
         try
@@ -370,7 +380,7 @@ public sealed partial class BuildRunController
         string named = string.Join(", ", others);
         if (NoOneToAsk() is { } why)
         {
-            return $"{chosen.Name} was not run: it would replace {named} of {plan.ProjectName}, which Passenger did not make, and {why}; "
+            return $"{starting} was not run: it would replace {named} of {plan.ProjectName}, which Passenger did not make, and {why}; "
                 + "remove them first, or run it from the window";
         }
         bool replace = false;
@@ -380,7 +390,7 @@ public sealed partial class BuildRunController
             BackgroundWork.End();
             try
             {
-                replace = await ask(chosen.Name, plan.ProjectName, others, work.Stopping);
+                replace = await ask(starting, plan.ProjectName, others, work.Stopping);
             }
             finally
             {
@@ -388,7 +398,7 @@ public sealed partial class BuildRunController
             }
         }
         work.Stopping.ThrowIfCancellationRequested();
-        return replace ? null : $"{chosen.Name} was not run: {named} of {plan.ProjectName}, which Passenger did not make, were left as they are";
+        return replace ? null : $"{starting} was not run: {named} of {plan.ProjectName}, which Passenger did not make, were left as they are";
     }
 
     /// <summary>What the CLI is told in the Run console: no colours, no hints.</summary>

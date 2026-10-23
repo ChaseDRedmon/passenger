@@ -6,6 +6,7 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Containers;
 using Passenger.App.Debugging;
+using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
 
@@ -159,6 +160,100 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Docker.Stopped(window, project, "Stop to take every container down");
         }
         window.Close();
+    }
+
+    /// <summary>A configuration marking both .NET services Don't start runs only the cache, its rows listing web and api as not
+    /// started, Attach greyed saying so; web's Run from its row builds it and starts it later, unheld, and Rerun restarts its
+    /// changed build as the run's; api's Debug from its row starts it held, stopping in its Main, web left as it runs; Rerun
+    /// while debugging, Debug of the configuration run whole, starts both again; and Stop takes every container down.</summary>
+    [AvaloniaFact]
+    public void A_service_marked_Dont_start_is_listed_not_started_and_its_Run_and_Debug_start_it_later_in_the_run()
+    {
+        Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
+        (string folder, string project) = ContainerRunsTests.Shop("later");
+        foreach (string app in (string[])["Web", "Api"])
+        {
+            TestFolders.Write(folder, $"{app}/Program.cs", Program);
+        }
+        MainWindow window = ContainerRunsTests.Open(folder);
+        window.Debugger.Breakpoints.Toggle(Source(folder, "Api"), InMain);
+        RunConfiguration later = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with
+        {
+            Name = "Later",
+            ServiceActions = new Dictionary<string, ServiceStart> { ["web"] = ServiceStart.DontStart, ["api"] = ServiceStart.DontStart },
+            Generated = false,
+        };
+        window.SetConfigurations([later], later.Name);
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "the cache to come up", TimeSpan.FromMinutes(5));
+            Dictionary<string, string> states = ContainerRunsTests.States(project);
+            Assert.True(states.GetValueOrDefault("cache") == "running" && !states.ContainsKey("web") && !states.ContainsKey("api"),
+                $"A run whose .NET services are marked Don't start left these: {string.Join(", ", states)}");
+
+            // Listed under the project as not started, as an AppHost's resource so left is; Attach has nothing to reach.
+            ContainersView view = Shown(window);
+            foreach (string service in (string[])["web", "api"])
+            {
+                Ui.WaitFor(() => view.Rows.Any(r => r.Service == service && r.LeftUnstarted && r.Detail == "Not started"), $"{service}'s row, not started");
+            }
+            Assert.True(view.Choose(r => r.Service == "web" && r.LeftUnstarted), "web's row could not be chosen");
+            Ui.Settle();
+            Assert.Equal("web of Later is not started: its configuration says Don't start; its Run, Debug or Profile starts it",
+                window.Actions.WhyNot(AppActions.ServiceAttach, window.Actions.Context()));
+            Assert.Equal($"{project}/web is not started: its run configuration says Don't start; its Start, Run, Debug or Profile starts it",
+                window.Actions.WhyNot(AppActions.ContainerStop, window.Actions.Context()));
+            Assert.Null(window.Actions.WhyNot(AppActions.ServiceRun, window.Actions.Context()));
+
+            // Run from its row: built, then started from that build without the debugger, answering on its port.
+            Later(window, view, project, "web", AppActions.ServiceRun);
+            Assert.Contains("web of Later started, without the debugger", window.Status, StringComparison.Ordinal);
+            Assert.DoesNotContain(window.Debugger.Tabs, t => t.Name == "web" && t.IsLive);
+            Assert.Equal("web 1", Answered(Request(project, "web"), project, "web"));
+            Ui.WaitFor(() => view.Rows.Any(r => r.Service == "web" && !r.LeftUnstarted && r.Containers.Any(c => c.IsRunning)), "web's row to be its running container's");
+
+            // Rerun keeps it the run's: its changed build is built and web restarted with it.
+            TestFolders.Write(folder, "Web/Message.cs", "public static class Message\n{\n    public const string Text = \"web 2\";\n}\n");
+            Assert.True(window.Perform(AppActions.Rerun), "Rerun did not run");
+            Assert.True(Ui.Pumped(() => window.Status?.Contains("restarted web with the new build", StringComparison.Ordinal) == true, TimeSpan.FromMinutes(3)),
+                $"Rerun did not restart web alone: {window.Status}{Ui.BuildErrors(window)}\n{ContainerRunsTests.Run(window)}");
+            Assert.Equal("web 2", Answered(Request(project, "web"), project, "web"));
+            Assert.True(window.IsRunning, "Rerun took the run down");
+            string webStarted = ContainerRunsTests.Started(project, "web");
+
+            // Debug from its row: built, then started held, so it stops in its Main; web runs on, never restarted.
+            Later(window, view, project, "api", AppActions.ServiceDebug);
+            DebugTab api = ContainerRunDebuggingTests.Tab(window, "api");
+            ContainerRunDebuggingTests.StoppedAt(window, api, Source(folder, "Api"), InMain, "api, started later held, to stop in Main");
+            Assert.Equal(webStarted, ContainerRunsTests.Started(project, "web"));
+            ContainerRunDebuggingTests.Resume(window, api);
+            Assert.Equal("api 1", Answered(Request(project, "api"), project, "api"));
+
+            // Rerun while debugging is Debug of the configuration, run whole: both started again with the rest, api held as chosen.
+            Assert.True(window.Perform(AppActions.Rerun), "Rerun did not run");
+            Ui.WaitFor(() => ContainerRunsTests.Started(project, "web") is { Length: > 0 } now && now != webStarted
+                && window.Debugger.Tabs.Any(t => t.Name == "api" && t.IsLive && t.Session is { State: DebugState.Paused }), "the run made again, api stopping in Main", TimeSpan.FromMinutes(5));
+            ContainerRunDebuggingTests.StoppedAt(window, window.Debugger.Tabs.Single(t => t.Name == "api" && t.IsLive), Source(folder, "Api"), InMain,
+                "api, started again by the run made whole, to stop in Main");
+            states = ContainerRunsTests.States(project);
+            Assert.True(states.GetValueOrDefault("web") == "running" && states.GetValueOrDefault("api") == "running", $"The run made again left these: {string.Join(", ", states)}");
+        }
+        finally
+        {
+            Docker.Stopped(window, project, "Stop to take every container down, those started later too");
+        }
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the sessions to end with Stop");
+        window.Close();
+    }
+
+    /// <summary>One of a service's actions on its row, its run's build and start of it waited out, failing with what it said.</summary>
+    private static void Later(MainWindow window, ContainersView view, string project, string service, string action)
+    {
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == service), $"{service}'s row");
+        Assert.True(window.Perform(action), $"{action} could not run on {service}: {window.Status}");
+        Ui.WaitFor(() => window.Actions.Work.Of(action) is null, $"{action} of {service} to build and start it", TimeSpan.FromMinutes(4));
+        Assert.True(ContainerRunsTests.StatesNow(project)?.GetValueOrDefault(service) == "running",
+            $"{action} did not start {service}: {window.Status}{Ui.BuildErrors(window)}\n{ContainerRunsTests.Run(window)}");
     }
 
     private static string Source(string folder, string app) => Path.Combine(folder, app, "Program.cs");

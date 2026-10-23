@@ -911,15 +911,24 @@ public sealed partial class BuildRunController
         {
             return await RerunContainersAsync();
         }
-        if (RunsInConsole || session.ContainerRun is { IsStopped: false })
+        // A container run of it run again whole keeps what it started later (StartContainersAsync).
+        rerun = Containers is { } going && going.Name == chosen.Name ? going : null;
+        try
         {
-            await EndInConsoleAsync();
-            if (session.IsEnded)
+            if (RunsInConsole || session.ContainerRun is { IsStopped: false })
             {
-                return Left;
+                await EndInConsoleAsync();
+                if (session.IsEnded)
+                {
+                    return Left;
+                }
             }
+            return await RunAsync();
         }
-        return await RunAsync();
+        finally
+        {
+            rerun = null;
+        }
     }
 
     public async Task<string?> RerunAspireAsync(CancellationToken cancellation = default)

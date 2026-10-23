@@ -145,6 +145,19 @@ public abstract class ServiceRun
     /// <summary>The service of this run by its name, or null.</summary>
     public virtual IRunService? ServiceNamed(string name) => Services.FirstOrDefault(s => s.Name == name);
 
+    /// <summary>Whether the run left a service unstarted, as its configuration says Don't start: its Debug, Run and Profile
+    /// start it later (<see cref="StartLater"/>), held as chosen, and Attach has nothing to reach. A kind whose unstarted
+    /// services are started otherwise (an Aspire AppHost's, by its resource's Start) leaves none so.</summary>
+    public virtual bool LeftUnstarted(IRunService service) => false;
+
+    /// <summary>Why a service the run left unstarted cannot be started later where its kind runs it, or null when it can.</summary>
+    public virtual string? WhyNotStartedLater(IRunService service) => null;
+
+    /// <summary>Makes a service the run left unstarted one it starts from now, its next restart starting it (held once for the
+    /// profiler, when <paramref name="profiled"/>, besides the hold chosen), and Stop, Rerun and its restarts taking it as any
+    /// other of the run's: null once so, else why not (its build not there to run).</summary>
+    public virtual string? StartLater(IRunService service, bool profiled) => $"{Name} does not start {service.Name}";
+
     /// <summary>Ends what reaches services of the run from here (every one, given none): their debugging sessions (in a tab
     /// or for Hot Reload) and the profiler's recording, its snapshot read; done once they have. Stop's order, written once for
     /// every stop of a service or a run (Stop, a restart, a service's own end, the folder's end): these end before the
