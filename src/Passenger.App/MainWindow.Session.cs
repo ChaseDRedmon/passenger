@@ -173,7 +173,6 @@ public partial class MainWindow
         UpdateStatus();
         Remember();
         _ = KeepSnapshotsAsync();
-        ShowWaitingNotes();
     }
 
     /// <summary>What the open folder had in the window goes, kept with it in the store first: its editors close, each saved

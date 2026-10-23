@@ -527,7 +527,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   actions are `MainWindow.Tabs.cs`, filling a tab's menu through
   `EditorArea.TabMenuOpening` with `ActionContext.Tab` naming the tab they act on. `MainWindow.CloseSolution` ends the
   folder's session and shows the Welcome screen; `LeaveFolder` keeps or closes editors and `EndSession` ends the
-  session, so new per-folder state belongs in `ProjectSession`, made with it and ended in its end. An image (PNG, JPEG,
+  session, so new per-folder state belongs in `ProjectSession`, made with it and ended in its end. A folder opens with
+  its own kept tabs whatever was open before it (#444, `EditorArea.Restore`): the main window's tabs open with no folder
+  (a file opened alone, a licence About opened, What's New) stay, after the folder's in its current group, the one shown
+  still in front, and are the folder's from then, so its saved tabs are never lost to them. An image (PNG, JPEG,
   BMP, GIF, WebP, ICO) or a TTF/OTF font opens as a read-only preview: `OpenDocument.Load` gives it an `AssetPreview`
   (`OpenDocument.Asset`, shared by its tabs, disposed with the document, followed by its bytes through a folder moved
   elsewhere) and an empty text stand-in, and each group shows it through an `AssetPreviewControl` of its own; it is
@@ -1391,9 +1394,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   started, which `PASSENGER_STARTED_FOR=agent` tells, `McpProxy.StartedForAgent`, taken out of its environment as it
   starts, so the person's next start shows them): once, when `UpdatesState.NotesShown` names an older version or is
   missing from a state an older Passenger kept (`StateStore.UsedBefore`: its documents there as the process opened the
-  store), with the folder the start opens once that folder's own tabs are back (`Begin`'s `ShowWaitingNotes`, since a
-  file open before a folder keeps the folder's tabs from coming back), else with the first folder opened, and recorded
-  as shown then; a fresh state records its version and shows nothing, the Welcome screen greeting a first start. Help,
+  store), at once as the version starts and recorded as shown then, a folder the start is still opening coming back with
+  its own tabs behind them (`EditorArea.Restore`, Editors above); a fresh state records its version and shows nothing,
+  the Welcome screen greeting a first start. Help,
   What's New (`AppActions.WhatsNew`, Find Action's Release Notes too, an agent's `ide_action`) shows them whenever asked,
   greyed for a version that carries none (a build at Directory.Build.props' version before its notes are written).
   `WhatsNewTests` hold it, each window the version whose stand-in the build carries (`MainWindow.Notes`).

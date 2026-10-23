@@ -625,23 +625,46 @@ public sealed partial class EditorArea : UserControl
         };
     }
 
-    /// <summary>Opens what a folder kept, into an area with nothing open: the main window's splits and the editor windows
-    /// where they stood, each group's tabs with their carets and the one shown. A file gone from disk is left out, and a
-    /// group left with none goes, a window with it.</summary>
+    /// <summary>Opens what a folder kept: the main window's splits and the editor windows where they stood, each group's
+    /// tabs with their carets and the one shown. A file gone from disk is left out, and a group left with none goes, a
+    /// window with it. The main window's tabs open before it (a file opened with no folder, a licence About opened) stay,
+    /// after the folder's in its current group, the one shown still in front: the folder's from then, as it opens.</summary>
     public void Restore(EditorLayout? layout, IReadOnlyList<KeptEditorWindow>? windows = null)
     {
-        if (documents.Count > 0)
-        {
-            return;
-        }
+        List<EditorGroup> before = [.. main.Groups];
+        OpenDocument? front = before.Contains(activeGroup) ? activeGroup.Active : null;
+        // Read before the kept tabs open, which may show one of these in a group of the folder's.
+        List<(OpenDocument Document, bool Pinned, SelectionSet Selections, Vector Scroll)> open =
+            [.. before.SelectMany(g => g.Tabs.Select(t => (t.Document, t.IsPinned, g.SelectionsOf(t.Document), g.ScrollOf(t.Document))))];
         bool restored = false;
         if (layout is not null && Restore(layout, out EditorGroup? current) is { } tree)
         {
+            // The groups left go: nothing of theirs may keep showing or following a file.
+            foreach ((EditorGroup group, OpenDocument document) in before.SelectMany(g => g.Tabs.Select(t => (g, t.Document))).ToList())
+            {
+                group.Remove(document);
+            }
             activeGroup.IsCurrent = false;
             main.Root = tree;
             activeGroup = current ?? main.Groups.First();
             main.Current = activeGroup;
             activeGroup.IsCurrent = true;
+            foreach ((OpenDocument document, bool pinned, SelectionSet selections, Vector scroll) in open)
+            {
+                if (!main.Groups.Any(g => g.Has(document)))
+                {
+                    activeGroup.Add(document, activeGroup.Tabs.Count, pinned);
+                    activeGroup.Remember(document, selections, scroll);
+                }
+            }
+            if (front is not null && main.Groups.FirstOrDefault(g => g.Has(front)) is { } showing)
+            {
+                showing.Show(front);
+                activeGroup.IsCurrent = false;
+                activeGroup = showing;
+                main.Current = showing;
+                showing.IsCurrent = true;
+            }
             Rebuild(main);
             activeGroup.Editor.Focus();
             restored = true;

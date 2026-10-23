@@ -16,7 +16,7 @@ namespace Passenger.Tests;
 /// <summary>The IDE's own state, in one store in its state folder: a file that does not read is set aside, said in
 /// the status bar and logged, never written over; a later build's values and a hand edit out of range stay in the file while the window
 /// uses what it can; two windows' changes are both kept; what a person kept before the store is there on the first
-/// run; and a folder's layout, breakpoints and bookmarks come back with it.</summary>
+/// run; and a folder's tabs (whatever was open before it), layout, breakpoints and bookmarks come back with it.</summary>
 public sealed class StateTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("folder-");
@@ -267,6 +267,46 @@ public sealed class StateTests : IDisposable
             $"Opening a folder with 4,000 breakpoints kept allocated {many / 1024} KB on the window's thread, {few / 1024} KB with 40: its documents are read there");
     }
 
+    /// <summary>#444: a file open with no folder kept the next folder's tabs from coming back, and leaving that folder then
+    /// wrote the file over the tabs it had kept.</summary>
+    [AvaloniaFact]
+    public void A_folder_opens_with_its_own_tabs_whatever_was_open_before_it_which_stays_beside_them()
+    {
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), "class Shop { }\n");
+        File.WriteAllText(Path.Combine(folder, "Bank.cs"), "class Bank { }\n");
+        MainWindow window = Keeping(folder);
+        window.OpenFile(Path.Combine(folder, "Shop.cs"));
+        window.OpenFile(Path.Combine(folder, "Bank.cs"));
+        Ui.Settle();
+        window.Close();
+        Ui.Settle();
+
+        // The next start opens no folder, and About's link opens the licence the app carries.
+        window = Keeping();
+        AboutDialog about = DialogButtonsTests.Check(window.ShowAbout());
+        Ui.ClickButton(about, AboutDialog.LicenseLink);
+        string licence = PathNames.Canonical(Path.Combine(AppContext.BaseDirectory, "LICENSE.txt"));
+        Assert.Equal(licence, window.EditorArea.Active?.Path);
+
+        // The folder opens with its own tabs back, the licence after them, still in front as it was.
+        window.OpenFolder(folder);
+        Ui.Settle();
+        string[] tabs = Tabs(window);
+        Assert.True(tabs.SequenceEqual(["Shop.cs", "Bank.cs", "LICENSE.txt"]),
+            $"The folder opened on [{string.Join(", ", tabs)}], not its own Shop.cs and Bank.cs with the licence open before it after them");
+        Assert.Equal(licence, window.EditorArea.Active?.Path);
+
+        // Left and opened again, it has the same tabs: none of its own went to the file open before it.
+        Assert.Null(window.CloseSolution());
+        Ui.Settle();
+        Assert.Empty(window.EditorArea.Documents);
+        window.OpenFolder(folder);
+        Ui.Settle();
+        Assert.True(Tabs(window).SequenceEqual(tabs), $"Opened again, the folder has [{string.Join(", ", Tabs(window))}], not the [{string.Join(", ", tabs)}] it was left with");
+        Assert.Equal(licence, window.EditorArea.Active?.Path);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Each_folder_opens_on_its_own_layout_and_one_without_on_the_one_there_was()
     {
@@ -340,6 +380,9 @@ public sealed class StateTests : IDisposable
     }
 
     private static JsonObject Read(string file) => (JsonObject)JsonNode.Parse(File.ReadAllText(file))!;
+
+    /// <summary>Every tab's file name, group after group, as the strips show them.</summary>
+    private static string[] Tabs(MainWindow window) => [.. window.EditorArea.Groups.SelectMany(g => g.Tabs).Select(t => t.Document.Name)];
 
     /// <summary>Puts the tests' theme back once a window that keeps its settings has put the person's in force.</summary>
     private static IDisposable TestsTheme() => new ThemeBack(Avalonia.Application.Current!.RequestedThemeVariant);

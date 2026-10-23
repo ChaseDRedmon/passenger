@@ -4,15 +4,13 @@ using Passenger.App.Updates;
 namespace Passenger.App;
 
 /// <summary>What's New: the running version's release notes, carried beside the app (<see cref="ReleaseNotes"/>), in an
-/// editor tab of their own, rendered and read-only. The person's window shows them once after an update, beside the folder
-/// it opens rather than over it; Help, What's New shows them whenever asked, Find Action and an agent's ide_action too.</summary>
+/// editor tab of their own, rendered and read-only. The person's window shows them once after an update, as it starts, in
+/// front of the folder's own tabs once those are back; Help, What's New shows them whenever asked, Find Action and an
+/// agent's ide_action too.</summary>
 public partial class MainWindow
 {
     /// <summary>The notes the window shows: this build's, by the version it is; a test names a version of its own.</summary>
     public ReleaseNotes Notes { get; init; } = ReleaseNotes.Carried;
-
-    /// <summary>Whether the notes wait to show with the next folder this window opens, once its own tabs are back.</summary>
-    private bool notesWaiting;
 
     private void AddWhatsNew()
     {
@@ -38,9 +36,9 @@ public partial class MainWindow
 
     /// <summary>The person's window as it starts (App, never a headless or agent's window, and a test only when it asks):
     /// the notes of the version it is, once, when the state it keeps says an older Passenger ran here, its record of the
-    /// notes shown older or missing from an older Passenger's state. They show with the folder the start opens, once its
-    /// tabs are back, else with the first folder opened, and are recorded as shown then. A fresh state records this version
-    /// and shows nothing: the Welcome screen greets a first start.</summary>
+    /// notes shown older or missing from an older Passenger's state, recorded as shown then. A folder the start is still
+    /// opening comes back with its own tabs behind them (<c>EditorArea.Restore</c>). A fresh state records
+    /// this version and shows nothing: the Welcome screen greets a first start.</summary>
     public void ShowWhatsNewOnce()
     {
         if (!keepsSettings)
@@ -66,24 +64,10 @@ public partial class MainWindow
             IdeErrors.Write($"What's New: Passenger {Notes.Version} carries no release notes to show after {kept.NotesShown ?? "an older Passenger"}");
             return;
         }
-        notesWaiting = true;
-        ShowWaitingNotes();
-    }
-
-    /// <summary>The notes waiting to show, once a folder is open here: after its own tabs are back, so they neither stop
-    /// those coming back nor stand behind them.</summary>
-    private void ShowWaitingNotes()
-    {
-        if (!notesWaiting || session.Folder is null)
-        {
-            return;
-        }
-        notesWaiting = false;
-        string? before = state!.Updates.Value.NotesShown;
         if (ShowWhatsNew() is null)
         {
-            state.Updates.Set(state.Updates.Value with { NotesShown = Notes.Version });
-            IdeErrors.Write($"What's New: Passenger {Notes.Version}'s notes shown, after {before ?? "an older Passenger"}");
+            state.Updates.Set(kept with { NotesShown = Notes.Version });
+            IdeErrors.Write($"What's New: Passenger {Notes.Version}'s notes shown, after {kept.NotesShown ?? "an older Passenger"}");
         }
     }
 }

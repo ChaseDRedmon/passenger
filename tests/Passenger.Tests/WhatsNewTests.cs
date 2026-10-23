@@ -11,10 +11,10 @@ using Passenger.Core;
 namespace Passenger.Tests;
 
 /// <summary>What's New: the release notes a version carries beside it, shown in the person's window the first time that
-/// version starts after an update, once, in a tab of their own, rendered and read-only, beside the folder the window opens
-/// (its own tabs back first); never for a fresh state; and again from Help whenever asked. Each window keeps its state in
-/// the test's own folder, as the person's keeps theirs, and is the version whose notes the build carries (the stand-in
-/// docs/release-notes/0.2.0.md), so each reads that real file.</summary>
+/// version starts after an update, once, in a tab of their own, rendered and read-only, in front of the folder it opens
+/// (whose own tabs come back behind them); never for a fresh state; and again from Help whenever asked. Each window keeps
+/// its state in the test's own folder, as the person's keeps theirs, and is the version whose notes the build carries
+/// (the stand-in docs/release-notes/0.2.0.md), so each reads that real file.</summary>
 public sealed class WhatsNewTests : IDisposable
 {
     private const string Version = "0.2.0";
@@ -31,7 +31,7 @@ public sealed class WhatsNewTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void After_an_update_the_notes_show_once_beside_the_folder_the_window_opens_and_not_on_the_next_start()
+    public void After_an_update_the_notes_show_once_in_front_of_the_folder_the_window_opens_and_not_on_the_next_start()
     {
         // The person used an older Passenger here: its folder's file open as they left it, and What's New's record older.
         MainWindow window = Started();
@@ -43,11 +43,11 @@ public sealed class WhatsNewTests : IDisposable
         Ui.Settle();
         File.WriteAllText(Path.Combine(state, "updates.json"), """{ "version": 1, "notesShown": "0.1.0" }""");
 
-        // The new version starts: its notes wait for the folder it opens, then show in front of the folder's own tabs.
+        // The new version starts: its notes show at once, and the folder it then opens comes back behind them, its own tab too.
         window = Started();
         window.ShowWhatsNewOnce();
         Ui.Settle();
-        Assert.True(window.EditorArea.Documents.Count == 0, $"The notes opened before any folder did, which would keep its own tabs from coming back: [{Open(window)}]");
+        ShownNotes(window);
         window.OpenFolder(folder);
         Ui.Settle();
         OpenDocument notes = ShownNotes(window);
