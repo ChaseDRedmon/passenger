@@ -967,7 +967,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   a `ConnectionStrings:` key) or service its AppHost never gives
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
-  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
+  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`); a connection string read by a
+  name no resource has (`AspireUnknownConnection`; none for a service whose environment the AppHost sets by hand,
+  WithEnvironment) and that its appsettings.json or appsettings.Development.json do not give (`BackingService.Configured`,
+  a compose file's check's reading too) is marked on the name, its fix Change to the declared name near it (Compose's
+  rule, `Spelling.Near`), one edit worked out again as it is chosen (`CodeAssist.ConnectionFix`); resource names complete in a
   string literal, `AddProject` goes to its project (`AspireProjectDeclaration`) and a resource's name a service reads (a
   connection string's, by GetConnectionString, a client integration's connectionName or a `ConnectionStrings:` key; a
   service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one

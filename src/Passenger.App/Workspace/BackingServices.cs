@@ -79,6 +79,21 @@ public sealed partial record BackingService(string Service, string Image, string
         }
     }
 
+    /// <summary>A connection string a project's own settings give the app as it runs in an environment: its
+    /// appsettings.{environment}.json's, else its appsettings.json's (letter case aside, as configuration keys are), with the
+    /// file's name; null where neither gives one that is not empty. A compose file's check and Aspire's alike read it.</summary>
+    public static (string File, string Value)? Configured(string folder, string name, string environment)
+    {
+        foreach (string file in (string[])[$"appsettings.{environment}.json", "appsettings.json"])
+        {
+            if (ConnectionStrings(folder, file).FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Value is { Length: > 0 } value)
+            {
+                return (file, value);
+            }
+        }
+        return null;
+    }
+
     /// <summary>The backing service an app's connection string (its name, and its value in appsettings.json) reaches, by
     /// the value's own shape among those the project's packages call for: Host= is Npgsql's (postgres), Server= or Data
     /// Source= with SqlClient SQL Server's (but a file's, SQLite's), mongodb:// Mongo's, amqp:// RabbitMQ's, host:port

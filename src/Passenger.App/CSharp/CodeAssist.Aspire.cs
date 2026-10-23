@@ -76,9 +76,10 @@ public sealed partial class CodeAssist
         return token.IsKind(SyntaxKind.StringLiteralToken) && token.SpanStart < caret && caret <= token.Span.End;
     }
 
-    /// <summary>The WithReference fixes of a service's Aspire warnings on an offset's line, one of Passenger's own fixes
-    /// (<see cref="EditorFixes"/>), listed before the server's: each adds the reference in the AppHost, worked out again by
-    /// the extension as it is chosen, at the warning's place as it then stands, as one command of global undo.</summary>
+    /// <summary>The fixes of a service's Aspire warnings on an offset's line, Passenger's own (<see cref="EditorFixes"/>), listed
+    /// before the server's: a WithReference added in the AppHost, worked out again by the extension as it is chosen, at the
+    /// warning's place as it then stands, as one command of global undo; and a connection string read by a name no resource
+    /// has changed to a declared name near it (<see cref="ConnectionFix"/>). An AppHost's: a parameter's value set.</summary>
     public IReadOnlyList<EditorFix> AspireFixes(OpenDocument file, int offset)
     {
         if (service()?.For(file) is not { Lsp: { } lsp } features)
@@ -93,8 +94,9 @@ public sealed partial class CodeAssist
         {
             return [];
         }
-        return [.. features.AspireMissingOn(lsp.PositionOf(offset).Line).DistinctBy(m => (m.Service, m.Resource))
-            .Select(m => Fix(m.Range, m.Service, m.Resource))];
+        int line = lsp.PositionOf(offset).Line;
+        return [.. features.AspireUnknownOn(line).DistinctBy(u => u.Range).SelectMany(u => u.Near.Select(near => ConnectionFix(file, u.Range, u.Name, near))),
+            .. features.AspireMissingOn(line).DistinctBy(m => (m.Service, m.Resource)).Select(m => Fix(m.Range, m.Service, m.Resource))];
 
         EditorFix Fix(TextRange range, string named, string resource) =>
             new($"Add WithReference({resource}) to {named}", "Aspire AppHost reference", range, string.Empty)
@@ -108,6 +110,18 @@ public sealed partial class CodeAssist
                 _ => $"Added WithReference({resource}) to {named}", patience),
         };
     }
+
+    /// <summary>Change to a resource the AppHost declares near the name a service reads a connection string by, which no resource
+    /// has (Compose's Change to, <see cref="Passenger.Core.Spelling.Near"/>): one edit of the name in its string, worked out again
+    /// as it is chosen at its warning as it then stands, and refused once the name is no longer written there.</summary>
+    private EditorFix ConnectionFix(OpenDocument file, TextRange range, string name, string near) =>
+        new($"Change to {near}", "a resource the AppHost declares", range, near)
+        {
+            Again = now => service()?.For(file)?.AspireUnknownOn(null).Where(u => u.Name == name && u.Near.Contains(near))
+                .OrderBy(u => Math.Abs(u.Range.Start - range.Start)).Select(u => u.Range).FirstOrDefault() is { Length: > 0 } current
+                && current.End <= now.Length && now.GetText(current.Start, current.Length) == name
+                ? ConnectionFix(file, current, name, near) : null,
+        };
 
     /// <summary>The fix of an AppHost's warning that a parameter has no value in its configuration: its value asked for (masked
     /// for a secret) and set in the AppHost's user secrets for a secret, else in its appsettings.json, as one command of global

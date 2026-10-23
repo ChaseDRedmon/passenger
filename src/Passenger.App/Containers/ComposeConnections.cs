@@ -105,7 +105,7 @@ internal static class ComposeConnections
                     continue;
                 }
                 string variable = $"ConnectionStrings__{name}";
-                if (Configured(runs, name, environmentName) is { } given)
+                if (runs is not null && BackingService.Configured(runs.Folder, name, environmentName) is { } given)
                 {
                     // Given by its settings, which its build carries: worth saying only when it names this machine, which in
                     // the container is the container itself.
@@ -133,24 +133,6 @@ internal static class ComposeConnections
             }
         }
         return found;
-    }
-
-    /// <summary>A connection string the project's own settings give, which its build carries into the container: its
-    /// appsettings.{environment}.json's, else its appsettings.json's, with the file's name; null where neither gives one.</summary>
-    private static (string File, string Value)? Configured(ProjectModel? project, string name, string environment)
-    {
-        if (project is null)
-        {
-            return null;
-        }
-        foreach (string file in (string[])[$"appsettings.{environment}.json", "appsettings.json"])
-        {
-            if (BackingService.ConnectionStrings(project.Folder, file).FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Value is { Length: > 0 } value)
-            {
-                return (file, value);
-            }
-        }
-        return null;
     }
 
     /// <summary>The project a service runs: the one its build's Dockerfile builds, its context and Dockerfile the folder's.</summary>

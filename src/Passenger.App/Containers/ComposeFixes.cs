@@ -413,17 +413,8 @@ public static partial class ComposeFixes
 
     /// <summary>The names the file declares of the fault's kind that are near its name, letter case aside (an edit or two
     /// away, one for a short name), nearest first, three at most: never the service itself.</summary>
-    private static IEnumerable<string> Near(ComposeText read, ComposeFault fault)
-    {
-        int most = fault.Name.Length <= 3 ? 1 : 2;
-        return Children(read, [fault.Key]).Select(e => e.Path[^1])
-            .Where(name => name != fault.Name && !(fault.Kind == "service" && name == fault.Service))
-            .Select(name => (Name: name, Distance: Spelling.Distance(name.ToLowerInvariant(), fault.Name.ToLowerInvariant())))
-            .Where(n => n.Distance <= most)
-            .OrderBy(n => n.Distance).ThenBy(n => n.Name, StringComparer.Ordinal)
-            .Take(3)
-            .Select(n => n.Name);
-    }
+    private static IEnumerable<string> Near(ComposeText read, ComposeFault fault) =>
+        Spelling.Near(fault.Name, Children(read, [fault.Key]).Select(e => e.Path[^1]).Where(name => !(fault.Kind == "service" && name == fault.Service)));
 
     [GeneratedRegex(@"^service ""(?<service>[^""]+)"" refers to undefined (?<kind>volume|network|secret|config) (?<name>[^\s:]+)")]
     private static partial Regex Undefined();
