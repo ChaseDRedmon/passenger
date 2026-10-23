@@ -159,7 +159,7 @@ public partial class MainWindow
     /// for it starts no shell of its own.</summary>
     private Task<TerminalRun> ShowInTerminal(string name, System.Diagnostics.ProcessStartInfo start)
     {
-        Task<TerminalRun> starting = terminal!.RunAsync(name, start);
+        Task<TerminalRun> starting = TerminalPanel.RunAsync(name, start);
         ShowToolWindow(ToolWindowIds.Terminal);
         return starting;
     }

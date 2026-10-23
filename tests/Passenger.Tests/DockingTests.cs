@@ -61,6 +61,7 @@ public sealed class DockingTests
         dock.Move(dock[ToolWindowIds.Hierarchy]!, ToolAnchor.RightBottom);
         dock.Move(dock[ToolWindowIds.LiveTree]!, ToolAnchor.LeftBottom);
         dock.Move(dock[ToolWindowIds.Endpoints]!, ToolAnchor.LeftBottom);
+        dock.Move(dock[ToolWindowIds.Requests]!, ToolAnchor.LeftBottom);
         Ui.Settle();
         Assert.Single(Stripe(window, right: true));
         Point lowest = Ui.Centre(Button(window, "hierarchy"), window);
@@ -384,7 +385,7 @@ public sealed class DockingTests
         MainWindow window = Open(settings);
         window.KeepLayout();
         DockHost dock = window.DockHost;
-        string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory];
+        string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit];
         foreach (string id in built)
         {
             Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");

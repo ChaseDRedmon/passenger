@@ -475,6 +475,64 @@ public sealed class ActiveEditorResponsivenessTests : ActiveEditorFolders
         Assert.True(largeBytes <= smallBytes + (16 * 1024),
             $"A key in 2,000 members allocated {largeBytes / 1024:N0} KB on the UI thread, {(largeBytes - smallBytes) / 1024:N0} KB more than in 20: it copied what every line or region has");
     }
+
+    /// <summary>A frame of lines with hints, a parameter's name before each argument, allocates on the UI thread about what
+    /// a frame of the same lines naming their arguments in their text does (#441): each hinted line's hints were made again
+    /// at every frame, a list, an array and a closure for each, and its text drawn whole once for each piece between them;
+    /// now a row's hints are kept while the text and its hints stand, and each run of its text is drawn once.</summary>
+    [AvaloniaFact]
+    public void A_frame_of_hinted_lines_allocates_about_what_one_of_the_same_lines_naming_their_arguments_does()
+    {
+        MainWindow window = new() { Width = 1100, Height = 800, StartsLanguageServer = false };
+        window.Show();
+        (long named, _) = Frames(named: true);
+        (long hinted, string hintedFile) = Frames(named: false);
+        TestContext.Current.TestOutputHelper?.WriteLine($"A frame of 60 calls allocated {named / 1024} KB on the UI thread naming their arguments, {hinted / 1024} KB with them as hints");
+        Assert.True(hinted <= named + (32 * 1024),
+            $"A frame of 60 calls with two hints each allocated {hinted / 1024} KB on the UI thread, against {named / 1024} KB for the same calls naming their arguments: each line's hints were made again, or its text drawn once for each piece");
+        window.Close();
+
+        // The least a frame drawing the editor again over a file of calls allocated on the UI thread, of a few: the calls
+        // naming their arguments, or their names as hints before them.
+        (long Bytes, string File) Frames(bool named)
+        {
+            StringBuilder text = new("static class Calls\n{\n    public static int Of(int width, int height) => width * height;\n\n    public static void Run()\n    {\n");
+            for (int i = 0; i < 60; i++)
+            {
+                text.Append(named ? FormattableString.Invariant($"        Of(width: {i}, height: {i + 1});\n") : FormattableString.Invariant($"        Of({i}, {i + 1});\n"));
+            }
+            string source = text.Append("    }\n}\n").ToString();
+            string path = Path.Combine(folder, named ? "Named.cs" : "Hinted.cs");
+            File.WriteAllText(path, source);
+            window.OpenFile(path);
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            if (!named)
+            {
+                List<InlayHint> hints = [];
+                for (int i = 0; i < 60; i++)
+                {
+                    int call = source.IndexOf($"Of({i}, ", StringComparison.Ordinal);
+                    hints.Add(new InlayHint(call + 3, "width:", PadRight: true));
+                    hints.Add(new InlayHint(source.IndexOf(", ", call, StringComparison.Ordinal) + 2, "height:", PadRight: true));
+                }
+                editor.SetInlayHints(hints);
+                Ui.Settle();
+                Assert.Equal(120, editor.InlayHints.Count);
+            }
+            long least = long.MaxValue;
+            for (int i = 0; i < 5; i++)
+            {
+                editor.InvalidateVisual();
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            return (least, path);
+        }
+    }
 }
 
 /// <summary>The folders an Active Editor test writes its files and keeps its settings in, its texts, and the helpers that

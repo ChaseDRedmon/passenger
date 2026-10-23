@@ -24,10 +24,11 @@ internal static class CSharpClassifier
 
     private static readonly TokenKind[] Braces = [TokenKind.Brace1, TokenKind.Brace2, TokenKind.Brace3];
 
-    /// <summary>The spans of the tokens (and their trivia) that reach into <paramref name="range"/>,
+    /// <summary>The spans of the tokens (and the trivia) that reach into <paramref name="range"/>,
     /// sorted. A comment or an excluded block that starts before the range is included whole. It
     /// finds the first token by position and walks token by token, never through a list of siblings,
-    /// so a class with ten thousand members costs what the lines on screen cost. A bracket's depth is
+    /// so a class with ten thousand members costs what the lines on screen cost, and of a token's
+    /// trivia it takes only those in the range (<see cref="AddTrivia"/>). A bracket's depth is
     /// counted on from the first token's (<see cref="DepthBefore"/>): an opener at the depth it opens
     /// at, its closer at the same, a stray closer at none below the outermost.</summary>
     public static List<SyntaxSpan> Classify(SyntaxNode root, TextSpan range)
@@ -37,7 +38,7 @@ internal static class CSharpClassifier
         int depth = DepthBefore(token);
         while (token.RawKind != 0 && token.FullSpan.Start <= range.End)
         {
-            AddTrivia(token.LeadingTrivia, spans);
+            AddTrivia(token.LeadingTrivia, range, spans);
             // A skipped token is trivia, not one of the tree's tokens: never a bracket.
             int bracket = token.Parent is { IsStructuredTrivia: true } ? 0 : Bracket(token);
             if (bracket > 0)
@@ -54,7 +55,7 @@ internal static class CSharpClassifier
             {
                 AddToken(token, spans);
             }
-            AddTrivia(token.TrailingTrivia, spans);
+            AddTrivia(token.TrailingTrivia, range, spans);
             token = Next(root, token);
         }
         return spans;
@@ -179,10 +180,36 @@ internal static class CSharpClassifier
         _ => 0,
     };
 
-    private static void AddTrivia(SyntaxTriviaList trivia, List<SyntaxSpan> spans)
+    /// <summary>The trivia of a token that reach into a range, the first found by halving the list's positions: a run of
+    /// thousands of <c>//</c> lines is the leading trivia of the one token after it, of which a screen's lines are a few.</summary>
+    private static void AddTrivia(SyntaxTriviaList trivia, TextSpan range, List<SyntaxSpan> spans)
     {
-        foreach (SyntaxTrivia t in trivia)
+        // A long list's positions are kept by Roslyn (its indexer reads them), a short one's summed: walked from its start.
+        int count = trivia.Count;
+        int first = 0;
+        for (int last = count; count > 16 && first < last;)
         {
+            int middle = (first + last) / 2;
+            if (trivia[middle].FullSpan.End < range.Start)
+            {
+                first = middle + 1;
+            }
+            else
+            {
+                last = middle;
+            }
+        }
+        for (int i = first; i < count; i++)
+        {
+            SyntaxTrivia t = trivia[i];
+            if (t.FullSpan.Start > range.End)
+            {
+                break;
+            }
+            if (t.FullSpan.End < range.Start)
+            {
+                continue;
+            }
             TokenKind? kind = t.Kind() switch
             {
                 SyntaxKind.SingleLineCommentTrivia or SyntaxKind.MultiLineCommentTrivia => TokenKind.Comment,

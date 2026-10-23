@@ -129,8 +129,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   otherwise is given it so (the Migrations window's connection strings, as its environment), or not made (the development
   certificate exported for containers as PEM with no password, #442). A fork costs a large process tens of
   milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
-  thread's), on the caller's thread otherwise: every git command (`Git`) starts so; `Start` stays on the caller's
-  thread for what needs the child at once (a console's `ProcessRunner`, `Builder.ProcessId`). A child the IDE ends (`Kill`, or
+  thread's), on the caller's thread otherwise: every git command (`Git`) starts so, and every start an async caller
+  makes (the project host, a test host, NuGet's changes and credential providers, dotnet ef, the container engine's
+  commands); `Start` stays on the caller's thread for what needs the child at once (a console's `ProcessRunner.Start`),
+  while `ProcessRunner.StartAsync` (an AppHost and its services) and a run started after a wait (`StartDotnet`'s `after`:
+  every build) fork off it, held as background work, a Stop meanwhile ending the child as it comes. A child the IDE ends (`Kill`, or
   `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
   only with Log every program. `RunAsync`'s limit covers a child's run to its exit; once it has exited, whatever the
@@ -171,7 +174,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
   goes with the text before it, or a value (`InlayHintKind.Value`: what a compose file's `${VAR}` comes to), which goes
   with the text before it as a type does and shows whatever Settings say of the other two; the hints at an offset are a
-  caret place of their own, as IntelliJ's inlays are. A file's hints are a `HintList` (runs, as `FoldList`'s regions are:
+  caret place of their own, as IntelliJ's inlays are. A row's hints are kept while
+  the text, the hints and how they are drawn stand (`rowGaps`), and a hinted line's text is drawn a run at a time, each
+  run once in the piece it is in (one a hint stands inside clipped to each piece it spans), so a frame of hinted lines
+  costs about what the same lines without hints do. A file's hints are a `HintList` (runs, as `FoldList`'s regions are:
   an edit moves the runs it reaches, the rest shifted whole), which the open file carries through each edit
   (`OpenDocument.InlayHints`, as its folds) and each editor carries too, ahead of everyone (`OnChangedFirst`, before the
   wraps, so the key's lines wrap with their hints where they now stand); the editor takes a host's list as it is when in
@@ -206,11 +212,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   Razor tooling) colour Razor files before the server answers, and C#'s colours Markdown's C# blocks. `TypeHints` turns Roslyn's type hints
   into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
-  before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
+  before through the nodes Roslyn reused, never from a walk of the whole tree, a range classified takes only the trivia
+  it covers (`CSharpClassifier.AddTrivia`, found by halving: a run of thousands of `//` lines is the trivia of the one
+  token after it), and the server's colours are asked for
   the screen's lines first and the whole file only once typing stops. Each line's colours read from the tree are kept
   and carried through the edits made until the next parse lands (`CSharpHighlighter`'s lines, by a frame's runs of whole
   lines; `CharactersClassified` counts what the UI thread classifies), so a key classifies again only the lines it
-  changed, however far the parse falls behind (as while a solution loads). A finder never tells its answer inside the
+  changed, however far the parse falls behind (as while a solution loads); the parse classifies the lines last asked for
+  on its worker and its landing keeps them as the lines' colours (`CSharpHighlighter.TakeLines`, carried through the
+  edits made since), so the frame after it classifies none again. A finder never tells its answer inside the
   document's `Changed` (`FoldScan` awaits its scan with `ForceYielding`): the open file moves its regions through the
   edit in a later handler of the same event, so regions told during it were moved twice.
 - `src/Passenger.Xaml`: Passenger's own XAML core, no UI and no Avalonia, which WPF (#187) shares: `Syntax` (XmlTree and
@@ -320,7 +330,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   build's problems and console links to its messages and to stack frames are read through it as well, and so are the
   debugger's lines, which are the PDB's: `Debugging/BuiltLines` sends breakpoints, Run to Cursor and Set Next Statement
   at the compiler's line in the built text and shows a stop's frame (the arrow, its row, MCP's place) at the editor's
-  line now, and Hot Reload's rude edits are listed at the editor's line. XAML's compilers count lines as an XML reader
+  line now (its map of the built lines to the lines now and back kept as runs, `LineRuns`, which an edit splits only
+  where it reaches them and moves whole past them, so a key in a debugged file costs what it changed), and Hot Reload's
+  rude edits are listed at the editor's line. XAML's compilers count lines as an XML reader
   does (`ServerLines.OfXml`: a lone '\r' ends a line, U+0085, U+2028 and U+2029 do not), and `ServerPlaces.Compiled`
   gives any file's lines as its compiler counts them, which BuiltLines and a profile's hot spots read the PDB through,
   and a build's problems too (`BuildRunController.Placed`, through `ServerPlaces.PositionOfCompiled`: Avalonia's AVLN and
@@ -538,11 +550,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   profiler in `ProfilerCommands`). A window's start builds no view it hides (#233): a `ToolWindow` given how to build
   its view (`Func<Control>`, its header's `Tools` too) builds and wires it as it is first shown, by its layout kept too
   (`IsBuilt`, `Built`), and what reads or acts on it asks through a property that builds it (`StructureView`, `Find`,
-  `Hierarchy`, `LocalHistoryWindow`), while what only follows the IDE (a caret moved, a session bound) passes over one
-  not built (`structure?.`); what only looks among the views made (which window holds the keys) asks `IsBuilt` first. A
-  view written to while hidden (the Build, Run, Debug and Problems consoles and lists) is made up front, its costly part
-  made as it is first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests
-  window's details, a `MergedLog`'s Find.
+  `Hierarchy`, `LocalHistoryWindow`, `Endpoints`, `NuGet`, `ContainersWindow`, `TerminalPanel`, `GitWindow`,
+  `CommitView`: a route's request sent, a package installed or a project file's completion asking the feeds, a container
+  action, a program run in the terminal, Show History, the branch widget's menu, Commit), while what only follows the IDE
+  (a caret moved, a session bound, the routes read, Settings applied, a folder's favourite branches) passes over one not
+  built (`structure?.`, `endpoints?.`, `terminal?.`, `gitView?.`); what only
+  looks among the views made (which window holds the keys) asks `IsBuilt` first. A view written to while hidden (the
+  Build, Run, Debug and Problems consoles and lists) is made up front, its costly part made as it is first shown: an
+  `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests window's details, a
+  `MergedLog`'s Find. Still made up front, their views read or written as the IDE runs: the Problems and Debug windows
+  (every build's and server's problems, each session's tab), Aspire's (each AppHost's run), the profiler's (each
+  profile's start, run and end) and the Live Visual Tree's (its controller reads its view).
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -1085,7 +1103,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
   bearer token, kept hashed and compared in constant time and checked before anything is admitted, one ordinary request a
   connection (`AspireExecutionConnection`) with ten seconds for its headers, body and writes, its notifications over
-  WebSockets, and a create given up by its connection cancelled on its own. An AppHost is a project whose evaluation sets
+  WebSockets, and a create given up by its connection cancelled on its own; different resources' creates run at once, a
+  held start's attach included, one resource's (by the OTEL_SERVICE_NAME DCP tells it) creates and deletes in the order DCP
+  sent them, and a session's delete waits for its own create alone (#436), its instance's end for every one under way. An AppHost is a project whose evaluation sets
   `IsAspireHost` (`ProjectModel.IsAspireHost`, carried by the host's `evaluate`; an older `projectModels.json` forgotten), or a
   single-file `apphost.cs` (a C# file whose head names `Aspire.AppHost.Sdk`, `AspireAppHosts.IsSingleFile`), found among the
   files of the folder's one walk (`FileIndex.Walked`, `ProjectSession.AspireFiles`; none under a hidden folder), each C#
@@ -1114,8 +1134,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   for a resource with health reports, its http and https addresses as links through `Browse`; a row's menu the service
   actions first, as a container's row's menu begins, then its commands, each item greyed with why, `MainWindow.RowMenuItem`),
   and the tabs both windows name alike in one order (`RunWindows.Tabs`), Log first and shown at first: Log, the resources'
-  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their
-  start), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
+  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned or Refresh reading the shown ones again from
+  their start; a resource that comes or restarts, another generation, streams on its own after the lines shown while the
+  others' streams go on, #435), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
   relationships, environment, properties and volumes), Telemetry, the dashboard's structured logs and traces (the
   Telemetry view's two pages under it, as the Containers window's Telemetry tab has them, below), and AppHost Log, the
   AppHost's own console. What a resource says is masked as a container's
@@ -1223,8 +1244,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
   services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either, a read that fails said
   in the same words by the view and an agent's `telemetry`, as the dashboard's failure, never Passenger's
-  (`TelemetrySource.Unread`, `NoDashboard`). `TelemetryView` is the
-  one view of them (logs, traces put together by id, a span tree, each list kept by key through every snapshot by `RunRows.Put` so a click survives one, a log's trace and a span's logs a click apart, chosen as
+  (`TelemetrySource.Unread`, `NoDashboard`). A record costs what it adds (#437): the reader counts each resource's records
+  and their bytes as they come and go, measures a record once as it writes it (`Masked`), makes a trace again only when an
+  envelope touched it (`RecentTraces`, each span's start and end kept as numbers) and tells the view of logs what each
+  envelope added and evicted (`AspireLogBatch`), each log numbered in order of arrival off the UI thread
+  (`AspireStructuredLog.Sequence`). `TelemetryView` is the
+  one view of them (logs, traces put together by id, a span tree, each list kept by key so a click survives a landing:
+  the logs by their numbers, added after those listed and evicted from the front, a stream's first batch listing them
+  anew, so a landing costs the UI thread what came, as AspireStandInTests hold it with a thousand kept against ten; the
+  traces through `RunRows.Put`, the chosen one's tree walked again only when it changed; a log's trace and a span's logs a click apart, chosen as
   the other page streams them), streaming only the page its host shows: the Aspire and Containers windows' Telemetry tab
   (`TelemetryView.Both`, the two pages under tabs of their own, `ShowPage` choosing one), the Containers window's shown for
   a Compose project of the window's container run that collects telemetry, a service's or container's row its own
@@ -1499,7 +1527,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   a data row's name) and `TestOutcome`, behind `ITestRunner`; `VsTestRunner` is the only file that knows VSTest's
   object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
   parsed off the UI thread, an open file's from its own parse (`TestsAtCaret.Read` is the one reading of a file's
-  tests), changed ones through the folder watcher; discovery and runs merge into those rows by id.
+  tests), changed ones through the folder watcher; discovery and runs merge into those rows by id. A read of an open
+  file that only moves its tests' lines (`FileTests.OnlyMoved`) moves the tests told and the rows showing them in place
+  (`TestFinder.Moved`, `TestTree.Move`): no project told again, no tree made again, the gutter's index kept.
   `MainWindow.Tests.cs` wires it. `TestRunners` sends each built assembly to its runner: a Testing Platform application
   (its `Microsoft.Testing.Platform.Application` assembly metadata: xUnit v3, MSTest's runner, TUnit) to
   `TestingPlatformRunner`, which runs it with `--server` through ChildProcesses and speaks the platform's JSON-RPC, one
@@ -1795,8 +1825,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   person's window (#278), where `ide_action` is, and its answer names the files a save left unsaved (a read-only one).
   `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
-  editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
-  there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
+  editor has not changed takes the disk's text first (`PassengerTools.DocumentAsync`), since an agent's own file tools
+  write there and ask at once: its length and time looked at off the UI thread and the file read and compared there only
+  once they changed since the editor last read it (`OpenDocument.TakeDiskTextAsync`, `DiskStamp`, with the text's version
+  then; a time within 2 s of its read trusted to show no second write), so a question of an open file costs the window
+  what it asks, not the file's size (#438, McpWindowTests holds it with 20,000 lines against ten). A call's wait for what
+  the IDE does wakes on the event or task of what it waits on (`When`, `On`, `Ends`: the C# server's state, a debugged
+  program's or an inspected app's, a file's checks, a profiled program's end, a run's end), `Until`'s 50 ms looks left only
+  where what it waits on raises nothing, each saying why; `refactor`'s project and solution scopes take their files from
+  the folder's index off the UI thread (`CodeFilesAsync`), and the tools are made once a process, off the UI thread
+  (`McpHost.Tools`, each call reaching its connection's `PassengerTools` through `McpHost.Serving`). `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
   (`AfterLaunch`, which watches 2 s more for a stop in its first layout); each run of a stop's frames outside the
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
   names that build's errors (`WithBuildErrors`, by the `BuildOutcome` of the build it ran, `LaunchBuild`; a refusal for anything

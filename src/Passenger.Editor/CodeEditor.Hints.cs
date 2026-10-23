@@ -140,7 +140,8 @@ public sealed partial class CodeEditor
         return low;
     }
 
-    /// <summary>The hints shown on a row: those at a wrap go on the row it starts.</summary>
+    /// <summary>The hints shown on a row: those at a wrap go on the row it starts. Kept for the row while the text, the hints
+    /// and how they are drawn stand (<see cref="rowGaps"/>), so a frame that draws them again makes none of them again.</summary>
     private Gap[] HintsOn(RowSpan span)
     {
         HintList hints = hintList;
@@ -150,8 +151,24 @@ public sealed partial class CodeEditor
         {
             return [];
         }
-        List<Gap> gaps = [];
+        (HintList, TextSnapshot, bool, bool, double, double) drawn = (hints, document.Snapshot, showTypeHints, showParameterHints, metrics.CharWidth, FontSize);
+        if (!rowGapsOf.Equals(drawn) || rowGaps.Count > 4096)
+        {
+            rowGaps.Clear();
+            rowGapsOf = drawn;
+        }
+        if (rowGaps.TryGetValue((span.Start, span.End), out Gap[]? kept) && Drawn(kept))
+        {
+            return kept;
+        }
+        int count = 0;
+        for (int i = low; i < hints.Count && hints[i].Offset <= end; i++)
+        {
+            count += Shows(hints[i]) ? 1 : 0;
+        }
+        Gap[] gaps = count == 0 ? [] : new Gap[count];
         double pad = metrics.CharWidth / 2;
+        int at = 0;
         for (int i = low; i < hints.Count && hints[i].Offset <= end; i++)
         {
             InlayHint hint = hints[i];
@@ -159,12 +176,32 @@ public sealed partial class CodeEditor
             {
                 continue;
             }
-            TextLine label = labels.Get((hint.Label, -6), () => Format(hint.Label, [], hintRun ??= HintRun()));
+            TextLine label = labels.TryGet((hint.Label, -6), out TextLine? known) ? known : labels.Add((hint.Label, -6), Format(hint.Label, [], hintRun ??= HintRun()));
             double width = label.WidthIncludingTrailingWhitespace + pad + (hint.PadLeft ? pad : 0) + (hint.PadRight ? pad : 0);
-            gaps.Add(new Gap(hint.Offset - span.Start, width, label, hint.PadLeft, Trails(hint), hint));
+            gaps[at++] = new Gap(hint.Offset - span.Start, width, label, hint.PadLeft, Trails(hint), hint);
         }
-        return [.. gaps];
+        rowGaps[(span.Start, span.End)] = gaps;
+        return gaps;
     }
+
+    /// <summary>Whether a row's hints kept have their labels still, kept on for this frame: a frame lets go of the labels it
+    /// did not draw.</summary>
+    private bool Drawn(Gap[] gaps)
+    {
+        foreach (Gap gap in gaps)
+        {
+            if (!labels.TryGet((gap.Hint.Label, -6), out TextLine? label) || !ReferenceEquals(label, gap.Label))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Each row's hints as <see cref="HintsOn"/> found them, by where the row starts and ends, while what they were
+    /// found for (<see cref="rowGapsOf"/>: the hints, the text, which are shown, the font) stands.</summary>
+    private readonly Dictionary<(int Start, int End), Gap[]> rowGaps = [];
+    private (HintList?, TextSnapshot?, bool, bool, double, double) rowGapsOf;
 
     /// <summary>Whether shown hints stand at an offset, and whether one of them ends the text before it (a type).</summary>
     private (bool Any, bool Trailing) HintsAt(int offset)
@@ -355,36 +392,90 @@ public sealed partial class CodeEditor
         return Math.Clamp(layout.ColumnAt(x - shift), 0, length);
     }
 
-    private static double HintsWidth(Gap[] gaps) => gaps.Sum(g => g.Width);
+    private static double HintsWidth(Gap[] gaps)
+    {
+        double width = 0;
+        foreach (Gap gap in gaps)
+        {
+            width += gap.Width;
+        }
+        return width;
+    }
 
     /// <summary>A line with hints: its text in pieces between them, each moved right by the hints before it, and
-    /// each hint's label on its chip in the room left.</summary>
+    /// each hint's label on its chip in the room left. Each of the line's runs is drawn once, in the piece it is in; only
+    /// a run a hint stands inside (a stretch of one colour) is drawn in each piece it spans, clipped to it, where the whole
+    /// line was drawn once for each piece.</summary>
     private void DrawWithHints(DrawingContext context, LineView layout, Gap[] gaps, double left, double y)
     {
         double top = y + (metrics.LineHeight - layout.Height) / 2;
-        double shift = 0;
-        double from = -metrics.CharWidth;
-        for (int i = 0; i <= gaps.Length; i++)
+        TextLine line = layout.Text!.Line;
+        // Where each hint stands, read once: the line's layout walks its runs for each.
+        Span<double> boundaries = gaps.Length <= 64 ? stackalloc double[gaps.Length] : new double[gaps.Length];
+        for (int i = 0; i < gaps.Length; i++)
         {
-            double to = i < gaps.Length
-                ? layout.DistanceOf(gaps[i].Column)
-                : layout.Width + metrics.CharWidth * 2;
-            if (to > from)
+            boundaries[i] = layout.DistanceOf(gaps[i].Column);
+        }
+        double x = layout.X + line.Start;
+        int piece = 0;
+        double shift = 0;
+        // By index: an enumerator of the runs would be made for each line each frame.
+        IReadOnlyList<TextRun> runs = line.TextRuns;
+        for (int r = 0; r < runs.Count; r++)
+        {
+            if (runs[r] is not DrawableTextRun drawable)
             {
-                using (context.PushClip(new Rect(left + shift + from, y, to - from, metrics.LineHeight)))
+                continue;
+            }
+            double end = x + drawable.Size.Width;
+            // The piece the run begins in: past every hint at or before its start.
+            while (piece < gaps.Length && boundaries[piece] <= x + Slack)
+            {
+                shift += gaps[piece++].Width;
+            }
+            double baseline = top + line.Baseline - drawable.Baseline;
+            if (piece == gaps.Length || end <= boundaries[piece] + Slack)
+            {
+                drawable.Draw(context, new Point(left + shift + x, baseline));
+            }
+            else
+            {
+                // A hint inside the run: drawn in each piece it reaches, each clipped to its piece and moved with it.
+                double from = piece == 0 ? double.NegativeInfinity : boundaries[piece - 1];
+                double moved = shift;
+                for (int at = piece; ; at++)
                 {
-                    layout.Draw(context, left + shift, top);
+                    double to = at < gaps.Length ? boundaries[at] : double.PositiveInfinity;
+                    double clipFrom = Math.Max(from, x - metrics.CharWidth);
+                    double clipTo = Math.Min(to, end + metrics.CharWidth);
+                    if (clipTo > clipFrom)
+                    {
+                        using (context.PushClip(new Rect(left + moved + clipFrom, y, clipTo - clipFrom, metrics.LineHeight)))
+                        {
+                            drawable.Draw(context, new Point(left + moved + x, baseline));
+                        }
+                    }
+                    if (at == gaps.Length || to >= end)
+                    {
+                        break;
+                    }
+                    moved += gaps[at].Width;
+                    from = to;
                 }
             }
-            if (i == gaps.Length)
-            {
-                break;
-            }
-            DrawHint(context, gaps[i], left + shift + to, y);
-            shift += gaps[i].Width;
-            from = to;
+            x = end;
+        }
+        double before = 0;
+        for (int i = 0; i < gaps.Length; i++)
+        {
+            DrawHint(context, gaps[i], left + before + boundaries[i], y);
+            before += gaps[i].Width;
         }
     }
+
+    /// <summary>How far past a hint's place a run may begin, or before it end, and still count as beside it: a run's width
+    /// summed and a column's distance read are the same place by different sums.</summary>
+    private const double Slack = 0.01;
 
     private void DrawHint(DrawingContext context, Gap gap, double x, double y)
     {

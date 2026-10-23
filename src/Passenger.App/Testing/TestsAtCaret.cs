@@ -11,8 +11,11 @@ namespace Passenger.App.Testing;
 /// run only through the types deriving from them.</summary>
 public sealed record DeclaredTest(string Type, string Method, int Line, IReadOnlyList<KeyValuePair<string, string>> Traits, bool Abstract)
 {
-    public bool SameAs(DeclaredTest other) =>
-        Type == other.Type && Method == other.Method && Line == other.Line && Abstract == other.Abstract && Traits.SequenceEqual(other.Traits);
+    public bool SameAs(DeclaredTest other) => Line == other.Line && SameTest(other);
+
+    /// <summary>The same test, on whatever line.</summary>
+    public bool SameTest(DeclaredTest other) =>
+        Type == other.Type && Method == other.Method && Abstract == other.Abstract && Traits.SequenceEqual(other.Traits);
 }
 
 /// <summary>What a C# file declares for testing: the types that hold tests and the tests, with the lines their names
@@ -25,6 +28,31 @@ public sealed record FileTests(IReadOnlyList<(string Type, int Line)> Types, IRe
     /// <summary>Whether a later read says the same: typing inside a method's body changes nothing of it.</summary>
     public bool SameAs(FileTests other) =>
         Types.SequenceEqual(other.Types) && Tests.Count == other.Tests.Count && Tests.Zip(other.Tests).All(p => p.First.SameAs(p.Second)) && Methods.SetEquals(other.Methods);
+
+    /// <summary>Whether a later read says the same but for the lines the types and tests are on: lines put in or taken out
+    /// above or among them, which move their rows rather than make the tree again.</summary>
+    public bool OnlyMoved(FileTests other)
+    {
+        if (Types.Count != other.Types.Count || Tests.Count != other.Tests.Count || !Methods.SetEquals(other.Methods))
+        {
+            return false;
+        }
+        for (int i = 0; i < Types.Count; i++)
+        {
+            if (Types[i].Type != other.Types[i].Type)
+            {
+                return false;
+            }
+        }
+        for (int i = 0; i < Tests.Count; i++)
+        {
+            if (!Tests[i].SameTest(other.Tests[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
 }
 
 /// <summary>What Rider's Run Tests runs from the editor: the test method the caret is in, else every test of the

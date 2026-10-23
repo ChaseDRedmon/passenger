@@ -55,7 +55,13 @@ public sealed class AspireView : DockPanel, IDisposable
     private bool disposed;
     private bool executing;
     private Func<AspireSelection, string, Func<bool>, CancellationToken, Task>? argumentCommand;
-    private CancellationTokenSource? consoleReading;
+    /// <summary>Each shown resource's console stream, by its name: the generation it reads and what ends it.</summary>
+    private readonly Dictionary<string, (string Generation, CancellationTokenSource Cancel)> consoleStreams = new(StringComparer.Ordinal);
+    private (string Name, string Words)[] offeredConsoles = [];
+
+    /// <summary>Whether the console shows its streams' lines from their start, so a stream that comes or restarts adds its
+    /// own after them; false once they are stopped, the next update reading the console again whole.</summary>
+    private bool consoleLive;
     private int consoleGeneration;
     private string currentPage = LogTab;
     private bool liveResources;
@@ -65,7 +71,6 @@ public sealed class AspireView : DockPanel, IDisposable
     /// <summary>Discover or Refresh asked while the window was hidden, which their actions show it for first: done as it shows.</summary>
     private bool discoverWhenShown;
     private bool refreshWhenShown;
-    private readonly Dictionary<string, string> streamedResources = new(StringComparer.Ordinal);
     private Func<string, bool>? requestAction;
     private ActionRegistry? actionRegistry;
     private Func<string, MenuItem>? actionItem;
@@ -719,54 +724,76 @@ public sealed class AspireView : DockPanel, IDisposable
     private void StopConsole()
     {
         consoleGeneration++;
-        consoleReading?.Cancel();
-        consoleReading?.Dispose();
-        consoleReading = null;
+        consoleLive = false;
+        foreach ((string _, CancellationTokenSource cancel) in consoleStreams.Values)
+        {
+            cancel.Cancel();
+            cancel.Dispose();
+        }
+        consoleStreams.Clear();
     }
 
-    /// <summary>Streams the consoles of the resources whose toggles are on into the merged log while the Console page shows;
-    /// <paramref name="again"/> (a toggle turned) reads them again from their start, as a project's merged log does.</summary>
+    /// <summary>Streams the consoles of the resources whose toggles are on into the merged log while the Console page shows.
+    /// A resource that comes, or restarts (another generation), has its own stream started and its lines added after those
+    /// shown, one that goes has its stream ended, and the rest stream on; the console is cleared and every stream read again
+    /// from its start only when it was stopped (hidden, another tab, Refresh) or <paramref name="again"/> (a toggle turned)
+    /// asks, as a project's merged log does, so one resource's restart never reads the others' backlogs again.</summary>
     private void UpdateConsole(bool again = false)
     {
         UiThread.Check();
         if (disposed || !displayVisible || currentPage != LogTab || SelectedApp is not { } app || ConsoleProvider is null)
         {
             StopConsole();
-            streamedResources.Clear();
             return;
         }
         AspireResource[] offered = Visible();
-        Dictionary<string, string> next = offered.Where(resource => Log.Shows(resource.Name))
-            .ToDictionary(resource => resource.Name, resource => resource.Generation, StringComparer.Ordinal);
-        if (!again && consoleReading is not null && next.Count == streamedResources.Count
-            && next.All(pair => streamedResources.GetValueOrDefault(pair.Key) == pair.Value))
-        {
-            return;
-        }
-        StopConsole();
-        streamedResources.Clear();
-        foreach ((string name, string version) in next)
-        {
-            streamedResources.Add(name, version);
-        }
         if (!again)
         {
-            Log.Offer([.. offered.Select(resource => (resource.Name, resource.DisplayName))], forget: false);
+            (string Name, string Words)[] sources = [.. offered.Select(resource => (resource.Name, resource.DisplayName))];
+            if (!sources.SequenceEqual(offeredConsoles))
+            {
+                offeredConsoles = sources;
+                Log.Offer(sources, forget: false);
+            }
         }
-        consoleReading = new CancellationTokenSource();
-        CancellationToken cancel = consoleReading.Token;
-        Console.Clear();
-        consoleStatus.Text = "Live · retained output is bounded";
-        foreach (AspireResource resource in offered.Where(resource => next.ContainsKey(resource.Name)))
+        AspireResource[] shown = [.. offered.Where(resource => Log.Shows(resource.Name))];
+        if (again || !consoleLive)
         {
+            StopConsole();
+            consoleLive = true;
+            Console.Clear();
+            consoleStatus.Text = "Live · retained output is bounded";
+        }
+        HashSet<string> named = shown.Select(resource => resource.Name).ToHashSet(StringComparer.Ordinal);
+        foreach ((string name, (string generation, CancellationTokenSource cancel)) in consoleStreams.ToArray())
+        {
+            if (!named.Contains(name) || shown.First(resource => resource.Name == name).Generation != generation)
+            {
+                cancel.Cancel();
+                cancel.Dispose();
+                consoleStreams.Remove(name);
+            }
+        }
+        foreach (AspireResource resource in shown.Where(resource => !consoleStreams.ContainsKey(resource.Name)))
+        {
+            CancellationTokenSource reading = new();
+            consoleStreams.Add(resource.Name, (resource.Generation, reading));
             AspireSelection selected = new(app.AppHostPath, resource);
-            IAsyncEnumerable<IReadOnlyList<AspireConsoleLog>>? stream = ConsoleProvider(selected, cancel);
+            IAsyncEnumerable<IReadOnlyList<AspireConsoleLog>>? stream = ConsoleProvider(selected, reading.Token);
             if (stream is not null)
             {
-                _ = ReadConsoleAsync(stream, consoleGeneration, selected, cancel);
+                _ = ReadConsoleAsync(stream, consoleGeneration, selected, reading.Token);
             }
         }
     }
+
+    /// <summary>Whether a stream still stands for its resource's console: the console not read again since it began and its
+    /// resource's stream the one of its generation.</summary>
+    private bool Streams(int version, AspireSelection selected, CancellationToken cancel) =>
+        !disposed && displayVisible && !cancel.IsCancellationRequested && version == consoleGeneration && currentPage == LogTab
+        && SelectedApp?.AppHostPath == selected.AppHostPath
+        && consoleStreams.TryGetValue(selected.Resource.Name, out (string Generation, CancellationTokenSource Cancel) stream)
+        && stream.Generation == selected.Resource.Generation;
 
     private async Task ReadConsoleAsync(IAsyncEnumerable<IReadOnlyList<AspireConsoleLog>> stream, int version,
         AspireSelection selected, CancellationToken cancel)
@@ -779,9 +806,7 @@ public sealed class AspireView : DockPanel, IDisposable
             {
                 await UiThread.InvokeAsync(() =>
                 {
-                    if (!disposed && displayVisible && !cancel.IsCancellationRequested && version == consoleGeneration && currentPage == LogTab
-                        && SelectedApp?.AppHostPath == selected.AppHostPath
-                        && streamedResources.GetValueOrDefault(selected.Resource.Name) == selected.Resource.Generation)
+                    if (Streams(version, selected, cancel))
                     {
                         foreach (AspireConsoleLog line in lines)
                         {
@@ -881,6 +906,7 @@ public sealed class AspireView : DockPanel, IDisposable
         resources = [];
         collapsed.Clear();
         Fill(null);
+        offeredConsoles = [];
         Log.Offer([], forget: true);
         ShowResource();
         ClearTelemetry();

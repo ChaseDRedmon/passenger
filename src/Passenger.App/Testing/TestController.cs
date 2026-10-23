@@ -60,6 +60,7 @@ public sealed class TestController : IAsyncDisposable
             code = found;
             Load();
         };
+        Finder.Moved += (_, moved) => Tree.Move(moved.Path, moved.Moved);
         Load();
     }
 

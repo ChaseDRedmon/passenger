@@ -40,7 +40,7 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
     private bool disposed;
 
     /// <summary>The parse under way, which a caller asking for the syntax before the first has landed waits for.</summary>
-    private Task<(SyntaxTree Tree, FoldRegions Folds)>? running;
+    private Task<(SyntaxTree Tree, FoldRegions Folds, Dictionary<int, (int Length, SyntaxSpan[] Spans)> Lines)>? running;
 
     /// <summary>The syntax given for <see cref="currentVersion"/> of the text.</summary>
     private ParsedText? current;
@@ -51,8 +51,9 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
     private readonly Dictionary<(int Start, int Length), SyntaxSpan[]> cached = [];
     private int cachedVersion = -1;
 
-    /// <summary>The ranges asked of the newest text, which the next parse classifies ahead.</summary>
-    private readonly List<(int Start, int Length)> asked = [];
+    /// <summary>The lines asked of the newest text, first and last, which the next parse classifies ahead and hands over as
+    /// it lands (<see cref="lines"/>): a frame after a key asks for the lines the frame before it did.</summary>
+    private readonly List<(int First, int Last)> asked = [];
 
     /// <summary>Each line's colours as read from <see cref="tree"/>, by where the line starts in the text of
     /// <see cref="linesVersion"/>: its length with its break, and its colours relative to its start. Carried from one
@@ -126,11 +127,12 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
         {
             return known;
         }
-        if (asked.Count < 64)
+        (int First, int Last)? whole = WholeLines(snapshot, start, length);
+        if (asked.Count < 64 && length > 0 && start + length <= snapshot.Length)
         {
-            asked.Add((start, length));
+            asked.Add(whole ?? (snapshot.GetLineFromOffset(start), snapshot.GetLineFromOffset(start + length - 1)));
         }
-        SyntaxSpan[] result = WholeLines(snapshot, start, length) is (int first, int last) ? ByLine(snapshot, first, last) : [.. Classified(start, length)];
+        SyntaxSpan[] result = whole is (int first, int last) ? ByLine(snapshot, first, last) : [.. Classified(start, length)];
         if (cached.Count >= 256)
         {
             cached.Clear();
@@ -254,27 +256,60 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
             linesVersion = version + 1;
             return;
         }
-        int from = edits[0].Start;
-        int to = edits[^1].Start + edits[^1].Length;
+        Carry(lines, spareLines, edits);
+        (lines, spareLines) = (spareLines, lines);
+        linesVersion = version + 1;
+    }
+
+    /// <summary>Lines' colours carried through an edit into another set, those it reaches left out.</summary>
+    private static void Carry(Dictionary<int, (int Length, SyntaxSpan[] Spans)> from, Dictionary<int, (int Length, SyntaxSpan[] Spans)> into, IReadOnlyList<TextEdit> edits)
+    {
+        int first = edits[0].Start;
+        int last = edits[^1].Start + edits[^1].Length;
         int shift = 0;
         foreach (TextEdit edit in edits)
         {
             shift += edit.Text.Length - edit.Length;
         }
-        spareLines.Clear();
-        foreach ((int start, (int Length, SyntaxSpan[] Spans) kept) in lines)
+        into.Clear();
+        foreach ((int start, (int Length, SyntaxSpan[] Spans) kept) in from)
         {
-            if (start + kept.Length < from)
+            if (start + kept.Length < first)
             {
-                spareLines[start] = kept;
+                into[start] = kept;
             }
-            else if (start > to)
+            else if (start > last)
             {
-                spareLines[start + shift] = kept;
+                into[start + shift] = kept;
             }
         }
-        (lines, spareLines) = (spareLines, lines);
-        linesVersion = version + 1;
+    }
+
+    /// <summary>The colours of the lines asked of the text before a parse, read from the parse on its worker, by where each
+    /// line starts in the parsed text, as <see cref="lines"/> keeps them: what its landing hands the screen's next frame,
+    /// which then classifies nothing again. A worker's.</summary>
+    private static Dictionary<int, (int Length, SyntaxSpan[] Spans)> Read(SyntaxNode root, TextSnapshot text, (int First, int Last)[] warm)
+    {
+        Dictionary<int, (int Length, SyntaxSpan[] Spans)> read = [];
+        int lineCount = text.LineCount;
+        foreach ((int firstAsked, int lastAsked) in warm)
+        {
+            int first = Math.Min(firstAsked, lineCount - 1);
+            int last = Math.Min(lastAsked, lineCount - 1);
+            if (read.Count > MostLines || (read.ContainsKey(text.GetLineStart(first)) && read.ContainsKey(text.GetLineStart(last))))
+            {
+                continue;
+            }
+            LineSpan top = text.GetLine(first);
+            LineSpan bottom = text.GetLine(last);
+            List<SyntaxSpan> found = CSharpClassifier.Classify(root, TextSpan.FromBounds(top.Start, Math.Min(bottom.EndIncludingBreak, root.FullSpan.End)));
+            for (int line = first; line <= last; line++)
+            {
+                LineSpan of = text.GetLine(line);
+                read[of.Start] = (of.EndIncludingBreak - of.Start, Pieces(found, of.Start, of.EndIncludingBreak));
+            }
+        }
+        return read;
     }
 
     /// <summary>How many characters the editor's asks have had classified from the tree on the UI thread: what drawing the
@@ -317,25 +352,20 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
         FoldRegions? previousFolds = treeFolds;
         int parsedVersion = version;
         parsingVersion = parsedVersion;
-        (int Start, int Length)[] warm = [.. asked];
+        (int First, int Last)[] warm = [.. asked];
         BackgroundWork.Begin();
-        Task<(SyntaxTree Tree, FoldRegions Folds)> parse = Task.Run(() =>
+        Task<(SyntaxTree Tree, FoldRegions Folds, Dictionary<int, (int Length, SyntaxSpan[] Spans)> Lines)> parse = Task.Run(() =>
         {
             long allocated = GC.GetAllocatedBytesForCurrentThread();
             SyntaxTree parsed = previous is null ? CSharpSyntaxTree.ParseText(parsedText, Options) : previous.WithChangedText(parsedText);
             // Classifying the lines on screen here builds the tree's nodes there (Roslyn makes them on
-            // first touch, and a list of thousands of members makes arrays of thousands), so the UI
-            // thread finds them made.
-            SyntaxNode root = parsed.GetRoot();
-            int end = root.FullSpan.End;
-            foreach ((int start, int length) in warm)
-            {
-                CSharpClassifier.Classify(root, TextSpan.FromBounds(Math.Min(start, end), Math.Min(start + length, end)));
-            }
+            // first touch, and a list of thousands of members makes arrays of thousands), and its colours
+            // are the screen's once the parse lands, so the UI thread classifies them no more.
+            Dictionary<int, (int Length, SyntaxSpan[] Spans)> read = Read(parsed.GetRoot(), parsedText.Snapshot, warm);
             FoldRegions folds = FoldRegions.Of(new ParsedText(parsed, parsedText.Snapshot), previous is null ? null : previousFolds);
             Interlocked.Add(ref parseBytes, GC.GetAllocatedBytesForCurrentThread() - allocated);
             Interlocked.Increment(ref parses);
-            return (Tree: parsed, Folds: folds);
+            return (Tree: parsed, Folds: folds, Lines: read);
         });
         running = parse;
         parse.ContinueWith(done => OnUi(() =>
@@ -352,7 +382,7 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
                     parsedText.ForgetHistory();
                     sinceTree.RemoveAll(batch => batch.Version <= parsedVersion);
                     cached.Clear();
-                    lines.Clear();
+                    TakeLines(done.Result.Lines);
                     Changed?.Invoke(this, EventArgs.Empty);
                     if (parsedVersion == version)
                     {
@@ -371,6 +401,24 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
                 BackgroundWork.End();
             }
         }), TaskScheduler.Default);
+    }
+
+    /// <summary>The lines the landing parse classified on its worker, as the lines kept for the text as it stands: carried
+    /// through the edits made since it was asked for, which <see cref="sinceTree"/> holds once the parse has landed.</summary>
+    private void TakeLines(Dictionary<int, (int Length, SyntaxSpan[] Spans)> read)
+    {
+        foreach ((_, IReadOnlyList<TextEdit> edits) in sinceTree)
+        {
+            if (read.Count == 0 || edits.Count == 0)
+            {
+                break;
+            }
+            Carry(read, spareLines, edits);
+            (read, spareLines) = (spareLines, read);
+        }
+        spareLines = lines;
+        lines = read;
+        linesVersion = version;
     }
 
     /// <summary>The newest tree carried to the text as it stands. Asked before the first parse has landed, that parse is

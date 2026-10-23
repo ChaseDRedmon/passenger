@@ -169,7 +169,7 @@ public sealed class ContainerEngine
         ProcessStartInfo start = Command(arguments);
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        using Process process = ChildProcesses.Start(start);
+        using Process process = await ChildProcesses.StartAsync(start);
         Task<string> output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
         Task<string> errors = process.StandardError.ReadToEndAsync(CancellationToken.None);
         bool ended = true;
@@ -650,7 +650,7 @@ public sealed class ContainerEngine
             ProcessStartInfo start = Command(["events", "--format", "json"]);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {

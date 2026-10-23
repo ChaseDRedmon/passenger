@@ -54,27 +54,56 @@ public sealed record AspireConsoleLog(string ResourceName, string Content, bool 
 
 public sealed class AspireStructuredLog(JsonElement data)
 {
+    private string? resourceName;
+
     public JsonElement Data { get; } = data;
+
+    /// <summary>Its place in the order its reader heard the logs (from 1), given once off the UI thread, which the Telemetry
+    /// view keys its row by; 0 for a log read otherwise (the CLI's).</summary>
+    public long Sequence { get; init; }
+
+    /// <summary>The resource that logged it, read once.</summary>
+    public string? ResourceName => resourceName ??= AspireJson.String(Data, "resourceName");
     public string Message => AspireJson.String(Data, "message") ?? string.Empty;
     public string? TraceId => AspireJson.String(Data, "traceId");
     public string? SpanId => AspireJson.String(Data, "spanId");
     public override string ToString() => $"{AspireJson.String(Data, "severity")} · {AspireJson.String(Data, "resourceName")} · {Message}";
 }
 
+/// <summary>What one envelope of a followed log stream changed of the logs its reader keeps: those it added and those the
+/// bounds evicted, each oldest first (an evicted log may be one it added).</summary>
+public sealed record AspireLogBatch(IReadOnlyList<AspireStructuredLog> Added, IReadOnlyList<AspireStructuredLog> Evicted);
+
 public sealed class AspireSpan(JsonElement data)
 {
+    /// <summary>What a span with no parent keeps as its parent's id once read: a string of its own, never a span's id.</summary>
+    private static readonly string NoParent = new('-', 1);
+    private string? spanId;
+    private string? parentSpanId;
+
     public JsonElement Data { get; } = data;
-    public string SpanId => AspireJson.RequiredString(Data, "spanId");
-    public string? ParentSpanId => AspireJson.String(Data, "parentSpanId");
+
+    /// <summary>Its id and its parent's, read once: a trace's tree reads them for every span at every look.</summary>
+    public string SpanId => spanId ??= AspireJson.RequiredString(Data, "spanId");
+    public string? ParentSpanId
+    {
+        get
+        {
+            string parent = parentSpanId ??= AspireJson.String(Data, "parentSpanId") ?? NoParent;
+            return ReferenceEquals(parent, NoParent) ? null : parent;
+        }
+    }
     public string? Source => AspireJson.String(Data, "source");
     public override string ToString() => $"{Source} · {AspireJson.String(Data, "name")} · {AspireJson.Duration(Data)} · {AspireJson.String(Data, "status")}";
 }
 
 public sealed class AspireTrace(JsonElement data, IReadOnlyList<AspireSpan> spans)
 {
+    private string? traceId;
+
     public JsonElement Data { get; } = data;
     public IReadOnlyList<AspireSpan> Spans { get; } = spans;
-    public string TraceId => AspireJson.RequiredString(Data, "traceId");
+    public string TraceId => traceId ??= AspireJson.RequiredString(Data, "traceId");
     public override string ToString() => $"{AspireJson.String(Data, "title") ?? TraceId} · {AspireJson.Duration(Data)}{(AspireJson.Boolean(Data, "hasError") ? " · Error" : string.Empty)}";
 }
 

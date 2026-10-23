@@ -414,7 +414,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             app.Runner.Exited += (_, _) => BackgroundWork.Track(StopAppAsync(app));
             ProcessStartInfo hostStart = ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory);
             hostStart.Environment.Remove("DEBUG_SESSION_SERVER_CERTIFICATE");
-            if (app.Runner.Start(hostStart, environment) is { } refused)
+            if (await app.Runner.StartAsync(hostStart, environment) is { } refused)
             {
                 throw new LaunchException(refused);
             }
@@ -914,7 +914,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             ProcessRunner runner = resource.Runner = new ProcessRunner(resource.Console, takesInput: true);
             runner.OutputReceived += (_, output) => app.Execution?.NotifyServiceLog(request.DcpInstanceId, request.SessionId, output.Text, output.IsError);
             runner.Exited += (_, code) => Finished(app, resource, code);
-            string? refused = runner.Start(inspected.Program, inspected.Arguments, inspected.WorkingDirectory, inspected.Environment);
+            string? refused = await runner.StartAsync(inspected.Program, inspected.Arguments, inspected.WorkingDirectory, inspected.Environment);
             if (refused is not null)
             {
                 throw new LaunchException(refused);

@@ -19,8 +19,8 @@ public partial class MainWindow
     /// <summary>The container engine the window asks: the person's, or a test's stand-in.</summary>
     public ContainerEngine Engine { get; init; } = ContainerEngine.Shared;
 
-    /// <summary>The Containers tool window.</summary>
-    public ContainersView ContainersWindow => containersView!;
+    /// <summary>The Containers tool window, built as it is first shown or asked for (an agent's or a run's action on a row).</summary>
+    public ContainersView ContainersWindow => containersView ?? (ContainersView)Dock[ToolWindowIds.Containers]!.Content;
 
     private void AddContainers()
     {
@@ -41,7 +41,7 @@ public partial class MainWindow
                 Works = id,
             });
         }
-        actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = containersView!.RefreshAsync()));
+        actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = ContainersWindow.RefreshAsync()));
         actions.Add(new IdeAction(AppActions.ContainerScale, "Scale Service…", "Containers", context => _ = ScaleAsync(Chosen()!))
         {
             WhyNot = _ => Chosen() is { Kind: ContainerRowKind.Service, Project: not null } chosen
@@ -61,7 +61,18 @@ public partial class MainWindow
         actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(Chosen()!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
 
         AddServiceActions();
-        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title, RowMenuItem));
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Containers, "Containers", "Icon.Containers", MakeContainers, Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowContainers,
+            Menus = [new MenuPlace("Tools", 0, 4)],
+            Chosen = () => containersView?.Chosen,
+        });
+    }
+
+    /// <summary>The Containers window's view, as it is first shown or asked for.</summary>
+    private ContainersView MakeContainers()
+    {
+        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions![id]!.Title, RowMenuItem));
         containersView = view;
         view.RowChosen += (_, _) => lastServiceWindow = ToolWindowIds.Containers;
         // An AppHost's containers under it, as its run's resources name them (the folder's AppHosts that run now).
@@ -77,13 +88,9 @@ public partial class MainWindow
         view.Files.Problem += (_, problem) => status.Text = problem;
         // The window's first use of it: Inspect's copies an earlier Passenger wrote unmasked go before anything reads them.
         view.AttachedToVisualTree += (_, _) => _ = ForgetUnmaskedCopiesAsync();
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Containers, "Containers", "Icon.Containers", view, Docking.ToolAnchor.BottomLeft)
-        {
-            Action = AppActions.ShowContainers,
-            Menus = [new MenuPlace("Tools", 0, 4)],
-            Chosen = () => view.Chosen,
-        });
-        ActionButtons.ShowMarked(view, actions);
+        // Added after the window marks its tool windows' buttons (ShowActionWork): its own marked as it is built.
+        ActionButtons.ShowMarked(view, actions!);
+        return view;
     }
 
     /// <summary>The window's folder opened: when it holds a Compose file or a Dockerfile, the engine is asked once, off the
@@ -208,7 +215,7 @@ public partial class MainWindow
             return;
         }
         ContainerRow row = chosen ?? new ContainerRow(ContainerRowKind.Group, 0, "group:Containers", "Containers");
-        await containersView!.ActAsync(AppActions.ContainerPrune, "prune", row, words);
+        await ContainersWindow.ActAsync(AppActions.ContainerPrune, "prune", row, words);
     }
 
     /// <summary>Remove: a container, image or network at once, a Compose project taken down with its volumes kept, and a
@@ -240,7 +247,7 @@ public partial class MainWindow
         {
             return;
         }
-        await containersView!.ActAsync(AppActions.ContainerScale, "scale", service,
+        await ContainersWindow.ActAsync(AppActions.ContainerScale, "scale", service,
             [.. project.Arguments, "up", "-d", "--no-recreate", "--scale", $"{service.Service}={count}", "--", service.Service!]);
     }
 
@@ -345,8 +352,8 @@ public partial class MainWindow
         }
         try
         {
-            TerminalRun run = await terminal!.RunAsync($"{container.Name} (shell)", engine.Command(["exec", "-it", container.Id, "sh"]));
-            terminal.FocusView();
+            TerminalRun run = await TerminalPanel.RunAsync($"{container.Name} (shell)", engine.Command(["exec", "-it", container.Id, "sh"]));
+            TerminalPanel.FocusView();
             return run;
         }
         catch (LaunchException failed)

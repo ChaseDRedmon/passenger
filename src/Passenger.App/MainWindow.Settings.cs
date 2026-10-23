@@ -94,18 +94,13 @@ public partial class MainWindow
         Explorer.NestFiles = next.NestFiles;
         assist.Templates = CSharp.TemplateSet.Of(next);
         assist.XamlFormat = next.XamlFormat;
-        terminal!.View.FontSize = next.TerminalFontSize;
+        if (terminal is { } panel)
+        {
+            FollowTerminalSettings(panel, next, before);
+        }
         foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, .. Bottom.Debug.Consoles])
         {
             console.Limit = next.ConsoleBufferKb * 1024;
-        }
-        if (next.TerminalShell is { } shell && Run.CommandLine.Split(shell) is { Count: > 0 } parts)
-        {
-            terminal.Shell = (parts[0], [.. parts.Skip(1)]);
-        }
-        else if (before.TerminalShell is not null)
-        {
-            terminal.Shell = null;
         }
         ApplyAnalysis();
         session.Web?.UseNode(next.NodeInterpreter);

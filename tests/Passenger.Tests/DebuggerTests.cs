@@ -283,6 +283,85 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Close();
     }
 
+    /// <summary>A key in a file of the program being debugged carries the build's lines through it by what it changed
+    /// (#440): an Enter near the top of a file of 20,000 lines allocates on the UI thread about what one in a short file
+    /// does, each with a breakpoint below, where each looked at every line of the file and made an array of them for each
+    /// Debug tab; the breakpoint goes down with its code, and the program, let go, stops there, shown at its line now.</summary>
+    [AvaloniaFact]
+    public void A_key_near_the_top_of_a_long_debugged_file_costs_what_it_does_in_a_short_one_and_its_breakpoint_and_stop_go_with_their_code()
+    {
+        Write("Program.cs", "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total} {Long.Last()} {Short.Last()}\");\n");
+        Write("Long.cs", "static class Long\n{\n" + string.Concat(Enumerable.Range(0, 20_000).Select(i => $"    public const int Value{i} = {i};\n"))
+            + "\n    public static int Last()\n    {\n        return Value0;\n    }\n}\n");
+        Write("Short.cs", "static class Short\n{\n    public const int One = 1;\n\n    public static int Last()\n    {\n        return One;\n    }\n}\n");
+        string longFile = Path.Combine(PathNames.Canonical(Folder), "Long.cs");
+        string shortFile = Path.Combine(PathNames.Canonical(Folder), "Short.cs");
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the stop in the loop");
+        int longReturn = Breakpoint(longFile, "return Value0;");
+        int shortReturn = Breakpoint(shortFile, "return One;");
+        Ui.Settle();
+
+        const int Keys = 5;
+        long inShort = Enters(shortFile);
+        long inLong = Enters(longFile);
+        TestContext.Current.TestOutputHelper?.WriteLine($"An Enter in the short file allocated {inShort / 1024} KB on the UI thread, near the top of 20,000 lines {inLong / 1024} KB");
+        Assert.True(inLong <= inShort + (32 * 1024),
+            $"An Enter near the top of a debugged file of 20,000 lines allocated {inLong / 1024} KB on the UI thread, against {inShort / 1024} KB in a short one: the build's lines were carried through it one by one");
+        Assert.Equal(longReturn + Keys, Assert.Single(window.Debugger.Breakpoints.In(longFile)).Line);
+        Assert.Equal(shortReturn + Keys, Assert.Single(window.Debugger.Breakpoints.In(shortFile)).Line);
+
+        // The loop's breakpoint taken away and the program let go: it stops at the return the lines went in above, shown there.
+        window.OpenFile(Program);
+        Ui.Settle();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => window.EditorArea.Active?.Path == longFile
+            && window.EditorArea.CodeEditor.LineMarks.Contains(new LineMark(longReturn + Keys, LineMarkKind.ExecutionPoint)), "the stop at Long's return, where its line is now");
+        Assert.Contains(new LineMark(longReturn + Keys, LineMarkKind.BreakpointBound), window.EditorArea.CodeEditor.LineMarks);
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+
+        // A breakpoint on a statement of a file, bound: its line.
+        int Breakpoint(string file, string statement)
+        {
+            window.OpenFile(file);
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            int line = editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf(statement, StringComparison.Ordinal));
+            editor.GoTo(new TextPosition(line, 8));
+            Ui.Run(window, AppActions.ToggleBreakpoint);
+            Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(line, LineMarkKind.BreakpointBound)), $"the breakpoint at {Path.GetFileName(file)}'s {statement} bound");
+            return line;
+        }
+
+        // The least an Enter at the top of a file allocated on the UI thread, of a few.
+        long Enters(string file)
+        {
+            window.OpenFile(file);
+            Ui.Settle();
+            CodeEditor shown = window.EditorArea.CodeEditor;
+            shown.GoTo(new TextPosition(0, 0));
+            shown.Focus();
+            Ui.Settle();
+            long least = long.MaxValue;
+            for (int i = 0; i < Keys; i++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+                window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, null);
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+                Ui.Settle();
+            }
+            return least;
+        }
+    }
+
     /// <summary>Roslyn's compiler ends a line at each break in the comment that the editor does not, so the PDB's lines run four
     /// ahead of the editor's below it: a breakpoint stops at its own line, the arrow, the frame's row and an agent's place say
     /// it, a line typed above while paused moves them with their code, and Run to Cursor and Set Next Statement go to the

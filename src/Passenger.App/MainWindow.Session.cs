@@ -280,7 +280,7 @@ public partial class MainWindow
             }
         };
         next.MSBuild.Feed = () => NuGet.FeedAsync(null);
-        next.MSBuild.Vulnerabilities = NuGet.VulnerabilitiesAsync;
+        next.MSBuild.Vulnerabilities = () => NuGet.VulnerabilitiesAsync();
         if (next.Web is { } web)
         {
             web.StateChanged += (_, _) =>

@@ -274,7 +274,7 @@ public static class ContainerTools
             System.Diagnostics.ProcessStartInfo start = engine.Command(["cp", $"{container}:{path}", "-"]);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {

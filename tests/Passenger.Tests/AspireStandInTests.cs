@@ -166,7 +166,9 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
     }
 
     /// <summary>Rerun with nothing changed builds and restarts nothing; with the AppHost's own code changed it stops the AppHost
-    /// first, then builds it and runs it again, never building over its running files, which Windows locks while it runs.</summary>
+    /// first, then builds it and runs it again, never building over its running files, which Windows locks while it runs.
+    /// Neither the builds nor the AppHost start on the window's thread (#441: a fork costs a large process tens of
+    /// milliseconds, which the window would wait out).</summary>
     [AvaloniaFact]
     public void Rerun_runs_an_AppHost_whose_own_code_changed_again_once_stopped_and_leaves_one_unchanged_running()
     {
@@ -175,6 +177,24 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         File.Delete(project.KeyFile);
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
         project.Serve(backend);
+        string folder = PathNames.Canonical(project.Folder);
+        List<string> onWindow = [];
+        int started = 0;
+        void Heard(object? sender, ChildStart start)
+        {
+            if (start.Folder.Length > 0 && PathNames.Within(PathNames.Canonical(start.Folder), folder))
+            {
+                Interlocked.Increment(ref started);
+                if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+                {
+                    lock (onWindow)
+                    {
+                        onWindow.Add(start.Command);
+                    }
+                }
+            }
+        }
+        ChildProcesses.Started += Heard;
         MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project.Folder);
@@ -195,9 +215,15 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Ui.WaitFor(() => window.AspireRuntime.Apps is [{ ProcessId: int again } app] && again != first && Said(app).Contains("The stand-in AppHost is up again", StringComparison.Ordinal),
                 "Rerun to run the changed AppHost again", TimeSpan.FromMinutes(3));
             Assert.False(Processes.IsRunning(first), "The AppHost that ran before Rerun still runs");
+            Assert.True(started >= 3, $"Only {started} programs were heard starting in the AppHost's folder: its two builds and runs were not");
+            lock (onWindow)
+            {
+                Assert.True(onWindow.Count == 0, $"{onWindow.Count} of the {started} programs started in the AppHost's folder started on the window's thread: {string.Join("; ", onWindow.Distinct())}");
+            }
         }
         finally
         {
+            ChildProcesses.Started -= Heard;
             window.Close();
             Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
         }
@@ -250,7 +276,10 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             old.Push(new ConsoleLogLine { Text = "stale generation", LineNumber = 4 });
             Ui.WaitFor(() => Console(window).Contains("new generation", StringComparison.Ordinal), "the new generation's output");
             Assert.DoesNotContain("stale generation", Console(window), StringComparison.Ordinal);
-            Assert.DoesNotContain("line 2", Console(window), StringComparison.Ordinal);
+            // The lines shown before the restart stay, the new generation's read after them, as a console reads.
+            Assert.True(Console(window).IndexOf("[apiservice] line 3", StringComparison.Ordinal) is >= 0 and int before
+                && before < Console(window).IndexOf("[apiservice] new generation", StringComparison.Ordinal),
+                $"The new generation's lines did not follow those shown before its restart: {Console(window)}");
             next.Push(
                 new ConsoleLogLine { Text = $"{project.Program}(3,4): error ASPIRETEST: request source", LineNumber = 2 },
                 new ConsoleLogLine { Text = "See https://example.com/aspire/help.", LineNumber = 3 });
@@ -285,6 +314,126 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
 
         static ConsoleLogLine Line(int number) => new() { Text = $"line {number}", LineNumber = number };
+    }
+
+    /// <summary>Following an app's logs costs each log what it adds (#437): a log landing while a thousand are kept allocates
+    /// on the UI thread about what one does while ten are, the list keyed by each log's place in arrival, given off the UI
+    /// thread, never by its whole JSON, and the oldest leaving it as the dashboard's bound is passed.</summary>
+    [AvaloniaFact]
+    public void A_log_landing_costs_the_UI_thread_what_it_adds_however_many_are_kept()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        backend.PushResource(new Resource { Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running" });
+        AspireDashboardHost dashboard = Ui.Await(AspireDashboardHost.StartAsync(), "the stand-in dashboard");
+        dashboard.Streams = true;
+        MainWindow window = OpenRunning(backend, dashboard.Endpoint);
+        int sent = 0;
+        try
+        {
+            FindAction(window, "Show Aspire Resources");
+            Ui.Click(Tab(window, "Telemetry"));
+            Ui.WaitFor(() => dashboard.Following("logs") == 1, "the Telemetry tab to follow the dashboard's logs");
+            long few = Costs(10);
+            long many = Costs(AspireClient.LogLimit);
+            // With a thousand kept the oldest log's row leaves the top and another row comes into view, drawn anew (about
+            // 45 KB), where ten kept take the newest below the view; the list keyed again by each kept log's JSON at every
+            // landing made those thousand logs' text again, hundreds of KB.
+            Assert.True(many < few + 128 * 1024,
+                $"A log landing with {AspireClient.LogLimit} kept allocated {many / 1024} KB on the UI thread, with 10 kept {few / 1024} KB: the list is read again whole at each landing");
+            IReadOnlyList<AspireStructuredLog> listed = window.Aspire.Telemetry.Logs;
+            Assert.Equal(AspireClient.LogLimit, listed.Count);
+            Assert.Equal($"log {sent - AspireClient.LogLimit + 1}", listed[0].Message);
+            Assert.Equal($"log {sent}", listed[^1].Message);
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(dashboard.DisposeAsync().AsTask()), "the stand-in dashboard to stop");
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        // The least one log landing allocated on the UI thread, with as many kept as given (the first fill one envelope).
+        long Costs(int kept)
+        {
+            Send(kept - sent);
+            Ui.WaitFor(() => Landed(sent), $"the first {sent} logs to land");
+            Ui.Settle();
+            long least = long.MaxValue;
+            for (int round = 0; round < 5; round++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Send(1);
+                Ui.WaitFor(() => Landed(sent), $"log {sent} to land");
+                Ui.Settle();
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            return least;
+        }
+
+        void Send(int count)
+        {
+            dashboard.Send("logs", "{\"resourceLogs\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"apiservice\"}}]},"
+                + "\"scopeLogs\":[{\"logRecords\":["
+                + string.Join(",", Enumerable.Range(sent + 1, count).Select(number =>
+                    $"{{\"timeUnixNano\":\"1760000000000000000\",\"severityText\":\"Information\",\"body\":{{\"stringValue\":\"log {number}\"}}}}"))
+                + "]}]}]}");
+            sent += count;
+        }
+
+        bool Landed(int last) => window.Aspire.StructuredLogs.ItemCount > 0
+            && window.Aspire.StructuredLogs.Items[window.Aspire.StructuredLogs.ItemCount - 1] is Passenger.App.ToolWindows.RunItem<AspireStructuredLog> item
+            && item.Data.Message == $"log {last}";
+    }
+
+    /// <summary>One resource's restart costs what it changed (#435): with three resources' consoles merged and shown, a new
+    /// generation of one ends its own stream alone and reads its lines again after those shown; the others' streams go on as
+    /// they were, never asked for again, and every line already shown stays.</summary>
+    [AvaloniaFact]
+    public void A_resources_restart_reads_only_its_own_console_again()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        foreach (string name in (string[])["apiservice", "worker", "cache"])
+        {
+            backend.PushResource(new Resource { Name = name, DisplayName = name, Uid = name, ResourceType = "Project", State = "Running" });
+        }
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            FindAction(window, "Show Aspire Log");
+            Ui.WaitFor(() => backend.Consoles.Length == 3, "the three resources' console subscriptions");
+            AspireInteractionHost.ConsoleSubscription api = Of("apiservice"), worker = Of("worker"), cache = Of("cache");
+            api.Push(new ConsoleLogLine { Text = "api began", LineNumber = 1 });
+            worker.Push(new ConsoleLogLine { Text = "worker began", LineNumber = 1 });
+            cache.Push(new ConsoleLogLine { Text = "cache began", LineNumber = 1 });
+            string[] began = ["[apiservice] api began", "[worker] worker began", "[cache] cache began"];
+            Ui.WaitFor(() => began.All(line => Console(window).Contains(line, StringComparison.Ordinal)), "the three resources' lines merged");
+
+            backend.PushResource(new Resource { Name = "apiservice", DisplayName = "apiservice", Uid = "apiservice again", ResourceType = "Project", State = "Running" });
+            Ui.WaitFor(() => api.Closed.Task.IsCompleted && backend.Consoles.Count(console => console.ResourceName == "apiservice") == 2,
+                "the restarted resource's console to be read again");
+            Of("apiservice").Push(new ConsoleLogLine { Text = "api began again", LineNumber = 1 });
+            worker.Push(new ConsoleLogLine { Text = "worker goes on", LineNumber = 2 });
+            Ui.WaitFor(() => Console(window).Contains("[apiservice] api began again", StringComparison.Ordinal)
+                && Console(window).Contains("[worker] worker goes on", StringComparison.Ordinal), "the restarted resource's lines and the others' going on");
+            Assert.False(worker.Closed.Task.IsCompleted || cache.Closed.Task.IsCompleted, "One resource's restart ended the others' console streams");
+            Assert.Equal(1, backend.Consoles.Count(console => console.ResourceName == "worker"));
+            Assert.Equal(1, backend.Consoles.Count(console => console.ResourceName == "cache"));
+            string shown = Console(window);
+            Assert.All(began, line => Assert.Contains(line, shown, StringComparison.Ordinal));
+            Assert.True(shown.IndexOf("[apiservice] api began", StringComparison.Ordinal) < shown.IndexOf("[apiservice] api began again", StringComparison.Ordinal),
+                $"The restarted resource's lines did not follow those shown before: {shown}");
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        AspireInteractionHost.ConsoleSubscription Of(string name) => backend.Consoles.Last(console => console.ResourceName == name);
     }
 
     [AvaloniaFact]
@@ -1613,9 +1762,16 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
-    private MainWindow OpenRunning(AspireInteractionHost backend)
+    private MainWindow OpenRunning(AspireInteractionHost backend, Uri? dashboard = null)
     {
-        project.Serve(backend);
+        if (dashboard is null)
+        {
+            project.Serve(backend);
+        }
+        else
+        {
+            project.Serve(backend, dashboard);
+        }
         MainWindow window = project.Open(project.Program, languageServer: false);
         try
         {

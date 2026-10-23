@@ -45,7 +45,7 @@ public sealed partial class PassengerTools
     /// project read, the C# server's workspace loaded. A file no service reads is refused at once, saying which do.</summary>
     private async Task<Served> Serve(string path, CancellationToken cancel)
     {
-        OpenDocument document = Document(path);
+        OpenDocument document = await DocumentAsync(path, cancel);
         string name = Path.GetFileName(document.Path);
         if (XamlService.IsXaml(document.Path))
         {
@@ -65,6 +65,7 @@ public sealed partial class PassengerTools
         if (Session.Web is { } languages && languages.For(document) is { } web)
         {
             // Its server starts with the first file of its kind, and answers once it has; without a Node.js to run on, never.
+            // Looked at every 50 ms: a web server's document comes as the server starts, which raises nothing of it.
             await Until(() => web.Lsp is not null || languages.CannotStart(document), ServerLimit, cancel);
             return web.Lsp is { } server
                 ? new ServerServed(document, LanguageOf(document), server, web)
@@ -326,7 +327,7 @@ public sealed partial class PassengerTools
 
     /// <summary>Waits for the C# server to load the workspace, when one runs: an element's field is found in the code-behind
     /// through it, and before it has loaded none are.</summary>
-    private Task CodeBehindRead(CancellationToken cancel) => Until(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel);
+    private Task CodeBehindRead(CancellationToken cancel) => When(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel, ServerState());
 
     /// <summary>Rename in XAML: an element's name, in its file and where its code-behind uses its field, saved.</summary>
     private async Task<string> XamlRename(XamlServed xaml, int offset, string newName, CancellationToken cancel)

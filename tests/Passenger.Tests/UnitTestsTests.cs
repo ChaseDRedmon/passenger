@@ -841,6 +841,83 @@ public sealed class UnitTestsResponsivenessTests : UnitTestsFolders
         Assert.Same(found, Method(window, "Case_0107")!.Items[0]);
         window.Close();
     }
+
+    /// <summary>An Enter typed above the tests of an open test file moves their rows to their new lines, nothing made again
+    /// (#439): in a solution of 3,000 tests it allocates on the UI thread about what it does in one of three, where each
+    /// read that moved a test's line told its project's tests again and the Unit Tests window made its whole tree again.
+    /// The rows, and Go to Source from them, are then at the tests' new lines.</summary>
+    [AvaloniaFact]
+    public void An_enter_above_the_tests_of_a_file_in_a_solution_of_thousands_moves_their_rows_and_costs_what_it_does_among_a_few()
+    {
+        const string Few = "using Xunit;\n\nnamespace Few.Tests;\n\npublic class FewTests\n{\n    [Fact]\n    public void One() { }\n\n    [Fact]\n    public void Two() { }\n\n    [Fact]\n    public void Three() { }\n}\n";
+        StringBuilder many = new("using Xunit;\n\nnamespace Few.Tests;\n");
+        for (int batch = 0; batch < 30; batch++)
+        {
+            many.Append(System.Globalization.CultureInfo.InvariantCulture, $"\npublic class Batch{batch:00}\n{{\n");
+            for (int test = 0; test < 100; test++)
+            {
+                many.Append(System.Globalization.CultureInfo.InvariantCulture, $"    [Fact]\n    public void Case_{(batch * 100) + test:0000}() {{ }}\n");
+            }
+            many.Append("}\n");
+        }
+        string small = NewFolder();
+        Write(small, "Few.Tests/Few.Tests.csproj", TestProject(TestProjects.Framework));
+        Write(small, "Few.Tests/FewTests.cs", Few);
+        string large = NewFolder();
+        Write(large, "Few.Tests/Few.Tests.csproj", TestProject(TestProjects.Framework));
+        Write(large, "Few.Tests/FewTests.cs", Few);
+        Write(large, "Few.Tests/ManyTests.cs", many.ToString());
+
+        (long among, bool keptAmong) = Enters(small, 3);
+        (long amid, bool keptAmid) = Enters(large, 3003);
+        TestContext.Current.TestOutputHelper?.WriteLine($"An Enter above the tests allocated {among / 1024} KB on the UI thread among 3 tests, {amid / 1024} KB among 3,003");
+        Assert.True(amid <= among + (64 * 1024),
+            $"An Enter above the tests of a file allocated {amid / 1024} KB on the UI thread in a solution of 3,003 tests, against {among / 1024} KB in one of 3: the tree was made again");
+        Assert.True(keptAmong && keptAmid, "Lines put in above a file's tests made the Unit Tests window's tree again");
+
+        // The least an Enter typed above the tests allocated on the UI thread, with what it set off, and whether the tree's
+        // methods stayed as they were; the rows then at the tests' new lines, and Go to Source on one goes there.
+        (long Least, bool Kept) Enters(string solution, int tests)
+        {
+            MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
+            window.Show();
+            window.OpenFolder(solution);
+            Tree(window);
+            Ui.WaitFor(() => window.Tests.Tree.Roots.Sum(r => r.Methods.Count()) == tests, $"the tree's {tests} tests");
+            window.OpenFile(Path.Combine(solution, "Few.Tests", "FewTests.cs"));
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            Passenger.App.Workspace.OpenDocument file = window.EditorArea.Active!;
+            Ui.WaitFor(() => file.TestMarks.Count == 4, "the file's run icons");
+            IReadOnlyList<TestNode> methods = window.Tests.Tree.Methods;
+            editor.Selections = SelectionSet.Single(Few.IndexOf("public class", StringComparison.Ordinal));
+            editor.Focus();
+            Ui.Settle();
+            long least = long.MaxValue;
+            const int Keys = 5;
+            for (int i = 0; i < Keys; i++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
+                window.KeyRelease(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
+                Ui.Settle();
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            TextSnapshot text = editor.Document.Snapshot;
+            int two = text.GetLineFromOffset(text.ToString().IndexOf("void Two", StringComparison.Ordinal));
+            Ui.WaitFor(() => file.TestMarks.Contains(new TestMark(two, TestMarkKind.NotRun)), "Two's run icon at its new line");
+            bool kept = ReferenceEquals(methods, window.Tests.Tree.Methods);
+            TestNode moved = Method(window, "Two")!;
+            Assert.Equal(two + 1, moved.Line);
+            ListBox tree = Tree(window);
+            tree.SelectedItem = moved;
+            editor.Selections = SelectionSet.Single(0);
+            Ui.ChooseFromMenu(tree, "Go to Source");
+            Assert.Equal(two, editor.Document.Snapshot.GetLineFromOffset(editor.Selections.Primary.Caret));
+            window.Close();
+            return (least, kept);
+        }
+    }
 }
 
 /// <summary>The Sums.Tests project a unit testing test takes, restored, the folders it writes for solutions of its own, and

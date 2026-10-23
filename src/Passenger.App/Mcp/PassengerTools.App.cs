@@ -353,7 +353,7 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"{chosen.Name} is paused in the debugger, and its UI answers nothing until it runs: debug_continue");
         }
-        await Until(() => chosen.State != LiveAppState.Waiting, AppUiLimit, cancel);
+        await When(() => chosen.State != LiveAppState.Waiting, AppUiLimit, cancel, On(h => chosen.StateChanged += h, h => chosen.StateChanged -= h));
         return chosen.State switch
         {
             LiveAppState.Connected => chosen,
@@ -547,7 +547,7 @@ public sealed partial class PassengerTools
         }
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         Task<InputDone> sent = live.InputAsync(input, giveUp.Token);
-        await Until(() => sent.IsCompleted || debugged.State == DebugState.Paused, LiveApp.AnswerLimit, cancel);
+        await When(() => sent.IsCompleted || debugged.State == DebugState.Paused, LiveApp.AnswerLimit, cancel, Ends(sent), StateOf(debugged));
         if (sent.IsCompleted || debugged.State != DebugState.Paused)
         {
             return (await sent, null);
@@ -561,7 +561,7 @@ public sealed partial class PassengerTools
         {
             // Given up on: its answer comes once the program runs again, to no one.
         }
-        // Its stop chooses its tab, whose stop the debugger reads.
+        // Its stop chooses its tab, whose stop the debugger reads; looked at every 50 ms, a stop's reading raising nothing as it lands.
         await Until(() => Session.Debug.Session == debugged && Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
         DebugSnapshot stop = await DebugSnapshotAsync(debugged);
         return (null, $"that paused the program{(stop.Reason is { } why ? $" ({why})" : string.Empty)}{(stop.Location is { } at ? $" at {at}" : string.Empty)} before it was done: "

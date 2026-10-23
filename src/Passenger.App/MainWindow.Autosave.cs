@@ -27,9 +27,9 @@ public partial class MainWindow
                 Autosave();
             }
         };
-        // Leaving Passenger from any of its windows saves (OnLeft); going to one of its own (a dialog, Settings, a diff) does
-        // not, as in Rider. Any key or click in them is activity, which the idle wait starts again from (OnActivity).
-        terminal!.View.GotFocus += (_, _) => SaveOnLeaving();
+        // Leaving Passenger from any of its windows saves (OnLeft), and so does going to its terminal (MakeTerminal); going to
+        // one of its own (a dialog, Settings, a diff) does not, as in Rider. Any key or click in them is activity, which the
+        // idle wait starts again from (OnActivity).
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) => RestartIdleSave();
         Editors.Opened += (_, document) =>
         {

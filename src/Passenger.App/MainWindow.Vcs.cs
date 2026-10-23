@@ -17,10 +17,10 @@ public partial class MainWindow
     private ToolWindows.GitView? gitView;
 
     /// <summary>The Git tool window's log.</summary>
-    public ToolWindows.GitLogView GitLog => gitView!.Log;
+    public ToolWindows.GitLogView GitLog => GitWindow.Log;
 
     /// <summary>The Git tool window: its Log and the histories Show History opened beside it.</summary>
-    public ToolWindows.GitView GitWindow => gitView!;
+    public ToolWindows.GitView GitWindow => gitView ?? (ToolWindows.GitView)Dock[ToolWindowIds.Git]!.Content;
 
     /// <summary>The open folder's version control, its session's.</summary>
     public VcsController Vcs => session.Vcs;
@@ -40,8 +40,8 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>The Commit tool window.</summary>
-    public ToolWindows.CommitView CommitView => commitView!;
+    /// <summary>The Commit tool window, built as it is first shown or asked for.</summary>
+    public ToolWindows.CommitView CommitView => commitView ?? (ToolWindows.CommitView)Dock[ToolWindowIds.Commit]!.Content;
 
     /// <summary>Asks the person to agree to something that cannot be undone (a rollback): its title, what happens,
     /// and the button that does it. Tests answer for them.</summary>
@@ -69,38 +69,60 @@ public partial class MainWindow
 
     private void AddVcs()
     {
-        commitView = new ToolWindows.CommitView(session.Vcs);
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Commit, "Commit", "Icon.Commit", commitView, Docking.ToolAnchor.LeftTop)
+        // Each built as it is first shown or asked for, over the session's Git then.
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Commit, "Commit", "Icon.Commit", MakeCommit, Docking.ToolAnchor.LeftTop)
         {
             Action = AppActions.ShowCommit,
             ActionTitle = "Commit Tool Window",
             Menus = [new MenuPlace("Git", 3, 0)],
         });
-        gitView = new ToolWindows.GitView(session.Vcs);
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Git, "Git", "Icon.Branch", gitView, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Git, "Git", "Icon.Branch", MakeGit, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowGit,
             Menus = [new MenuPlace("Git", 3, 1)],
-            HeaderTools = gitView.Tabs,
+            Tools = () => gitView?.Tabs,
         });
         AddVcsActions();
         AddHistoryActions();
         AddMergeConflicts();
-        AddBranches();
-        gitView.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
-        gitView.CompareRequested += (_, chosen) => _ = CompareWithAsync(chosen.Local, chosen.Commit.Hash, chosen.Commit.Short, chosen.File.Path);
-        commitView.OpenRequested += (_, path) => OpenFile(path);
-        commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
-        commitView.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
-        commitView.DeleteRequested += async (_, path) => await DeleteAsync(path);
-        commitView.IgnoreRequested += (_, path) => Ignore(path);
-        gitView.NewBranchRequested += (_, commit) =>
+        // Back from another program, the open files take what it changed on disk, and Git is read again (Rider's
+        // synchronize on frame activation).
+        Activated += (_, _) =>
+        {
+            session.Vcs.ReloadOpenFiles();
+            _ = session.Vcs.RefreshAsync();
+        };
+    }
+
+    /// <summary>The Commit window's view, as it is first shown or asked for.</summary>
+    private ToolWindows.CommitView MakeCommit()
+    {
+        ToolWindows.CommitView view = commitView = new ToolWindows.CommitView(session.Vcs);
+        view.OpenRequested += (_, path) => OpenFile(path);
+        view.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
+        view.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
+        view.DeleteRequested += async (_, path) => await DeleteAsync(path);
+        view.IgnoreRequested += (_, path) => Ignore(path);
+        view.ResolveRequested += (_, _) => ShowConflicts();
+        view.MergeRequested += (_, path) => _ = MergeAsync(path);
+        view.Confirm = (title, text, yes) => Confirm(title, text, yes);
+        return view;
+    }
+
+    /// <summary>The Git window's view, as it is first shown or asked for (Show History, a branch's menu, a blamed line's
+    /// commit), its branches panel given the folder's favourites.</summary>
+    private ToolWindows.GitView MakeGit()
+    {
+        ToolWindows.GitView view = gitView = new ToolWindows.GitView(session.Vcs);
+        view.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
+        view.CompareRequested += (_, chosen) => _ = CompareWithAsync(chosen.Local, chosen.Commit.Hash, chosen.Commit.Short, chosen.File.Path);
+        view.NewBranchRequested += (_, commit) =>
         {
             NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, async name => (await session.Vcs.NewBranchAtAsync(name, commit.Hash)).Problem);
             popup.Done += (_, _) => popups.Close();
             popups.Show(popup);
         };
-        gitView.ResetRequested += async (_, reset) =>
+        view.ResetRequested += async (_, reset) =>
         {
             if (reset.Mode == ResetMode.Hard && !await Confirm("Reset Current Branch to Here",
                 $"Move {session.Vcs.Branch ?? "HEAD"} to {reset.Commit.Short} and drop every change since, committed or not?", "Reset"))
@@ -109,13 +131,8 @@ public partial class MainWindow
             }
             await session.Vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
         };
-        // Back from another program, the open files take what it changed on disk, and Git is read again (Rider's
-        // synchronize on frame activation).
-        Activated += (_, _) =>
-        {
-            session.Vcs.ReloadOpenFiles();
-            _ = session.Vcs.RefreshAsync();
-        };
+        FollowBranches(view.Log.Branches!);
+        return view;
     }
 
     /// <summary>A session's Git in the window: its Commit and Git windows, what it says in the status bar, the branch
@@ -492,7 +509,7 @@ public partial class MainWindow
             Editors.SaveAll();
             ShowToolWindow(ToolWindowIds.Commit);
             _ = session.Vcs.RefreshAsync();
-            commitView!.FocusMessage();
+            CommitView.FocusMessage();
         }, new("Git", 0, 0));
         Add(AppActions.Push, "Push…", context => _ = session.Vcs.PushAsync(), new("Git", 0, 1));
         Add(AppActions.UpdateProject, "Update Project…", context => _ = session.Vcs.UpdateAsync(), new("Git", 0, 2));
