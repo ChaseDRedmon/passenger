@@ -413,6 +413,52 @@ public sealed partial class BuildRunController
         ["COMPOSE_STATUS_STDOUT"] = "1",
     };
 
+    /// <summary>The container run whose log ended by itself while it is asked whether its containers still run, which keeps
+    /// Stop meanwhile.</summary>
+    private ContainerRun? followingAgain;
+
+    /// <summary>A container run's log that ended while the run was not stopped (Compose's <c>logs --follow</c> can, as a service
+    /// is made anew: on Podman's own docker it crashes there) is followed again from its end, saying so in the Run console,
+    /// once its containers are known to run, a restart under way waited out; else it is the run's end, as before.</summary>
+    private async Task FollowContainersAgainAsync(ContainerRun run, int code)
+    {
+        string since = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        bool up;
+        try
+        {
+            up = await run.StillUpAsync(CancellationToken.None);
+        }
+        catch (Exception unknown) when (unknown is OperationCanceledException or ContainerCommandException or TimeoutException
+            or System.Text.Json.JsonException or FileNotFoundException or System.ComponentModel.Win32Exception)
+        {
+            up = false;
+        }
+        if (followingAgain == run)
+        {
+            followingAgain = null;
+        }
+        if (session.IsEnded || session.Runner.IsRunning)
+        {
+            return;
+        }
+        // A log followed again that ends at once is not followed for good: the run is said to have ended, as before.
+        bool atOnce = followedAgainAt is { } at && DateTime.UtcNow - at < TimeSpan.FromSeconds(2);
+        if (!up || atOnce || run.IsStopped || session.ContainerRun != run || run.Engine.Cli is not { } cli)
+        {
+            RunLogEnded(code);
+            return;
+        }
+        parts.Views.Run.Append($"{run.Plan.Name}'s services still run: following their log again\n");
+        followedAgainAt = DateTime.UtcNow;
+        if (Started(session.Runner.Start(cli, run.LogsSince(since), run.Plan.Folder, Quiet)) is not null)
+        {
+            RunLogEnded(code);
+        }
+    }
+
+    /// <summary>When a container run's log was last followed again.</summary>
+    private DateTime? followedAgainAt;
+
     /// <summary>How a container run whose log stopped is said: taken down by Stop, its backing services kept, or its
     /// services all ended by themselves.</summary>
     private string ContainersEnded(ContainerRun run) => !run.IsStopped ? $"{ran}'s services have all ended"

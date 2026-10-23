@@ -157,10 +157,24 @@ public sealed partial class BuildRunController
         };
         session.Runner.Exited += (_, code) =>
         {
-            parts.Views.Run.SetRunning(false);
-            RunningChanged?.Invoke(this, EventArgs.Empty);
-            parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
+            // A container run's log that ended by itself, its run not stopped, is followed again while its containers run.
+            if (session.ContainerRun is { IsStopped: false } containers && !session.Runner.WasStopped && !session.IsEnded && session.Runner.Unstarted is null)
+            {
+                followingAgain = containers;
+                BackgroundWork.Track(FollowContainersAgainAsync(containers, code));
+                return;
+            }
+            RunLogEnded(code);
         };
+    }
+
+    /// <summary>The Run window's program ended (a container run's log, which Stop or its services' end ended): said, and Stop
+    /// greyed.</summary>
+    private void RunLogEnded(int code)
+    {
+        parts.Views.Run.SetRunning(false);
+        RunningChanged?.Invoke(this, EventArgs.Empty);
+        parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
     }
 
     /// <summary>A program started or ended, or a launch was refused: the toolbar's Stop follows.</summary>
@@ -176,7 +190,7 @@ public sealed partial class BuildRunController
     public bool IsBuilding => building is not null;
 
     /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
-    public bool IsRunning => session.Aspire.IsRunning || session.Runner.IsRunning || session.InTerminal is { IsRunning: true };
+    public bool IsRunning => session.Aspire.IsRunning || session.Runner.IsRunning || followingAgain is not null || session.InTerminal is { IsRunning: true };
 
     /// <summary>Whether the program Run started runs under dotnet watch (Settings' Hot Reload when running), which applies
     /// the edits of each file saved.</summary>
