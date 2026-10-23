@@ -213,7 +213,7 @@ public sealed class ProcessRunner : IDisposable
     /// window to be quiet finds the program started; one stopped meanwhile is ended as it comes.</summary>
     private async Task<string?> LaunchAsync(ProcessStartInfo start, TaskCompletionSource<int> waited)
     {
-        console.Append($"{ChildProcesses.Display(start)}\n");
+        console.Append($"{ChildProcesses.Shown(start)}\n");
         Process started;
         forking = true;
         BackgroundWork.Begin();
