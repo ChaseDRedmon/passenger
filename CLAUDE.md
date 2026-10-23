@@ -291,6 +291,8 @@ is named by its content, so a changed one takes a new name.
 - **Linux**: file systems tell letter case apart, so a test of another letter case skips there.
 - **MSBuild**: a build through another spelling of a project's path deletes what the first wrote (IncrementalClean;
   the terminal's shell is given its folder as PWD, #413). It keeps no idle node unless the process's nice value is 0.
+- **EventPipe from a program's start**: .NET 10's LoggingEventSource misreads the `FilterSpecs` it is made with, so a
+  category takes no `:Level` there or none of its logs come (`LiveRequests.LogsSpec`).
 
 ## Tests
 

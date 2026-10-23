@@ -43,6 +43,15 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   switch's settle waits out the same 400 ms pause, ten taking 4.05 s on the Mac against an unscaled 5 s. **The test**,
   which held the IDE's own pauses to a time: it holds how long a key waits for the window's thread (0bbb464f), 11 ms on
   the Mac, a window held 1 s failing it.
+- `LiveRequestsTests`' requests window over the running shop, CI run 39992190279 at e25b06d0, Linux and Windows, and every
+  time in the Ubuntu VM (it passed on the Mac): "Waited 180 s for the command's parameters, from EF Core's log of it". No
+  log of a command came at all. The window follows a program from its runtime's start, so its session can begin before the
+  app makes its LoggingEventSource, which is then told the session's FilterSpecs as it is made, in its static constructor;
+  .NET 10's reads them there before its separator fields are set, splitting at white space alone, so
+  "Microsoft.EntityFrameworkCore.Database.Command:Information" was one category of that name, no logger's, and every log
+  was left out (the app's own rules said so, read through it). On the Mac the session began after the source was made.
+  **A race in the IDE**, with the app's start: the spec names the category alone, at the session's level, which reads the
+  same either way.
 - `PublishTests`' Publish greyed for a library and a test project (`Publish_is_greyed_with_why…`), CI run 39992190279 at
   e25b06d0, Linux and Windows (it passed on the Mac and in the Ubuntu VM): "The Explorer does not show Tools", from the
   wait for Tools to be offered once its project asks to be published. Writing Tools.csproj makes the window read the

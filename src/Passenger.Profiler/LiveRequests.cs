@@ -57,6 +57,12 @@ public sealed class LiveRequests : IAsyncDisposable
         "Microsoft.EntityFrameworkCore/Microsoft.EntityFrameworkCore.Database.Command.DataReaderDisposing:-Id=CommandId;Reads=ReadCount;Trace=*Activity.RootId",
     ]);
 
+    /// <summary>The logs asked of the app's logging: EF Core's commands' category, with no level of its own, so the session's
+    /// (Informational) gives Information. A session begun before the app makes its LoggingEventSource (one followed from its
+    /// start) is told to it as it is made, which before .NET 11 reads the spec with its separators not yet set, splitting it
+    /// at white space alone: a ":Information" stayed part of the category's name, which no logger's matched, so none came.</summary>
+    internal const string LogsSpec = "Microsoft.EntityFrameworkCore.Database.Command";
+
     private readonly EventPipeEventSource source;
     private readonly Func<Task> stop;
 
@@ -78,7 +84,8 @@ public sealed class LiveRequests : IAsyncDisposable
         // request's last events are heard within a second of it, not only once the app serves another.
         new EventPipeProvider("System.Runtime", EventLevel.Informational, 0, new Dictionary<string, string> { ["EventCounterIntervalSec"] = "1" }),
         // EF Core's log of each command, through the app's own logging: its parameters, which the bridge's events cannot name.
-        new EventPipeProvider(Logging, EventLevel.Informational, 0x4, new Dictionary<string, string> { ["FilterSpecs"] = "Microsoft.EntityFrameworkCore.Database.Command:Information" }),
+        // Its category alone, at the session's level (LogsSpec says why).
+        new EventPipeProvider(Logging, EventLevel.Informational, 0x4, new Dictionary<string, string> { ["FilterSpecs"] = LogsSpec }),
     ];
 
     /// <summary>Starts hearing a running program at its diagnostic port, each event told to <paramref name="heard"/> on the
