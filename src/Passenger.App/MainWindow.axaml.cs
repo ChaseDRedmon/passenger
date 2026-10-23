@@ -579,7 +579,11 @@ public partial class MainWindow : Window
             Chosen = () => Bottom.Tests.Selected,
         });
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Build, "Build", "Icon.Build", Bottom.Build, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowBuild, ActionTitle = "Build Tool Window" });
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Problems, "Problems", "Icon.Problems", Bottom.Problems, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProblems, ActionTitle = "Problems" });
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Problems, "Problems", "Icon.Problems", () => new ToolWindows.ProblemsView(Bottom.Problems), Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowProblems,
+            ActionTitle = "Problems",
+        });
     }
 
     /// <summary>The window a person uses keeps its layout: it opens on the one kept, and keeps each change; and each

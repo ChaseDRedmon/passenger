@@ -16,8 +16,8 @@ public sealed record StatusPlace(string Name, Action Go)
     public static StatusPlace Window(DockHost dock, string id) => new($"open the {dock[id]?.Title ?? id} window", () => dock.Show(id));
 
     /// <summary>Problems on one of its tabs, the first problem <paramref name="which"/> picks chosen.</summary>
-    public static StatusPlace Problems(DockHost dock, ProblemsView problems, ProblemsTab tab, Func<Problem, bool>? which = null) =>
-        new($"see it in Problems, {ProblemsView.TitleOf(tab)}", () =>
+    public static StatusPlace Problems(DockHost dock, ProblemsModel problems, ProblemsTab tab, Func<Problem, bool>? which = null) =>
+        new($"see it in Problems, {ProblemsModel.TitleOf(tab)}", () =>
         {
             dock.Show(ToolWindowIds.Problems);
             problems.Reveal(tab, which);

@@ -82,7 +82,7 @@ public sealed class EngineChecksTests
             Assert.Equal("FromAsCasing", casing.LinkText);
 
             // Problems' Containers tab lists it under its file, linked to the rule's page.
-            ProblemsView problems = window.BottomPanel.Problems;
+            ProblemsModel problems = window.BottomPanel.Problems;
             Problem listed = Assert.Single(problems.ContainerProblems);
             Assert.Equal((PathOf(folder, "Dockerfile"), 2, casing.Message), (listed.Path, listed.Position.Line, listed.Message));
             problems.Shown = ProblemsTab.Containers;

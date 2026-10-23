@@ -261,7 +261,7 @@ public sealed class SolutionViewTests : IDisposable
         byte[] original = File.ReadAllBytes(app);
         MainWindow window = Open();
         window.OpenFile(Path.Combine(folder, "Shop.App", "Program.cs"));
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Ui.WaitFor(() => problems.FileProblems.Any(p => p.Severity == ProblemSeverity.Error), "the language server's error for the type of a project not referenced", TimeSpan.FromMinutes(2));
 
         // Add, Reference... on the project: the other project offered, checked with Space, OK with Enter.

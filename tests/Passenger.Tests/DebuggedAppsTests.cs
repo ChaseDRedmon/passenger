@@ -60,7 +60,7 @@ public sealed class DebuggedAppsTests : IClassFixture<RestoredFolders>, IDisposa
         {
             // The first app: its tree, its greeting's value read for the control chosen, its caption's failure in Problems.
             Debug(window, "BindingErrorsApp", "Caption");
-            ProblemsView problems = window.BottomPanel.Problems;
+            ProblemsModel problems = window.BottomPanel.Problems;
             Ui.WaitFor(() => problems.BindingProblems.Any(p => p.Failure.Path == "Nmae"), "the first app's caption to fail in Problems");
             Choose(window, "Greeting");
             Ui.WaitFor(() => Value(editor, greeting) == "Text: \"Hello\"", $"the first app's greeting after its binding, not {Value(editor, greeting)}", TimeSpan.FromMinutes(1));

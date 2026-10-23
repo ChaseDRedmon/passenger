@@ -70,7 +70,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.Equal(Misspelt, window.EditorArea.CodeEditor.CaretPosition);
 
         // In Problems' Bindings, under its file, once, with its control, property, path and count, at the misspelt member.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         BindingProblem caption = Assert.Single(problems.BindingProblems);
         Assert.Equal(("TextBlock#Caption", "Text", "Nmae", 1), (caption.Failure.Control, caption.Failure.Property, caption.Failure.Path, caption.Failure.Count));
         Assert.Equal((Xaml, Misspelt), (caption.Problem.Path, caption.Problem.Position));
@@ -93,7 +93,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         // Its fix, from Problems: the editor goes to the misspelt member and offers the view model's nearest, which it takes.
         window.ShowToolWindow(ToolWindowIds.Problems);
         Ui.Settle();
-        ListBox list = problems.GetVisualDescendants().OfType<ListBox>().First();
+        ListBox list = window.ProblemsWindow.GetVisualDescendants().OfType<ListBox>().First();
         list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
         Ui.ChooseFromMenu(list, "Show Context Actions");
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the binding's fixes");
@@ -130,7 +130,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.Equal((Xaml, misspelt), (window.EditorArea.Active?.Path, window.EditorArea.CodeEditor.CaretPosition));
 
         // The app reports XamlIl's place of the caption's element: past both lone '\r's, at the column after the comment's.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         BindingProblem caption = Assert.Single(problems.BindingProblems);
         int element = text.IndexOf("TextBlock x:Name=\"Caption\"", StringComparison.Ordinal);
         Assert.Equal((EditorPlace(text, "TextBlock x:Name=\"Caption\"").Line + 3, element - text.LastIndexOf('\r', element)),
@@ -141,7 +141,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.ShowToolWindow(ToolWindowIds.Problems);
         problems.Shown = ProblemsTab.Bindings;
         Ui.Settle();
-        ListBox list = problems.GetVisualDescendants().OfType<ListBox>().First();
+        ListBox list = window.ProblemsWindow.GetVisualDescendants().OfType<ListBox>().First();
         list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
         Ui.ChooseFromMenu(list, "Show Context Actions");
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the binding's fixes");
@@ -355,7 +355,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.True(failed >= 2 * 3001, $"The app's 3,001 failing bindings failed only {failed} times before it was calmed, not as it opened and again since");
 
         // Problems lists the first thousand, each with its count, and counts the rest beneath them: every failure, once.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         LiveApp app = window.LiveApp!;
         int Accounted() => problems.BindingProblems.Sum(b => b.Failure.Count) + app.Untold.Bindings;
         try

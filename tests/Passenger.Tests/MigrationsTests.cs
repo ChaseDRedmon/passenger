@@ -40,13 +40,13 @@ public sealed class MigrationsTests
             ShopApp.AddPrice(folder);
             Ui.Run(window, AppActions.Build);
             string said = "ShopContext's model has changes no migration covers: Add Migration… makes one";
-            Passenger.App.ToolWindows.ProblemsView problems = window.BottomPanel.Problems;
+            Passenger.App.ToolWindows.ProblemsModel problems = window.BottomPanel.Problems;
             Ui.WaitFor(() => problems.Problems.Any(p => p.Message == said) && window.Migrations.Busy is null, $"the pending model changes in Problems after the build ({window.Status})", Slow);
             Passenger.App.Run.Problem pending = problems.Problems.Single(p => p.Message == said);
             Assert.Equal(Passenger.Core.PathNames.Canonical(Path.Combine(folder, "Program.cs")), pending.Path);
             window.ShowToolWindow(ToolWindowIds.Problems);
             Ui.Settle();
-            ListBox found = problems.GetVisualDescendants().OfType<ListBox>().First();
+            ListBox found = window.ProblemsWindow.GetVisualDescendants().OfType<ListBox>().First();
             found.SelectedItem = problems.Rows.Single(r => r.Problem == pending);
             Ui.ChooseFromMenu(found, "Show Context Actions");
             Ui.WaitFor(() => window.Assist.Offered.Contains("Add Migration…"), "Add Migration… offered at the context");

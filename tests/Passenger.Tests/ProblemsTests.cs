@@ -35,7 +35,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         window.OpenFolder(folder);
         window.OpenFile("Helper.cs");
         Ui.Settle();
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Assert.Null(problems.SolutionProblems);
 
         window.Perform(AppActions.ToggleSolutionAnalysis);
@@ -70,7 +70,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         // A problem's menu copies its message.
         window.ShowToolWindow(ToolWindowIds.Problems);
         problems.Shown = ProblemsTab.File;
-        Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
+        Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProblemsWindow).OfType<Avalonia.Controls.ListBox>().First();
         ProblemRow chosen = problems.Rows.First(r => r.Problem is { Severity: ProblemSeverity.Error });
         Ui.RightClick(Ui.Row(rows, chosen));
         Ui.Choose(rows.ContextMenu, "Copy Message");
@@ -93,7 +93,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     /// <summary>The Solution tab's rows, as the pulls since it was shown left them, are those it lists afresh.</summary>
-    private static void ListedAsAfresh(ProblemsView problems, string when)
+    private static void ListedAsAfresh(ProblemsModel problems, string when)
     {
         string[] Listed() => [.. problems.Rows.Select(r => $"{new string(' ', r.Depth * 2)}{r.Label}  {r.Detail}")];
         string[] kept = Listed();
@@ -114,7 +114,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         window.OpenFolder(folder);
         window.OpenFile("Helper.cs");
         Ui.Settle();
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         window.Perform(AppActions.ToggleSolutionAnalysis);
         Ui.WaitFor(() => problems.SolutionProblems?.Any(p => p.Code == "CS0029") == true, "the closed file's error");
 
@@ -156,10 +156,10 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         window.OpenFile("Several.cs");
         window.Perform(AppActions.ShowProblems);
         Ui.Settle();
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Assert.Equal(ProblemsTab.File, problems.Shown);
         Ui.WaitFor(() => problems.FileProblems.Count(p => p.Severity == ProblemSeverity.Error) == 3, "the file's three errors");
-        Avalonia.Controls.ListBox list = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
+        Avalonia.Controls.ListBox list = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProblemsWindow).OfType<Avalonia.Controls.ListBox>().First();
         // The text on each row that says where its problem is, as the list shows it (its rows' boxes are reused anyway).
         Avalonia.Controls.TextBlock[] Shown() => [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(list).OfType<Avalonia.Controls.ListBoxItem>()
             .Select(item => Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(item).OfType<Avalonia.Controls.TextBlock>()
@@ -204,7 +204,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         window.OpenFolder(folder);
         window.OpenFile("Warned.cs");
         window.Perform(AppActions.ShowProblems);
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Ui.WaitFor(() => problems.FileProblems.Count == 3000, "the file's 3,000 warnings", TimeSpan.FromMinutes(2));
         Assert.Equal(new TextPosition(4, 12), problems.FileProblems[0].Position);
         Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
@@ -274,7 +274,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         window.OpenFolder(folder);
         window.OpenFile("Typed.cs");
         window.Perform(AppActions.ShowProblems);
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Ui.Settle();
         window.Perform(AppActions.ToggleSolutionAnalysis);
         Assert.True(window.Settings.SolutionWideAnalysis);
@@ -319,7 +319,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         window.OpenFolder(folder);
         window.OpenFile("Program.cs");
         Ui.Settle();
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
 
         Ui.Run(window, AppActions.Build);
@@ -340,7 +340,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         window.Perform(AppActions.ShowProblems);
         problems.Shown = ProblemsTab.Build;
         Ui.Settle();
-        Choose(problems, separated);
+        Choose(window, problems, separated);
         Assert.Equal(separated, window.EditorArea.Active?.Path);
         Assert.Equal(new TextPosition(3, 23), editor.CaretPosition);
 
@@ -351,7 +351,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal(new TextPosition(3, 23), problems.SolutionProblems!.First(p => p.Path == separated).Position);
         problems.Shown = ProblemsTab.Solution;
         Ui.Settle();
-        Choose(problems, separated);
+        Choose(window, problems, separated);
         Assert.Equal(new TextPosition(3, 23), editor.CaretPosition);
         Passenger.App.Mcp.ProblemsInfo told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).Problems(), "the problems an agent asks for");
         Assert.Equal((4, 24), told.Build.Where(f => f.Path == "Separated.cs").Select(f => (f.Line, f.Column)).Single());
@@ -360,9 +360,9 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     /// <summary>A problem's row chosen in the tab shown and gone to from its menu, as a person goes to it.</summary>
-    private static void Choose(ProblemsView problems, string path)
+    private static void Choose(MainWindow window, ProblemsModel problems, string path)
     {
-        Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
+        Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProblemsWindow).OfType<Avalonia.Controls.ListBox>().First();
         rows.SelectedItem = problems.Rows.First(r => r.Problem?.Path == path);
         Ui.ChooseFromMenu(rows, "Go to");
     }

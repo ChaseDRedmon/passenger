@@ -560,12 +560,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   action, a program run in the terminal, Show History, the branch widget's menu, Commit), while what only follows the IDE
   (a caret moved, a session bound, the routes read, Settings applied, a folder's favourite branches) passes over one not
   built (`structure?.`, `endpoints?.`, `terminal?.`, `gitView?.`); what only
-  looks among the views made (which window holds the keys) asks `IsBuilt` first. A view written to while hidden (the
-  Build, Run, Debug and Problems consoles and lists) is made up front, its costly part made as it is first shown: an
-  `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests window's details, a
-  `MergedLog`'s Find. Still made up front, their views read or written as the IDE runs: the Problems and Debug windows
-  (every build's and server's problems, each session's tab), Aspire's (each AppHost's run), the profiler's (each
-  profile's start, run and end) and the Live Visual Tree's (its controller reads its view).
+  looks among the views made (which window holds the keys) asks `IsBuilt` first. A window the IDE writes to and reads
+  as it runs keeps that apart from its view, which builds from it as first shown (#441): Problems' lists are a
+  `ProblemsModel` (`ToolViews.Problems`: every build's, server's, binding's and container's problems, the tab shown
+  and the row chosen; its view `ProblemsWindow`). The Build, Run and Debug consoles are made up front, their costly
+  part made as first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests
+  window's details, a `MergedLog`'s Find. Still made up front: the Debug window (each session's tab), Aspire's view,
+  made again at each session bind (`BindAspire`: its resources, selection, consoles and telemetry are `AspireView`'s
+  own, which the Aspire actions' checks read, so a lazy one needs it split first), the profiler's (each profile's
+  start, run and end) and the Live Visual Tree's (its controller reads its view).
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -1492,7 +1495,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   pauses, 250 ms, and fresh markers for the text already shown at once; its solution-wide list keeps each report by its
   URI's path, made once off the UI thread as it comes with its problems placed, and lists again only the files a pull
   changed, an open file's as its own pull lands (`CSharpService.SolutionProblemsChanged` names them,
-  `ProblemsView.ShowSolutionFile` makes or moves only their rows), so a typing pause costs what it changed; it asks a refused
+  `ProblemsModel.ShowSolutionFile` makes or moves only their rows), so a typing pause costs what it changed; it asks a refused
   workspace pull again after a pause, 1 s doubling to 30 s, and `LanguageServer.RefuseNext(method, n)` refuses one for a
   test; Roslyn holds a workspace pull open until the next change, so an answer lost after it was sent waits for another). Every console (Run, Build, Debug, the profiler's) is written
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past

@@ -78,7 +78,7 @@ public sealed class ProjectLoadTests : IDisposable
 
         // A click on it shows it in Problems' Toolset, Environment: under the project, with the advisory's link, which opens
         // in the browser.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         window.DockHost.Hide("problems");
         problems.Shown = ProblemsTab.File;
         ClickStatus(window);
@@ -89,7 +89,7 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.True(warning is { Severity: ProblemSeverity.Warning, Project: "Web", Message: Warned } && warning.Link == new Uri(Advisory),
             $"Problems lists the load's warning as {warning.Severity} \"{warning.Message}\" under {warning.Project}, its link {warning.Link}");
         Assert.Equal(["Web", Warned], problems.Rows.Select(r => r.Label));
-        Button link = Links(problems).SingleOrDefault(b => (string?)b.Content == Advisory)
+        Button link = Links(window.ProblemsWindow).SingleOrDefault(b => (string?)b.Content == Advisory)
             ?? throw new Xunit.Sdk.XunitException("The warning's row in Problems shows no link to the advisory");
         Ui.Click(link, settle: false);
         Assert.True(window.Browsed.Contains(new Uri(Advisory)), $"Clicking the advisory's link opened [{string.Join(", ", window.Browsed)}]");
@@ -138,7 +138,7 @@ public sealed class ProjectLoadTests : IDisposable
     {
         Restore.Run(project);
         MainWindow window = Open();
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Ui.WaitFor(() => problems.ToolsetProblems.Count == 1, "the vulnerable package's warning in Problems");
         NuGetView nuget = window.NuGet;
         window.Perform(AppActions.ShowNuGet);
@@ -175,7 +175,7 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.True(window.StatusSeverity == ProblemSeverity.Error, $"The status bar's load error is marked as {window.StatusSeverity?.ToString() ?? "nothing"}, not an error");
 
         // A click on it shows it under the project in Problems' Toolset, Environment.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         window.DockHost.Hide("problems");
         problems.Shown = ProblemsTab.File;
         ClickStatus(window);
@@ -203,7 +203,7 @@ public sealed class ProjectLoadTests : IDisposable
         window.Perform(AppActions.ShowProblems);
         problems.Shown = ProblemsTab.Toolset;
         Ui.Settle();
-        ListBox list = Descendants<ListBox>(problems).First();
+        ListBox list = Descendants<ListBox>(window.ProblemsWindow).First();
         list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
         Ui.ChooseFromMenu(list, "Go to");
         Ui.Settle();

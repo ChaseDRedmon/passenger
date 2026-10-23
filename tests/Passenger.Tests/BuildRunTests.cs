@@ -126,7 +126,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 
         // The status bar's word that it failed is a link to its errors in Problems' Build, the first chosen.
         Assert.StartsWith("Build failed: 1 error", window.Status, StringComparison.Ordinal);
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         window.ShowToolWindow(ToolWindowIds.Build);
         problems.Shown = ProblemsTab.File;
         Button said = window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage");
@@ -182,7 +182,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         window.Perform(AppActions.ShowProblems);
         window.BottomPanel.Problems.Shown = ProblemsTab.Build;
         Ui.Settle();
-        TextBlock[] shown = [.. window.BottomPanel.Problems.GetVisualDescendants().OfType<TextBlock>()];
+        TextBlock[] shown = [.. window.ProblemsWindow.GetVisualDescendants().OfType<TextBlock>()];
         Assert.Contains(shown, t => t.Text == "File doesn't contain valid XAML: 'Hello' is an unexpected token.");
         Assert.DoesNotContain(shown, t => t.Text?.Contains("ParseAttributes", StringComparison.Ordinal) == true);
         window.Close();

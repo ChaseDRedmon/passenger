@@ -444,7 +444,7 @@ public sealed partial class PassengerTools
             // Looked at every 50 ms: the server's solution-wide pulls raise nothing as the last is answered.
             await Until(() => Session.CSharp is not { IsAnalysing: true }, ServerLimit, cancel);
         }
-        ToolWindows.ProblemsView view = window.BottomPanel.Problems;
+        ToolWindows.ProblemsModel view = window.BottomPanel.Problems;
         return new ProblemsInfo([.. view.ToolsetProblems.Select(Found)], [.. view.Problems.Select(Found)],
             Session.CSharp?.SolutionProblems is { } solution ? [.. solution.Select(p => new Finding(p.Diagnostic.Severity == 1 ? "error" : "warning", p.Diagnostic.Code?.ToString(),
                 p.Diagnostic.Message, Relative(p.Path), p.At.Line + 1, p.At.Column + 1))] : null);

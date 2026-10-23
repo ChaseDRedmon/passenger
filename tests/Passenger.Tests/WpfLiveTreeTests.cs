@@ -158,7 +158,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         Assert.Equal((Xaml, Misspelt), (window.EditorArea.Active?.Path, window.EditorArea.CodeEditor.CaretPosition));
 
         // In Problems' Bindings, once, with its element, property, path and count, at the misspelt member.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         BindingProblem caption = Assert.Single(problems.BindingProblems);
         Assert.Equal(("TextBlock#Caption", "Text", "Nmae", 1), (caption.Failure.Control, caption.Failure.Property, caption.Failure.Path, caption.Failure.Count));
         Assert.Equal((Xaml, Misspelt), (caption.Problem.Path, caption.Problem.Position));

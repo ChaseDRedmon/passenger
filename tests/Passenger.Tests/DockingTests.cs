@@ -385,7 +385,8 @@ public sealed class DockingTests
         MainWindow window = Open(settings);
         window.KeepLayout();
         DockHost dock = window.DockHost;
-        string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit];
+        string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit,
+            ToolWindowIds.Problems];
         foreach (string id in built)
         {
             Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");
@@ -406,6 +407,21 @@ public sealed class DockingTests
         Assert.Equal(bottom.Run.Document.Snapshot.Length, bottom.Run.Editor.Selections.Primary.Caret);
         bottom.Run.Append("Done\n");
         Assert.Equal(bottom.Run.Document.Snapshot.Length, bottom.Run.Editor.Selections.Primary.Caret);
+
+        // What the IDE writes to the hidden Problems window is all there once it is shown: a build's problems, their tab chosen.
+        Passenger.App.Run.Problem broken = new(Passenger.App.Run.ProblemSeverity.Error, "The name 'x' does not exist", Path.Combine(settings, "Program.cs"), "Hello",
+            new Passenger.Text.TextPosition(2, 4), "Program.cs:3");
+        bottom.Problems.Show([broken]);
+        Ui.Settle();
+        Assert.False(dock[ToolWindowIds.Problems]!.IsBuilt, "What the IDE wrote to the hidden Problems window built its view");
+        dock.Show(ToolWindowIds.Problems);
+        Ui.Settle();
+        Control problems = dock[ToolWindowIds.Problems]!.Content;
+        Assert.Contains(problems, dock.GetVisualDescendants());
+        Assert.Contains(problems.GetVisualDescendants().OfType<ToggleButton>(), t => t.IsChecked == true && t.Content as string == "Build  1");
+        Assert.Contains(problems.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == broken.Message);
+        dock.Hide(ToolWindowIds.Problems);
+        Ui.Settle();
 
         // Shown, a window's view is built; the layout kept with it shown builds it as the next window opens, and no other.
         dock.Show(ToolWindowIds.Structure);
