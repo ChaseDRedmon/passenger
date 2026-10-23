@@ -492,13 +492,13 @@ public sealed class McpWindowDebuggingTests : McpRig, IClassFixture<RestoredFold
     }
 
     /// <summary>On the person's window an agent is asked once, the first time, before it runs a configuration, sets a
-    /// breakpoint (whose condition runs in their later sessions too), debugs, evaluates code in the paused program, sets a
-    /// value there or types into its input; saving and stopping are never asked about. The configuration uses the terminal
-    /// (DebuggerTests and TerminalTests run and debug one there through the window): run answers with what the program's tab
-    /// shows, debug_start stops at a breakpoint on Main's first line, debug_input types into its tab, and debug_output reads
-    /// the tab, the program's end in it.</summary>
+    /// breakpoint (whose condition runs in their later sessions too), debugs, evaluates code in the paused program (setting
+    /// a value there with it unasked after) or types into its input; stopping is never asked about. The configuration uses
+    /// the terminal (DebuggerTests and TerminalTests run and debug one there through the window): run answers with what the
+    /// program's tab shows, debug_start stops at a breakpoint on Main's first line, debug_input types into its tab, and
+    /// output reads the tab, the program's end in it.</summary>
     [AvaloniaFact]
-    public void An_agent_is_asked_once_before_it_first_runs_sets_a_breakpoint_evaluates_sets_a_value_or_types_into_a_program_in_the_terminal()
+    public void An_agent_is_asked_once_before_it_first_runs_sets_a_breakpoint_evaluates_or_types_into_a_program_in_the_terminal()
     {
         Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
         MainWindow window = AgentsWindow(Folder, languageServer: false);
@@ -511,7 +511,6 @@ public sealed class McpWindowDebuggingTests : McpRig, IClassFixture<RestoredFold
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
         {
-            Assert.Equal("Nothing to save", Unasked(window, client, "save_all").GetString());
             JsonElement ran = Asked(window, client, "run", "run a configuration", new() { ["waitSeconds"] = 5 });
             string output = ran.GetProperty("output").GetString()!;
             Assert.True(ran.GetProperty("stillRunning").GetBoolean() && output.Contains("red at the third row's fifth column", StringComparison.Ordinal),
@@ -526,22 +525,22 @@ public sealed class McpWindowDebuggingTests : McpRig, IClassFixture<RestoredFold
                 $"Debugged in the terminal, the program did not stop on Main's first line: {stop}");
             Assert.Equal("42", Asked(window, client, "debug_evaluate", "evaluate an expression", new() { ["expression"] = "6 * 7" }).GetProperty("value").GetString());
             Assert.Equal("0", Unasked(window, client, "debug_evaluate", new() { ["expression"] = "args.Length" }).GetProperty("value").GetString());
-            string set = Asked(window, client, "debug_set_value", "set a value", new() { ["expression"] = "line", ["value"] = "\"forty\"" }).GetProperty("value").GetString()!;
+            string set = Unasked(window, client, "debug_evaluate", new() { ["expression"] = "line", ["value"] = "\"forty\"" }).GetProperty("value").GetString()!;
             Assert.Contains("forty", set, StringComparison.Ordinal);
-            set = Unasked(window, client, "debug_set_value", new() { ["expression"] = "line", ["value"] = "\"again\"" }).GetProperty("value").GetString()!;
+            set = Unasked(window, client, "debug_evaluate", new() { ["expression"] = "line", ["value"] = "\"again\"" }).GetProperty("value").GetString()!;
             Assert.Contains("again", set, StringComparison.Ordinal);
 
             // Let go, it asks for a key in its tab, which the agent types there, then a line.
-            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint's removal");
-            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 24 })), "the other breakpoint's removal");
+            Await(Task.Run(() => Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 1, ["remove"] = true })), "the breakpoint's removal");
+            Await(Task.Run(() => Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 24, ["remove"] = true })), "the other breakpoint's removal");
             Await(Task.Run(() => Call(client, "debug_continue", new() { ["waitSeconds"] = 1 })), "the program let go");
             WaitFor(() => window.Debugger.Session?.Terminal?.Session.Screen.Lines.Any(l => l.Text() == "key?") == true, "the program to ask for a key in its tab");
             Asked(window, client, "debug_input", "type into the program's console", new() { ["text"] = "q", ["newline"] = false });
             Unasked(window, client, "debug_input", new() { ["text"] = "hello" });
             WaitFor(() => !window.Debugger.IsDebugging && window.Debugger.Session?.Terminal?.Ended.IsCompleted == true, "the program's end");
-            string shown = Await(Task.Run(() => Call(client, "debug_output")), "the program's output").GetString()!;
+            string shown = Await(Task.Run(() => Call(client, "output", new() { ["of"] = "debug" })), "the program's output").GetString()!;
             Assert.True(shown.Contains("key? key q", StringComparison.Ordinal) && shown.Contains("line hello", StringComparison.Ordinal)
-                && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"debug_output read, of the program's tab:\n{shown}");
+                && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"output read, of the program's tab:\n{shown}");
         }
         finally
         {

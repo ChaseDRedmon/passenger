@@ -448,11 +448,6 @@ public sealed partial class PassengerTools
         Finding Found(Problem p) => new(p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message,
             p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1);
     });
-
-    [McpServerTool(Name = "build_output", Title = "What the Build window shows", ReadOnly = true), Description(
-        "The Build window's console, its last lines: the last build's MSBuild output, whoever started it, as it stands, while " +
-        "it runs too.")]
-    public Task<string> BuildOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Tail(Session.Builder.Shown(), Math.Max(1, lines))));
 }
 
 /// <summary>The settings as an agent reads them: whether they are the person's, and each setting.</summary>

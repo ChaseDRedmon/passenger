@@ -116,11 +116,11 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         Assert.True(pinned.Contains("<PackageVersion Include=\"Passenger.Sample\" Version=\"1.0.0\" />", StringComparison.Ordinal),
             $"nuget_install answered with the open Directory.Packages.props still as it was:\n{pinned}");
 
-        JsonElement remove = await Call(client, "nuget_remove", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample" });
+        JsonElement remove = await Call(client, "nuget_install", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample", ["remove"] = true });
         Assert.Contains("Lib.csproj", remove.GetProperty("changed").EnumerateArray().Select(f => f.GetString()));
-        Assert.True(!remove.TryGetProperty("version", out JsonElement left) || left.ValueKind == JsonValueKind.Null, $"nuget_remove answered a version: {remove}");
+        Assert.True(!remove.TryGetProperty("version", out JsonElement left) || left.ValueKind == JsonValueKind.Null, $"nuget_install with remove answered a version: {remove}");
         string removed = (await Call(client, "editor_text", project)).GetString()!;
-        Assert.False(removed.Contains("Passenger.Sample", StringComparison.Ordinal), $"nuget_remove answered with the open project file still holding the package:\n{removed}");
+        Assert.False(removed.Contains("Passenger.Sample", StringComparison.Ordinal), $"nuget_install with remove answered with the open project file still holding the package:\n{removed}");
     }
 
     /// <summary>Git's tools on a repository, a merge stopped for a conflict among them: the agent finds it in vcs_status as

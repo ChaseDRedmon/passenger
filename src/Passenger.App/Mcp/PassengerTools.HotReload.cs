@@ -28,7 +28,7 @@ public sealed partial class PassengerTools
             AgentCall.Say("Saving the edits for dotnet watch and waiting for what it makes of them");
             HotReloadOutcome? said = await window.SaveForWatchAsync().WaitAsync(cancel);
             return said is null
-                ? new HotReloadInfo("unanswered", "The files were saved, and dotnet watch said nothing of them in 30 s: debug_output or the Run window shows what it printed",
+                ? new HotReloadInfo("unanswered", "The files were saved, and dotnet watch said nothing of them in 30 s: output or the Run window shows what it printed",
                     [], [], 0, [], false, false)
                 : new HotReloadInfo(Result(said.Result), said.Said, [], [], 0, [], said.Result == HotReloadResult.RestartNeeded,
                     said.Result == HotReloadResult.RestartNeeded);

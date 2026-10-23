@@ -197,14 +197,19 @@ public sealed partial class PassengerTools
         CancellationToken cancel = default) => OnUi(cancel, async () =>
         await (await window.NuGet.FeedAsync(feed)).SearchAsync(query, prerelease, cancel));
 
-    [McpServerTool(Name = "nuget_install", Title = "Install a package", Destructive = true), Description(
+    [McpServerTool(Name = "nuget_install", Title = "Install or remove a package", Destructive = true), Description(
         "Adds a package to a project (its name or .csproj) at a version (else the newest on the folder's enabled feeds), or " +
         "moves it to that version, through dotnet add package as the NuGet window does, restoring from the folder's " +
-        "nuget.config feeds. Answers the version installed and the files it changed (the project, and Directory.Packages.props " +
-        "under central package management).")]
-    public Task<PackageChange> NuGetInstall(string project, string id, string? version = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "nuget.config feeds; with remove, takes it out through dotnet remove package. Answers the version installed and the " +
+        "files it changed (the project, and Directory.Packages.props under central package management).")]
+    public Task<PackageChange> NuGetInstall(string project, string id, string? version = null, bool remove = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
+        if (remove)
+        {
+            AgentCall.Follow(window.Actions.Work, ToolWindows.NuGetView.Changing);
+            return new PackageChange(id, null, chosen.Name, Changed(await window.NuGet.RemoveAsync(chosen, id)));
+        }
         AgentCall.Say($"Finding {id} on the folder's feeds");
         IPackageFeed feeds = await window.NuGet.FeedAsync(null);
         string at = version ?? (await feeds.VersionsAsync(id, prerelease: false, cancel)).FirstOrDefault()
@@ -212,15 +217,6 @@ public sealed partial class PassengerTools
         AgentCall.Say(null);
         AgentCall.Follow(window.Actions.Work, ToolWindows.NuGetView.Changing);
         return new PackageChange(id, at, chosen.Name, Changed(await window.NuGet.InstallAsync(chosen, id, at)));
-    });
-
-    [McpServerTool(Name = "nuget_remove", Title = "Remove a package", Destructive = true), Description(
-        "Takes a package out of a project, through dotnet remove package. Answers the files it changed.")]
-    public Task<PackageChange> NuGetRemove(string project, string id, CancellationToken cancel = default) => OnUi(cancel, async () =>
-    {
-        ProjectModel chosen = Project(project);
-        AgentCall.Follow(window.Actions.Work, ToolWindows.NuGetView.Changing);
-        return new PackageChange(id, null, chosen.Name, Changed(await window.NuGet.RemoveAsync(chosen, id)));
     });
 
     /// <summary>The files a package change wrote, named as the answer names them (the window's change took them into the
@@ -601,7 +597,7 @@ public sealed record ControlLayoutInfo(string Control, int Measures, double Meas
 /// <summary>A type on the heap of a memory snapshot: its live objects and their bytes.</summary>
 public sealed record HeapTypeInfo(string Type, int Count, long Bytes);
 
-/// <summary>What nuget_install or nuget_remove did: the package, the version installed (none for a removal), the project, and
+/// <summary>What nuget_install did: the package, the version installed (none for a removal), the project, and
 /// the files it changed.</summary>
 public sealed record PackageChange(string Package, string? Version, string Project, IReadOnlyList<string> Changed);
 

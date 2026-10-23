@@ -32,7 +32,7 @@ public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
         Assert.Equal(["Helper.cs:3", "Program.cs:4"], Places(found));
         Assert.Equal(["Helper.cs:3"], Places(await Call(client, "find_in_files", new() { ["text"] = "Twice", ["mask"] = "*.cs, !Program.cs" })));
         Assert.Equal(["Program.cs:4"], Places(await Call(client, "find_in_files", new() { ["text"] = @"Twice\(\w\)", ["regex"] = true })));
-        await Call(client, "open_file", new() { ["path"] = "Helper.cs", ["line"] = 1, ["column"] = 1 });
+        await Call(client, "open", new() { ["path"] = "Helper.cs", ["line"] = 1, ["column"] = 1 });
         Assert.Equal(["Helper.cs:3"], Places(await Call(client, "find_in_files", new() { ["text"] = "Twice", ["scope"] = "openFiles" })));
         foreach ((Dictionary<string, object?> arguments, string said) in new (Dictionary<string, object?>, string)[]
         {
@@ -46,10 +46,10 @@ public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
         }
 
         // Two saves of Helper.cs are its Local History, the newest first, each with what the file held before it.
-        await Call(client, "type", new() { ["text"] = "/* a */ " });
-        await Call(client, "save_all");
-        await Call(client, "type", new() { ["text"] = "/* b */ " });
-        await Call(client, "save_all");
+        await Call(client, "app_type", new() { ["app"] = "ide", ["text"] = "/* a */ " });
+        await Call(client, "ide_action", new() { ["action"] = "app.saveAll" });
+        await Call(client, "app_type", new() { ["app"] = "ide", ["text"] = "/* b */ " });
+        await Call(client, "ide_action", new() { ["action"] = "app.saveAll" });
         JsonElement[] rows = [.. (await Call(client, "local_history", new() { ["path"] = "Helper.cs" })).GetProperty("rows").EnumerateArray()];
         Assert.True(rows.Length >= 2 && rows[0].GetProperty("title").GetString() == "Change" && rows[1].GetProperty("title").GetString() == "Change",
             $"Helper.cs's history after two saves: {string.Join("; ", rows.Select(r => r.GetRawText()))}");
@@ -77,7 +77,7 @@ public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
         Assert.True(build.Contains("CS0029 Bad.cs:3") && build.Contains("CS0219 Helper.cs:5"), $"Problems' Build tab, for an agent: {string.Join("; ", build)}");
         Assert.Equal(JsonValueKind.Array, problems.GetProperty("toolset").ValueKind);
         Assert.False(problems.TryGetProperty("solution", out _), "Problems' solution tab was answered with solution-wide analysis off");
-        string output = (await Call(client, "build_output")).GetString()!;
+        string output = (await Call(client, "output", new() { ["of"] = "build" })).GetString()!;
         Assert.True(output.Contains("CS0029", StringComparison.Ordinal), $"The Build window's console, for an agent, lacks the build's error:\n{output}");
         // A run refused for a failed build names its errors, so the agent fixes them without a second call to find them.
         CallToolResult notRun = await Result(client, "run");

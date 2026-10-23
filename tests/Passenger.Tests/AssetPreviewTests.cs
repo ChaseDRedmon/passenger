@@ -274,8 +274,8 @@ public sealed class AssetPreviewTests : IDisposable
         window.EditorArea.Close(window.EditorArea.Active!);
         Ui.Settle();
         Passenger.App.Mcp.PassengerTools agent = new(window);
-        Task<string> opening = agent.OpenFile("huge.bmp");
-        Ui.WaitFor(() => opening.IsCompleted, "the agent's open_file to answer");
+        Task opening = agent.Open("huge.bmp");
+        Ui.WaitFor(() => opening.IsCompleted, "the agent's open to answer");
         Assert.True(opening.IsFaulted, "An agent was told an image whose decode failed is open");
         Assert.Contains("32 million pixels", opening.Exception!.InnerException!.Message, StringComparison.Ordinal);
         Assert.Empty(window.EditorArea.Documents);
@@ -385,7 +385,7 @@ public sealed class AssetPreviewTests : IDisposable
         AssetPreview shown = document.Asset!;
 
         Passenger.App.Mcp.PassengerTools agent = new(window);
-        foreach (Task asked in new Task[] { agent.OpenFile("picture.png"), agent.EditorText("picture.png"), agent.Diagnostics("picture.png"), agent.GetWorkspace() })
+        foreach (Task asked in new Task[] { agent.Open("picture.png"), agent.EditorText("picture.png"), agent.Diagnostics("picture.png"), agent.GetWorkspace() })
         {
             Ui.WaitFor(() => asked.IsCompleted, "the agent's answer");
             // editor_text's refusal is its answer, read so it is never reported as an error nobody saw.

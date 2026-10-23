@@ -17,7 +17,7 @@ namespace Passenger.App.Mcp;
 public sealed partial class PassengerTools
 {
     // Said once a parameter for each app_ tool; the element query's syntax once, in app_tree's description.
-    private const string AppChoice = "run, debug, a debugged program's name or ide; by default the one running";
+    private const string AppChoice = "run, debug, a debugged program's name, or ide for Passenger's own windows; by default the one running";
 
     private const string ControlQuery = "@N or a query, as app_tree describes";
 
@@ -214,7 +214,7 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "app_type", Title = "Type into the app", Destructive = true), Description(
         "Types text into the app as a keyboard would, a key at a time (a newline is Enter, a tab Tab): into an element, given " +
         "the focus first (a text box types at its end), else into what has the focus. With replace, Select All goes first. " +
-        "Says what it shows now.")]
+        "Says what it shows now. With app ide, Passenger's editor types at the caret open put it at, leaving the file unsaved.")]
     public Task<string> AppType(
         string text,
         [Description(AppChoice)] string? app = null,

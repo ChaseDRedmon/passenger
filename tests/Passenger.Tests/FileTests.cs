@@ -395,12 +395,6 @@ public sealed class FileTests : IDisposable
         Assert.True(new FileInfo(path).IsReadOnly, "The save made the read-only file writable");
         Assert.True(window.EditorArea.Active!.IsModified, "The read-only file's changes were taken for saved");
 
-        // An agent's save_all is told the file was not saved, rather than that it was.
-        Task<string> saving = new Passenger.App.Mcp.PassengerTools(window).SaveAll();
-        Ui.WaitFor(() => saving.IsCompleted, "save_all's answer");
-        Assert.Equal("Saved 0 of 1 files; not saved: Locked.cs (read-only)", Assert.IsType<ModelContextProtocol.McpException>(saving.Exception?.InnerException).Message);
-        Assert.Equal("class Locked { }\n", File.ReadAllText(path));
-
         // Made writable, it is saved.
         agree = true;
         Ui.Press(window, Ui.Shortcut(AppActions.Save));

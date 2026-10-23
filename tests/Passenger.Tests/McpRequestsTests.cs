@@ -5,7 +5,7 @@ using ModelContextProtocol.Client;
 namespace Passenger.Tests;
 
 /// <summary>An agent reads a running web app's requests and the SQL each issued, as the Requests window hears them: its own
-/// Passenger (<c>--mcp</c>) runs LiveRequestsTests' shop, and run_output with requests follows it and says what it served.</summary>
+/// Passenger (<c>--mcp</c>) runs LiveRequestsTests' shop, and output with requests follows it and says what it served.</summary>
 public sealed class McpRequestsTests : McpRig
 {
     [Fact]
@@ -21,8 +21,8 @@ public sealed class McpRequestsTests : McpRig
         try
         {
             // The first ask follows the app, so what it serves from then on is heard.
-            string following = (await Call(client, "run_output", new() { ["requests"] = true })).GetString()!;
-            Assert.True(following.StartsWith("Following Shop: http (process", StringComparison.Ordinal), $"run_output with requests did not follow the shop: {following}");
+            string following = (await Call(client, "output", new() { ["requests"] = true })).GetString()!;
+            Assert.True(following.StartsWith("Following Shop: http (process", StringComparison.Ordinal), $"output with requests did not follow the shop: {following}");
             using HttpClient http = new();
             Assert.True(await Waiting.UntilAsync(() =>
             {
@@ -38,7 +38,7 @@ public sealed class McpRequestsTests : McpRig
             string said = string.Empty;
             Assert.True(await Waiting.UntilAsync(async () =>
             {
-                said = (await Call(client, "run_output", new() { ["requests"] = true })).GetString()!;
+                said = (await Call(client, "output", new() { ["requests"] = true })).GetString()!;
                 return said.Split('\n').Any(l => l.StartsWith("GET /orders 200", StringComparison.Ordinal) && l.Contains("->", StringComparison.Ordinal)) && said.Split('\n').Length >= 6;
             }, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken), $"The agent never read the orders' request and its commands: {said}");
             string request = said.Split('\n').First(l => l.StartsWith("GET /orders 200", StringComparison.Ordinal));

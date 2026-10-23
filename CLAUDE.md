@@ -59,7 +59,7 @@ just site-shots [SCENE...] # site/images/<scene>-<dark|light>.webp retaken (afte
 
 **Use Passenger on itself.** `.mcp.json` starts Passenger's MCP server over this repository (`tools/mcp.sh`), so its
 tools are the quickest way to ask Roslyn about Passenger's code (`diagnostics`, `find_symbol`, `outline`, `usages`),
-to debug the IDE's own projects, and to look at the window (`screenshot`). It runs from an APFS clone of the last
+to debug the IDE's own projects, and to look at the window (`app_screenshot` with `app` ide). It runs from an APFS clone of the last
 Debug build, so `just build` never changes the files under it; reconnect the server to pick a new build up. A tool's
 lines and columns count from 1 and its paths are the folder's. Anything it gets wrong is a Passenger bug to fix.
 
@@ -600,7 +600,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
   Packages and Sources tabs, and every package change's one path (`InstallAsync`/`RemoveAsync`: one at a time, under
-  `Changing`, answering a `PackageOutcome`), which MCP's `nuget_install` and `nuget_remove` take too. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
+  `Changing`, answering a `PackageOutcome`), which MCP's `nuget_install` (with `remove` too) takes. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
   `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
   restore's NuGetAudit does; the window marks vulnerable installed versions and offers the lowest that fixes them.
   `StandInFeed` is the tests' v3 feed on loopback (optional credentials, an advisory resource); tests never reach
@@ -666,7 +666,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `*Activity.RootId`, which ties a command to its request; `Microsoft-Extensions-Logging`'s `FormattedMessage` for EF Core's
   log of each command (20101, the app's own logging, tied by its `ActivityTraceId`), which names its parameters; and the
   runtime's counters once a second, which keep the stream's reader handing on what it holds. Only while someone looks: the
-  window shows, or an agent asked (run_output's `requests`, `RequestsForAgentAsync`, until another folder opens); it follows
+  window shows, or an agent asked (`output`'s `requests`, `RequestsForAgentAsync`, until another folder opens); it follows
   from the moment it shows or a program starts, and lets go as it hides or the program ends. `RequestLog` takes the events
   on the UI thread a batch at a time (500 requests kept, each with the program that served it) and tells what the batch
   changed (`RequestChanges`: the requests that came, changed and went), which alone the list puts in, draws again in place
@@ -1212,7 +1212,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   and any other file's typing pause, completion, actions and declarations cost Aspire nothing (AspireCodeHelpTests holds a
   pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
   `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
-  (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `run_output` with it reads a service's
+  (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `output` with it reads a service's
   own console (a compose service's log), `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
   ended, or that sends no resources within 30 s, with that as its state and none listed:
   `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation) beside the container run, each
@@ -1466,7 +1466,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   starts there). A test project's first Project launch profile gives its variables to its tests. A configuration that
   uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
   `TerminalRun` with its process, exit code and Stop); Debug answers the adapter's runInTerminal the same way
-  (`DebugController.RunInTerminal`), and `debug_input`/`debug_output` use that tab. In a program's tab, Run, Debug,
+  (`DebugController.RunInTerminal`), and `debug_input` and `output`'s debug use that tab. In a program's tab, Run, Debug,
   Rerun, Stop and the debugger's keys stay with the IDE. Console links come from `ToolWindows/ConsoleLinks` (URLs, .NET
   stack frames, compiler messages; in the terminal also paths to any file, hidden until Cmd/Ctrl), drawn by
   `CodeEditor.Links` and `TerminalView.Links`; `MainWindow.Browse` is the only way the IDE opens a browser (recording
@@ -1686,8 +1686,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   refused by `StaleAsync` for a file not open the server may not have read (the agent's own write a moment before), the
   call waits until `DocumentTexts` says the server holds the disk's text (else for the 2 s to pass) and works it out
   again, 10 s in all, a file so seen trusted until it is written again; the window's commands still refuse at once. `app_details` is the
-  Live Visual Tree's details for an agent (value sources; styles with why each applies or not); `breakpoint_set` and
-  `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
+  Live Visual Tree's details for an agent (value sources; styles with why each applies or not); `breakpoint_set` (with
+  `remove` too) takes `control` and `property` for Break When Value Changes, waiting for
   `LiveTreeController.Watching`; `debug_state` carries `bindingValues`, and with several programs debugged lists them
   (`sessions`): the debug tools and `stop` take `session`, a Debug tab's name, else act on the one paused, else the only
   one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All,
@@ -1695,7 +1695,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`MainWindow.ApplyHotReloadAsync`: `DebugController.ApplyAllAsync` under the action's work, given a `HotReloadRestart`, the
   window's `SettingsRestart`, an agent's `RestartForAgentAsync`, which never asks; under dotnet watch, `SaveForWatchAsync`'s
   last word); the headless `--mcp` IDE
-  starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
+  starts on the default settings, so `run` takes `hotReload` and `output` reads the Run console; `debug_start` on a
   container configuration debugs each service in a session of its own, answering with them (`sessions`). An agent gets as much
   from a container run's services as from an AppHost's resources (`PassengerTools.Services.cs`): `workspace` lists the
   container run beside the AppHosts (`ContainerRunInfo`: its configuration, Compose project, how it was started, state),
@@ -1707,7 +1707,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   or still starting its health check), has ended or waitSeconds pass, with its run's resources one line each, its notes
   and its own console (`ResourceAnswer`, `Standing`: an AppHost's waited on through its resource stream, a compose
   service's through the engine's events), one its run runs itself (a backing service, an AppHost's container) run by
-  nothing and answered as it stands. `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
+  nothing and answered as it stands. `output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
   `telemetry` of a container run that collects none says to turn its configuration's Collect logs and traces on.
   `container_action` given an AppHost resource runs one of its advertised commands by its name, or start, stop and
   restart as Aspire's `resource-…` ones (`AspireCommandOfAsync`, `MainWindow.ExecuteAspireResourceCommandAsync`, through
@@ -1720,7 +1720,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
   `find_in_files`/`replace_in_files` are the window's own search in its scopes and masks once `FileIndex.IsWalking` is
   false; the `local_history` tools wait for `LocalHistory.IsRecording`, their revert `RevertLocalHistoryAsync`;
-  `problems` is Problems' Toolset, Build and Solution tabs (after `CSharpService.IsAnalysing`), `build_output` the Build
+  `problems` is Problems' Toolset, Build and Solution tabs (after `CSharpService.IsAnalysing`), `output` of build the Build
   console, and `profile` takes `attach` (and `container`, a container's program). The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
@@ -1749,8 +1749,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`,
   `AgentConnection.AllowAsync`: one question per tool, which every call of it waits on and the last to give up takes
   away), and `open` asks before it replaces their folder. What runs code in a debugged program or changes it
-  (`debug_evaluate`, `debug_set_value`, `debug_input`) and `breakpoint_set` (whose condition runs in later sessions
-  too) are `Destructive`; `save_all`, `stop` and the debugger's steps are not, the owner's choice (#278). No wait on
+  (`debug_evaluate`, its `value` set too, and `debug_input`) and `breakpoint_set` (whose condition runs in later sessions
+  too) are `Destructive`; `stop` and the debugger's steps are not, the owner's choice (#278). No wait on
   the person is unbounded (#255): each question goes through `MainWindow.AskForAgentAsync`, which closes it unanswered
   after `MainWindow.AgentAnswerLimit` (2 minutes), the call then saying nobody answered and a later one asking again, brings the window forward (`Attention.Ask` bounces
   the Dock icon on macOS, where Activate is refused while another app is in front) and has the status bar say who waits
@@ -1780,7 +1780,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpDebuggingTests until
   Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call), so it says each thing once: the
   element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
-  own write in the instructions; lines and columns from 1 never per parameter. `edit` replaces text in one file as the editor does (found once as written,
+  own write in the instructions; lines and columns from 1 never per parameter. Nor does it hold a tool another covers (the
+  owner's call, 0.2.0): `open` shows a file at a line and column, the app_ tools with `app` ide picture Passenger's own
+  windows and type into its editor at the caret, `ide_action` saves (`app.saveAll`), `hierarchy` has implementations,
+  `debug_continue` runs to a line, `debug_evaluate` sets a `value`, `breakpoint_set` and `nuget_install` take `remove`, and
+  `output` reads the Run, Debug and Build consoles. `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
   editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
   there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
@@ -1788,7 +1792,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
   names that build's errors (`WithBuildErrors`, by the `BuildOutcome` of the build it ran, `LaunchBuild`; a refusal for anything
   else names none); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
-  for first. `nuget_install`/`nuget_remove` answer a `PackageChange`: the version installed and the files that changed
+  for first. `nuget_install` (and its `remove`) answers a `PackageChange`: the version installed and the files that changed
   (the project, the nearest Directory.Packages.props). `profile`'s hot spots in the folder's code carry `source`
   (path:line of the method's first sequence point: `Profiler/MethodSources` reads the module's PDB by the trace's
   module path and method token, `HotSpot.Code`; the line the editor's, through `ServerPlaces.Compiled`). A resume of a debugged test run (`debug_continue`, `debug_step`)
@@ -2002,7 +2006,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   applies a changed signature as a delete plus an add and recompiles only members whose code changed, so `StaleCallers`
   blocks an update that leaves a loaded module's unchanged code calling the deleted body (ENC0033 at the new
   declaration); under dotnet watch, `SaveForWatchAsync` follows dotnet watch's words 10 s (`PASSENGER_WATCH_LATER_MS`) past its first, the last
-  standing. MCP's nuget_install and nuget_remove have open project files take the disk's text before answering
+  standing. MCP's nuget_install has open project files take the disk's text before answering
   (`MainWindow.FollowWritten`).
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
   net8.0, carried under `inspector/`, never put in the app's build): a startup hook `LiveApp.For` gives a launch whose

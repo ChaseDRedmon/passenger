@@ -58,7 +58,7 @@ public static partial class McpHost
         "Lines and columns count from 1; relative paths are the open folder's.\n\n" +
         "Begin with workspace: the folder and solution open, their projects, run configurations and open files (open opens another folder, " +
         "solution or file). Find your way by meaning rather than by text: find_symbol finds a type or member by name, outline lists a file's " +
-        "types and members with their lines, and symbol_info, definition, usages, implementations and hierarchy follow the symbol at a line " +
+        "types and members with their lines, and symbol_info, definition, usages and hierarchy follow the symbol at a line " +
         "and column; find_in_files searches text. editor_text reads a file with its lines numbered; edit changes one as the editor does " +
         "(an open file the editor has not changed also takes what is written on disk); diagnostics checks it. A file written a moment " +
         "before is waited for (up to 10 s) until the language server has read it, so rename, refactor and code actions work on what was " +
@@ -73,13 +73,13 @@ public static partial class McpHost
         "app_screenshot, app_click, app_type, app_key, app_scroll, app_binding_errors. Also version control (vcs_status, vcs_diff, " +
         "vcs_commit), NuGet (nuget_search, nuget_install), Problems and Local History (problems, local_history), the settings (settings, " +
         "settings_set), the container engine (containers, container_logs, container_exec, container_action) and the window itself " +
-        "(screenshot, ide_action).\n\n" +
+        "(app_screenshot and the other app_ tools with app ide, ide_action).\n\n" +
         "Attached to a person's Passenger (--mcp-attach), the first call joins the Passenger window open on the agent's folder (the folder " +
         "after --mcp-attach, else the agent's working folder). With none open, it has the running Passenger open that folder, or starts " +
         "Passenger on it, in a window the person sees, and waits for it. Unless the person has turned on Enable MCP Server, or let agents " +
         "into that folder always, the window asks them to let the agent in. The person is also asked before the agent first uses each tool " +
         "that changes something (edit, rename, build, run, debug_start, breakpoint_set, debug_evaluate, vcs_commit and the like; reading, " +
-        "save_all, stop and stepping never ask), and before it opens another folder in their window. A call waits for each answer 2 " +
+        "stop and stepping never ask), and before it opens another folder in their window. A call waits for each answer 2 " +
         "minutes at most, telling its progress meanwhile when asked to; one refused or left unanswered says so, and a later call asks " +
         "again. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
 
