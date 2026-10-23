@@ -47,7 +47,13 @@ internal sealed class AspireContainerOwnership
         string appHost = Hash(Path.GetFullPath(ownedAppHostPath));
         long observation = observations.GetValueOrDefault(appHost) + 1;
         observations[appHost] = observation;
-        List<Entry> entries = [.. Read().Entries];
+        using IDisposable held = BackgroundWork.Scope();
+        List<Entry> entries = [.. (await ReadAsync()).Entries];
+        // A later snapshot of the AppHost's, come while the manifest was read, is the one to record.
+        if (closing.IsCancellationRequested || observations[appHost] != observation)
+        {
+            return;
+        }
         List<(string Id, string Name, string Uid)> observed = [];
         HashSet<string> withdrawn = new(StringComparer.Ordinal);
         foreach (AspireResource resource in resources)
@@ -71,7 +77,7 @@ internal sealed class AspireContainerOwnership
         }
         if (entries.RemoveAll(entry => IsCurrent(entry, appHost) && withdrawn.Contains(entry.Id)) > 0)
         {
-            Save(entries);
+            await SaveAsync(entries);
         }
         observed.RemoveAll(item => withdrawn.Contains(item.Id) || entries.Any(entry => IsCurrent(entry, appHost)
             && entry.Id == item.Id && entry.Name == item.Name && entry.Uid == item.Uid));
@@ -79,50 +85,39 @@ internal sealed class AspireContainerOwnership
         {
             return;
         }
-        using IDisposable held = BackgroundWork.Scope();
         Task<Identity?> readingIdentity = observingIdentity is { IsCompleted: false } pending
             ? pending : observingIdentity = Task.Run(() => ReadIdentityAsync(again: false));
-        Identity? identity = await readingIdentity.ConfigureAwait(false);
-        if (closing.IsCancellationRequested)
+        Identity? identity = await readingIdentity;
+        if (closing.IsCancellationRequested || observations[appHost] != observation)
         {
             return;
         }
-        try
+        if (identity is null)
         {
-            await UiThread.InvokeAsync(() =>
+            IdeErrors.Write("Aspire containers: ownership was not recorded because the engine identity could not be pinned");
+            return;
+        }
+        entries = [.. (await ReadAsync()).Entries];
+        if (closing.IsCancellationRequested || observations[appHost] != observation)
+        {
+            return;
+        }
+        foreach ((string id, string name, string uid) in observed)
+        {
+            Entry entry = new(id, name, uid, appHost, identity.Fingerprint,
+                state, ContainerLabels.MachineValue, ContainerLabels.ProcessValue);
+            if (!entries.Contains(entry))
             {
-                if (closing.IsCancellationRequested || observations[appHost] != observation)
+                entries.RemoveAll(known => IsCurrent(known, appHost) && known.Id == id);
+                if (entries.Count == MaximumRecords)
                 {
-                    return false;
+                    IdeErrors.Write("Aspire containers: ownership manifest is full; additional containers are left untracked");
+                    break;
                 }
-                if (identity is null)
-                {
-                    IdeErrors.Write("Aspire containers: ownership was not recorded because the engine identity could not be pinned");
-                    return false;
-                }
-                entries = [.. Read().Entries];
-                foreach ((string id, string name, string uid) in observed)
-                {
-                    Entry entry = new(id, name, uid, appHost, identity.Fingerprint,
-                        state, ContainerLabels.MachineValue, ContainerLabels.ProcessValue);
-                    if (!entries.Contains(entry))
-                    {
-                        entries.RemoveAll(known => IsCurrent(known, appHost) && known.Id == id);
-                        if (entries.Count == MaximumRecords)
-                        {
-                            IdeErrors.Write("Aspire containers: ownership manifest is full; additional containers are left untracked");
-                            break;
-                        }
-                        entries.Add(entry);
-                    }
-                }
-                Save(entries);
-                return true;
-            }).WaitAsync(closing).ConfigureAwait(false);
+                entries.Add(entry);
+            }
         }
-        catch (OperationCanceledException) when (closing.IsCancellationRequested)
-        {
-        }
+        await SaveAsync(entries);
     }
 
     /// <summary>Checks earlier owners once per tracker. No engine command runs when no eligible record exists.</summary>
@@ -138,13 +133,13 @@ internal sealed class AspireContainerOwnership
 
     private async Task CleanupCoreAsync()
     {
-        Entry[] candidates = [.. Read().Entries.Where(entry => entry.State == state && entry.Machine == ContainerLabels.MachineValue
+        using IDisposable held = BackgroundWork.Scope();
+        Entry[] candidates = [.. (await ReadAsync()).Entries.Where(entry => entry.State == state && entry.Machine == ContainerLabels.MachineValue
             && entry.Owner != ContainerLabels.ProcessValue && ContainerLabels.IsGone(entry.Owner))];
-        if (candidates.Length == 0)
+        if (candidates.Length == 0 || closing.IsCancellationRequested)
         {
             return;
         }
-        using IDisposable held = BackgroundWork.Scope();
         List<Entry> removed = await Task.Run(async () =>
         {
             List<Entry> removed = [];
@@ -194,22 +189,13 @@ internal sealed class AspireContainerOwnership
                 }
             }
             return removed;
-        }).ConfigureAwait(false);
+        });
         if (removed.Count > 0 && !closing.IsCancellationRequested)
         {
-            try
+            List<Entry> left = [.. (await ReadAsync()).Entries.Except(removed)];
+            if (!closing.IsCancellationRequested)
             {
-                await UiThread.InvokeAsync(() =>
-                {
-                    if (!closing.IsCancellationRequested)
-                    {
-                        Save(Read().Entries.Except(removed).ToList());
-                    }
-                    return true;
-                }).WaitAsync(closing).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (closing.IsCancellationRequested)
-            {
+                await SaveAsync(left);
             }
         }
     }
@@ -245,29 +231,35 @@ internal sealed class AspireContainerOwnership
         return new(Hash($"{Path.GetFullPath(cli)}\n{current.Context}\n{endpoint}\n{environment}"), arguments);
     }
 
-    private Manifest Read()
+    /// <summary>The manifest as the disk has it now (another Passenger over the same state writes it too), read off the UI thread.</summary>
+    private Task<Manifest> ReadAsync() => BackgroundWork.Run(() =>
     {
         if (File.Exists(document.Path) && new FileInfo(document.Path).Length > MaximumBytes)
         {
             throw new InvalidDataException("The Aspire container ownership manifest exceeds its size limit; cleanup is disabled.");
         }
-        document.Reread();
-        return document.Value;
-    }
+        return document.Peek();
+    });
 
-    private void Save(List<Entry> entries)
+    /// <summary>Keeps the entries, written at once off the UI thread (a crash a moment later still leaves the record), merged
+    /// over what another Passenger wrote meanwhile.</summary>
+    private async Task SaveAsync(List<Entry> entries)
     {
+        await document.ValueAsync();
         string folder = Path.GetDirectoryName(document.Path)!;
-        if (OperatingSystem.IsWindows())
+        await BackgroundWork.Run(() =>
         {
-            Directory.CreateDirectory(folder);
-        }
-        else
-        {
-            Directory.CreateDirectory(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
+            if (OperatingSystem.IsWindows())
+            {
+                Directory.CreateDirectory(folder);
+            }
+            else
+            {
+                Directory.CreateDirectory(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        });
         document.Set(new Manifest { Entries = entries });
-        document.Flush();
+        await BackgroundWork.Run(document.Flush);
     }
 
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));

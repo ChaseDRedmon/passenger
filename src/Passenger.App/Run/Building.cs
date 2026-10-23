@@ -93,7 +93,8 @@ public static partial class BuildOutput
     /// lines not wrapped, so every problem is one line read once. A framework given builds a project for that one alone,
     /// as a run configuration's build before launch does. Windows targeting builds a WPF or Windows Forms project off
     /// Windows, as the project host evaluates it (<see cref="WindowsTargeting(string, IReadOnlyList{ProjectModel})"/>).</summary>
-    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build, string? framework = null, bool windowsTargeting = false)
+    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build, string? framework = null, bool windowsTargeting = false,
+        string? output = null)
     {
         List<string> arguments = kind switch
         {
@@ -104,6 +105,10 @@ public static partial class BuildOutput
         if (framework is not null)
         {
             arguments.AddRange(["--framework", framework]);
+        }
+        if (output is not null)
+        {
+            arguments.AddRange(["--output", output]);
         }
         if (windowsTargeting)
         {

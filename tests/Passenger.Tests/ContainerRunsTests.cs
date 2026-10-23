@@ -344,6 +344,43 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         }
     }
 
+    /// <summary>A run's log that ends while its services run (Compose's <c>logs --follow</c> crashes on Podman's own docker as a
+    /// service is made anew; here its process is killed) is followed again from its end: Stop stays, what the service says
+    /// next reaches the Run window, and Stop still takes it down.</summary>
+    [AvaloniaFact]
+    public void A_runs_log_that_ends_while_its_services_run_is_followed_again_and_Stop_still_takes_them_down()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string folder = TestFolders.Create("ctr-relog-");
+        string project = ProjectNamed("relog");
+        TestFolders.Write(folder, "compose.yaml", $"name: {project}\nservices:\n  ticker:\n    image: {Docker.Image}\n    init: true\n"
+            + "    command: [\"sh\", \"-c\", \"i=0; while true; do i=$$((i+1)); echo tick $$i; sleep 1; done\"]\n");
+        MainWindow window = Open(folder);
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        try
+        {
+            Launched(window, "the ticker to come up");
+            Ui.WaitFor(() => Run(window).Contains("tick 2\n", StringComparison.Ordinal), "the ticker's lines in the Run window", TimeSpan.FromMinutes(1));
+            using (System.Diagnostics.Process log = System.Diagnostics.Process.GetProcessById(window.Runner.ProcessId ?? throw new InvalidOperationException("The run follows no log")))
+            {
+                log.Kill(entireProcessTree: true);
+            }
+            Ui.WaitFor(() => Run(window).Contains("services still run: following their log again", StringComparison.Ordinal) || !window.IsRunning,
+                "the run's log to be followed again", TimeSpan.FromMinutes(1));
+            Assert.True(window.IsRunning, $"The run took its log's end for its own: {window.Status}\n{Run(window)}");
+            Assert.Null(window.Actions.WhyNot(AppActions.Stop, window.Actions.Context()));
+            int followed = Run(window).LastIndexOf("following their log again", StringComparison.Ordinal);
+            Ui.WaitFor(() => Run(window)[followed..].Contains("tick ", StringComparison.Ordinal), "the ticker's next lines after the log was followed again",
+                TimeSpan.FromMinutes(1));
+            Assert.Equal("running", States(project)["ticker"]);
+        }
+        finally
+        {
+            Docker.Stopped(window, project, "Stop to take the ticker down");
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void A_service_that_serves_HTTPS_has_the_development_certificate_and_the_projects_user_secrets_mounted()
     {

@@ -9,11 +9,11 @@ using Passenger.Core;
 
 namespace Passenger.App.Aspire;
 
-/// <summary>Bounded snapshots from Aspire 13.6.2's documented CLI JSON. Credentials stay internal; public resource snapshots mask values.
+/// <summary>Bounded snapshots from the documented CLI JSON of Aspire 13.x from 13.6.0. Credentials stay internal; public resource snapshots mask values.
 /// The CLI is the one on the PATH, or the program a window names (<see cref="MainWindow.AspireCliFrom"/>).</summary>
 public sealed class AspireClient(string? program = null)
 {
-    internal const string SupportedVersion = "13.6.2";
+    internal const string SupportedVersion = "13.x (13.6.0 or newer)";
     public const int ResourceLimit = 256;
     public const int LogLimit = 1000;
     public const int TraceLimit = 50;

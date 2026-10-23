@@ -56,7 +56,6 @@ public sealed class ProfilerCommands
     /// <summary>Ends the start under way, which waits for the program to reach the profiler: Kill while it starts.</summary>
     private CancellationTokenSource? starting;
     private Task<SnapshotRead>? snapshotting;
-    private readonly Dictionary<ProfilingSession, Task<SnapshotRead>?> serviceRuns = [];
 
     /// <summary>The process the snapshot shown came from, none for one opened from its file.</summary>
     private int? shownProcess;
@@ -115,7 +114,6 @@ public sealed class ProfilerCommands
     public void Rebind()
     {
         snapshotting = null;
-        serviceRuns.Clear();
         if (View.IsFollowing || View.CanKill)
         {
             View.Stopped($"Profiling {profilingName} ended with its folder");
@@ -407,7 +405,6 @@ public sealed class ProfilerCommands
     /// program's end (or its recording's, in a container) unless Get Snapshot read it first.</summary>
     private void Follow(ProjectSession profiled, ProfilingSession running, string name, bool killable)
     {
-        bool serviceOwned = serviceRuns.ContainsKey(running);
         profiled.Profiling = running;
         profilingName = name;
         View.Running(name, () => running.Elapsed, killable);
@@ -419,7 +416,7 @@ public sealed class ProfilerCommands
             {
                 _ = SnapshotAsync();
             }
-            else if (profiled.IsEnded && !serviceOwned)
+            else if (profiled.IsEnded)
             {
                 // Its folder's end let go of the run, read by no one.
                 BackgroundWork.Track(running.DisposeAsync().AsTask());
@@ -495,110 +492,59 @@ public sealed class ProfilerCommands
         return AttachTargetAsync(new AttachTarget(processId, name, FileName(Path.GetFileNameWithoutExtension(program))));
     }
 
-    /// <summary>Starts exactly one owned service, held until its first instruction can be recorded. The capture callback
-    /// takes ownership of native startup cleanup, including when this UI-facing start fails or is canceled.</summary>
-    public async Task<ProfilingSession> StartServiceAsync(LaunchPlan plan, ProgramPump pump, CancellationToken cancellation,
-        Action<Task<ProfilingSession>>? captureStarting = null, Func<bool>? ownerClosing = null)
+    /// <summary>Records a service of a run of services held at its start on this machine (the one an Aspire configuration's
+    /// Profile holds), which lets it go once recording, so the run begins at its first instruction: the run's profiler
+    /// (<see cref="ServiceRun.Profiler"/>), as a container run's is in its container. Stop reads its snapshot before the run's
+    /// programs go (<see cref="ServiceRun.EndProfiling"/>). Null once it records, else why not.</summary>
+    public async Task<string?> RecordHeldServiceAsync(ServiceRun run, IRunService service, ServiceProgram program, CancellationToken stop)
     {
         UiThread.Check();
         ProjectSession profiled = Session;
         if (Busy(profiled) is { } busy)
         {
-            throw new LaunchException(busy);
+            return busy;
         }
-        using Working work = parts.Actions.Work.Begin(AppActions.Profile, $"Starting {plan.Name} under the profiler…")
-            ?? throw new LaunchException(ActionWork.Busy(parts.Actions.Work.Of(AppActions.Profile)!));
+        using Working? work = parts.Actions.Work.Begin(AppActions.Profile, $"Recording {service.Name} from its start…");
+        if (work is null)
+        {
+            return ActionWork.Busy(parts.Actions.Work.Of(AppActions.Profile)!);
+        }
+        string name = $"{service.Name} of {run.Name}";
         launching = profiled;
-        using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation, work.Stopping);
-        starting = stop;
-        profiled.ProfileStarting = stop;
-        ProfilingSession? recording = null;
+        ProfilingSession recording;
         try
         {
-            View.Starting(plan.Name);
-            ProfileTarget target = new(plan.Program, plan.Arguments.ToArray(), plan.WorkingDirectory,
-                new Dictionary<string, string>(plan.Environment));
+            View.Starting(name);
+            using CancellationTokenSource stopping = CancellationTokenSource.CreateLinkedTokenSource(stop, work.Stopping);
+            CancellationToken token = stopping.Token;
             string snapshots = SnapshotFolder;
-            string sockets = SocketFolders.Own(State.StateStore.DefaultRoot);
-            CancellationToken stopping = stop.Token;
-            Task<ProfilingSession> nativeStart = Task.Run(() => ProfilingSession.StartAsync(target, snapshots, sockets, pump, stopping));
-            captureStarting?.Invoke(nativeStart);
-            recording = await nativeStart;
-            stop.Token.ThrowIfCancellationRequested();
-            if (Session != profiled || profiled.IsEnded || ownerClosing?.Invoke() == true)
-            {
-                throw new LaunchException("The solution was closed");
-            }
-            serviceRuns.Add(recording, null);
-            Follow(profiled, recording, plan.Name, killable: false);
-            return recording;
+            recording = await Task.Run(() => ProfilingSession.AttachAsync(program.Id, FileName(service.Name), snapshots, token, resume: true), token);
         }
-        catch
+        catch (ProfilingException refused)
         {
-            if (recording is not null && captureStarting is null)
-            {
-                recording.Kill();
-                await recording.ExitedAsync();
-                await recording.DisposeAsync();
-            }
+            View.Stopped(refused.Message);
+            return $"Could not profile {service.Name}: {refused.Message}";
+        }
+        catch (OperationCanceledException)
+        {
+            View.Stopped($"Profiling {name} was stopped as it started");
             throw;
         }
         finally
         {
-            if (starting == stop)
-            {
-                starting = null;
-            }
-            if (profiled.ProfileStarting == stop)
-            {
-                profiled.ProfileStarting = null;
-            }
             if (launching == profiled)
             {
                 launching = null;
             }
         }
-    }
-
-    /// <summary>Finishes an owned service's recording, then ends its process and releases the profiler.</summary>
-    public async Task EndServiceAsync(ProfilingSession recording, Func<bool>? ownerClosing = null, Func<Task>? release = null)
-    {
-        ProjectSession profiled = Session;
-        CancellationToken closing = profiled.Aspire.ClosingToken;
-        Task reading = Session.Profiling == recording ? SnapshotAsync()
-            : serviceRuns.GetValueOrDefault(recording) is { } pending ? pending
-            : Task.Run(() => recording.StopAsync());
-        try
+        if (profiled != Session || profiled.IsEnded)
         {
-            await reading.ConfigureAwait(false);
+            await recording.DisposeAsync();
+            return "The solution was closed";
         }
-        finally
-        {
-            if (!closing.IsCancellationRequested)
-            {
-                try
-                {
-                    Task cleanup = await UiThread.InvokeAsync(() =>
-                    {
-                        if (closing.IsCancellationRequested || profiled.IsEnded || ownerClosing?.Invoke() == true)
-                        {
-                            return Task.CompletedTask;
-                        }
-                        serviceRuns.Remove(recording);
-                        return release is not null ? release() : Task.Run(async () =>
-                        {
-                            recording.Kill();
-                            await recording.ExitedAsync().ConfigureAwait(false);
-                            await recording.DisposeAsync().ConfigureAwait(false);
-                        });
-                    }).WaitAsync(closing).ConfigureAwait(false);
-                    await cleanup.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (closing.IsCancellationRequested)
-                {
-                }
-            }
-        }
+        Follow(profiled, recording, name, killable: false);
+        run.EndProfiling = () => profiled.Profiling == recording && profiled == Session ? SnapshotAsync() : Task.CompletedTask;
+        return null;
     }
 
     private async Task<string?> AttachTargetAsync(AttachTarget? target, bool choose = false)
@@ -855,18 +801,13 @@ public sealed class ProfilerCommands
         {
             Session.Profiling = null;
             snapshotting = ReadSnapshotAsync(Session, run);
-            if (serviceRuns.ContainsKey(run))
-            {
-                serviceRuns[run] = snapshotting;
-            }
         }
         return snapshotting ?? Task.FromResult(new SnapshotRead(null, "Nothing has been profiled"));
     }
 
     private async Task<SnapshotRead> ReadSnapshotAsync(ProjectSession profiled, ProfilingSession run)
     {
-        bool serviceOwned = serviceRuns.ContainsKey(run);
-        bool dispose = profiled.Profiled?.Run != run && !serviceOwned;
+        bool dispose = profiled.Profiled?.Run != run;
         CancellationToken closing = profiled.Aspire.ClosingToken;
         string name = profilingName;
         string kept = SnapshotFolder;
