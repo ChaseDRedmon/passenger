@@ -87,7 +87,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Passenger.App.Docking.DockHost dock = window.DockHost;
         dock.Move(dock[ToolWindowIds.Debug]!, Passenger.App.Docking.ToolAnchor.RightTop);
         Ui.Settle();
-        Passenger.App.ToolWindows.DebugView debug = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugView debug = window.DebugWindow;
         Point origin = debug.TranslatePoint(default, window)!.Value;
         ListBox[] lists = [.. debug.GetVisualDescendants().OfType<ListBox>().Where(l => l.IsEffectivelyVisible)];
         Assert.Equal(2, lists.Length);
@@ -122,13 +122,13 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Assert.Contains("Debugging Sum: step over stopped", Ui.IdeLog(), StringComparison.Ordinal);
 
         // The menus of Variables and Frames: a value copied and watched, and the stack copied with the line stopped at.
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
-        view.VariablesList.SelectedItem = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == "i");
-        Ui.ChooseFromMenu(view.VariablesList, "Copy Value");
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
+        window.DebugWindow.VariablesList.SelectedItem = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == "i");
+        Ui.ChooseFromMenu(window.DebugWindow.VariablesList, "Copy Value");
         Ui.WaitFor(() => Ui.Clipboard(window) == "2", "the value on the clipboard");
-        Ui.ChooseFromMenu(view.VariablesList, "Add to Watches");
+        Ui.ChooseFromMenu(window.DebugWindow.VariablesList, "Add to Watches");
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Watch && r.Name == "i" && r.Value == "2"), "the watch");
-        ListBox frames = view.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
+        ListBox frames = window.DebugWindow.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
         Ui.ChooseFromMenu(frames, "Copy Stack");
         Ui.WaitFor(() => Ui.Clipboard(window)?.Contains("<Main>$", StringComparison.Ordinal) == true, "the stack on the clipboard");
         Assert.Contains($"Program.cs:{view.Frames[0].Line}", Ui.Clipboard(window), StringComparison.Ordinal);
@@ -159,9 +159,9 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         dock.SetMode(dock[ToolWindowIds.Debug]!, Passenger.App.Docking.ToolMode.Floating);
         Ui.Settle();
         Window floating = Assert.Single(window.OwnedWindows);
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
-        Assert.Contains(view, floating.GetVisualDescendants());
-        ListBox variables = view.VariablesList;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
+        Assert.Contains(window.DebugWindow, floating.GetVisualDescendants());
+        ListBox variables = window.DebugWindow.VariablesList;
         Point row = variables.TranslatePoint(new Point(variables.Bounds.Width / 2, 12), floating)!.Value;
         floating.MouseDown(row, MouseButton.Left);
         floating.MouseUp(row, MouseButton.Left);
@@ -182,7 +182,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
         // Its evaluate box takes what is typed, a key the IDE's editor has (Backspace) included, and evaluates it with Enter.
         Ui.Run(floating, AppActions.Evaluate);
-        TextBox evaluate = view.GetVisualDescendants().OfType<TextBox>().Single(b => b.IsKeyboardFocusWithin);
+        TextBox evaluate = window.DebugWindow.GetVisualDescendants().OfType<TextBox>().Single(b => b.IsKeyboardFocusWithin);
         floating.KeyTextInput("total + 100");
         Ui.Press(floating, "BACK_SPACE");
         Assert.Equal("total + 10", evaluate.Text);
@@ -382,9 +382,9 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Assert.Contains(new LineMark(4, LineMarkKind.ExecutionPoint), editor.LineMarks);
         Assert.Contains(new LineAnnotation(4, "total: 0", LineAnnotationKind.InlineValue), editor.LineAnnotations);
         // The debugger names the compiler's line 9; the frame's row, and the stack copied from it, the editor's 5.
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
         Assert.Equal(9, view.Frames[0].Line);
-        ListBox frames = view.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
+        ListBox frames = window.DebugWindow.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
         Ui.ChooseFromMenu(frames, "Copy Stack");
         Ui.WaitFor(() => Ui.Clipboard(window)?.Contains("<Main>$", StringComparison.Ordinal) == true, "the stack on the clipboard");
         Assert.Contains("Program.cs:5", Ui.Clipboard(window), StringComparison.Ordinal);
@@ -511,7 +511,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.ToggleBreakpoint);
         StartDebugging(window);
         WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused && Row(window, "total") is not null, "the stop before the call");
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
         Assert.DoesNotContain(view.Tree.Rows, r => r.IsReturnValue);
 
         Ui.Run(window, AppActions.StepOver);
@@ -521,8 +521,8 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Assert.True(returned.IsReturnValue, "The call's value was not shown as one");
 
         // Its menu's Add to Watches watches its name in an expression, which evaluates to the value.
-        view.VariablesList.SelectedItem = returned;
-        Ui.ChooseFromMenu(view.VariablesList, "Add to Watches");
+        window.DebugWindow.VariablesList.SelectedItem = returned;
+        Ui.ChooseFromMenu(window.DebugWindow.VariablesList, "Add to Watches");
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Watch && r.Name == "$ReturnValue" && r.Value == "5"), "the watch of the value returned");
         Ui.Run(window, AppActions.Evaluate);
         window.KeyTextInput("$returnvalue * 2");
@@ -903,7 +903,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         within.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == content && b.IsEffectivelyVisible);
 
     /// <summary>Waits for a top-level row of Variables to show a value; a failure says what the rows showed instead.</summary>
-    private static void Shows(Passenger.App.ToolWindows.DebugView view, string name, string value, string what)
+    private static void Shows(Passenger.App.ToolWindows.DebugModel view, string name, string value, string what)
     {
         try
         {
@@ -917,7 +917,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     }
 
     /// <summary>Waits for a watch to show a value; a failure says what the watches showed instead.</summary>
-    private static void Watched(Passenger.App.ToolWindows.DebugView view, string expression, string value, string what)
+    private static void Watched(Passenger.App.ToolWindows.DebugModel view, string expression, string value, string what)
     {
         try
         {
@@ -981,7 +981,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.ToggleBreakpoint);
         StartDebugging(window);
         WaitDebugging(window, () => Value(window, "total") == "0", "the first stop");
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
         Ui.Run(window, AppActions.Evaluate);
         window.KeyTextInput("total += 100");
         Ui.Press(window, "Enter");
@@ -998,7 +998,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         // At the loop's next turn, Rider's Set Value: click the row, F2, type over the value, Enter.
         Ui.Run(window, AppActions.Resume);
         WaitDebugging(window, () => Value(window, "i") == "2" && Value(window, "total") == "101", "the loop's next turn");
-        ListBox list = view.VariablesList;
+        ListBox list = window.DebugWindow.VariablesList;
         VariableNode total = view.Tree.Rows.First(r => r.Name == "total");
         Control row = list.ContainerFromItem(total)!;
         Ui.Click(row, settle: false);
@@ -1045,7 +1045,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
         static void SetElement(MainWindow window, string local, string range, string element, string value)
         {
-            Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+            Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
             VariableNode Child(VariableNode parent, string name)
             {
                 Task opened = view.Tree.Expand(parent);
@@ -1056,7 +1056,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             VariableNode top = Row(window, local)!;
             VariableNode row = Child(Child(top, range), element);
             // Click the row, F2, type over the value, Enter: Rider's Set Value.
-            ListBox list = view.VariablesList;
+            ListBox list = window.DebugWindow.VariablesList;
             Ui.Click(Ui.Row(list, row), settle: false);
             Ui.Press(window, "F2");
             Assert.True(row.IsEditing, $"F2 on {local}'s {element} did not open its value for editing");
@@ -1079,7 +1079,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.ToggleBreakpoint);
         StartDebugging(window);
         WaitDebugging(window, () => Value(window, "i") == "1", "the stop in the loop");
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
 
         Evaluate(window, "Waits.Input");
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Name == "Waits.Input" && r.Value.Contains("could not be stopped", StringComparison.Ordinal)),
@@ -1149,7 +1149,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.ToggleBreakpoint);
         StartDebugging(window);
         WaitDebugging(window, () => Value(window, "i") == "1", "the first stop's locals");
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
         Ui.Run(window, AppActions.Evaluate);
         window.KeyTextInput("slow.Getter");
         Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
@@ -1214,7 +1214,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.ToggleBreakpoint);
         StartDebugging(window);
         WaitDebugging(window, () => Row(window, "inner") is not null, "the stop before the call");
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
         VariableNode stale = Row(window, "inner")!;
         Assert.True(stale.HasChildren);
 
@@ -1921,7 +1921,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             adapter = starting.AdapterProcessId;
             Assert.Equal(DebugState.Starting, starting.State);
             Assert.True(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could not be clicked while the debugger waited for the program to start");
-            Button stop = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Stop", StringComparison.Ordinal));
+            Button stop = window.DebugWindow.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Stop", StringComparison.Ordinal));
             Assert.True(stop.IsEnabled, "The Debug window's Stop was greyed while the debugger waited for the program to start");
 
             // Not settled: without Stop the start would hold the background work for good.

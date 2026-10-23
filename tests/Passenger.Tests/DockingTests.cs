@@ -124,7 +124,7 @@ public sealed class DockingTests
         dock.SetMode(debug, ToolMode.Floating);
         Ui.Settle();
         Window floating = Assert.Single(window.OwnedWindows);
-        Assert.Contains(window.BottomPanel.Debug, floating.GetVisualDescendants());
+        Assert.Contains(window.DebugWindow, floating.GetVisualDescendants());
         Assert.Equal(0, dock.RowDefinitions[2].ActualHeight);
         Assert.True(debug.IsShown);
 
@@ -142,7 +142,7 @@ public sealed class DockingTests
         dock.Show(ToolWindowIds.Debug);
         Ui.Settle();
         Assert.True(dock.RowDefinitions[2].ActualHeight > 100);
-        Assert.Contains(window.BottomPanel.Debug, dock.GetVisualDescendants());
+        Assert.Contains(window.DebugWindow, dock.GetVisualDescendants());
         window.Close();
     }
 
@@ -222,7 +222,7 @@ public sealed class DockingTests
         GC.Collect();
         Assert.False(hidden.TryGetTarget(out _), "The floating window hidden by its button is still alive, held by its tool window");
         Assert.False(closed.TryGetTarget(out _), "The floating window the system closed is still alive, held by its tool window");
-        Assert.Contains(window.BottomPanel.Debug, dock.GetVisualDescendants());
+        Assert.Contains(window.DebugWindow, dock.GetVisualDescendants());
         window.Close();
     }
 
@@ -386,7 +386,7 @@ public sealed class DockingTests
         window.KeepLayout();
         DockHost dock = window.DockHost;
         string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit,
-            ToolWindowIds.Problems];
+            ToolWindowIds.Problems, ToolWindowIds.Debug];
         foreach (string id in built)
         {
             Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");
@@ -408,19 +408,32 @@ public sealed class DockingTests
         bottom.Run.Append("Done\n");
         Assert.Equal(bottom.Run.Document.Snapshot.Length, bottom.Run.Editor.Selections.Primary.Caret);
 
-        // What the IDE writes to the hidden Problems window is all there once it is shown: a build's problems, their tab chosen.
+        // What the IDE writes to the hidden Problems and Debug windows is all there once each is shown: a build's problems,
+        // their tab chosen; a debugged program's tab, its console shown with what it wrote, and Mute Breakpoints pressed.
         Passenger.App.Run.Problem broken = new(Passenger.App.Run.ProblemSeverity.Error, "The name 'x' does not exist", Path.Combine(settings, "Program.cs"), "Hello",
             new Passenger.Text.TextPosition(2, 4), "Program.cs:3");
         bottom.Problems.Show([broken]);
+        bottom.Debug.Sessions.Add(new Passenger.App.ToolWindows.DebugTab("Hello", bottom.Debug.FirstConsole));
+        bottom.Debug.FirstConsole.Append("Hello from the program\n");
+        bottom.Debug.ShowTab(console: true);
+        bottom.Debug.ShowMuted(true);
         Ui.Settle();
-        Assert.False(dock[ToolWindowIds.Problems]!.IsBuilt, "What the IDE wrote to the hidden Problems window built its view");
+        Assert.False(dock[ToolWindowIds.Problems]!.IsBuilt || dock[ToolWindowIds.Debug]!.IsBuilt, "What the IDE wrote to the hidden Problems or Debug window built its view");
         dock.Show(ToolWindowIds.Problems);
         Ui.Settle();
         Control problems = dock[ToolWindowIds.Problems]!.Content;
         Assert.Contains(problems, dock.GetVisualDescendants());
         Assert.Contains(problems.GetVisualDescendants().OfType<ToggleButton>(), t => t.IsChecked == true && t.Content as string == "Build  1");
         Assert.Contains(problems.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == broken.Message);
-        dock.Hide(ToolWindowIds.Problems);
+        dock.Show(ToolWindowIds.Debug);
+        Ui.Settle();
+        Passenger.App.ToolWindows.DebugView debug = window.DebugWindow;
+        Assert.Contains(debug, dock.GetVisualDescendants());
+        Assert.Contains(bottom.Debug.FirstConsole.Editor, debug.GetVisualDescendants());
+        Assert.Equal("Hello from the program\n", bottom.Debug.FirstConsole.Document.Snapshot.ToString());
+        Assert.Contains(debug.HeaderTools.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Hello");
+        Assert.Contains(debug.GetVisualDescendants().OfType<ToggleButton>(), t => t.IsChecked == true && ToolTip.GetTip(t) is string tip && tip.StartsWith("Mute Breakpoints", StringComparison.Ordinal));
+        dock.Hide(ToolWindowIds.Debug);
         Ui.Settle();
 
         // Shown, a window's view is built; the layout kept with it shown builds it as the next window opens, and no other.

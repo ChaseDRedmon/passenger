@@ -356,7 +356,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
     /// <summary>A member of a top-level row of Variables, the row opened to show it.</summary>
     private static string Member(MainWindow window, string row, string name)
     {
-        DebugView view = window.BottomPanel.Debug;
+        DebugModel view = window.BottomPanel.Debug;
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Depth == 0 && r.Name == row),
             $"{row} in Variables, not only {string.Join(", ", view.Tree.Rows.Where(r => r.Depth == 0).Select(r => r.Name))}");
         VariableNode owner = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == row);

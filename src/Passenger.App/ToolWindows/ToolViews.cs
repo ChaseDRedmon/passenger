@@ -17,7 +17,8 @@ public sealed class ToolViews
     public OutputView Run { get; } = new() { RerunsWhileRunning = true };
     /// <summary>What the Problems window lists, kept while its view is not built.</summary>
     public ProblemsModel Problems { get; } = new();
-    public DebugView Debug { get; } = new();
+    /// <summary>What the Debug window shows, kept while its view is not built.</summary>
+    public DebugModel Debug { get; } = new();
     public AspirePane AspirePane { get; private set; } = new();
     public AspireView Aspire => AspirePane.View;
     public ContentControl AspireHost { get; } = new();

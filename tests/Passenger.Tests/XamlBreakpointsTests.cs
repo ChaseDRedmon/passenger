@@ -301,7 +301,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
     /// <summary>A member of a top-level row of Variables, the row opened to show it.</summary>
     private static string? Member(MainWindow window, string row, string name)
     {
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Depth == 0 && r.Name == row), $"{row} in Variables");
         VariableNode owner = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == row);
         if (!owner.IsExpanded)
@@ -331,8 +331,8 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
     /// <summary>The places the Debug window's frame rows name, as drawn.</summary>
     private static List<string?> FrameRows(MainWindow window)
     {
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
-        ListBox frames = view.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
+        ListBox frames = window.DebugWindow.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
         return [.. frames.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text)];
     }
 

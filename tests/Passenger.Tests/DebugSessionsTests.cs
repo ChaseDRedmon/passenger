@@ -558,7 +558,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     {
         window.ShowToolWindow(ToolWindowIds.Debug);
         Ui.Settle();
-        return [.. window.BottomPanel.Debug.HeaderTools.GetVisualDescendants().OfType<ToggleButton>().Select(button =>
+        return [.. window.DebugWindow.HeaderTools.GetVisualDescendants().OfType<ToggleButton>().Select(button =>
         {
             TextBlock name = button.GetVisualDescendants().OfType<TextBlock>().First();
             return (name.Text ?? string.Empty, button.IsChecked == true, name.Classes.Contains("muted"), button, button.GetVisualDescendants().OfType<Button>().First());

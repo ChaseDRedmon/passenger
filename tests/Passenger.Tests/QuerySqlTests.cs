@@ -35,7 +35,7 @@ public sealed class QuerySqlTests : McpRig, IClassFixture<QuerySqlTests.Shop>
             Ui.Launched(window, window.DebugAsync(), "the shop to start debugged", TimeSpan.FromMinutes(3));
             Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.BottomPanel.Debug.Tree.Rows.Any(r => r.Name == "stocked"),
                 $"the stop at the breakpoint and its locals; the status bar said \"{window.Status}\"", TimeSpan.FromMinutes(1));
-            VariablesList variables = window.BottomPanel.Debug.VariablesList;
+            VariablesList variables = window.DebugWindow.VariablesList;
 
             // Opened, the query lists its SQL first, unread: nothing has run ToQueryString() in the program yet.
             VariableNode stocked = variables.Tree.Rows.Single(r => r.Name == "stocked" && r.Depth == 0);

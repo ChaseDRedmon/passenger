@@ -25,7 +25,7 @@ public sealed class DebugController : IDisposable
     public const string AttachedConsole = "Console output is not available when the debugger is attached to a running process";
 
     private readonly EditorArea editors;
-    private readonly DebugView view;
+    private readonly DebugModel view;
     private readonly List<string> watches = [];
     private readonly Dictionary<OpenDocument, EventHandler<DocumentChangedEventArgs>> following = [];
 
@@ -88,7 +88,7 @@ public sealed class DebugController : IDisposable
     private bool ending;
 
     /// <summary>A folder's debugger over the window's editors and Debug window, which it has until it is disposed.</summary>
-    public DebugController(EditorArea editors, DebugView view)
+    public DebugController(EditorArea editors, DebugModel view)
     {
         this.editors = editors;
         this.view = view;

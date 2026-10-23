@@ -320,7 +320,7 @@ public sealed class KeymapChoiceTests : IDisposable
         {
             window.ShowToolWindow(ToolWindowIds.Debug);
             Ui.Settle();
-            Button breakpoints = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>()
+            Button breakpoints = window.DebugWindow.GetVisualDescendants().OfType<Button>()
                 .Single(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("View Breakpoints and Exceptions", StringComparison.Ordinal));
             Assert.Equal($"View Breakpoints and Exceptions ({Shortcut.Parse($"{Cmd} alt B").Display()})", ToolTip.GetTip(breakpoints));
             // Containers' actions have no keys of either keymap's: Refresh is given one over VS Code's alone.

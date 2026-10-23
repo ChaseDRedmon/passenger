@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
     private readonly ToolWindows.ToolViews Bottom = new();
     private ToolWindows.StructureView? structure;
+    private ToolWindows.DebugView? debugView;
 
     /// <summary>The folder open and what it has and runs, or the window's nothing before one opens.</summary>
     private ProjectSession session;
@@ -373,7 +374,7 @@ public partial class MainWindow : Window
         {
             if (!shifted)
             {
-                if (!BranchesTake(action) && !Bottom.Debug.TakesAction(action))
+                if (!BranchesTake(action) && debugView?.TakesAction(action) != true)
                 {
                     Request(action);
                 }
@@ -449,6 +450,10 @@ public partial class MainWindow : Window
     public ToolWindows.ToolViews BottomPanel => Bottom;
 
     public DebugController Debugger => session.Debug;
+
+    /// <summary>The Debug window's view, built as it is asked for; what it shows is <see cref="ToolWindows.ToolViews.Debug"/>,
+    /// kept while it is not.</summary>
+    public ToolWindows.DebugView DebugWindow => debugView ?? (ToolWindows.DebugView)Dock[ToolWindowIds.Debug]!.Content;
 
     /// <summary>The open folder, canonical, or null before one is opened.</summary>
     public string? Folder => session.Folder;
@@ -564,11 +569,11 @@ public partial class MainWindow : Window
         // Shown however it is (its action, its stripe button, a layout), it asks for the file shown then itself.
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Structure, "Structure", "Icon.Structure", MakeStructure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Run, "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun, ActionTitle = "Run Tool Window" });
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Debug, "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Debug, "Debug", "Icon.Debug", () => debugView = new ToolWindows.DebugView(Bottom.Debug), Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowDebug,
             ActionTitle = "Debug Tool Window",
-            HeaderTools = Bottom.Debug.HeaderTools,
+            Tools = () => debugView?.HeaderTools,
         });
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Aspire, "Aspire", "Icon.Aspire", Bottom.AspireHost, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowAspire, ActionTitle = "Aspire Tool Window" });
         Closed += (_, _) => Bottom.AspirePane.Dispose();

@@ -34,7 +34,7 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
         MainWindow window = Stopped();
         try
         {
-            Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+            Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
             VariablesList values = Hover(window, "person.Name");
             VariableNode person = Assert.Single(values.Tree.Rows);
             Assert.Equal("person", person.Name);

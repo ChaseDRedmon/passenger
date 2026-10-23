@@ -145,7 +145,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
             $"The app's frames were still recorded once the profiler's session had ended: {Said(console, "layout listened", 1)}");
 
         // The Debug window's toggle sets an overlay on the app's window, read back from its renderer.
-        DebugView debug = window.BottomPanel.Debug;
+        DebugModel debug = window.BottomPanel.Debug;
         Assert.True(debug.Overlays.IsVisible, "The Debug window has no overlay toggle while an inspected app is debugged");
         Toggle(window, "debug", debug.Overlays, "LayoutTimeGraph");
         Assert.Equal(["LayoutTimeGraph"], Shown(window.LiveApp!));

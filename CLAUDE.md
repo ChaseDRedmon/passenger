@@ -563,12 +563,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   looks among the views made (which window holds the keys) asks `IsBuilt` first. A window the IDE writes to and reads
   as it runs keeps that apart from its view, which builds from it as first shown (#441): Problems' lists are a
   `ProblemsModel` (`ToolViews.Problems`: every build's, server's, binding's and container's problems, the tab shown
-  and the row chosen; its view `ProblemsWindow`). The Build, Run and Debug consoles are made up front, their costly
-  part made as first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests
-  window's details, a `MergedLog`'s Find. Still made up front: the Debug window (each session's tab), Aspire's view,
-  made again at each session bind (`BindAspire`: its resources, selection, consoles and telemetry are `AspireView`'s
-  own, which the Aspire actions' checks read, so a lazy one needs it split first), the profiler's (each profile's
-  start, run and end) and the Live Visual Tree's (its controller reads its view).
+  and the row chosen; its view `ProblemsWindow`), and the Debug window's a `DebugModel` (`ToolViews.Debug`: each
+  session's tab and console, the threads, frames and values shown and what its toolbar can press; its view
+  `DebugWindow`, which the Evaluate field's keys and Variables' rows are). The Build and Run consoles are made up
+  front, their costly part made as first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it
+  kept), as each Debug console's, the Unit Tests window's details, a `MergedLog`'s Find. Still made up front: Aspire's
+  view, made again at each session bind (`BindAspire`: its resources, selection, consoles and telemetry are
+  `AspireView`'s own, which the Aspire actions' checks read, so a lazy one needs it split first), the profiler's (each
+  profile's start, run and end) and the Live Visual Tree's (its controller reads its view).
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -1923,7 +1925,7 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Debugging`: `BreakpointStore` holds line breakpoints by file and Rider's CLR exception
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
   `Muted` is Mute Breakpoints, which sends none while on. Several programs are debugged at once (#341): the controller
-  holds a `DebugTab` per session (the Debug window's header tabs, `DebugView.Sessions`, each with its own console, built
+  holds a `DebugTab` per session (the Debug window's header tabs, `DebugModel.Sessions`, each with its own console, built
   lines, Hot Reload and inspected app, `DebugTab.App`, #352), and `DebugController.Session` is the chosen tab's, which the window shows and every action and
   `Stop` act on; a stop in any program chooses its tab, and the chosen one's end chooses another still debugged (one
   paused first). Debug or Attach of a program already debugged (a tab's name: its configuration's, or the program's)

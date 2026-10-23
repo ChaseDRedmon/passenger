@@ -125,7 +125,7 @@ public sealed class DebuggedAppsTests : IClassFixture<RestoredFolders>, IDisposa
     {
         window.ShowToolWindow(ToolWindowIds.Debug);
         Ui.Settle();
-        ToggleButton tab = window.BottomPanel.Debug.HeaderTools.GetVisualDescendants().OfType<ToggleButton>()
+        ToggleButton tab = window.DebugWindow.HeaderTools.GetVisualDescendants().OfType<ToggleButton>()
             .First(button => button.GetVisualDescendants().OfType<TextBlock>().First().Text == name);
         Ui.Click(tab);
         Assert.True(window.Debugger.Chosen?.Name == name, $"A click on {name}'s tab chose {window.Debugger.Chosen?.Name}");
