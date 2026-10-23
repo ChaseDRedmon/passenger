@@ -224,26 +224,29 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         OpenDocument document = window.EditorArea.Active!;
         MSBuildDocument help = window.Session.MSBuild.For(document)!;
         void Counted(int count, string why) => Ui.WaitFor(() => help.Insight?.ItemType("Compile")?.Count == count, why);
-        Assert.Equal("MSBuild item, 2 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+        // As MSBuild evaluates the element's wildcard: by the system's separator.
+        string price = Path.Combine("..", "Shared", "Price.cs");
+        string tag = Path.Combine("..", "Shared", "Tag.cs");
+        Assert.Equal($"MSBuild item, 2 Compile items in the project: {price}", ItemCard(window, "<Comp"));
 
         File.WriteAllText(Path.Combine(folder, "Core", "Shelf.cs"), "class Shelf\n{\n}\n");
         Counted(3, "the Compile items to count the file another program put in the project's folder");
-        Assert.Equal("MSBuild item, 3 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+        Assert.Equal($"MSBuild item, 3 Compile items in the project: {price}", ItemCard(window, "<Comp"));
         File.WriteAllText(Path.Combine(folder, "Shared", "Tag.cs"), "class Tag\n{\n}\n");
         Counted(4, "the Compile items to count the file put in the folder outside the project that its element takes in");
-        Assert.Equal("MSBuild item, 4 Compile items in the project: ../Shared/Price.cs;../Shared/Tag.cs", ItemCard(window, "<Comp"));
+        Assert.Equal($"MSBuild item, 4 Compile items in the project: {price};{tag}", ItemCard(window, "<Comp"));
         File.Delete(Path.Combine(folder, "Core", "Shelf.cs"));
         Counted(3, "the Compile items to stop counting the file deleted from the project's folder");
         File.Delete(Path.Combine(folder, "Shared", "Tag.cs"));
         Counted(2, "the Compile items to stop counting the file deleted from Shared");
-        Assert.Equal("MSBuild item, 2 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+        Assert.Equal($"MSBuild item, 2 Compile items in the project: {price}", ItemCard(window, "<Comp"));
 
         // A file the IDE makes itself, which the folder watcher takes for a save.
         Assert.Null(window.CreateFile(Path.Combine(folder, "Core"), "Crate.cs", "class Crate\n{\n}\n"));
         Counted(3, "the Compile items to count the file New File made");
         window.OpenFile(Path.Combine(folder, "Core", "Core.csproj"));
         Ui.Settle();
-        Assert.Equal("MSBuild item, 3 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+        Assert.Equal($"MSBuild item, 3 Compile items in the project: {price}", ItemCard(window, "<Comp"));
         window.Close();
     }
 

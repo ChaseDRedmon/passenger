@@ -397,7 +397,8 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>, IC
                 "public static class Speaker\n{\n    public static void Speak(int i)\n    {\n        Console.WriteLine($\"Plugin {i}\");\n    }\n}\n");
             Directory.CreateDirectory(PathOf(Path.Combine("App", "bin")));
             Directory.CreateDirectory(PathOf(Path.Combine("Plugin", "bin")));
-            Prepare();
+            // App's reference reaches Plugin by its real path, which the solution's restore would reach by the folder's too.
+            Prepare(byRealPath: true);
         }
     }
 }
