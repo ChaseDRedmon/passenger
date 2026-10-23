@@ -26,7 +26,12 @@ public sealed class AspireDetailsPane(Action<Uri> browse, Action<string> open) :
             Say("Choose a resource to see its state, health, addresses and environment");
             return;
         }
-        Say(null);
+        // Shown again as each of the AppHost's updates comes: tables that show what they showed stay, a press on a link kept.
+        Show(() => Fill(resource));
+    }
+
+    private void Fill(AspireResource resource)
+    {
         JsonElement data = resource.Data;
         List<(string, Control)> about = [("Type", Words(Text(data, "resourceType") ?? Text(data, "type") ?? "Unknown"))];
         about.Add(("State", State(resource.State ?? "Unknown", Health(resource))));

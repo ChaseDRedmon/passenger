@@ -31,6 +31,7 @@ public sealed class ContainersView : DockPanel
 
     private readonly ContainersParts parts;
     private readonly ListBox list;
+    private readonly System.Collections.ObjectModel.ObservableCollection<RunItem<ContainerRow>> items = [];
     private readonly TextBlock empty;
     private readonly TextBlock nothingChosen;
     private readonly Dictionary<string, ToggleButton> tabs = [];
@@ -81,7 +82,8 @@ public sealed class ContainersView : DockPanel
         list = new ListBox
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<ContainerRow>((row, _) => row is null ? new Panel() : Row(row), supportsRecycling: false),
+            ItemsSource = items,
+            ItemTemplate = RunRows.Template<ContainerRow>(Row, Toggle, parts.Browse, "containerPort"),
         };
         list.SelectionChanged += (_, _) =>
         {
@@ -165,10 +167,10 @@ public sealed class ContainersView : DockPanel
     public bool HasRead { get; private set; }
 
     /// <summary>The rows listed, headings among them.</summary>
-    public IReadOnlyList<ContainerRow> Rows => list.ItemsSource as IReadOnlyList<ContainerRow> ?? [];
+    public IReadOnlyList<ContainerRow> Rows => [.. items.Select(item => item.Data)];
 
     /// <summary>The row chosen, which the window's actions act on.</summary>
-    public ContainerRow? Chosen => list.SelectedItem as ContainerRow;
+    public ContainerRow? Chosen => (list.SelectedItem as RunItem<ContainerRow>)?.Data;
 
     /// <summary>The detail tab shown: Log, Stats, Files or Details.</summary>
     public string ShownTab => shownTab;
@@ -176,7 +178,7 @@ public sealed class ContainersView : DockPanel
     /// <summary>Chooses a row by its key, as a click would.</summary>
     public bool Choose(Func<ContainerRow, bool> which)
     {
-        if (Rows.FirstOrDefault(which) is not { } row)
+        if (items.FirstOrDefault(item => which(item.Data)) is not { } row)
         {
             return false;
         }
@@ -346,12 +348,13 @@ public sealed class ContainersView : DockPanel
                     new ContainerRow(kind, 1, $"{o.Kind}:{o.Id}", o.Name) { Detail = o.Detail, Object = o })));
             }
         }
-        // The rows replaced choose nothing for a moment, which must not end the chosen row's streams.
+        // Rows taken out may choose nothing for a moment, which must not end the chosen row's streams; a row kept keeps its
+        // control, so a click on it lands whatever the engine said meanwhile.
         filling = true;
         try
         {
-            list.ItemsSource = rows;
-            list.SelectedItem = chosen is null ? null : rows.FirstOrDefault(r => r.Key == chosen);
+            RunRows.Put(items, [.. rows.Select(row => (row.Key, row))]);
+            list.SelectedItem = chosen is null ? null : items.FirstOrDefault(item => item.Key == chosen);
         }
         finally
         {
@@ -481,13 +484,13 @@ public sealed class ContainersView : DockPanel
     /// <summary>A row as every list of what runs draws one (<see cref="RunRows"/>): a heading with its count, a project with
     /// its status, a service or container with its health and ports (links on the engine's machine while it runs), an
     /// image, volume or network with what it is.</summary>
-    private Control Row(ContainerRow row)
+    private RunRow Row(ContainerRow row)
     {
         IReadOnlyList<ContainerInfo> containers = row.Containers;
         bool runs = row.Kind is ContainerRowKind.Project or ContainerRowKind.Service or ContainerRowKind.Container;
         bool serves = row.Kind is ContainerRowKind.Service or ContainerRowKind.Container;
         bool trailing = row.Kind is ContainerRowKind.Project or ContainerRowKind.Group;
-        RunRow shown = new(row.Depth, row.Label)
+        return new RunRow(row.Depth, row.Label)
         {
             Heading = row.Kind == ContainerRowKind.Group,
             Expands = row.Expands,
@@ -501,7 +504,6 @@ public sealed class ContainersView : DockPanel
             Trailing = trailing ? row.Detail ?? string.Empty : null,
             Tip = row.Container is { } one ? $"{one.Name} ({one.Id})\n{one.Image}\n{one.Status}" : row.Object is { } thing ? $"{thing.Name}\n{thing.Id}" : row.Name,
         };
-        return RunRows.Of(shown, () => Toggle(row), parts.Browse, "containerPort");
     }
 
     /// <summary>The state dot's: running (unhealthy while its health check fails), paused between states, the rest stopped.</summary>

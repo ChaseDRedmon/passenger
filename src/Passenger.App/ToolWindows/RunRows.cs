@@ -1,6 +1,8 @@
+using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -52,88 +54,104 @@ public sealed record RunRow(int Depth, string Label)
     public string? Tip { get; init; }
 }
 
-/// <summary>The one way the Containers and Aspire windows draw a row of what runs and its state, so both lists read alike.</summary>
+/// <summary>A row of a list of what runs as the list holds it, kept by its key while the list is read again (a resource's
+/// health streaming in, an engine's event): the same item, so its control, a press under way on it and the list's choice of
+/// it stay, told what it stands for now.</summary>
+public sealed class RunItem<T>(string key, T data)
+    where T : class
+{
+    public string Key { get; } = key;
+
+    /// <summary>What it stands for as last read.</summary>
+    public T Data { get; private set; } = data;
+
+    /// <summary>What it stands for changed: its control shows it anew in place.</summary>
+    public event EventHandler? Changed;
+
+    internal void Take(T data)
+    {
+        Data = data;
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public override string ToString() => Key;
+}
+
+/// <summary>The one way the Containers and Aspire windows list what runs and draw its rows, so both lists read alike and a
+/// click on either survives the list being read again.</summary>
 public static class RunRows
 {
-    /// <summary>A row's line: <paramref name="toggle"/> runs on its chevron's press, <paramref name="browse"/> on a link's
-    /// click; each link is named <paramref name="linkName"/>, as a test finds it.</summary>
-    public static Control Of(RunRow row, Action toggle, Action<Uri> browse, string linkName)
+    /// <summary>Makes a list's items the rows given, by their keys: a row whose key it lists keeps its item (its control,
+    /// a press on it, its choice) and is told what it stands for now; the others are put in or taken out where they stand.
+    /// Never the list made anew, whose controls a click's press and release would straddle, the click then lost.</summary>
+    public static void Put<T>(ObservableCollection<RunItem<T>> items, IReadOnlyList<(string Key, T Data)> rows)
+        where T : class
     {
-        DockPanel line = new() { Height = ListRow.Height, Margin = new Thickness(6 + (row.Depth * 16), 0, 6, 0) };
-        // Its whole box takes a press, not only the glyph's thin strokes.
-        PathIcon chevron = new()
+        HashSet<string> keys = rows.Select(row => row.Key).ToHashSet(StringComparer.Ordinal);
+        for (int i = items.Count - 1; i >= 0; i--)
         {
-            Width = 12, Height = 12, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, IsVisible = row.Expands,
-            Background = Brushes.Transparent, Name = "rowChevron",
-        };
-        chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable(row.Expanded ? "Icon.ChevronDown" : "Icon.ChevronRight"));
-        chevron.Bind(PathIcon.ForegroundProperty, chevron.GetResourceObservable("Passenger.TextMuted"));
-        chevron.PointerPressed += (_, e) =>
-        {
-            // The press's capture let go first: the rows made again take this chevron away, and a capture left on what held
-            // it would take the next press, which then reached no chevron.
-            e.Pointer.Capture(null);
-            toggle();
-            e.Handled = true;
-        };
-        // A second press soon after is the chevron's again, never the list's double click, which would toggle it back.
-        chevron.DoubleTapped += (_, e) => e.Handled = true;
-        DockPanel.SetDock(chevron, Dock.Left);
-        line.Children.Add(chevron);
-        if (row.Heading)
-        {
-            line.Children.Add(Words(row.Trailing ?? string.Empty, muted: true, dock: Dock.Right));
-            TextBlock heading = Words(row.Label, muted: false, dock: null);
-            heading.FontWeight = FontWeight.SemiBold;
-            line.Children.Add(heading);
-            return line;
-        }
-        if (row.State != RunState.None)
-        {
-            Ellipse state = new() { Width = 8, Height = 8, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-            state.Bind(Shape.FillProperty, state.GetResourceObservable(Colour(row.State)));
-            ToolTip.SetTip(state, row.StateTip);
-            DockPanel.SetDock(state, Dock.Left);
-            line.Children.Add(state);
-        }
-        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center, [DockPanel.DockProperty] = Dock.Right };
-        if (row.Health is { } health)
-        {
-            right.Children.Add(Containers.ContainerDetailsPane.HealthTag(health));
-        }
-        foreach (RunLink link in row.Links)
-        {
-            if (link.Target is { } target)
+            if (!keys.Contains(items[i].Key))
             {
-                Button open = new() { Classes = { "link" }, Content = link.Words, VerticalAlignment = VerticalAlignment.Center, Name = linkName };
-                ToolTip.SetTip(open, link.Tip ?? target.ToString());
-                open.Click += (_, _) => browse(target);
-                right.Children.Add(open);
+                items.RemoveAt(i);
+            }
+        }
+        for (int i = 0; i < rows.Count; i++)
+        {
+            (string key, T data) = rows[i];
+            if (i < items.Count && items[i].Key == key)
+            {
+                items[i].Take(data);
+                continue;
+            }
+            int at = -1;
+            for (int j = i + 1; j < items.Count; j++)
+            {
+                if (items[j].Key == key)
+                {
+                    at = j;
+                    break;
+                }
+            }
+            if (at >= 0)
+            {
+                items.Move(at, i);
+                items[i].Take(data);
             }
             else
             {
-                right.Children.Add(Words(link.Words, muted: true, dock: null));
+                items.Insert(i, new RunItem<T>(key, data));
             }
         }
-        if (row.Trailing is { } trailing)
+        while (items.Count > rows.Count)
         {
-            right.Children.Add(Words(trailing, muted: true, dock: null));
+            items.RemoveAt(items.Count - 1);
         }
-        line.Children.Add(right);
-        TextBlock name = Words(row.Label, muted: false, dock: Dock.Left);
-        name.MaxWidth = 260;
-        name.HorizontalAlignment = HorizontalAlignment.Left;
-        line.Children.Add(name);
-        if (row.Detail is { Length: > 0 } detailed)
-        {
-            TextBlock after = Words(detailed, muted: true, dock: null);
-            after.Margin = new Thickness(8, 0, 0, 0);
-            after.FontSize = 12;
-            line.Children.Add(after);
-        }
-        ToolTip.SetTip(line, row.Tip ?? row.Label);
-        return line;
     }
+
+    /// <summary>A list's rows: each item drawn by <paramref name="draw"/> as a <see cref="RunRowView"/>, shown anew in place
+    /// as its item changes; <paramref name="toggle"/> runs on a chevron's press and <paramref name="browse"/> on a link's
+    /// click, each link named <paramref name="linkName"/>, as a test finds it.</summary>
+    public static FuncDataTemplate<RunItem<T>> Template<T>(Func<T, RunRow> draw, Action<T> toggle, Action<Uri> browse, string linkName)
+        where T : class =>
+        new((item, _) =>
+        {
+            if (item is null)
+            {
+                return new Panel();
+            }
+            RunRowView view = new(() => toggle(item.Data), browse, linkName);
+            void Show(object? sender, EventArgs e) => view.Show(draw(item.Data));
+            view.Show(draw(item.Data));
+            // Followed while shown: a row scrolled away or taken out holds no handler on its item.
+            view.AttachedToVisualTree += (_, _) =>
+            {
+                item.Changed -= Show;
+                item.Changed += Show;
+                view.Show(draw(item.Data));
+            };
+            view.DetachedFromVisualTree += (_, _) => item.Changed -= Show;
+            return view;
+        }, supportsRecycling: false);
 
     /// <summary>A list of such rows opens and closes a row by a double click and by Enter, as both windows' lists do.</summary>
     public static void Toggles(ListBox list, Func<bool> expands, Action toggle)
@@ -158,7 +176,7 @@ public static class RunRows
         _ => "Passenger.TextMuted",
     };
 
-    private static TextBlock Words(string text, bool muted, Dock? dock)
+    internal static TextBlock Words(string text, bool muted, Dock? dock)
     {
         TextBlock words = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
         if (muted)
@@ -170,5 +188,127 @@ public static class RunRows
             DockPanel.SetDock(words, side);
         }
         return words;
+    }
+}
+
+/// <summary>A row of a list of what runs drawn (<see cref="RunRows"/>): indented by its depth, a chevron when rows go under
+/// it, its state's dot, its name and muted words after it, and at its right its health's tag, its addresses (links to the
+/// browser, else words) and muted words of its own. Shown again in place, each part changed only where what it shows
+/// changed, so a press on a link or the chevron is not taken from under the pointer by a read that changed nothing of it.</summary>
+public sealed class RunRowView : DockPanel
+{
+    private readonly Action<Uri> browse;
+    private readonly string linkName;
+    private readonly PathIcon chevron;
+    private readonly Ellipse dot = new() { Width = 8, Height = 8, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+    private readonly StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+    private readonly StackPanel links = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock trailing = RunRows.Words(string.Empty, muted: true, dock: null);
+    private readonly TextBlock name = RunRows.Words(string.Empty, muted: false, dock: Dock.Left);
+    private readonly TextBlock detail = RunRows.Words(string.Empty, muted: true, dock: null);
+    private Control? healthTag;
+    private string? tagged;
+    private RunRow? shown;
+
+    public RunRowView(Action toggle, Action<Uri> browse, string linkName)
+    {
+        this.browse = browse;
+        this.linkName = linkName;
+        Height = ListRow.Height;
+        // Its whole box takes a press, not only the glyph's thin strokes.
+        chevron = new PathIcon
+        {
+            Width = 12, Height = 12, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center,
+            Background = Brushes.Transparent, Name = "rowChevron",
+        };
+        chevron.Bind(PathIcon.ForegroundProperty, chevron.GetResourceObservable("Passenger.TextMuted"));
+        chevron.PointerPressed += (_, e) =>
+        {
+            // The press's capture let go first: rows put in or taken out under the pointer as it toggles, a capture kept on
+            // what they moved would take the next press, which then reached no chevron.
+            e.Pointer.Capture(null);
+            toggle();
+            e.Handled = true;
+        };
+        // A second press soon after is the chevron's again, never the list's double click, which would toggle it back.
+        chevron.DoubleTapped += (_, e) => e.Handled = true;
+        SetDock(chevron, Dock.Left);
+        SetDock(dot, Dock.Left);
+        SetDock(right, Dock.Right);
+        right.Children.Add(links);
+        right.Children.Add(trailing);
+        detail.Margin = new Thickness(8, 0, 0, 0);
+        detail.FontSize = 12;
+        Children.Add(chevron);
+        Children.Add(dot);
+        Children.Add(right);
+        Children.Add(name);
+        Children.Add(detail);
+    }
+
+    /// <summary>What the row shows now.</summary>
+    public RunRow? Shown => shown;
+
+    /// <summary>Shows a row, changing only the parts that differ from what it shows.</summary>
+    public void Show(RunRow row)
+    {
+        RunRow? was = shown;
+        shown = row;
+        Margin = new Thickness(6 + (row.Depth * 16), 0, 6, 0);
+        chevron.IsVisible = row.Expands;
+        if (was is null || was.Expanded != row.Expanded)
+        {
+            chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable(row.Expanded ? "Icon.ChevronDown" : "Icon.ChevronRight"));
+        }
+        dot.IsVisible = !row.Heading && row.State != RunState.None;
+        if (was is null || was.State != row.State)
+        {
+            dot.Bind(Shape.FillProperty, dot.GetResourceObservable(RunRows.Colour(row.State)));
+        }
+        ToolTip.SetTip(dot, row.StateTip);
+        string? health = row.Heading ? null : row.Health;
+        if (health != tagged)
+        {
+            tagged = health;
+            if (healthTag is not null)
+            {
+                right.Children.Remove(healthTag);
+            }
+            healthTag = health is null ? null : Containers.ContainerDetailsPane.HealthTag(health);
+            if (healthTag is not null)
+            {
+                right.Children.Insert(0, healthTag);
+            }
+        }
+        IReadOnlyList<RunLink> offered = row.Heading ? [] : row.Links;
+        if (was is null || !offered.SequenceEqual(was.Heading ? [] : was.Links))
+        {
+            links.Children.Clear();
+            foreach (RunLink link in offered)
+            {
+                links.Children.Add(Link(link));
+            }
+        }
+        links.IsVisible = links.Children.Count > 0;
+        trailing.Text = row.Trailing ?? string.Empty;
+        trailing.IsVisible = row.Trailing is not null;
+        name.Text = row.Label;
+        name.FontWeight = row.Heading ? FontWeight.SemiBold : FontWeight.Normal;
+        name.MaxWidth = row.Heading ? double.PositiveInfinity : 260;
+        detail.Text = row.Detail ?? string.Empty;
+        detail.IsVisible = !row.Heading && row.Detail is { Length: > 0 };
+        ToolTip.SetTip(this, row.Heading ? null : row.Tip ?? row.Label);
+    }
+
+    private Control Link(RunLink link)
+    {
+        if (link.Target is not { } target)
+        {
+            return RunRows.Words(link.Words, muted: true, dock: null);
+        }
+        Button open = new() { Classes = { "link" }, Content = link.Words, VerticalAlignment = VerticalAlignment.Center, Name = linkName };
+        ToolTip.SetTip(open, link.Tip ?? target.ToString());
+        open.Click += (_, _) => browse(target);
+        return open;
     }
 }
