@@ -3,12 +3,11 @@ using Passenger.Core;
 
 namespace Passenger.Tests;
 
-/// <summary>The stand-in for dotnet dev-certs every run that serves HTTPS is tested with (a container run's, an Aspire
-/// AppHost's), which trusts nothing on this machine: it notes what it was asked, answers the check with the exit code the test
-/// put in "check" (naming the certificate in "thumbprint" as found, when there is one; first taking two minutes while "slow"
-/// is there), trusts nothing, and exports a file that is no certificate with the mode its umask gives (or fails, as a locked
-/// keychain does, while "fail" is there), noting in "folder" the mode of the folder it exports into as it is called. Its
-/// first word is the folder it keeps those in. A shell script, so tests of it skip on Windows.</summary>
+/// <summary>The stand-in for dotnet dev-certs every HTTPS run is tested with (a container run's, an AppHost's), trusting
+/// nothing here: it notes what it was asked, answers the check with the exit code in "check" (naming "thumbprint"'s
+/// certificate as found, if any; first taking two minutes while "slow" is there), and exports a certificate and its .key,
+/// both none, at its umask's modes (or fails, as a locked keychain does, while "fail" is there), noting in "folder" the
+/// mode of the folder it exports into. Its first word is where it keeps those. A shell script: tests of it skip on Windows.</summary>
 internal static class DevCerts
 {
     internal const string Script = """
@@ -20,7 +19,7 @@ internal static class DevCerts
                          exit "$(cat "$dir/check")" ;;
           *" -ep "*) if [ -f "$dir/fail" ]; then echo "The keychain is locked" >&2; exit 3; fi
                      while [ "$1" != "-ep" ]; do shift; done; ls -ld "$(dirname "$2")" | cut -c1-10 > "$dir/folder"
-                     printf 'stand-in' > "$2"; exit 0 ;;
+                     printf 'stand-in' > "$2"; printf 'stand-in key' > "${2%.*}.key"; exit 0 ;;
           *" --trust "*) exit 0 ;;
         esac
         exit 1

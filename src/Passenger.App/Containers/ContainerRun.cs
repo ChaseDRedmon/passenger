@@ -600,8 +600,9 @@ public static class ContainerPlans
                 if (Serves(service) && certificate is { } exported)
                 {
                     volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = exported.Folder, ["target"] = "/https", ["read_only"] = true });
-                    environment["ASPNETCORE_Kestrel__Certificates__Default__Path"] = $"/https/{Path.GetFileName(exported.File)}";
-                    environment["ASPNETCORE_Kestrel__Certificates__Default__Password"] = exported.Password;
+                    // PEM, its key unencrypted in the folder only the person enters, mounted read-only: no password anywhere.
+                    environment["ASPNETCORE_Kestrel__Certificates__Default__Path"] = $"/https/{Path.GetFileName(exported.Certificate)}";
+                    environment["ASPNETCORE_Kestrel__Certificates__Default__KeyPath"] = $"/https/{Path.GetFileName(exported.Key)}";
                 }
                 else if (Serves(service))
                 {
@@ -778,7 +779,7 @@ public static class ContainerPlans
         // A service's ports Passenger chose replace the file's (YAML's tag, on JSON's flow, which YAML reads alike).
         string text = json.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         text = overriding ? text.Replace("\"ports\": [", "\"ports\": !override [", StringComparison.Ordinal) : text;
-        // It may hold the certificate's password and the configuration's environment: the person's alone to read.
+        // It may hold the configuration's environment: the person's alone to read.
         OwnFiles.Write(path, text);
     }
 

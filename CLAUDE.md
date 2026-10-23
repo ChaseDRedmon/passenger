@@ -123,11 +123,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   start and end in the log, what it throws) and every console's echo of one go through `ChildProcesses.Shown`, which the
   IDE makes `ContainerSecrets.CommandLine` as it starts (`IdeErrors.Install`): `InSaid`'s mask on each word alone (a
   `--password=…` masks its value, never the words after it, as a whole line's connection-string rule would), also knowing the
-  secret-named values of the child's own environment and those its starter names secrets with `ChildProcesses.Hiding`
-  (dev-certs' export password after `-p`), so no program's secret reaches the log or a window, whoever started it;
-  `ChildStart.Command` and `ChildEnd.Command` stay the command as it ran, for what watches the programs. A command line is
-  any process's on the machine to read, so a secret a program can take otherwise is given it so (the Migrations window's
-  connection strings, as its environment). A fork costs a large process tens of
+  secret-named values of the child's own environment, so no program's secret reaches the log or a window, whoever started
+  it; `ChildStart.Command` and `ChildEnd.Command` stay the command as it ran, for what watches the programs. A command line
+  is any process's on the machine to read, so no command line Passenger starts holds a secret: one a program can take
+  otherwise is given it so (the Migrations window's connection strings, as its environment), or not made (the development
+  certificate exported for containers as PEM with no password, #442). A fork costs a large process tens of
   milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
   thread's), on the caller's thread otherwise: every git command (`Git`) starts so; `Start` stays on the caller's
   thread for what needs the child at once (a console's `ProcessRunner`, `Builder.ProcessId`). A child the IDE ends (`Kill`, or
@@ -888,7 +888,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   or dotnet publish, `ComposeDeclarations.Built`, else the configuration's choice, else the .dcproj's), and every command
   takes Passenger's override from the folder's state (`workspaces/…/containers/<config>.override.yaml`, JSON, written
   after the host's build, the person's alone to read on macOS and Linux from the moment it is made, as a single service's
-  compose file is (`OwnFiles`), since it names the certificate's password and the configuration's environment): labels on
+  compose file is (`OwnFiles`), since it holds the configuration's environment): labels on
   every service, image build and network;
   in fast mode each .NET service it starts its runtime
   stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
@@ -903,8 +903,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   and Trust running `--trust` or Run over HTTP; a run an agent's call started (`Mcp.AgentCall.Current`) or an agent's own
   IDE (`MainWindow.AgentsOwn`, `--mcp`'s, not `--no-mcp`'s) asks no one and runs over HTTP, saying so in the status bar and
   the call's answer (`ContainerRun.Notes`); a start stopped closes the question; then exported, again once the check names
-  another certificate than the one exported (its thumbprint kept beside it), into a folder only the person enters, made so
-  before dev-certs writes there, its files theirs alone to read (`OwnFiles`), the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
+  another certificate than the one exported (its thumbprint kept beside it), as PEM with its key unencrypted (`-ep
+  aspnetapp.pem --format Pem --no-password`, the key `aspnetapp.key` beside it: dev-certs takes a password only on its
+  command line, #442) into a folder only the person enters, made so before dev-certs writes there, its files theirs alone
+  to read (`OwnFiles`), an earlier Passenger's .pfx and password deleted there, the run's `ContainerRun.Certificate`,
+  mounted read-only at `/https` and given to Kestrel as `ASPNETCORE_Kestrel__Certificates__Default__Path` and `__KeyPath`
+  (an Aspire AppHost's run exports nothing, its services on this machine reading its store); with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
   failure is said in the status bar, a click from the Run window's line of what dev-certs said; the wait for the answer
   holds no `BackgroundWork`; `DotnetWords` is the dotnet it runs through, a test's stand-in by `MainWindow.DevCertificates`)
   and in Development the project's own user secrets (its UserSecretsId's folder alone, mounted at
@@ -1013,11 +1017,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
   Dockerfile's final FROM, their menu running or debugging that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
   run them against the engine on aspnet:10.0 and busybox (with a fast-mode run up, a build twice and a configuration's
-  plan each end as without one, #433); their HTTPS test exports the machine's development certificate
-  first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
-  which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`; its check answered trusted by a
-  stand-in, so it asks nothing), their certificate question's test answers with a shell stand-in for dev-certs that trusts
-  nothing on the machine (`DevCerts`, which AspireStandInTests' and McpAspireTests' HTTPS AppHost take too), and their SDK container image (unlabelled, the SDK's) is removed by the test that
+  plan each end as without one, #433); their HTTPS test serves a certificate made for the test and thrown away, its PEM
+  and key written by a dev-certs stand-in whose check answers trusted (the machine's store never read, so nothing asks the
+  person), and checks the service serves that one, their certificate question's test answers with a shell stand-in for
+  dev-certs that trusts nothing on the machine (`DevCerts`, which AspireStandInTests' and McpAspireTests' HTTPS AppHost
+  take too), both hold every command line the run started (`ChildProcesses.Started`) to naming no password, and their SDK container image (unlabelled, the SDK's) is removed by the test that
   made it.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the

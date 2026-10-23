@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
 using Passenger.App.Containers;
 using Passenger.Core;
 
@@ -12,11 +11,19 @@ public delegate ProcessStartInfo DotnetWords(IReadOnlyList<string> words, string
 /// <summary>ASP.NET Core's development certificate for a run that serves HTTPS (a container run's services, an Aspire
 /// AppHost and the services it starts): how it stands on this machine (<c>dotnet dev-certs https --check --trust</c>), made
 /// and trusted when the person asks (<c>--trust</c>, which the system may ask about too), and, for containers, exported
-/// once into the state (<c>-ep … -p …</c>), with a password of its own kept beside it and never written to a console; each
-/// through ChildProcesses, bounded, saying why when it does not come.</summary>
+/// once into the state as PEM with its key unencrypted (<c>-ep … --format Pem --no-password</c>) in a folder only the person
+/// enters, so no password is on any command line; each through ChildProcesses, bounded, saying why when it does not come.</summary>
 public static partial class DevelopmentCertificate
 {
-    public sealed record Exported(string Folder, string File, string Password);
+    /// <summary>The certificate exported for containers: its folder, which a container mounts read-only, and its certificate
+    /// and key there, which Kestrel reads as PEM.</summary>
+    public sealed record Exported(string Folder, string Certificate, string Key);
+
+    /// <summary>The exported certificate's name in its folder, its key's the same with <c>.key</c>.</summary>
+    private const string CertificateFile = "aspnetapp.pem";
+
+    /// <summary>What an earlier Passenger exported there: a .pfx and the password beside it.</summary>
+    private static readonly string[] Earlier = ["aspnetapp.pfx", "password"];
 
     /// <summary>What tells a .NET program that serves HTTPS to serve HTTP for this run, there being no certificate to give it
     /// (the person chose so, nobody was there to ask, or the export failed), given its environment: its https addresses as
@@ -111,8 +118,9 @@ public static partial class DevelopmentCertificate
     public static async Task<(Exported? Certificate, string? Problem)> ExportAsync(DotnetWords dotnet, string state, string? thumbprint, CancellationToken cancel)
     {
         string folder = Path.Combine(state, "https");
-        string file = Path.Combine(folder, "aspnetapp.pfx");
-        string kept = Path.Combine(folder, "password");
+        string file = Path.Combine(folder, CertificateFile);
+        // dev-certs writes a PEM export's key beside it, named for it.
+        string key = Path.ChangeExtension(file, ".key");
         // The thumbprint of the certificate exported, as the check named it then: a copy of another the check no longer finds
         // (made again since, or expired and replaced) would be refused by every browser that trusts the new one.
         string exportedOf = Path.Combine(folder, "thumbprint");
@@ -120,28 +128,30 @@ public static partial class DevelopmentCertificate
         try
         {
             OwnFiles.Folder(folder);
-            if (File.Exists(file) && File.Exists(kept)
+            // An earlier Passenger's .pfx and its password, which the folder mounted would give every container.
+            Delete(state, Earlier);
+            if (File.Exists(file) && File.Exists(key)
                 && (thumbprint is null || File.Exists(exportedOf) && string.Equals((await File.ReadAllTextAsync(exportedOf, cancel)).Trim(), thumbprint, StringComparison.OrdinalIgnoreCase)))
             {
-                return (new Exported(folder, file, (await File.ReadAllTextAsync(kept, cancel)).Trim()), null);
+                return (new Exported(folder, file, key), null);
             }
             Forget(state);
-            string password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-            // dev-certs takes its password on its command line alone: the log and any word of the command mask it.
-            ChildResult exported = await ChildProcesses.RunAsync(ChildProcesses.Hiding(dotnet(["dev-certs", "https", "-ep", file, "-p", password], folder), password),
+            // PEM with its key unencrypted, in the folder only the person enters: a password would be on dev-certs' command
+            // line, which takes one nowhere else, for any process of the machine to read.
+            ChildResult exported = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "-ep", file, "--format", "Pem", "--no-password"], folder),
                 limit: ExportLimit, cancel: cancel);
-            if (!exported.Succeeded || !File.Exists(file))
+            if (!exported.Succeeded || !File.Exists(file) || !File.Exists(key))
             {
                 return (null, $"dotnet dev-certs https -ep ended with exit code {exported.ExitCode}: {Said(exported)}");
             }
-            // Whatever mode dev-certs gave the copy, in the folder no one else enters.
+            // Whatever modes dev-certs gave them, in the folder no one else enters.
             OwnFiles.Keep(file);
-            OwnFiles.Write(kept, password);
+            OwnFiles.Keep(key);
             if (thumbprint is not null)
             {
                 OwnFiles.Write(exportedOf, thumbprint);
             }
-            return (new Exported(folder, file, password), null);
+            return (new Exported(folder, file, key), null);
         }
         catch (TimeoutException)
         {
@@ -159,11 +169,15 @@ public static partial class DevelopmentCertificate
     }
 
     /// <summary>Lets go of the copy exported before, which a certificate made since no longer matches.</summary>
-    private static void Forget(string state)
+    private static void Forget(string state) =>
+        Delete(state, [CertificateFile, Path.ChangeExtension(CertificateFile, ".key"), "thumbprint", .. Earlier]);
+
+    /// <summary>Deletes these files of the state's certificate folder, where there.</summary>
+    private static void Delete(string state, IEnumerable<string> files)
     {
         try
         {
-            foreach (string kept in (string[])["aspnetapp.pfx", "thumbprint"])
+            foreach (string kept in files)
             {
                 if (Path.Combine(state, "https", kept) is var file && File.Exists(file))
                 {
