@@ -374,6 +374,52 @@ public sealed class DockingTests
         next.Close();
     }
 
+    /// <summary>A window's start makes no view of a tool window it hides, and no console's editor (#233: building every
+    /// view up front was 616 ms of a 2 s launch, the consoles' 77 and the Debug window's 51): each is built as it is first
+    /// shown, by its layout kept too, a run's output written meanwhile there whole, the caret at its end.</summary>
+    [AvaloniaFact]
+    public void A_hidden_tool_windows_view_is_built_only_as_it_is_first_shown_and_a_console_shows_what_was_written_before()
+    {
+        string settings = TestFolders.Create("settings-");
+        MainWindow window = Open(settings);
+        window.KeepLayout();
+        DockHost dock = window.DockHost;
+        string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory];
+        foreach (string id in built)
+        {
+            Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");
+        }
+        Passenger.App.ToolWindows.ToolViews bottom = window.BottomPanel;
+        Assert.False(bottom.Run.HasEditor || bottom.Build.HasEditor || bottom.Debug.FirstConsole.HasEditor,
+            "A console's editor was made as the window started, though its window is hidden");
+        Assert.False(bottom.Tests.HasDetails, "The Unit Tests window's details editor was made as the window started, though it is hidden");
+
+        // Output written while the Run window is hidden is all there once it is shown, the caret at its end to follow it.
+        bottom.Run.Append("Building…\nRunning Hello\n");
+        Ui.Settle();
+        Assert.False(bottom.Run.HasEditor, "Output written to the hidden Run window made its editor");
+        dock.Show(ToolWindowIds.Run);
+        Ui.Settle();
+        Assert.Contains(bottom.Run.Editor, dock.GetVisualDescendants());
+        Assert.Equal("Building…\nRunning Hello\n", bottom.Run.Document.Snapshot.ToString());
+        Assert.Equal(bottom.Run.Document.Snapshot.Length, bottom.Run.Editor.Selections.Primary.Caret);
+        bottom.Run.Append("Done\n");
+        Assert.Equal(bottom.Run.Document.Snapshot.Length, bottom.Run.Editor.Selections.Primary.Caret);
+
+        // Shown, a window's view is built; the layout kept with it shown builds it as the next window opens, and no other.
+        dock.Show(ToolWindowIds.Structure);
+        Ui.Settle();
+        Assert.Contains(window.StructureView, dock.GetVisualDescendants());
+        window.Close();
+        MainWindow next = Open(settings);
+        next.KeepLayout();
+        Ui.Settle();
+        Assert.True(next.DockHost.IsShown(ToolWindowIds.Structure));
+        Assert.Contains(next.StructureView, next.DockHost.GetVisualDescendants());
+        Assert.All(built.Skip(1), id => Assert.False(next.DockHost[id]!.IsBuilt, $"The {next.DockHost[id]!.Title} window's view was made, though it is hidden"));
+        next.Close();
+    }
+
     private static GridSplitter Divider(DockHost dock, Func<Control, bool> place) =>
         dock.Children.First(place).GetVisualDescendants().OfType<GridSplitter>().Single();
 

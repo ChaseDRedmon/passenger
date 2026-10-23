@@ -24,8 +24,7 @@ public partial class MainWindow
     private async Task HoldAsync(ExplorerNode node, bool cut)
     {
         IReadOnlyList<ExplorerNode> chosen = Explorer.SelectedNodes;
-        List<string> paths = [.. (chosen.Contains(node) ? chosen : [node]).Where(n => n.IsMovable).Select(n => n.Path!)];
-        paths = [.. paths.Where(p => !paths.Any(other => PathNames.IsUnder(p, other)))];
+        IReadOnlyList<string> paths = Outermost([.. (chosen.Contains(node) ? chosen : [node]).Where(n => n.IsMovable).Select(n => n.Path!)]);
         if (paths.Count == 0)
         {
             return;
@@ -33,7 +32,7 @@ public partial class MainWindow
         string text = string.Join(Environment.NewLine, paths);
         held = (paths, cut, text);
         // What is nested under a file cut goes with it, so it dims with it.
-        Explorer.Tree.SetCut(cut ? [.. paths, .. paths.SelectMany(DependentsOf)] : []);
+        Explorer.Tree.SetCut(cut ? [.. paths, .. DependentsOf(paths).Values.SelectMany(d => d)] : []);
         if (Clipboard is { } clipboard)
         {
             await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(clipboard, text);
@@ -71,8 +70,23 @@ public partial class MainWindow
 
     private Task DropAsync(ExplorerDrop drop)
     {
-        List<string> paths = [.. drop.Items.Select(i => i.Path!)];
-        return drop.Target.Into is { } into ? PutAsync([.. paths.Where(p => !paths.Any(other => PathNames.IsUnder(p, other)))], into, drop.Copy) : Task.CompletedTask;
+        return drop.Target.Into is { } into ? PutAsync(Outermost([.. drop.Items.Select(i => i.Path!)]), into, drop.Copy) : Task.CompletedTask;
+    }
+
+    /// <summary>The paths but those inside a folder among them, found by each one's folders rather than by every other path:
+    /// thousands chosen at once would otherwise be compared in pairs.</summary>
+    private static IReadOnlyList<string> Outermost(IReadOnlyList<string> paths)
+    {
+        HashSet<string> chosen = new(paths, PathNames.Comparer);
+        return [.. paths.Where(path => !Above(path).Any(chosen.Contains))];
+
+        static IEnumerable<string> Above(string path)
+        {
+            for (string? folder = Path.GetDirectoryName(path); folder is not null; folder = Path.GetDirectoryName(folder))
+            {
+                yield return folder;
+            }
+        }
     }
 
     /// <summary>Moves or copies files and folders into a folder: what is there already stays put, a folder never goes
@@ -83,15 +97,12 @@ public partial class MainWindow
     {
         into = PathNames.Canonical(into);
         // A file's dependents go with it, renamed as a copy's name asks; one chosen with its parent goes as the parent's.
-        Dictionary<string, IReadOnlyList<string>> following = new(StringComparer.Ordinal);
-        foreach (string path in paths)
-        {
-            following.TryAdd(path, DependentsOf(path));
-        }
+        IReadOnlyDictionary<string, IReadOnlyList<string>> following = DependentsOf(paths);
+        HashSet<string> dependents = [.. following.Values.SelectMany(d => d)];
         List<string> put = [];
         List<(string From, string To)> moved = [];
         List<string> refused = [];
-        foreach (string source in paths.Where(p => !following.Values.Any(d => d.Contains(p))))
+        foreach (string source in paths.Where(p => !dependents.Contains(p)))
         {
             string name = Path.GetFileName(source);
             if (!File.Exists(source) && !Directory.Exists(source))
@@ -173,8 +184,24 @@ public partial class MainWindow
 
     /// <summary>The files nested under one in the Solution view, by its project's DependentUpon and, while nesting by
     /// name is on, by Rider's rules: what goes where it goes. None for a file in no project.</summary>
-    private IReadOnlyList<string> DependentsOf(string path) =>
-        File.Exists(path) && ProjectOf(PathNames.Canonical(path)) is { } project ? FileNesting.DependentsOf(PathNames.Canonical(path), project, settings.NestFiles) : [];
+    private IReadOnlyList<string> DependentsOf(string path) => DependentsOf([path]).GetValueOrDefault(path) ?? [];
+
+    /// <summary>The files nested under each of several, by the path given (none for one in no project), each folder read once.</summary>
+    private IReadOnlyDictionary<string, IReadOnlyList<string>> DependentsOf(IReadOnlyList<string> paths)
+    {
+        Dictionary<string, string> canonical = new(StringComparer.Ordinal);
+        List<(string Path, ProjectModel? Project)> owned = [];
+        foreach (string path in paths)
+        {
+            string at = PathNames.Canonical(path);
+            if (canonical.TryAdd(path, at) && File.Exists(at) && ProjectOf(at) is { } project)
+            {
+                owned.Add((at, project));
+            }
+        }
+        IReadOnlyDictionary<string, IReadOnlyList<string>> found = FileNesting.DependentsOf(owned, settings.NestFiles);
+        return canonical.ToDictionary(p => p.Key, p => found.GetValueOrDefault(p.Value) ?? [], StringComparer.Ordinal);
+    }
 
     /// <summary>What names the files moved follows them, as Rider's project model does: the solution's projects and files,
     /// and every project's items naming one (an Update or Remove, a DependentUpon, a reference to a project moved), each

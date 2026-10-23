@@ -27,15 +27,15 @@ public partial class MainWindow
     /// <summary>The open folder's Local History, or null with none open.</summary>
     public LocalHistory? LocalHistory => session.LocalHistory;
 
-    /// <summary>The Local History tool window.</summary>
-    public LocalHistoryView LocalHistoryWindow => localHistoryView!;
+    /// <summary>The Local History tool window, built as it is first shown or asked for.</summary>
+    public LocalHistoryView LocalHistoryWindow => localHistoryView ?? (LocalHistoryView)Dock[ToolWindowIds.LocalHistory]!.Content;
 
     private void AddLocalHistory()
     {
-        localHistoryView = new LocalHistoryView();
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.LocalHistory, "Local History", "Icon.History", localHistoryView, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.LocalHistory, "Local History", "Icon.History", () => localHistoryView = new LocalHistoryView(),
+            Docking.ToolAnchor.BottomLeft)
         {
-            HeaderTools = localHistoryView.Tabs,
+            Tools = () => localHistoryView?.Tabs,
         });
         // Rider's names: the menus' own, and Find Action's (Show Local History...) beside the Git window's Show History.
         actions!.Add(new IdeAction(AppActions.ShowLocalHistory, "Show Local History…", "Local History", context => ShowLocalHistory(Target(context, fileOnly: false)!))
@@ -111,7 +111,7 @@ public partial class MainWindow
         }
         bool isFolder = Directory.Exists(full);
         ShowToolWindow(ToolWindowIds.LocalHistory);
-        return localHistoryView!.Show(full, Path.GetFileName(Path.TrimEndingDirectorySeparator(full)),
+        return LocalHistoryWindow.Show(full, Path.GetFileName(Path.TrimEndingDirectorySeparator(full)),
             () => new HistoryTab(history, new HistoryHost(Editors, RevertAsync), full, isFolder));
     }
 

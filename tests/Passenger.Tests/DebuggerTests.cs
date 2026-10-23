@@ -778,6 +778,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Show();
         window.KeepLayout();
         window.OpenFolder(sum.Folder);
+        Ui.Settle();
         window.OpenFile(Program);
         Ui.Settle();
         return window;

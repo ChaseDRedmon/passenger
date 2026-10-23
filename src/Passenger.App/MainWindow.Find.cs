@@ -15,14 +15,17 @@ public partial class MainWindow
 {
     private FindView? find;
 
-    /// <summary>The Find tool window.</summary>
-    public FindView Find => find!;
+    /// <summary>The Find tool window, built as it is first shown or asked for.</summary>
+    public FindView Find => find ?? (FindView)Dock[ToolWindowIds.Find]!.Content;
 
     private void AddFind()
     {
-        find = new FindView(path => TextOf(path)?.ToString());
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Find, "Find", "Icon.Search", find, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowFind, ActionTitle = "Find Tool Window" });
-        find.GoToRequested += (_, usage) => NavigateTo(usage.Path, new TextPosition(usage.Line, usage.Column));
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Find, "Find", "Icon.Search", () =>
+        {
+            find = new FindView(path => TextOf(path)?.ToString());
+            find.GoToRequested += (_, usage) => NavigateTo(usage.Path, new TextPosition(usage.Line, usage.Column));
+            return find;
+        }, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowFind, ActionTitle = "Find Tool Window" });
         assist.UsagesFound += (_, found) => ShowUsages(found.Title, found.Usages);
     }
 

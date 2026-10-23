@@ -102,8 +102,28 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     [McpServerTool(Name = "workspace", Title = "The workspace", ReadOnly = true), Description(
         "The open folder and solution, its projects (output type, frameworks), the run configurations and the chosen one, " +
         "the language server's state, the open files (unsaved ones marked) and the active file with its caret, and the Aspire " +
-        "AppHosts and container run under way: each resource's state, hold, debug session and the target the tools' resource takes.")]
-    public Task<Workspace> GetWorkspace(CancellationToken cancel = default) => OnUi(cancel, () => RunsWorkspace(Snapshot(), cancel));
+        "AppHosts and container run under way: each resource's state, hold, debug session and the target the tools' resource takes. " +
+        "routes adds the web projects' routes, read from their code: methods, template, parameters with their source, handler, place.")]
+    public Task<Workspace> GetWorkspace(bool routes = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        Workspace answered = await RunsWorkspace(Snapshot(), cancel);
+        if (!routes)
+        {
+            return answered;
+        }
+        if (Session.CSharp is null)
+        {
+            throw new InvalidOperationException("No C# language server runs for this folder, and routes are read from code through it");
+        }
+        await Until(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel);
+        IReadOnlyList<Roslyn.Extension.WebRoute> found = await window.RoutesAsync(cancel);
+        return answered with
+        {
+            Routes = [.. found.Select(r => new RouteInfo(Path.GetFileNameWithoutExtension(r.Project), r.Kind, Endpoints.RouteRequests.Title(r), r.Handler,
+                [.. r.Parameters.Select(p => $"{p.Name}{(p.Constraints is { } c ? ":" + c : p.Type is { } t ? ": " + t : string.Empty)}{(p.Optional ? "?" : string.Empty)} ({p.Source})")],
+                Relative(r.Path), ServerPlaces.PositionOf(Editors, r.Path, new LspPosition(r.At.Line, r.At.Character)).Line + 1, r.BodyType))],
+        };
+    });
 
     [McpServerTool(Name = "open_file", Title = "Show a file", Destructive = false), Description(
         "Opens a file in the editor, at a line and column if given, as the person sees it.")]
@@ -1861,7 +1881,14 @@ public sealed record Workspace(
 
     /// <summary>The container run under way, beside the AppHosts, its services as their resources are; null with none.</summary>
     public ContainerRunInfo? ContainerRun { get; init; }
+
+    /// <summary>The web projects' routes, when asked for.</summary>
+    public IReadOnlyList<RouteInfo>? Routes { get; init; }
 }
+
+/// <summary>A route as an agent reads it: its project, what declares it, its methods and template ("GET /todos/{id:int}"),
+/// its handler, its parameters ("id:int (route)"), where it is declared, and its body's type.</summary>
+public sealed record RouteInfo(string Project, string Kind, string Route, string Handler, IReadOnlyList<string> Parameters, string Path, int Line, string? Body);
 
 public sealed record ProjectInfo(string Name, string Path, string? OutputType, IReadOnlyList<string> TargetFrameworks);
 

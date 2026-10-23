@@ -83,6 +83,14 @@ public static class ChildProcesses
     /// run needs another); what <see cref="Process.Start()"/> throws when it cannot start, this throws.</summary>
     public static Process Start(ProcessStartInfo start) => Start(start, answers: null);
 
+    /// <summary><see cref="Start(ProcessStartInfo)"/> off the caller's thread when it has a context of its own (the UI
+    /// thread's), on it otherwise: the fork costs a large process tens of milliseconds (#233), which the window would wait
+    /// out. The child is started, its id known, once the task is done; what the start throws, the task throws.</summary>
+    public static Task<Process> StartAsync(ProcessStartInfo start) => StartOffAsync(start, answers: null);
+
+    private static async Task<Process> StartOffAsync(ProcessStartInfo start, IReadOnlyCollection<int>? answers) =>
+        SynchronizationContext.Current is null ? Start(start, answers) : await Task.Run(() => Start(start, answers));
+
     /// <summary><see cref="Start(ProcessStartInfo)"/>, with the exit codes that are the child's answer, not its failure.</summary>
     private static Process Start(ProcessStartInfo start, IReadOnlyCollection<int>? answers)
     {
@@ -173,7 +181,8 @@ public static class ChildProcesses
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        using Process process = Start(start, answers);
+        // Started off a caller's own thread (the window's), as every git command the window asks for is.
+        using Process process = await StartOffAsync(start, answers);
         using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         // Output past what the caller reads of it ends the child as an overrun limit does, said by the size it went past.
         Reading output = new(process.StandardOutput, mostOutput, ending);

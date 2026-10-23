@@ -393,7 +393,7 @@ public sealed partial class CodeAssist
             Menus = [new("Refactor", 4, 1)],
         });
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
-        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true, msbuild: true);
+        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true, msbuild: true, http: true);
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
             new("Navigate", 2, 1));
         Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 2));
@@ -407,8 +407,14 @@ public sealed partial class CodeAssist
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
         Code(AppActions.QuickDocumentation, "Quick Documentation", context => QuickDocumentation(), new("View", 1, 1), server: false);
 
-        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
-            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml, markup, msbuild), Menus = [menu] });
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false,
+            bool http = false) =>
+            actions.Add(new IdeAction(id, title, "Code", run)
+            {
+                // An .http file's requests go to their routes, with no language server of its own.
+                WhyNot = context => http && IsHttpFile(context.File) ? null : WhyNot(context, server, syntax, xaml, markup, msbuild),
+                Menus = [menu],
+            });
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
@@ -700,15 +706,8 @@ public sealed partial class CodeAssist
         }
         // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
         int alike = msbuildOffered.Count > 0 ? 1000 : 1;
-        List<CompletionRow> rows = open.Items
-            .Select(item => (item, score: FuzzyMatch.Label(led && item.FilterText is null ? typed[skip..] : typed, item.FilterText ?? item.Label)))
-            .Where(x => x.score is not null)
-            .OrderByDescending(x => x.score / alike)
-            .ThenByDescending(x => x.item.Preselect == true)
-            .ThenBy(x => x.item.SortText ?? x.item.Label, StringComparer.Ordinal)
-            .Take(200)
-            .Select(x => Swatched(Row(x.item)))
-            .ToList();
+        string bare = led ? typed[skip..] : typed;
+        List<CompletionRow> rows = [.. Shown(open.Items, typed, bare, alike).Select(item => Swatched(Row(item)))];
         if (rows.Count == 0)
         {
             CloseCompletion();
@@ -717,6 +716,64 @@ public sealed partial class CodeAssist
         completion.Show(rows);
         completion.IsVisible = true;
         Place(completion, open.Start, above: false);
+    }
+
+    /// <summary>The most rows the list shows.</summary>
+    private const int MostShown = 200;
+
+    /// <summary>The items that match what was typed, the best first (the higher score over <paramref name="alike"/>, then
+    /// the one the server preselects, then by its sort text): only the best <see cref="MostShown"/> kept as the items are
+    /// scored, where every match of a statement's list (every type in reach) was sorted at every key. An item with no
+    /// filter text of its own is matched by <paramref name="bare"/>, what was typed less a web server's lead.</summary>
+    private static CompletionItem[] Shown(IReadOnlyList<CompletionItem> items, string typed, string bare, int alike)
+    {
+        PriorityQueue<CompletionItem, (int Score, CompletionItem Item, int Index)> best = new(MostShown + 1, WorstFirst.Instance);
+        for (int i = 0; i < items.Count; i++)
+        {
+            CompletionItem item = items[i];
+            if (FuzzyMatch.Label(item.FilterText is null ? bare : typed, item.FilterText ?? item.Label) is not { } score)
+            {
+                continue;
+            }
+            (int, CompletionItem, int) ranked = (score / alike, item, i);
+            if (best.Count < MostShown)
+            {
+                best.Enqueue(item, ranked);
+            }
+            else if (best.TryPeek(out _, out (int Score, CompletionItem Item, int Index) worst) && WorstFirst.Instance.Compare(ranked, worst) > 0)
+            {
+                best.DequeueEnqueue(item, ranked);
+            }
+        }
+        CompletionItem[] shown = new CompletionItem[best.Count];
+        for (int i = shown.Length - 1; i >= 0; i--)
+        {
+            shown[i] = best.Dequeue();
+        }
+        return shown;
+    }
+
+    /// <summary>Matches in the order they go from the list's best: a lower score, then not preselected, then later by sort
+    /// text, then later in the server's list.</summary>
+    private sealed class WorstFirst : IComparer<(int Score, CompletionItem Item, int Index)>
+    {
+        public static readonly WorstFirst Instance = new();
+
+        public int Compare((int Score, CompletionItem Item, int Index) x, (int Score, CompletionItem Item, int Index) y)
+        {
+            int byScore = x.Score.CompareTo(y.Score);
+            if (byScore != 0)
+            {
+                return byScore;
+            }
+            int byPreselect = (x.Item.Preselect == true).CompareTo(y.Item.Preselect == true);
+            if (byPreselect != 0)
+            {
+                return byPreselect;
+            }
+            int bySort = string.CompareOrdinal(y.Item.SortText ?? y.Item.Label, x.Item.SortText ?? x.Item.Label);
+            return bySort != 0 ? bySort : y.Index.CompareTo(x.Index);
+        }
     }
 
     private async Task Commit()
@@ -1740,6 +1797,10 @@ public sealed partial class CodeAssist
 
     private async Task GoToDefinitionCore(int offset)
     {
+        if (HttpGoTo(offset))
+        {
+            return;
+        }
         if (MSBuildCurrent is { } msbuild)
         {
             await MSBuildGoTo(msbuild, offset);
@@ -1969,6 +2030,10 @@ public sealed partial class CodeAssist
 
     private async Task FindUsagesCore(int offset)
     {
+        if (RouteUsages(offset))
+        {
+            return;
+        }
         if (XamlCurrent is { } xaml)
         {
             await XamlUsages(xaml, offset);

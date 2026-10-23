@@ -27,12 +27,13 @@ public static class Handlers
     public const string AspireRename = "Passenger.Roslyn.Extension.AspireRename";
     public const string AspireParameters = "Passenger.Roslyn.Extension.AspireParameters";
     public const string ConnectionReads = "Passenger.Roslyn.Extension.ConnectionReads";
+    public const string WebRoutes = "Passenger.Roslyn.Extension.WebRoutes";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
         DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
-        AspireRename, AspireParameters, ConnectionReads,
+        AspireRename, AspireParameters, ConnectionReads, WebRoutes,
     ];
 }
 
@@ -115,6 +116,59 @@ public sealed record ConnectionRead(
 
 /// <summary>The connection strings the projects asked for read, each where it is read; none of a project the server has not loaded.</summary>
 public sealed record ConnectionReadsFound([property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads);
+
+/// <summary>The projects whose web routes are asked for, by their project files' paths; none asks for every project's.</summary>
+public sealed record RoutesRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
+
+/// <summary>A value a route takes: its name, where it comes from (route, query, body, header, form or services), its type
+/// as written (none for a route parameter no handler parameter takes), its template constraints ("int:min(1)") and
+/// whether it may be left out.</summary>
+public sealed record RouteParameter(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("source")] string Source,
+    [property: JsonPropertyName("type")] string? Type = null,
+    [property: JsonPropertyName("constraints")] string? Constraints = null,
+    [property: JsonPropertyName("optional")] bool Optional = false);
+
+/// <summary>A route an ASP.NET Core project's code declares, read with no build: what declares it (<see cref="RouteKinds"/>),
+/// its HTTP methods (none for any), its whole template from the app's root ("/api/todos/{id:int}"), the query a Razor
+/// Page's named handler takes ("handler=Delete"), its parameters, its handler ("TodosController.Get"), where the route is
+/// written (the file, the stretch from <paramref name="At"/> to <paramref name="End"/>, and that file's text's
+/// <see cref="TextHash"/>, which places it only in the text it was read from), where its handler is, the body parameter's
+/// type, a JSON body shaped from that type, and a hub's methods.</summary>
+public sealed record WebRoute(
+    [property: JsonPropertyName("project")] string Project,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("methods")] IReadOnlyList<string> Methods,
+    [property: JsonPropertyName("template")] string Template,
+    [property: JsonPropertyName("query")] string? Query,
+    [property: JsonPropertyName("parameters")] IReadOnlyList<RouteParameter> Parameters,
+    [property: JsonPropertyName("handler")] string Handler,
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("at")] Place At,
+    [property: JsonPropertyName("end")] Place End,
+    [property: JsonPropertyName("sourceHash")] string SourceHash,
+    [property: JsonPropertyName("handlerPath")] string? HandlerPath = null,
+    [property: JsonPropertyName("handlerAt")] Place? HandlerAt = null,
+    [property: JsonPropertyName("bodyType")] string? BodyType = null,
+    [property: JsonPropertyName("body")] string? Body = null,
+    [property: JsonPropertyName("operations")] IReadOnlyList<string>? Operations = null);
+
+/// <summary>What declares a route.</summary>
+public static class RouteKinds
+{
+    public const string Minimal = "Minimal API";
+    public const string Controller = "Controller";
+    public const string RazorPage = "Razor Page";
+    public const string Blazor = "Blazor";
+    public const string SignalR = "SignalR";
+    public const string Grpc = "gRPC";
+}
+
+/// <summary>The routes of the projects asked for, and those of them that are web projects, read even when they declare none.</summary>
+public sealed record RoutesFound(
+    [property: JsonPropertyName("routes")] IReadOnlyList<WebRoute> Routes,
+    [property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
 
 /// <summary>The AppHost whose proven project resources and source locations are read.</summary>
 public sealed record AspireResourcesRequest(string AppHost);

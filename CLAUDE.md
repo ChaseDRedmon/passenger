@@ -119,7 +119,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Core`: what every part shares and no UI needs. `ChildProcesses` starts every program Passenger runs (an
   input of its own, UTF-8, none of a git hook's variables, a log line when one fails or takes a while) and ends it with
   the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
-  group per child, which a watchdog shell kills once Passenger's pipe to it closes). A child the IDE ends (`Kill`, or
+  group per child, which a watchdog shell kills once Passenger's pipe to it closes). A fork costs a large process tens of
+  milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
+  thread's), on the caller's thread otherwise: every git command (`Git`) starts so; `Start` stays on the caller's
+  thread for what needs the child at once (a console's `ProcessRunner`, `Builder.ProcessId`). A child the IDE ends (`Kill`, or
   `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
   only with Log every program. `RunAsync`'s limit covers a child's run to its exit; once it has exited, whatever the
@@ -275,8 +278,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Passenger's own extension to the server (`src/Passenger.Roslyn.Extension`, compiled against the server package's own
   assemblies through `RoslynServer.targets`, carried under `roslyn-extension/` with none of them): the server loads it
   with `--extension`, `server/_vs_activateExtension` registers its handlers, and `LspDocument.ExtensionAsync` sends a
-  message through `textDocument/_vs_dipatchExtensionMessage`. A handler reads the server's solution and answers with
-  edits, never changing its workspace. Razor (.razor, .cshtml) is the server's own, cohosted in it: `LspDocument.IsRazor`
+  message through `textDocument/_vs_dipatchExtensionMessage` (`RoslynSession.ExtensionAsync` one about the whole
+  solution, as `ConnectionReads` and `WebRoutes` are). A handler reads the server's solution and answers with
+  edits or what it found, never changing its workspace. Razor (.razor, .cshtml) is the server's own, cohosted in it: `LspDocument.IsRazor`
   opens such a file as `aspnetcorerazor`, its colours take the legend Razor registers as it starts (why the client
   capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
   client of a file's HTML, through the HTML server (below; without Node.js, HTML's element names and global attributes
@@ -419,7 +423,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
   loads the host's builds (`passenger/loadProjects`, `passenger/projectInfo`, `passenger/projectLoader`), compiled
   against the server's publicized assemblies (`src/Publicize.targets`, which the debugger imports too); a server
-  without the host builds its projects itself. A file in several projects (a multi-targeted project's) has the
+  without the host builds its projects itself. The server loads a batch's projects at once (`RunParallelAsync`), each
+  given build read as its load takes it (`TryLoadProjectInMSBuildHostAsync`), but puts each into its workspace under one
+  gate (`_gate`), so a warm reopen's projects still land one after another there. A file in several projects (a multi-targeted project's) has the
   editor's target framework switcher (`CodeEditor.ContextLabel`, `MainWindow.TargetFramework.cs`), its requests naming
   the chosen context (`LspDocument.Context`, Roslyn's `_vs_projectContext`).
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
@@ -479,7 +485,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ToolWindowIds` (what a kept layout records it by, so a value there never changes, and what every show, hide and
   `ToolWindow.Id ==` names): the shell's own (Explorer, Structure, Run, Debug, Unit Tests, Build, Problems) in
   `MainWindow.AddToolWindows`, a feature's in its `Add…` beside the view's wiring (Git and Commit in `AddVcs`, the
-  profiler in `ProfilerCommands`).
+  profiler in `ProfilerCommands`). A window's start builds no view it hides (#233): a `ToolWindow` given how to build
+  its view (`Func<Control>`, its header's `Tools` too) builds and wires it as it is first shown, by its layout kept too
+  (`IsBuilt`, `Built`), and what reads or acts on it asks through a property that builds it (`StructureView`, `Find`,
+  `Hierarchy`, `LocalHistoryWindow`), while what only follows the IDE (a caret moved, a session bound) passes over one
+  not built (`structure?.`); what only looks among the views made (which window holds the keys) asks `IsBuilt` first. A
+  view written to while hidden (the Build, Run, Debug and Problems consoles and lists) is made up front, its costly part
+  made as it is first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests
+  window's details, a `MergedLog`'s Find.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -494,8 +507,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay (and an entry another window removed stays removed; a list its `Sets` names merges as what each side added and
   took away), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
-  (`StateFile.TakeUnsaid`). New state is a document there, never a file of
-  its own.
+  (`StateFile.TakeUnsaid`). A folder's open reads the documents its restore takes in off the UI thread first
+  (`ProjectState.ReadAsync`, through `ValueAsync`), as the folder left ends, and begins its session once they land
+  (`OpenFolder`, at once for documents read already), so a person's window opens a folder in that order with no read on
+  its thread; a test that acts on a keeping window's folder right after `OpenFolder` settles first. New state is a
+  document there, read ahead with the rest when the open restores it, never a file of its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
   `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol
@@ -553,7 +569,32 @@ window or takes the focus; it shows everything but the system's own window chrom
   redirect is followed by hand: to another origin (scheme, host or port) without the request's headers, and not when it
   would carry the body there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
   variables filled in to `MostFilledIn`; a row's last outcome is kept by its name, else its method and URL. Tests send
-  only to `EndpointsTests`' stand-ins on loopback (its `localhost` name the other host, a second stand-in the other port).
+  only to `EndpointsTests`' stand-ins on loopback (its `localhost` name the other host, a second stand-in the other port),
+  and `WebRoutesTests`' shop on loopback.
+  The window also lists each web project's routes under it (#417), read from code by the extension's `WebRoutes`
+  (`Passenger.Roslyn.Extension/Routes.cs`, `RouteReading`: no build, no running app): minimal APIs (`MapGet` and the rest,
+  `MapMethods`, `Map`; a `MapGroup` prefix followed through a local assigned once, a convention that gives back its
+  builder, and every caller of the method that maps them when all give one prefix, else the route left out, never
+  guessed), controllers (`[Route]` with `[controller]`/`[action]`/`[area]`, `[Http*]` and `[AcceptVerbs]`, an `Async`
+  suffix dropped, conventional routes from `MapControllerRoute` and the default for those with no route of their own),
+  Razor Pages (`@page` under Pages or an area's, Index its folder's, a code-behind's `On{Verb}{Name}` handlers, a named
+  one as `handler=Name`), Blazor's `@page` and `@attribute [Route]` (both read from the server's additional documents),
+  SignalR's `MapHub<T>` (its methods) and gRPC's `MapGrpcService<T>` (each override a POST to `/package.Service/Method`,
+  the name from the generated base's `__ServiceName`, else the project's one .proto declaring it). Each `WebRoute` has its
+  methods, template, parameters with their constraints and source (route, query, body, header, form, services, as
+  ASP.NET Core binds them), handler and its place, the body's type and a JSON body shaped from it (`JsonSample`), and its
+  file's `TextHash`. `ProjectSession.Routes` (`RouteCatalog`) keeps them by project; `MainWindow.Routes.cs` reads them
+  through `BackgroundWork` once the server is ready, every project's again as it loads more (`CSharpService.ProjectsLoaded`)
+  and a project's whose .cs, .razor, .cshtml or .proto changes (typed, or the watcher's), only while the window shows or
+  such a file is open. Each route's line in an open file whose
+  text is the one it was read from has an icon (`OpenDocument.RouteMarks`, drawn as the run icons, `RunMark`) whose menu
+  sends it: the first request of the project's .http files that calls it (`RouteRequests.Calls`: a method it takes and a
+  path that fits its template, after a leading `{{variable}}` or host), else an entry `RouteRequests.Entry` writes at the
+  end of `<Project>.http` beside the project (its `@<Project>_HostAddress` from the first launch profile, a variable per
+  route value, the JSON body; one undo step), sent by `EndpointsView.TestAsync` to the running app's address (Run's
+  program, else Debug's: `ASPNETCORE_URLS`), else the file's; a gRPC method has no icon. Go to Declaration in an .http
+  file goes to the routes its request calls, Find Usages on a route's declaration lists the requests that call it
+  (`CodeAssist.Routes.cs`), and an agent's `workspace` with `routes` lists them (`RouteInfo`).
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot
@@ -1339,7 +1380,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `display-name` properties; `ToolWindows/TestFramesStrip` shows every picture attachment over the details, and
   `FrameViewer` shows one at its size with zoom.
 - `src/Passenger.App/Navigation`: Recent Files and the Go to popups (Go to File scores every file on every key on the
-  UI thread, so `FuzzyMatch` allocates nothing and first rejects a name without the query's letters in order),
+  UI thread, so `FuzzyMatch` allocates nothing and first rejects a name without the query's letters in order, and
+  `FileIndex.Search` keeps only the best as it goes, never sorting every match; completion's `Shown` does the same),
   `NavigationHistory` (Back and Forward, the places
   edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
   `RecentLocationsPopup`; `Navigator` records the places visited and edited. Base and Derived Symbols use the

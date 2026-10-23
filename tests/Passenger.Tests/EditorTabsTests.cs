@@ -228,6 +228,7 @@ public sealed class EditorTabsTests : IDisposable
         window.Show();
         window.KeepLayout();
         window.OpenFolder(folder);
+        Ui.Settle();
         foreach (string file in files)
         {
             window.OpenFile(file);

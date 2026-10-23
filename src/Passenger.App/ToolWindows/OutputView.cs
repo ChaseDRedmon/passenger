@@ -32,24 +32,16 @@ public sealed class OutputView : DockPanel
     /// <summary>The console's own edits under way, which are never a Clear.</summary>
     private bool editing;
 
+    /// <summary>Its editor, made the first time the console is shown or asked for (<see cref="Editor"/>): a console a run
+    /// writes to while its window is hidden keeps its text and colours alone until then, as a window's start makes none.</summary>
+    private CodeEditor? editor;
+
     /// <param name="toolbar">Whether it has the run toolbar: none for a dialog's console, which its own buttons run.</param>
     public OutputView(bool toolbar = true)
     {
         Document = new TextDocument();
         Sink = new ConsoleSink(Flush, limit);
-        Editor = new CodeEditor
-        {
-            Document = Document,
-            IsReadOnly = true,
-            LineCommentPrefix = null,
-            ShowLineNumbers = false,
-            ShowErrorStripe = false,
-            FontSize = 12.5,
-            Highlighter = colours,
-        };
         colours.Links = Links;
-        Editor.Links = Links.On;
-        Editor.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
         rerun = ToolButtons.Of("Icon.Rerun", "Rerun");
         stop = ToolButtons.Of("Icon.Stop", "Stop");
         hotReload = ToolButtons.Of("Icon.HotReload", "Apply Hot Reload Changes");
@@ -77,11 +69,6 @@ public sealed class OutputView : DockPanel
         {
             Children.Add(tools);
         }
-        Children.Add(Editor);
-        Editor.ContextMenuRequested += (_, at) => ShowMenu(at);
-        // Ahead of the editor's own handling, which a read-only editor gives nothing to.
-        Editor.AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
-        Editor.AddHandler(TextInputEvent, OnText, RoutingStrategies.Tunnel);
         Document.Changed += (_, change) =>
         {
             if (!editing)
@@ -93,8 +80,43 @@ public sealed class OutputView : DockPanel
                 }
                 typedFrom = Document.Snapshot.Length;
             }
-            Editor.ScrollToEnd();
+            editor?.ScrollToEnd();
         };
+    }
+
+    /// <summary>Whether its editor has been made, as the console was shown or asked for.</summary>
+    public bool HasEditor => editor is not null;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _ = Editor;
+    }
+
+    /// <summary>Makes the editor over the text so far, its caret at the end, which it follows as the output grows.</summary>
+    private CodeEditor MakeEditor()
+    {
+        CodeEditor made = new()
+        {
+            Document = Document,
+            IsReadOnly = true,
+            LineCommentPrefix = null,
+            ShowLineNumbers = false,
+            ShowErrorStripe = false,
+            FontSize = 12.5,
+            Highlighter = colours,
+        };
+        editor = made;
+        made.Links = Links.On;
+        made.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
+        made.ContextMenuRequested += (_, at) => ShowMenu(at);
+        // Ahead of the editor's own handling, which a read-only editor gives nothing to.
+        made.AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
+        made.AddHandler(TextInputEvent, OnText, RoutingStrategies.Tunnel);
+        Children.Add(made);
+        made.Selections = SelectionSet.Single(typedFrom);
+        made.ScrollToEnd();
+        return made;
     }
 
     /// <summary>A link in the output was clicked: a file's place to open, or an address for the browser.</summary>
@@ -124,7 +146,9 @@ public sealed class OutputView : DockPanel
     public event EventHandler<string>? Written;
 
     public TextDocument Document { get; }
-    public CodeEditor Editor { get; }
+
+    /// <summary>The console's editor, made the first time it is shown or asked for.</summary>
+    public CodeEditor Editor => editor ?? MakeEditor();
 
     /// <summary>Where programs write to this console, from any thread.</summary>
     public ConsoleSink Sink { get; }
@@ -250,8 +274,9 @@ public sealed class OutputView : DockPanel
             return;
         }
         int at = typedFrom;
-        Selection caret = Editor.Selections.Primary;
-        bool following = !Editor.Selections.HasMultiple && caret.IsEmpty && caret.Caret >= at;
+        // With no editor yet there is no caret to keep: the one made later starts at the end.
+        Selection caret = editor?.Selections.Primary ?? new Selection(at, at);
+        bool following = editor is not null && !editor.Selections.HasMultiple && caret.IsEmpty && caret.Caret >= at;
         int typedCaret = caret.Caret - at;
         Edit(at, 0, text);
         colours.Insert(at, text.Length, runs.Where(r => r.Stream == ConsoleStream.Error).Select(r => (at + r.Start, r.Length)));
@@ -260,7 +285,7 @@ public sealed class OutputView : DockPanel
         if (following)
         {
             // A caret at the end, or in the line being typed, stays where it was in that line.
-            Editor.Selections = SelectionSet.Single(typedFrom + typedCaret);
+            editor!.Selections = SelectionSet.Single(typedFrom + typedCaret);
         }
     }
 

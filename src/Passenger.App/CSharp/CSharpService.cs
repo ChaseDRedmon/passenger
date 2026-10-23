@@ -70,6 +70,10 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
     public event EventHandler? StateChanged;
 
+    /// <summary>The server finished loading projects (the file shown's first, then the rest, or one loaded again); raised on
+    /// the UI thread.</summary>
+    public event EventHandler? ProjectsLoaded;
+
     /// <summary>Where the language servers keep their logs, a file to each server: beside the IDE's own log, so Help, Show
     /// Log finds them, and the newest kept as servers start.</summary>
     public static string LogFolder => Path.Combine(IdeErrors.LogFolder, "roslyn");
@@ -599,7 +603,11 @@ public sealed class CSharpService : IAsyncDisposable
             EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.ColoursMoved()));
             EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
             // Projects loaded (the file shown's first, then the rest, or one loaded again): the files' projects may be others.
-            EventHandler onProjects = (_, _) => UiThread.Post(() => Each(document => document.FindContexts()));
+            EventHandler onProjects = (_, _) => UiThread.Post(() =>
+            {
+                Each(document => document.FindContexts());
+                ProjectsLoaded?.Invoke(this, EventArgs.Empty);
+            });
             EventHandler<string> onExited = (_, _) => UiThread.Post(() => OnExited(started));
             EventHandler<string> onHung = (_, why) => UiThread.Post(() => OnNotResponding(started, why));
             started.Loaded += onLoaded;
