@@ -422,7 +422,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
   loads the host's builds (`passenger/loadProjects`, `passenger/projectInfo`, `passenger/projectLoader`), compiled
   against the server's publicized assemblies (`src/Publicize.targets`, which the debugger imports too); a server
-  without the host builds its projects itself. A file in several projects (a multi-targeted project's) has the
+  without the host builds its projects itself. The server loads a batch's projects at once (`RunParallelAsync`), each
+  given build read as its load takes it (`TryLoadProjectInMSBuildHostAsync`), but puts each into its workspace under one
+  gate (`_gate`), so a warm reopen's projects still land one after another there. A file in several projects (a multi-targeted project's) has the
   editor's target framework switcher (`CodeEditor.ContextLabel`, `MainWindow.TargetFramework.cs`), its requests naming
   the chosen context (`LspDocument.Context`, Roslyn's `_vs_projectContext`).
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
