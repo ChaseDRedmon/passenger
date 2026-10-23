@@ -151,7 +151,7 @@ public sealed class Git
         Process process;
         try
         {
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (System.ComponentModel.Win32Exception missing)
         {
@@ -375,7 +375,7 @@ public sealed class Git
         start.RedirectStandardError = true;
         try
         {
-            using Process process = ChildProcesses.Start(start);
+            using Process process = await ChildProcesses.StartAsync(start);
             using MemoryStream output = new();
             Task copied = process.StandardOutput.BaseStream.CopyToAsync(output);
             Task<string> error = process.StandardError.ReadToEndAsync();
@@ -1169,7 +1169,7 @@ public sealed class Git
         start.RedirectStandardError = true;
         try
         {
-            using Process process = ChildProcesses.Start(start);
+            using Process process = await ChildProcesses.StartAsync(start);
             using MemoryStream output = new();
             Task copied = process.StandardOutput.BaseStream.CopyToAsync(output);
             Task<string> error = process.StandardError.ReadToEndAsync();
