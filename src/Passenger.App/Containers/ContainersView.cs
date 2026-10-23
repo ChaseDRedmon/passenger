@@ -59,10 +59,12 @@ public sealed class ContainersView : DockPanel
     {
         this.parts = parts;
         refreshing = new Debounce(TimeSpan.FromMilliseconds(300), () => RefreshAsync());
-        Log = new ContainerLogPane(parts.Engine);
-        Stats = new ContainerStatsPane(parts.Engine);
-        Files = new ContainerFilesPane(parts.Engine, parts.StateFolder);
-        Details = new ContainerDetailsPane(parts.Engine, parts.Browse, () => State?.Endpoint);
+        // The chosen row's engine: an AppHost's containers its orchestrator ran on its own runtime are that runtime's.
+        Func<ContainerEngine> chosen = () => EngineOf(Chosen);
+        Log = new ContainerLogPane(chosen);
+        Stats = new ContainerStatsPane(chosen);
+        Files = new ContainerFilesPane(chosen, parts.StateFolder);
+        Details = new ContainerDetailsPane(chosen, parts.Browse, () => State?.Endpoint);
         Log.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
         Telemetry.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
         Telemetry.ShownChanged += (_, _) => ShowChosen();
@@ -187,6 +189,72 @@ public sealed class ContainersView : DockPanel
     /// <summary>The AppHost a container is of (its key and name), when the folder runs one whose resources name it.</summary>
     public Func<ContainerInfo, (string Key, string Name)?>? AppHostOf { get; set; }
 
+    /// <summary>The engines besides the window's that hold the folder's AppHosts' containers (an orchestrator's own runtime,
+    /// Podman's beside Docker's): their orchestrator's containers listed among the window's, each acted on there.</summary>
+    public Func<IReadOnlyList<ContainerEngine>>? OtherEngines { get; set; }
+
+    /// <summary>The other engines' events followed while the window shows, by engine.</summary>
+    private readonly Dictionary<ContainerEngine, IDisposable> othersFollowed = [];
+
+    /// <summary>The engine a row's commands go to: its containers' own where they are another's, else the window's.</summary>
+    private ContainerEngine EngineOf(ContainerRow? row) => row?.Containers.FirstOrDefault(container => container.Engine is not null)?.Engine ?? parts.Engine();
+
+    /// <summary><see cref="OtherEngines"/> changed: read again, followed from now, while the window shows.</summary>
+    public void OtherEnginesChanged()
+    {
+        UiThread.Check();
+        if (shown)
+        {
+            refreshing.Restart();
+        }
+    }
+
+    /// <summary>Follows each other engine's events while the window shows, as the window's own are, and no longer one that
+    /// holds none of the folder's containers.</summary>
+    private IReadOnlyList<ContainerEngine> FollowOthers()
+    {
+        IReadOnlyList<ContainerEngine> others = shown ? OtherEngines?.Invoke() ?? [] : [];
+        foreach (ContainerEngine gone in othersFollowed.Keys.Except(others).ToArray())
+        {
+            othersFollowed.Remove(gone, out IDisposable? following);
+            following?.Dispose();
+        }
+        foreach (ContainerEngine other in others.Where(other => !othersFollowed.ContainsKey(other)))
+        {
+            othersFollowed[other] = other.Follow(told =>
+            {
+                if (told.Type == "container" && !Quiet(told.Action) || told.Type == ContainerEngine.EngineEvent)
+                {
+                    UiThread.Post(() =>
+                    {
+                        if (shown)
+                        {
+                            refreshing.Restart();
+                        }
+                    });
+                }
+            });
+        }
+        return others;
+    }
+
+    /// <summary>The containers an orchestrator made on another engine, each marked as that engine's; none where it does
+    /// not answer, said in the IDE's log.</summary>
+    private static async Task<IReadOnlyList<ContainerInfo>> OrchestratedOnAsync(ContainerEngine other)
+    {
+        try
+        {
+            return [.. (await other.JsonLinesAsync(["ps", "-a", "--filter", $"label={OrchestratorLabel}", "--format", "json"]))
+                .Select(row => ContainerInfo.Read(row) with { Engine = other })];
+        }
+        catch (Exception failed) when (failed is ContainerCommandException or TimeoutException or System.Text.Json.JsonException or FileNotFoundException
+            or System.ComponentModel.Win32Exception)
+        {
+            IdeErrors.Write($"Containers: {other.Cli} did not list an AppHost's containers: {failed.Message}");
+            return [];
+        }
+    }
+
     /// <summary>The rows grouped again as what an AppHost's resources name changed, the engine not read again.</summary>
     public void Regroup()
     {
@@ -280,6 +348,7 @@ public sealed class ContainersView : DockPanel
         refreshing.Stop();
         following?.Dispose();
         following = null;
+        FollowOthers();
         Log.Stop();
         Stats.Stop();
         Details.Show(null);
@@ -295,20 +364,23 @@ public sealed class ContainersView : DockPanel
         UiThread.Check();
         int read = ++reads;
         ContainerEngine engine = parts.Engine();
-        (EngineState state, ContainerSnapshot? snapshot, string? problem) = await BackgroundWork.Run(async () =>
+        IReadOnlyList<ContainerEngine> others = FollowOthers();
+        (EngineState state, ContainerSnapshot? snapshot, string? problem, IReadOnlyList<ContainerInfo> elsewhere) = await BackgroundWork.Run(async () =>
         {
+            Task<IReadOnlyList<ContainerInfo>[]> orchestrated = Task.WhenAll(others.Select(OrchestratedOnAsync));
             EngineState state = await engine.StateAsync(again: true);
+            IReadOnlyList<ContainerInfo> elsewhere = [.. (await orchestrated).SelectMany(containers => containers)];
             if (state.Status is not (EngineStatus.Ready or EngineStatus.NoCompose))
             {
-                return (state, (ContainerSnapshot?)null, (string?)null);
+                return (state, (ContainerSnapshot?)null, (string?)null, elsewhere);
             }
             try
             {
-                return (state, await ContainerSnapshot.ReadAsync(engine), null);
+                return (state, await ContainerSnapshot.ReadAsync(engine), null, elsewhere);
             }
             catch (Exception failed) when (failed is ContainerCommandException or TimeoutException or System.Text.Json.JsonException)
             {
-                return (state, null, failed.Message);
+                return (state, null, failed.Message, elsewhere);
             }
         });
         if (read != reads)
@@ -318,6 +390,10 @@ public sealed class ContainersView : DockPanel
         bool changed = State?.Status != state.Status;
         State = state;
         Snapshot = snapshot ?? ContainerSnapshot.Empty;
+        if (elsewhere.Count > 0)
+        {
+            Snapshot = Snapshot with { Containers = [.. Snapshot.Containers.Concat(elsewhere).OrderBy(c => c.Name, StringComparer.Ordinal)] };
+        }
         HasRead = true;
         empty.Text = state.Problem ?? problem ?? "The engine holds no containers, images, volumes or networks";
         Fill();
@@ -557,7 +633,7 @@ public sealed class ContainersView : DockPanel
         }
         using (working)
         {
-            ContainerEngine engine = parts.Engine();
+            ContainerEngine engine = EngineOf(row);
             string? problem = await BackgroundWork.Run(async () =>
             {
                 try

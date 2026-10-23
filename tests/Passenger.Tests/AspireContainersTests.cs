@@ -125,6 +125,64 @@ public sealed class AspireContainersTests : IClassFixture<AspireApp>
         }
     }
 
+    /// <summary>An AppHost whose orchestrator is told Podman (ASPIRE_CONTAINER_RUNTIME=podman) where Passenger's docker
+    /// reaches another engine (Docker's) runs its containers where docker sees none: Passenger finds them on Podman, its
+    /// orchestrator's own runtime, records them there, lists them under their AppHost in the Containers window and reads
+    /// their Details there, and Stop takes the session container down there, the Persistent one kept. Skipped, saying
+    /// why, without Podman beside a docker that reaches another engine, or busybox in Podman's store.</summary>
+    [AvaloniaFact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    public void An_AppHost_told_Podman_has_its_containers_followed_on_Podman_and_Stop_takes_the_session_one_down_there()
+    {
+        Assert.SkipWhen(WhyNot is not null, WhyNot ?? string.Empty);
+        Assert.SkipWhen(Podman.WhyNot is not null, Podman.WhyNot ?? string.Empty);
+        WithContainers(Path.GetDirectoryName(project.Host)!, project.Write);
+        TellPodman(Path.GetDirectoryName(project.Host)!, project.Write);
+        MainWindow window = project.OpenHost(languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Aspire && PathNames.Same(configuration.Project, project.Host)
+                && configuration.LaunchProfile == "http"), "the generated HTTP Aspire configuration");
+            Assert.True(window.SelectConfiguration($"Aspire: {AspireApp.Name}.AppHost: http"));
+            Ui.Run(window, AppActions.RunProgram);
+            string session = Podman.Running(Session);
+            string kept = Podman.Running(Kept);
+            Assert.Null(Docker.State(session));
+
+            // Recorded on Podman as it was made, and listed under its AppHost from there.
+            string record = Path.Combine(window.StateFolder, "aspire-containers", "ownership.json");
+            Ui.WaitFor(() => File.Exists(record) && Ui.Shared(record).Contains(session, StringComparison.Ordinal), "the session container recorded on Podman");
+            using (System.Text.Json.JsonDocument recorded = System.Text.Json.JsonDocument.Parse(Ui.Shared(record)))
+            {
+                System.Text.Json.JsonElement entry = Assert.Single(recorded.RootElement.GetProperty("entries").EnumerateArray(),
+                    entry => entry.GetProperty("id").GetString() == session);
+                Assert.True(entry.TryGetProperty("runtime", out System.Text.Json.JsonElement runtime) && runtime.GetString() == "podman",
+                    $"The session container was not recorded as on the orchestrator's Podman: {entry}");
+            }
+            Assert.DoesNotContain(kept, Ui.Shared(record), StringComparison.Ordinal);
+            window.ShowToolWindow(ToolWindowIds.Containers);
+            ContainersView view = window.ContainersWindow;
+            Ui.WaitFor(() => view.Rows.Any(row => row.Kind == ContainerRowKind.AppHost && row.Containers.Count == 2),
+                $"the AppHost's row with its two containers on Podman, not [{string.Join(", ", view.Rows.Select(row => $"{row.Kind} {row.Label}"))}]", TimeSpan.FromMinutes(1));
+            ContainerRow host = view.Rows.Single(row => row.Kind == ContainerRowKind.AppHost);
+            Assert.All(host.Containers, container => Assert.True(container.Engine is { } engine && engine != window.Engine,
+                $"{container.Name} is not read from the orchestrator's Podman"));
+            Assert.True(view.Choose(row => row.Container is { } container && ContainerRow.SameId(session, container.Id)), "The session container's row");
+            Ui.Settle();
+            view.ShowTab("Details");
+            Ui.WaitFor(() => view.Details.Details?.Id is { } shown && ContainerRow.SameId(shown, session), "the session container's Details, read from Podman");
+
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Count == 0, "Stop to end the AppHost", TimeSpan.FromMinutes(1));
+            Assert.Null(Podman.State(session));
+            Assert.Equal("running", Podman.State(kept));
+        }
+        finally
+        {
+            window.Close();
+            Podman.RemoveMade();
+        }
+    }
+
     /// <summary>Why no AppHost here can make the tests' containers: no Linux engine, or no busybox in it (none is pulled).</summary>
     internal static string? WhyNot => Docker.WhyNot
         ?? (Docker.Said("image", "inspect", Docker.Image) is null ? $"The engine lacks {Docker.Image}, which these tests do not pull: docker pull {Docker.Image}" : null);
@@ -142,6 +200,20 @@ public sealed class AspireContainersTests : IClassFixture<AspireApp>
         string text = File.ReadAllText(source);
         Assert.Contains("builder.Build().Run();", text, StringComparison.Ordinal);
         write(source, text.Replace("builder.Build().Run();", added + "builder.Build().Run();", StringComparison.Ordinal));
+    }
+
+    /// <summary>The starter's AppHost's HTTP profile telling its orchestrator Podman: ASPIRE_CONTAINER_RUNTIME, and Podman's
+    /// store and settings the person's (XDG_DATA_HOME, XDG_CONFIG_HOME), which the profile's own HOME, the run's, would move.</summary>
+    private static void TellPodman(string hostFolder, Func<string, string, string> write)
+    {
+        string settings = Path.Combine(hostFolder, "Properties", "launchSettings.json");
+        System.Text.Json.Nodes.JsonObject launch = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(settings))!.AsObject();
+        System.Text.Json.Nodes.JsonNode variables = launch["profiles"]!["http"]!["environmentVariables"]!;
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        variables["ASPIRE_CONTAINER_RUNTIME"] = "podman";
+        variables["XDG_DATA_HOME"] = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } data ? data : Path.Combine(home, ".local", "share");
+        variables["XDG_CONFIG_HOME"] = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") is { Length: > 0 } config ? config : Path.Combine(home, ".config");
+        write(settings, launch.ToJsonString());
     }
 
     /// <summary>The whole id of the container DCP made for a resource, once it runs, the window's loop running meanwhile.</summary>
@@ -179,6 +251,79 @@ public sealed class AspireContainersTests : IClassFixture<AspireApp>
         foreach (string network in networks.Where(name => name.StartsWith("aspire-", StringComparison.Ordinal)))
         {
             Docker.Said("network", "rm", network);
+        }
+    }
+
+    /// <summary>Podman's own command beside Docker's, the runtime an orchestrator told it runs on: what the tests' AppHosts
+    /// made there, by the run's label, and why none can run (no Podman, a docker that reaches Podman itself, no busybox).</summary>
+    internal static class Podman
+    {
+        private static readonly Lazy<ContainerEngine?> Engine = new(() => Programs.OnPath("podman") is { } cli ? new ContainerEngine(cli: cli) : null);
+
+        private static readonly Lazy<string?> Unusable = new(() =>
+        {
+            if (OperatingSystem.IsWindows() || Engine.Value is null)
+            {
+                return "Podman is not installed here beside docker, so no orchestrator can be told it";
+            }
+            if (Said("info", "--format", "{{.Host.OS}}") is not "linux")
+            {
+                return "Podman does not answer here";
+            }
+            if (Task.Run(() => ContainerEngine.Shared.StateAsync()).GetAwaiter().GetResult() is { IsPodman: true })
+            {
+                return "docker reaches Podman itself here, so an orchestrator told Podman runs its containers where docker sees them";
+            }
+            return Said("image", "inspect", Docker.Image) is null ? $"Podman lacks {Docker.Image}, which these tests do not pull: podman pull {Docker.Image}" : null;
+        });
+
+        /// <summary>Why no orchestrator here can be told Podman, or null when one can.</summary>
+        public static string? WhyNot => Unusable.Value;
+
+        /// <summary>What Podman answers, trimmed, or null while it cannot say.</summary>
+        public static string? Said(params string[] arguments)
+        {
+            try
+            {
+                ChildResult result = Task.Run(() => Engine.Value!.RunAsync(arguments, TimeSpan.FromMinutes(1).Scaled())).GetAwaiter().GetResult();
+                return result.Succeeded ? result.Output.Trim() : null;
+            }
+            catch (TimeoutException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>A container's state on Podman (running, exited), or null when it holds none of that id.</summary>
+        public static string? State(string id) => Said("inspect", "-f", "{{.State.Status}}", id);
+
+        /// <summary>The whole id of the container an orchestrator made on Podman for a resource, once it runs.</summary>
+        public static string Running(string resource)
+        {
+            string? id = null;
+            Ui.WaitFor(() => (id = Said("ps", "-q", "--no-trunc", "--filter", $"label={Docker.RunLabel}", "--filter", $"name={resource}-")) is { Length: 64 },
+                $"{resource}'s container running on Podman", TimeSpan.FromMinutes(3));
+            return id!;
+        }
+
+        /// <summary>Removes what the tests' AppHosts made on Podman: their containers (by the run's label) and their networks.</summary>
+        public static void RemoveMade()
+        {
+            if (Engine.Value is null)
+            {
+                return;
+            }
+            string[] ids = (Said("ps", "-aq", "--filter", $"label={Docker.RunLabel}") ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            string[] networks = [.. ids.SelectMany(id => (Said("inspect", "-f", "{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}", id) ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)).Where(name => name.StartsWith("aspire-", StringComparison.Ordinal)).Distinct()];
+            if (ids.Length > 0)
+            {
+                Said(["rm", "-f", "-t", "0", .. ids]);
+            }
+            foreach (string network in networks)
+            {
+                Said("network", "rm", network);
+            }
         }
     }
 }

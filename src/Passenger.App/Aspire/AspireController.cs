@@ -38,20 +38,29 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 {
                     if (FindApp(made.AppHost) is { } app)
                     {
-                        string said = $"{app.Configuration.Name}'s orchestrator made {Plural.Of(made.Containers, "container")} on another engine than the one "
-                            + "Passenger's docker reaches (its own runtime: ASPIRE_CONTAINER_RUNTIME, else what it finds), so Passenger cannot list, "
-                            + "follow or remove them: set ASPIRE_CONTAINER_RUNTIME to the engine docker reaches, or docker's context to DCP's";
+                        string said = $"{app.Configuration.Name}'s orchestrator made {Plural.Of(made.Containers, "container")} on an engine Passenger reaches "
+                            + "neither through docker nor through the runtime it was told or would find (docker, podman), so Passenger cannot list, "
+                            + "follow or remove them: set ASPIRE_CONTAINER_RUNTIME to the engine docker or podman reaches, or docker's context to DCP's";
                         app.Console.Append(said + "\n", error: true);
                         ContainersElsewhere?.Invoke(this, said);
                     }
                 };
+                containers.OtherEnginesChanged += (_, _) => ContainerEnginesChanged?.Invoke(this, EventArgs.Empty);
             }
             return containers;
         }
     }
 
-    /// <summary>What a run's orchestrator made on another engine than Passenger's, in words for the status bar.</summary>
+    /// <summary>What a run's orchestrator made on an engine Passenger reaches no way, in words for the status bar.</summary>
     public event EventHandler<string>? ContainersElsewhere;
+
+    /// <summary>The engines besides the window's that hold the folder's AppHosts' containers: the runtime an orchestrator
+    /// chose where it is not the engine Passenger's docker reaches (Podman's beside Docker's), listed in the Containers
+    /// window under their AppHost.</summary>
+    public IReadOnlyList<Containers.ContainerEngine> ContainerEngines => containers?.OtherEngines ?? [];
+
+    /// <summary><see cref="ContainerEngines"/> changed. On the UI thread.</summary>
+    public event EventHandler? ContainerEnginesChanged;
 
     public IReadOnlyList<AspireAppRun> Apps => apps.AsReadOnly();
     public OutputView? LastAppConsole { get; private set; }
@@ -414,6 +423,10 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             app.Runner.Exited += (_, _) => BackgroundWork.Track(StopAppAsync(app));
             ProcessStartInfo hostStart = ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory);
             hostStart.Environment.Remove("DEBUG_SESSION_SERVER_CERTIFICATE");
+            // The runtime its orchestrator is told, where its containers are looked for first when Passenger's docker lacks them.
+            app.ContainerRuntime = ((string[])["ASPIRE_CONTAINER_RUNTIME", "DOTNET_ASPIRE_CONTAINER_RUNTIME"])
+                .Select(name => environment.GetValueOrDefault(name) ?? (hostStart.Environment.TryGetValue(name, out string? inherited) ? inherited : null))
+                .FirstOrDefault(told => told is { Length: > 0 });
             if (await app.Runner.StartAsync(hostStart, environment) is { } refused)
             {
                 throw new LaunchException(refused);
@@ -483,7 +496,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             // Each health check's run is an update: the Containers window is regrouped only when the containers named change.
             bool moved = !ids.ToHashSet(StringComparer.Ordinal).SetEquals(app.KnownContainerIds);
             app.KnownContainerIds = ids;
-            BackgroundWork.Track(Reported(Containers.Observe(app.Configuration.Project, snapshot)));
+            BackgroundWork.Track(Reported(Containers.Observe(app.Configuration.Project, snapshot, app.ContainerRuntime)));
             if (moved)
             {
                 ContainersChanged?.Invoke(this, app);
@@ -1283,6 +1296,9 @@ public sealed class AspireAppRun : ServiceRun
     internal TaskCompletionSource<(string Service, DateTime Asked)> ProfileAsked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IReadOnlyList<string> KnownContainerIds { get; internal set; } = [];
     internal AspireInteractions? Interactions { get; set; }
+
+    /// <summary>The container runtime its orchestrator was told (ASPIRE_CONTAINER_RUNTIME in its environment), else null.</summary>
+    internal string? ContainerRuntime { get; set; }
 
     /// <summary>The run's hold on its resource stream, which stays open while the run is up (<c>AspireController.Follow</c>).</summary>
     internal IDisposable? Following { get; set; }

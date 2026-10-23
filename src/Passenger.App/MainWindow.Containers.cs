@@ -79,6 +79,8 @@ public partial class MainWindow
         view.AppHostOf = container => session is { IsEnded: false } current
             && current.Aspire.Apps.FirstOrDefault(app => app.KnownContainerIds.Any(id => ContainerRow.SameId(id, container.Id))) is { } run
             ? (run.Configuration.Project, run.Configuration.Name) : null;
+        // Those an orchestrator ran on its own runtime, where it is not the engine docker reaches.
+        view.OtherEngines = () => session is { IsEnded: false } current ? current.Aspire.ContainerEngines : [];
         view.ActionRequested += (_, action) => Request(action);
         view.LinkClicked += (_, link) => OpenLink(link);
         view.TelemetryOf = project => session.ContainerRun is { } run && run.Plan.ProjectName == project ? run.Telemetry : null;
@@ -263,7 +265,7 @@ public partial class MainWindow
         {
             return;
         }
-        ContainerEngine engine = Engine;
+        ContainerEngine engine = row.Container?.Engine ?? Engine;
         await ForgetUnmaskedCopiesAsync();
         string copy = Path.Combine(ContainerSecrets.InspectCopies(StateFolder), $"{string.Concat(row.Name.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_'))}.json");
         string? problem = await BackgroundWork.Run(async () =>
@@ -328,7 +330,7 @@ public partial class MainWindow
     /// is said, rather than a tab that ends at once.</summary>
     public async Task<TerminalRun?> OpenShellAsync(ContainerInfo container)
     {
-        ContainerEngine engine = Engine;
+        ContainerEngine engine = container.Engine ?? Engine;
         string? problem = await BackgroundWork.Run(async () =>
         {
             try

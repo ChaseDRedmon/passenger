@@ -25,8 +25,10 @@ public static partial class ContainerLabels
     public const string Folder = "net.passenger-ide.folder";
     public const string Machine = "net.passenger-ide.machine";
 
-    /// <summary>The variables the CLI reads its engine from, which the watchdog's command is given as the IDE's had them.</summary>
-    private static readonly string[] EngineVariables = ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_TLS"];
+    /// <summary>The variables the CLI reads its engine from (Docker's, and Podman's own command's), which the watchdog's
+    /// command is given as the IDE's had them.</summary>
+    private static readonly string[] EngineVariables = ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_TLS",
+        "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_CONF"];
 
     /// <summary>The last command the watchdog was given, told again when the engine it reaches or what it removes changes.</summary>
     private static string? toldWatchdog;
@@ -41,6 +43,18 @@ public static partial class ContainerLabels
     /// <summary>The networks made for this process that carry none of its labels (an AppHost's session network), by name,
     /// which the watchdog's command removes once the containers on them have gone.</summary>
     private static readonly SortedSet<string> UnlabelledNetworks = new(StringComparer.Ordinal);
+
+    /// <summary>What was made for this process without its labels on another engine than the one the IDE's commands reach
+    /// (an AppHost's orchestrator's own runtime: Podman's beside Docker's), by the CLI and words that reach it.</summary>
+    private static readonly SortedDictionary<string, MadeOn> Elsewhere = new(StringComparer.Ordinal);
+
+    /// <summary>The containers and networks made on another engine, and the CLI and words that reach it.</summary>
+    private sealed record MadeOn(string Cli, IReadOnlyList<string> Arguments)
+    {
+        public SortedSet<string> Containers { get; } = new(StringComparer.Ordinal);
+
+        public SortedSet<string> Networks { get; } = new(StringComparer.Ordinal);
+    }
 
     private static readonly object Watchdog = new();
 
@@ -119,14 +133,42 @@ public static partial class ContainerLabels
         TellWatchdog(engine);
     }
 
-    /// <summary>Containers of <see cref="MadeUnlabelled"/> that have gone (removed, or no longer this process's), and
-    /// networks made with them, which the watchdog's command no longer names. Any thread.</summary>
+    /// <summary>As <see cref="MadeUnlabelled"/>, on another engine than the one the IDE's commands reach (an AppHost's
+    /// orchestrator's own runtime), reached through its CLI with the words given (a context, a host). Any thread.</summary>
+    public static void MadeElsewhere(string cli, IReadOnlyList<string> arguments, IEnumerable<string> ids, IEnumerable<string>? networks = null)
+    {
+        lock (Watchdog)
+        {
+            string key = $"{cli}\n{string.Join('\n', arguments)}";
+            if (!Elsewhere.TryGetValue(key, out MadeOn? made))
+            {
+                Elsewhere[key] = made = new MadeOn(cli, [.. arguments]);
+            }
+            made.Containers.UnionWith(ids);
+            made.Networks.UnionWith(networks ?? []);
+        }
+        TellWatchdog(null);
+    }
+
+    /// <summary>Containers of <see cref="MadeUnlabelled"/> or <see cref="MadeElsewhere"/> that have gone (removed, or no
+    /// longer this process's), and networks made with them, which the watchdog's command no longer names. Any thread.</summary>
     public static void EndedUnlabelled(IEnumerable<string> ids, IEnumerable<string>? networks = null)
     {
         lock (Watchdog)
         {
-            Unlabelled.ExceptWith(ids);
-            UnlabelledNetworks.ExceptWith(networks ?? []);
+            string[] gone = [.. ids];
+            string[] goneNetworks = [.. networks ?? []];
+            Unlabelled.ExceptWith(gone);
+            UnlabelledNetworks.ExceptWith(goneNetworks);
+            foreach ((string key, MadeOn made) in Elsewhere.ToArray())
+            {
+                made.Containers.ExceptWith(gone);
+                made.Networks.ExceptWith(goneNetworks);
+                if (made.Containers.Count + made.Networks.Count == 0)
+                {
+                    Elsewhere.Remove(key);
+                }
+            }
         }
         TellWatchdog(null);
     }
@@ -150,15 +192,12 @@ public static partial class ContainerLabels
     }
 
     /// <summary>The shell command that removes this process's containers and networks, for the watchdog, which runs it with
-    /// its own environment: the engine the IDE's commands reach is put in it, the CLI's variables as the IDE has them and
+    /// its own environment: the engine the IDE's commands reach is put in it, the CLIs' variables as the IDE has them and
     /// its context by name; what was made for it without its labels is named, its containers by id and then their networks
-    /// by name. Null for a value no line can hold, or with no engine reached yet. Under the lock.</summary>
+    /// by name, on the engine that holds them (that one, or another an orchestrator chose). Null for a value no line can
+    /// hold, or with nothing to reach. Under the lock.</summary>
     private static string? EndCommand()
     {
-        if (reached is not { } through)
-        {
-            return null;
-        }
         StringBuilder command = new();
         foreach (string variable in EngineVariables)
         {
@@ -167,16 +206,30 @@ public static partial class ContainerLabels
                 command.Append(CultureInfo.InvariantCulture, $"export {variable}={Quoted(value)}; ");
             }
         }
-        string docker = Quoted(through.Cli);
-        if (through.Context is { Length: > 0 } context && ContextName().IsMatch(context))
+        int begun = command.Length;
+        if (reached is { } through)
         {
-            docker += $" --context {Quoted(context)}";
+            string docker = Quoted(through.Cli);
+            if (through.Context is { Length: > 0 } context && ContextName().IsMatch(context))
+            {
+                docker += $" --context {Quoted(context)}";
+            }
+            string labels = $"--filter {Quoted($"label={Process}={ProcessValue}")} --filter {Quoted($"label={Machine}={MachineValue}")}";
+            command.Append(CultureInfo.InvariantCulture,
+                $"{docker} rm -f $({docker} ps -aq {labels}){Named(Unlabelled)}; {docker} network rm $({docker} network ls -q {labels}){Named(UnlabelledNetworks)}");
         }
-        string labels = $"--filter {Quoted($"label={Process}={ProcessValue}")} --filter {Quoted($"label={Machine}={MachineValue}")}";
-        command.Append(CultureInfo.InvariantCulture,
-            $"{docker} rm -f $({docker} ps -aq {labels}){Named(Unlabelled)}; {docker} network rm $({docker} network ls -q {labels}){Named(UnlabelledNetworks)}");
+        foreach (MadeOn made in Elsewhere.Values)
+        {
+            string other = string.Join(' ', [Quoted(made.Cli), .. made.Arguments.Select(Quoted)]);
+            command.Append(command.Length > begun ? "; " : string.Empty).Append(CultureInfo.InvariantCulture, $"{other} rm -f{Named(made.Containers)}");
+            if (made.Networks.Count > 0)
+            {
+                command.Append(CultureInfo.InvariantCulture, $"; {other} network rm{Named(made.Networks)}");
+            }
+        }
         string said = command.ToString();
-        return said.Contains('\n', StringComparison.Ordinal) || said.Contains('\r', StringComparison.Ordinal) || said.Contains('\0', StringComparison.Ordinal) ? null : said;
+        return command.Length == begun || said.Contains('\n', StringComparison.Ordinal) || said.Contains('\r', StringComparison.Ordinal)
+            || said.Contains('\0', StringComparison.Ordinal) ? null : said;
 
         static string Named(IEnumerable<string> words) => string.Concat(words.Select(word => $" {Quoted(word)}"));
     }

@@ -79,6 +79,10 @@ public sealed record ContainerInfo(string Id, string Name, string Image, string 
 
     public string? Service => Labels.GetValueOrDefault(ComposeLabels.Service);
 
+    /// <summary>The engine holding it where that is not the window's: an AppHost's orchestrator's own runtime (Podman's
+    /// beside Docker's), which every command on it goes to; null for the window's own.</summary>
+    public ContainerEngine? Engine { get; init; }
+
     /// <summary>Started by Testcontainers (its <c>org.testcontainers</c> label), for a test.</summary>
     public bool IsTestcontainers => Labels.ContainsKey("org.testcontainers");
 

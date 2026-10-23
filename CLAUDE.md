@@ -1086,7 +1086,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   which the run follows again from its end, its containers still running (`ContainerRun` above). So a compose file or a Dockerfile runs, debugs (two services at once, or one service of a run),
   Hot Reloads and profiles on Podman as on Docker: the ten container classes pass both ways (but for Ubuntu's own
   fault below). An AppHost's container resource runs on the same Podman (DCP takes Docker's CLI on its socket, or Podman's
-  own `docker` as Podman), and #397's cleanup reads Podman's bare container names. On Ubuntu 26.04 the pasta AppArmor
+  own `docker` as Podman), and #397's cleanup reads Podman's bare container names; one whose DCP is told Podman beside a
+  docker that reaches Docker's engine is followed on Podman, its own command (#412, Aspire below). On Ubuntu 26.04 the pasta AppArmor
   profile refuses podman's SIGTERM, so a container's removal can fail ("rootless netns: kill network process: permission
   denied"), Ubuntu's to fix (`signal (receive) peer=podman` in /etc/apparmor.d/usr.bin.pasta). Not handled: SELinux (Fedora, RHEL), whose bind mounts need
   relabelling (`:z`) or `label=disable`, untested on Ubuntu's AppArmor; rootless Docker, whose user mapping is the same
@@ -1177,9 +1178,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   containers were taken from), the folder's end once its AppHost and services have (`TakeDownAsync`), and the watchdog
   and the next start as the Rules say, each the network after its containers. A Persistent container
   (`container.lifetime`, DCP's `com.microsoft.developer.usvc-dev.persistent` label) is the person's to keep: never
-  recorded, never removed; so is the network of an AppHost that has one (DCP's `aspire-persistent-network-…`). A container DCP made that the engine Passenger's docker
-  reaches does not hold (DCP picks its runtime itself: ASPIRE_CONTAINER_RUNTIME, else its own look) is said in the
-  AppHost's console and the status bar (`AspireController.ContainersElsewhere`), never recorded. The Containers window
+  recorded, never removed; so is the network of an AppHost that has one (DCP's `aspire-persistent-network-…`). DCP runs
+  them on its own runtime (`AspireContainerOwnership.Runtimes`, docker or podman: the AppHost passes it
+  `--container-runtime` from ASPIRE_CONTAINER_RUNTIME, DOTNET_ASPIRE_CONTAINER_RUNTIME or DcpPublisher:ContainerRuntime,
+  else DCP looks itself, Docker first unless only Podman runs), which neither its resources nor its containers' labels
+  name: a container the engine Passenger's docker reaches does not hold is looked for on the runtime the AppHost was told
+  (`AspireAppRun.ContainerRuntime`, from the environment it was started with), then the other, each a `ContainerEngine`
+  over that runtime's CLI on the PATH (`RuntimesBesides`, one a process, `RuntimeEngine`, none whose CLI is Passenger's
+  docker's), and recorded on the one that holds it with the runtime's name (`Entry.Runtime`; Podman's own command with no
+  API socket reached with no words, `ReadIdentityAsync`), its Stop, the folder's end, the watchdog's command
+  (`ContainerLabels.MadeElsewhere`, after the labelled ones') and the next start's removal there; the Containers window
+  reads that engine's DCP containers beside its own (`ContainersView.OtherEngines`, `AspireController.ContainerEngines`,
+  each `ContainerInfo.Engine` that engine, its events followed while the window shows), so every pane and action on such a
+  row goes there. One no engine Passenger reaches holds is said in the AppHost's console and the status bar
+  (`AspireController.ContainersElsewhere`), never recorded. The Containers window
   lists an AppHost's containers under it in an Aspire heading (`ContainerRowKind.AppHost`, `ContainersView.AppHostOf`, by
   the run's resources; any other DCP made, by its labels, under the heading), and the engine's state during an Aspire run
   is said where a container run's is (`MainWindow.ShowAspireEngine` through `ShowEngine`, an engine with no Compose taken
@@ -2202,8 +2214,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   are never judged by this one's processes. What an engine makes for Passenger that carries none of its labels (an Aspire
   AppHost's session containers and session network, DCP's) is recorded with the same three (`AspireContainerOwnership`)
   and ended by the same rules and commands, with no rules of its own: the watchdog's command names them beside the
-  labelled ones, the containers by id and then the network by name (`ContainerLabels.MadeUnlabelled`, `EndedUnlabelled`),
-  and the next start removes a gone process's on the engine it recorded them on, each still the container recorded and
+  labelled ones, the containers by id and then the network by name, on the engine that holds them, the one the IDE's
+  commands reach or the runtime DCP chose (`ContainerLabels.MadeUnlabelled`, `MadeElsewhere`, `EndedUnlabelled`, the
+  CLIs' variables, Podman's CONTAINER_HOST too, as the IDE has them), and the next start removes a gone process's on the
+  engine it recorded them on (a runtime's by its name, found on the PATH again), each still the container recorded and
   not Persistent, then their network while DCP's labels say it is not Persistent, forgetting one the engine no longer holds. Tests
   label what they make with the run's `Docker.RunLabel` (its machine and process), removed at its end, and the first test
   that uses the engine removes what a run of this machine whose process is gone left: its label's objects and what its
@@ -2580,7 +2594,12 @@ have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard 
 applicationUrl), its resource service's calls ended (`AspireInteractionHost.Drop`) and its resource's commands run through
 `container_action` (`AspireInteractionHost.Commands`); AspireStandInTests' windows run a
 stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`, a shell script, so skipped on Windows); and
-`AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine.
+`AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine; `AspireContainersTests`
+(Alone) run the starter's AppHost with busybox containers of each lifetime, Stop taking the session container and its
+session network down, and one told Podman (ASPIRE_CONTAINER_RUNTIME in its launch profile, with the person's
+XDG_DATA_HOME and XDG_CONFIG_HOME, since the profile's HOME is the run's and would move Podman's store) has its
+containers followed on Podman beside Docker's engine, as the Ubuntu VM has them (`AspireContainersTests.Podman`;
+skipped, saying why, without Podman, with a docker that reaches Podman itself, or without busybox in Podman's store).
 `ContainerTelemetryTests` run a compose app whose ASP.NET Core service sends OpenTelemetry (its packages the ones the
 AspireGraphs' ServiceDefaults put in the package cache, `OpenTelemetryVersion`) with Collect logs and traces chosen in
 Edit Configurations, find its log and the request's trace in the Containers window's Telemetry tab and through an

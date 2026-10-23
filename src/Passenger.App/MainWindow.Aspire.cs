@@ -85,6 +85,13 @@ public partial class MainWindow
                 containersView?.Regroup();
             }
         };
+        next.Aspire.ContainerEnginesChanged += (_, _) =>
+        {
+            if (session == next && !next.IsEnded)
+            {
+                containersView?.OtherEnginesChanged();
+            }
+        };
         view.BindActions(Actions, id => Request(id), RowMenuItem);
         view.RowChosen += (_, _) => lastServiceWindow = ToolWindowIds.Aspire;
         view.Browse = Browse;

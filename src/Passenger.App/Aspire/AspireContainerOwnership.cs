@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,9 +18,11 @@ namespace Passenger.App.Aspire;
 /// labels, so they are recorded in the state folder with <see cref="ContainerLabels"/>' state, machine and process, and the
 /// same removal ends them: the run's Stop and the folder's end (<see cref="TakeDownAsync"/>), the watchdog's last command
 /// (<see cref="ContainerLabels.MadeUnlabelled"/>) and the next start's (<see cref="RemoveLeftoversAsync"/>), by
-/// <see cref="ContainerLabels.IsLeftover"/>. A Persistent container (the resource's container.lifetime, DCP's
-/// <see cref="PersistentLabel"/>) and the network an AppHost with one keeps are meant to outlive the AppHost: the person's
-/// to keep, never recorded nor removed. UI-thread owned but for the leftovers' removal.</summary>
+/// <see cref="ContainerLabels.IsLeftover"/>. DCP runs them on its own runtime (<see cref="Runtimes"/>), which may not be
+/// the engine Passenger's docker reaches: they are followed there (<see cref="RuntimesBesides"/>). A Persistent container
+/// (the resource's container.lifetime, DCP's <see cref="PersistentLabel"/>) and the network an AppHost with one keeps are
+/// meant to outlive the AppHost: the person's to keep, never recorded nor removed. UI-thread owned but for the leftovers'
+/// removal.</summary>
 internal sealed class AspireContainerOwnership
 {
     /// <summary>DCP's label on what it makes: true on a Persistent container (and its network), which outlives its AppHost.</summary>
@@ -27,6 +30,11 @@ internal sealed class AspireContainerOwnership
 
     /// <summary>DCP's label on what it made, naming the process of its own that made it.</summary>
     private const string CreatorLabel = "com.microsoft.developer.usvc-dev.creatorProcessId";
+
+    /// <summary>The container runtimes DCP runs on (its <c>--container-runtime</c>'s values): the AppHost tells it one
+    /// (ASPIRE_CONTAINER_RUNTIME, DOTNET_ASPIRE_CONTAINER_RUNTIME or DcpPublisher:ContainerRuntime), else it looks itself,
+    /// Docker first unless only Podman runs. Neither its resources nor its containers' labels say which it chose.</summary>
+    public static readonly IReadOnlyList<string> Runtimes = ["docker", "podman"];
 
     private const int MaximumRecords = 1024;
     private const long MaximumBytes = 1024 * 1024;
@@ -42,9 +50,12 @@ internal sealed class AspireContainerOwnership
     /// <summary>Each AppHost's containers as last recorded (their ids, lifetimes and names), by its hash.</summary>
     private readonly Dictionary<string, string> recordedAs = new(StringComparer.Ordinal);
 
-    /// <summary>The containers said to be on another engine than Passenger's (<see cref="Elsewhere"/>), each said once.</summary>
+    /// <summary>The containers said to be on no engine Passenger reaches (<see cref="Elsewhere"/>), each said once.</summary>
     private readonly HashSet<string> elsewhere = new(StringComparer.Ordinal);
     private Task<Identity?>? observingIdentity;
+
+    /// <summary>The engines of the runtimes an orchestrator chose, by their CLI's path, one for the process each.</summary>
+    private static readonly ConcurrentDictionary<string, ContainerEngine> RuntimeEngines = new(PathNames.Comparer);
 
     public AspireContainerOwnership(string stateFolder, ContainerEngine engine, CancellationToken closing = default)
     {
@@ -56,12 +67,21 @@ internal sealed class AspireContainerOwnership
 
     private static string ManifestOf(string stateFolder) => Path.Combine(stateFolder, "aspire-containers", "ownership.json");
 
-    /// <summary>An AppHost's orchestrator made containers (how many) on another engine than the one Passenger reaches: its
-    /// own runtime (ASPIRE_CONTAINER_RUNTIME, else its own look) is not Passenger's docker's. On the UI thread.</summary>
+    /// <summary>An AppHost's orchestrator made containers (how many) on an engine Passenger reaches neither through its
+    /// docker nor through the runtime the orchestrator was told or would find. On the UI thread.</summary>
     public event EventHandler<(string AppHost, int Containers)>? Elsewhere;
 
-    /// <summary>Call only for a snapshot from the still-owned AppHost's authenticated connection; await on the UI thread.</summary>
-    public async Task Observe(string ownedAppHostPath, IReadOnlyList<AspireResource> resources)
+    /// <summary>The engines other than Passenger's that hold containers an AppHost of this process's runs: an orchestrator's
+    /// own runtime (Podman's beside Docker's), which the Containers window lists those containers from. On the UI thread.</summary>
+    public IReadOnlyList<ContainerEngine> OtherEngines =>
+        [.. made.Values.SelectMany(containers => containers).Select(container => container.Engine).Where(other => other != engine).Distinct()];
+
+    /// <summary><see cref="OtherEngines"/> changed. On the UI thread.</summary>
+    public event EventHandler? OtherEnginesChanged;
+
+    /// <summary>Call only for a snapshot from the still-owned AppHost's authenticated connection; await on the UI thread.
+    /// <paramref name="toldRuntime"/> is the runtime the AppHost was told (its ASPIRE_CONTAINER_RUNTIME), else null.</summary>
+    public async Task Observe(string ownedAppHostPath, IReadOnlyList<AspireResource> resources, string? toldRuntime = null)
     {
         UiThread.Check();
         if (closing.IsCancellationRequested)
@@ -118,6 +138,7 @@ internal sealed class AspireContainerOwnership
         if (made.TryGetValue(appHost, out List<Made>? recorded) && recorded.RemoveAll(container => withdrawn.Contains(container.Id)) > 0)
         {
             ContainerLabels.EndedUnlabelled(withdrawn);
+            OtherEnginesChanged?.Invoke(this, EventArgs.Empty);
         }
         observed.RemoveAll(item => withdrawn.Contains(item.Id) || entries.Any(entry => IsCurrent(entry, appHost)
             && entry.Id == item.Id && entry.Name == item.Name && entry.Uid == item.Uid));
@@ -138,30 +159,38 @@ internal sealed class AspireContainerOwnership
             IdeErrors.Write("Aspire containers: ownership was not recorded because the engine identity could not be pinned");
             return;
         }
-        // The orchestrator picks its runtime itself (ASPIRE_CONTAINER_RUNTIME, else its own look): one the engine Passenger
-        // reaches does not hold is said, never recorded, since nothing of Passenger's could show, follow or remove it.
+        // The orchestrator picks its runtime itself: what Passenger's docker does not hold is looked for on the runtime it
+        // was told, then on the other it may have found, and recorded on whichever holds it; what none holds is said.
         observed.RemoveAll(item => elsewhere.Contains(item.Id));
+        List<(string Id, string Name, string Uid, ContainerEngine Engine, Identity Identity, string? Runtime, string? Network)> placed = [];
         string[] asked = [.. observed.Select(item => item.Id)];
-        // An engine that does not answer says nothing of where they are: they are recorded as its, their network unknown.
-        IReadOnlyList<(string Id, string? Network)> there = asked.Length == 0 ? []
-            : await BackgroundWork.Run(() => PlaceAsync(engine, asked)) ?? [.. asked.Select(id => (id, (string?)null))];
-        if (there.Count < asked.Length)
+        (List<(string Id, string? Network, ContainerEngine Engine, Identity Identity, string? Runtime)> found, string[] away, bool answered) =
+            asked.Length == 0 ? ([], [], true) : await BackgroundWork.Run(() => PlaceAsync(engine, identity, asked, toldRuntime));
+        if (closing.IsCancellationRequested || observations[appHost] != observation)
         {
-            string[] away = [.. asked.Where(id => !there.Any(container => container.Id == id))];
+            return;
+        }
+        if (answered && away.Length > 0)
+        {
             elsewhere.UnionWith(away);
             Elsewhere?.Invoke(this, (ownedAppHostPath, away.Length));
         }
-        observed.RemoveAll(item => !there.Any(container => container.Id == item.Id));
+        foreach ((string id, string name, string uid) in observed)
+        {
+            if (found.FirstOrDefault(there => there.Id == id) is { Engine: not null } there)
+            {
+                placed.Add((id, name, uid, there.Engine, there.Identity, there.Runtime, there.Network));
+            }
+        }
         entries = [.. (await ReadAsync()).Entries];
-        if (closing.IsCancellationRequested || observations[appHost] != observation || observed.Count == 0)
+        if (closing.IsCancellationRequested || observations[appHost] != observation || placed.Count == 0)
         {
             return;
         }
         List<Made> added = [];
-        foreach ((string id, string name, string uid) in observed)
+        foreach ((string id, string name, string uid, ContainerEngine on, Identity reached, string? runtime, string? network) in placed)
         {
-            string? network = there.First(container => container.Id == id).Network;
-            Entry entry = new(id, name, uid, appHost, identity.Fingerprint, state, ContainerLabels.MachineValue, ContainerLabels.ProcessValue, network);
+            Entry entry = new(id, name, uid, appHost, reached.Fingerprint, state, ContainerLabels.MachineValue, ContainerLabels.ProcessValue, runtime, network);
             if (!entries.Contains(entry))
             {
                 entries.RemoveAll(known => IsCurrent(known, appHost) && known.Id == id);
@@ -171,7 +200,7 @@ internal sealed class AspireContainerOwnership
                     break;
                 }
                 entries.Add(entry);
-                added.Add(new Made(id, network));
+                added.Add(new Made(id, on, reached, network));
             }
         }
         await SaveAsync(entries);
@@ -182,22 +211,112 @@ internal sealed class AspireContainerOwnership
             {
                 made[appHost] = recorded = [];
             }
+            bool moved = added.Any(container => container.Engine != engine && !recorded.Any(known => known.Engine == container.Engine));
             recorded.AddRange(added);
-            ContainerLabels.MadeUnlabelled(engine, added.Select(container => container.Id),
-                added.Select(container => container.Network).OfType<string>().Distinct(StringComparer.Ordinal));
+            foreach (IGrouping<ContainerEngine, Made> on in added.GroupBy(container => container.Engine))
+            {
+                string[] networks = [.. on.Select(container => container.Network).OfType<string>().Distinct(StringComparer.Ordinal)];
+                if (on.Key == engine)
+                {
+                    ContainerLabels.MadeUnlabelled(engine, on.Select(container => container.Id), networks);
+                }
+                else
+                {
+                    ContainerLabels.MadeElsewhere(on.First().Identity.Cli, on.First().Identity.Arguments, on.Select(container => container.Id), networks);
+                }
+            }
+            if (moved)
+            {
+                OtherEnginesChanged?.Invoke(this, EventArgs.Empty);
+            }
         }
     }
 
-    /// <summary>Those of the containers asked for the engine holds, each with the session network it is on; null when the
-    /// engine does not answer (nothing is then said of them). Off the UI thread.</summary>
-    private static async Task<IReadOnlyList<(string Id, string? Network)>?> PlaceAsync(ContainerEngine engine, string[] asked) =>
-        await ThereAsync(engine, asked, "as the AppHost made them") is { } here ? await SessionNetworksAsync(engine, here) : null;
+    /// <summary>Where the containers asked for are: on Passenger's engine, else on the runtime the orchestrator was told, else
+    /// on the other it may have found; each with the session network it is on and the engine's identity, the runtime's
+    /// name for one not on Passenger's. Those no engine holds are away; not answered when Passenger's engine did not
+    /// answer, which says nothing of where they are: they are then taken as its, their network unknown, and nothing is
+    /// said of them. Off the UI thread.</summary>
+    private static async Task<(List<(string Id, string? Network, ContainerEngine Engine, Identity Identity, string? Runtime)> Found, string[] Away, bool Answered)> PlaceAsync(
+        ContainerEngine engine, Identity identity, string[] asked, string? toldRuntime)
+    {
+        List<(string, string?, ContainerEngine, Identity, string?)> found = [];
+        if (await ThereAsync(engine, asked, "as the AppHost made them") is not { } here)
+        {
+            found.AddRange(asked.Select(id => (id, (string?)null, engine, identity, (string?)null)));
+            return (found, [], false);
+        }
+        foreach ((string id, string? network) in await SessionNetworksAsync(engine, here))
+        {
+            found.Add((id, network, engine, identity, null));
+        }
+        List<string> away = [.. asked.Where(id => !here.Any(container => container.Id == id))];
+        foreach ((string runtime, ContainerEngine other) in away.Count == 0 ? [] : RuntimesBesides(engine, toldRuntime))
+        {
+            if (away.Count == 0)
+            {
+                break;
+            }
+            if (await ThereAsync(other, away, $"as the AppHost made them ({runtime})") is not { Length: > 0 } there
+                || await ReadIdentityAsync(other, again: false) is not { } reached)
+            {
+                continue;
+            }
+            foreach ((string id, string? network) in await SessionNetworksAsync(other, there))
+            {
+                found.Add((id, network, other, reached, runtime));
+                away.Remove(id);
+            }
+        }
+        return (found, [.. away], true);
+    }
+
+    /// <summary>The engines of the runtimes an orchestrator may have chosen besides Passenger's engine, each with its name:
+    /// the one the AppHost was told first, then the other, each through its CLI on the PATH as the login shell has it, none
+    /// whose CLI is Passenger's engine's. Off the UI thread: finding a CLI may wait for the login shell.</summary>
+    internal static IReadOnlyList<(string Runtime, ContainerEngine Engine)> RuntimesBesides(ContainerEngine engine, string? toldRuntime)
+    {
+        string? own = engine.Cli is { } cli ? Canonical(cli) : null;
+        List<(string, ContainerEngine)> found = [];
+        foreach (string runtime in Runtimes.OrderBy(runtime => string.Equals(runtime, toldRuntime, StringComparison.OrdinalIgnoreCase) ? 0 : 1))
+        {
+            if (RuntimeEngine(runtime) is { Cli: { } other } runs && !PathNames.Same(Canonical(other), own ?? string.Empty))
+            {
+                found.Add((runtime, runs));
+            }
+        }
+        return found;
+
+        static string Canonical(string path)
+        {
+            try
+            {
+                return PathNames.Canonical(path);
+            }
+            catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException)
+            {
+                return path;
+            }
+        }
+    }
+
+    /// <summary>A runtime's engine, through its CLI found on the PATH as the login shell has it: one for the process, so its
+    /// state and events are asked once; null for a runtime DCP does not take, or one not installed. Off the UI thread.</summary>
+    internal static ContainerEngine? RuntimeEngine(string runtime)
+    {
+        if (!Runtimes.Contains(runtime))
+        {
+            return null;
+        }
+        return Programs.OnPath(OperatingSystem.IsWindows() ? $"{runtime}.exe" : runtime) is { } cli
+            ? RuntimeEngines.GetOrAdd(cli, path => new ContainerEngine(cli: path)) : null;
+    }
 
     /// <summary>Removes the session containers this process recorded of an AppHost's run once <paramref name="after"/> (its
-    /// AppHost's end) has come (the run's Stop, the folder's end), as a container run's Stop takes its own down, then the
-    /// session network they were on: done once the engine has answered, or given up after its limit, what fails the IDE's
-    /// error said with <paramref name="when"/>. Begun on the UI thread; the rest needs none, so the folder's end can wait
-    /// for it after the window's loop has stopped.</summary>
+    /// AppHost's end) has come (the run's Stop, the folder's end), as a container run's Stop takes its own down, each on the
+    /// engine that holds it, then the session network they were on: done once the engines have answered, or given up after
+    /// their limit, what fails the IDE's error said with <paramref name="when"/>. Begun on the UI thread; the rest needs
+    /// none, so the folder's end can wait for it after the window's loop has stopped.</summary>
     public Task TakeDownAsync(string appHostPath, string when, Task? after = null)
     {
         UiThread.Check();
@@ -209,8 +328,10 @@ internal sealed class AspireContainerOwnership
         {
             return Task.CompletedTask;
         }
-        string[] ids = [.. recorded.Select(container => container.Id)];
-        string[] networks = [.. recorded.Select(container => container.Network).OfType<string>().Distinct(StringComparer.Ordinal)];
+        if (recorded.Any(container => container.Engine != engine))
+        {
+            OtherEnginesChanged?.Invoke(this, EventArgs.Empty);
+        }
         StateDocument<Manifest> kept = document;
         // Not held: nothing it does is drawn, and the folder's end waits for it once the window's loop may have stopped.
         return Task.Run(async () =>
@@ -220,12 +341,17 @@ internal sealed class AspireContainerOwnership
                 // An orchestrator that outlived its AppHost could make one again of a container taken from under a live one.
                 await after.ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
             }
-            // Those the orchestrator has not removed itself, which an engine's rm of one gone would call a failure.
-            if (await ThereAsync(engine, ids, when) is { } there && await FolderContainers.RemoveAsync(engine, [.. there.Select(container => container.Id)], when)
-                && await RemoveNetworksAsync(engine, networks, when))
+            foreach (IGrouping<ContainerEngine, Made> on in recorded.GroupBy(container => container.Engine))
             {
-                Forget(kept, ids);
-                ContainerLabels.EndedUnlabelled(ids, networks);
+                string[] ids = [.. on.Select(container => container.Id)];
+                string[] networks = [.. on.Select(container => container.Network).OfType<string>().Distinct(StringComparer.Ordinal)];
+                // Those the orchestrator has not removed itself, which an engine's rm of one gone would call a failure.
+                if (await ThereAsync(on.Key, ids, when) is { } there && await FolderContainers.RemoveAsync(on.Key, [.. there.Select(container => container.Id)], when)
+                    && await RemoveNetworksAsync(on.Key, networks, when))
+                {
+                    Forget(kept, ids);
+                    ContainerLabels.EndedUnlabelled(ids, networks);
+                }
             }
         });
     }
@@ -318,10 +444,10 @@ internal sealed class AspireContainerOwnership
     }
 
     /// <summary>Removes the containers the state's record says a process of this state and machine that is gone had an
-    /// orchestrator make (<see cref="ContainerLabels.IsLeftover"/>), on the engine it recorded them on, each only while it is
-    /// still the container recorded (its id and name) and not Persistent, then the session networks they were on; a
-    /// recorded container the engine no longer holds is forgotten. No engine command runs when no record is a leftover.
-    /// Off the UI thread; the ids removed.</summary>
+    /// orchestrator make (<see cref="ContainerLabels.IsLeftover"/>), on the engine it recorded them on (Passenger's, or the
+    /// runtime the orchestrator chose, by its name), each only while it is still the container recorded (its id and name)
+    /// and not Persistent, then the session networks they were on; a recorded container the engine no longer holds is
+    /// forgotten. No engine command runs when no record is a leftover. Off the UI thread; the ids removed.</summary>
     public static async Task<IReadOnlyList<string>> RemoveLeftoversAsync(string stateFolder, ContainerEngine engine, CancellationToken cancel = default)
     {
         string path = ManifestOf(stateFolder);
@@ -341,6 +467,18 @@ internal sealed class AspireContainerOwnership
         {
             return [];
         }
+        List<string> removed = [];
+        foreach (IGrouping<string?, Entry> on in candidates.GroupBy(entry => entry.Runtime))
+        {
+            // A runtime's own engine where the record names one (an orchestrator's beside Passenger's), else Passenger's.
+            ContainerEngine reaching = on.Key is { } runtime ? await Task.Run(() => RuntimeEngine(runtime), cancel).ConfigureAwait(false) ?? engine : engine;
+            removed.AddRange(await RemoveLeftoversOnAsync(record, reaching, [.. on], cancel).ConfigureAwait(false));
+        }
+        return removed;
+    }
+
+    private static async Task<IReadOnlyList<string>> RemoveLeftoversOnAsync(StateDocument<Manifest> record, ContainerEngine engine, Entry[] candidates, CancellationToken cancel)
+    {
         Identity? identity = await ReadIdentityAsync(engine).ConfigureAwait(false);
         if (identity is null)
         {
@@ -431,19 +569,25 @@ internal sealed class AspireContainerOwnership
     private bool IsCurrent(Entry entry, string appHost) => entry.Owner == ContainerLabels.ProcessValue && entry.State == state
         && entry.Machine == ContainerLabels.MachineValue && entry.AppHost == appHost;
 
+    /// <summary>What reaches the engine as its CLI last found it, pinned so a record is acted on only where it was made: the
+    /// CLI, and its context or endpoint (none for Podman's own command with no API socket, which reaches its own storage).</summary>
     private static async Task<Identity?> ReadIdentityAsync(ContainerEngine engine, bool again = true)
     {
         EngineState current = await engine.StateAsync(again: again).ConfigureAwait(false);
-        if (current is not { Cli: { Length: > 0 } cli, Endpoint: { Length: > 0 } endpoint }
-            || !Path.IsPathFullyQualified(cli) || current.Status is not (EngineStatus.Ready or EngineStatus.NoCompose))
+        if (current is not { Cli: { Length: > 0 } cli } || !Path.IsPathFullyQualified(cli) || current.Status is not (EngineStatus.Ready or EngineStatus.NoCompose))
         {
             return null;
         }
-        if (Environment.GetEnvironmentVariable("DOCKER_HOST") is { Length: > 0 } host && host != endpoint)
+        string? endpoint = current.Endpoint is { Length: > 0 } known ? known : null;
+        if (endpoint is null && !current.PodmanCli)
         {
             return null;
         }
-        string[] arguments = current.Context is { Length: > 0 } context ? ["--context", context] : ["--host", endpoint];
+        if (!current.PodmanCli && Environment.GetEnvironmentVariable("DOCKER_HOST") is { Length: > 0 } host && host != endpoint)
+        {
+            return null;
+        }
+        string[] arguments = current.Context is { Length: > 0 } context ? ["--context", context] : endpoint is not null ? ["--host", endpoint] : [];
         if (current.Context is { Length: > 0 } named)
         {
             JsonElement inspected = await engine.JsonAsync(["context", "inspect", named]).ConfigureAwait(false);
@@ -455,8 +599,9 @@ internal sealed class AspireContainerOwnership
             }
         }
         string environment = string.Join('\n', new[] { "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_TLS" }
+            .Concat(current.PodmanCli ? ["CONTAINER_HOST", "CONTAINER_CONNECTION"] : [])
             .Select(variable => $"{variable}={Environment.GetEnvironmentVariable(variable)}"));
-        return new(Hash($"{Path.GetFullPath(cli)}\n{current.Context}\n{endpoint}\n{environment}"), arguments);
+        return new(Hash($"{Path.GetFullPath(cli)}\n{current.Context}\n{endpoint}\n{environment}"), arguments, Path.GetFullPath(cli));
     }
 
     /// <summary>The manifest as the disk has it now (another Passenger over the same state writes it too), read off the UI thread.</summary>
@@ -512,15 +657,18 @@ internal sealed class AspireContainerOwnership
         && int.TryParse(pid, NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id > 0
         && long.TryParse(start, NumberStyles.None, CultureInfo.InvariantCulture, out long began) && began > 0;
 
-    private sealed record Identity(string Fingerprint, string[] Arguments);
+    /// <summary>What reaches an engine: a fingerprint of it, the words before a command, and its CLI.</summary>
+    private sealed record Identity(string Fingerprint, string[] Arguments, string Cli);
 
-    /// <summary>A container this process recorded, and the session network it is on.</summary>
-    private sealed record Made(string Id, string? Network);
+    /// <summary>A container this process recorded: the engine holding it, its identity there, and its session network.</summary>
+    private sealed record Made(string Id, ContainerEngine Engine, Identity Identity, string? Network);
 
     /// <summary>A recorded container: its id, name, resource and AppHost, the engine's fingerprint, the state, machine and
-    /// process it was made for, and the session network it was on, written only when it has one, so a record an earlier
-    /// Passenger wrote is the same set member as it reads back.</summary>
+    /// process it was made for, the runtime the orchestrator chose where it is not Passenger's engine (docker, podman), and
+    /// the session network it was on, each of those two written only when it has one, so a record an earlier Passenger
+    /// wrote is the same set member as it reads back.</summary>
     public sealed record Entry(string Id, string Name, string Uid, string AppHost, string Engine, string State, string Machine, string Owner,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Runtime = null,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Network = null);
 
     public sealed class Manifest : IStateDocument<Manifest>
@@ -533,7 +681,7 @@ internal sealed class AspireContainerOwnership
             Entries = [.. (Entries ?? []).Take(MaximumRecords).Where(entry => entry is not null && FullId(entry.Id) && ContainerName(entry.Name)
                 && SafeText(entry.Uid, 256) && FullId(entry.AppHost) && FullId(entry.Engine)
                 && entry.State is { Length: 16 } && entry.Machine is { Length: 16 } && SafeText(entry.Owner, 64) && OwnerValue(entry.Owner)
-                && (entry.Network is null || NetworkName(entry.Network))).Distinct()],
+                && (entry.Runtime is null || Runtimes.Contains(entry.Runtime)) && (entry.Network is null || NetworkName(entry.Network))).Distinct()],
         };
     }
 }
