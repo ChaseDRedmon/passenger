@@ -2416,7 +2416,8 @@ from `SharedProject`: its windows share one warm language server (`MainWindow.Wa
 written before each test, and a file a test adds goes through `project.Write`, which ends the shared server: a file
 every test opens is the project's from the start (`LongFileAssistTests`' 20,000 lines). A file a test only rewrote is put
 back, with the time it was written at (the IDE refuses a server's edit to a file not open written in the last 2 s,
-`WorkspaceEdits.Catching`), and the server kept once it holds it as written again, which it reads through its own watcher
+`WorkspaceEdits.Catching`), or a moment after the last build when one compiled since (MSBuild would take that build of the
+test's text for the file's), and the server kept once it holds it as written again, which it reads through its own watcher
 (`WarmServer.HoldsAsync`, 10 s at most, else it is ended); a file that came or went, or one the server holds no document of
 (a project file), ends it. A window test that asks nothing of C# opens its window without the language server
 (`Ui.OpenFolder(folder, languageServer: false)`, a shared project's `Open(file, languageServer: false)`,

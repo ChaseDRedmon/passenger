@@ -10,6 +10,15 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-23
 
+- `DebugSessionsTests`' Hot Reload tests (`An_attach_to_a_program_started_held_for_it…` and `A_program_resumed_with_an_edit…`),
+  the lead's whole-class runs at bff67d61 and 8dfc252a, whichever ran after the class's rude edit, since a4ba62e3 (each
+  passed alone): "The edit was not applied as the program resumed: No managed code changes to apply", Roslyn's warning
+  behind it ENC1008, "Changing source file Counter.cs in a stale project 'First' has no effect until the project is
+  rebuilt". The rude edit's restart saved its signature and built First; the fixture's reset then put Counter.cs back with
+  the time it was written at, before that build, so the next test's build took the build of the rude edit as up to date and
+  ran it, whose PDB no longer matched the file. At a4ba62e3^ the same order passes and at a4ba62e3 both fail; #402's
+  widening of Hot Reload's scope (80e93fd9, in both) was not it. Neither race: **the fixture**, whose reset puts a file
+  back a moment after any build since its time, so the next build compiles it again.
 - `McpProcessesTests`' agent's Local History outlasting the person's window's pruning, the lead's landing run at 76647182
   (its third process), straight after the class's killed-Passenger test failed there (#443, below; it passed alone): "The IDE
   caught 1 error during the test: IOException: Failed to send message", from the agent's client's `PipeStream.WriteAsync`.

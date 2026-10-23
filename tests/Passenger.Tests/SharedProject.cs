@@ -96,10 +96,10 @@ public abstract class SharedProject : IDisposable
     }
 
     /// <summary>The project as written for the test about to run: what a test before it changed on disk written back with
-    /// the time it was written at, what it added removed. The shared server is ended if a file came or went, or a file it
-    /// holds no document of changed (a project file); one whose documents a test only rewrote is kept once it holds them as
-    /// written again, which it reads through its own watcher (<see cref="WarmServer.HoldsAsync"/>), and ended if it does
-    /// not within <see cref="Rereading"/>.</summary>
+    /// the time it was written at (a moment after a build since, which the next build then compiles again), what it added
+    /// removed. The shared server is ended if a file came or went, or one it holds no document of changed (a project file);
+    /// one whose documents a test only rewrote is kept once it holds them as written again, read through its own watcher
+    /// (<see cref="WarmServer.HoldsAsync"/>), and ended if it does not within <see cref="Rereading"/>.</summary>
     public void Reset()
     {
         bool structure = changed;
@@ -150,11 +150,12 @@ public abstract class SharedProject : IDisposable
                 }
             }
         }
-        // A file put back keeps the time it was written at, as a project untouched for a while has it: the IDE refuses a
-        // server's edit to a file not open written a moment before (WorkspaceEdits.Catching), which the next test's would be.
+        // A file put back keeps the time it was written at (WorkspaceEdits.Catching refuses a server's edit to one written a
+        // moment before), but after any build since, which may have compiled the test's text that MSBuild would take as built.
+        DateTime built = LastBuilt();
         foreach (string file in written.Keys.Where(file => File.GetLastWriteTimeUtc(file) != stamps[file]))
         {
-            File.SetLastWriteTimeUtc(file, stamps[file]);
+            File.SetLastWriteTimeUtc(file, stamps[file] > built ? stamps[file] : Min(built + TimeSpan.FromSeconds(1), DateTime.UtcNow));
         }
         // A folder's time is a file that came or went there, but for the temporary file a save writes beside a file and
         // renames over it (AtomicFile), which no project globs: a folder none of whose files was rewritten had one come and go.
@@ -181,6 +182,13 @@ public abstract class SharedProject : IDisposable
 
     /// <summary>Ends the shared server, waited for off the UI thread, whose continuations it needs none of.</summary>
     private void Drop() => Task.Run(Server.Drop).GetAwaiter().GetResult();
+
+    /// <summary>When a build last compiled one of the project's assemblies (a .dll under bin or obj, which neither a restore
+    /// nor a design-time build writes), or never.</summary>
+    private DateTime LastBuilt() => Directory.EnumerateFiles(Folder, "*.dll", SearchOption.AllDirectories)
+        .Where(file => !Own(file)).Select(File.GetLastWriteTimeUtc).DefaultIfEmpty(DateTime.MinValue).Max();
+
+    private static DateTime Min(DateTime one, DateTime other) => one < other ? one : other;
 
     private Dictionary<string, DateTime> Stamps()
     {
