@@ -75,9 +75,10 @@
        feed from there (MigrationsTests). -->
   <ItemGroup>
     <ProjectReference Include="../EfGraphs/Sqlite/EfGraphs.Sqlite.csproj" ReferenceOutputAssembly="false" />
-    <PackageDownload Include="dotnet-ef" Version="[$(EfCoreVersion)];[$(EfToolOlderVersion)]" />
+    <ProjectReference Include="../EfGraphs/SqliteOlder/EfGraphs.SqliteOlder.csproj" ReferenceOutputAssembly="false" />
+    <PackageDownload Include="dotnet-ef" Version="[$(EfCoreVersion)];[$(EfCoreOlderVersion)]" />
     <AssemblyMetadata Include="EfCoreVersion" Value="$(EfCoreVersion)" />
-    <AssemblyMetadata Include="EfToolOlderVersion" Value="$(EfToolOlderVersion)" />
+    <AssemblyMetadata Include="EfCoreOlderVersion" Value="$(EfCoreOlderVersion)" />
   </ItemGroup>
 
   <!-- VSTest's SDK and xunit's adapter at the versions this project restores, for the VSTest project TestFramesTests make

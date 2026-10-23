@@ -12,6 +12,9 @@ public sealed record EfProvider(string Id, string Version, string Range, bool Ho
 /// provider's range, not EF Core's newest, decides what fits.</summary>
 public sealed record EfRestore(string? Runtime, string? Design, IReadOnlyList<EfProvider> Providers)
 {
+    /// <summary>The framework of the restore's target read (net10.0), whose group of a package's dependencies applies.</summary>
+    public string? Framework { get; init; }
+
     /// <summary>EF Core's own package, whose version is the runtime the tools and the Design package match.</summary>
     public const string Core = "Microsoft.EntityFrameworkCore";
 
@@ -79,7 +82,7 @@ public sealed record EfRestore(string? Runtime, string? Design, IReadOnlyList<Ef
                     providers.Add(new EfProvider(id, version, given, InRange(given, runtime)));
                 }
             }
-            return new EfRestore(runtime, design, providers);
+            return new EfRestore(runtime, design, providers) { Framework = chosen.Name.Split('/')[0] };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -132,6 +135,10 @@ public sealed record EfRestore(string? Runtime, string? Design, IReadOnlyList<Ef
         string[] ends = given[1..^1].Split(',');
         string from = ends[0].Trim();
         string to = ends.Length > 1 ? ends[1].Trim() : from;
+        if (from == to)
+        {
+            return $"EF Core {from}";
+        }
         if (from.Length > 0 && to.Length > 0 && given[^1] == ')' && Major(to) == Major(from) + 1 && to.EndsWith(".0.0", StringComparison.Ordinal))
         {
             return $"EF Core {Major(from)}";

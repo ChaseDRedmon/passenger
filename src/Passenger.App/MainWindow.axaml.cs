@@ -248,7 +248,7 @@ public partial class MainWindow : Window
         // the value set in its configuration; a service's read of a connection string its compose file's environment lacks,
         // the variable set there.
         assist.EditorFixes = (file, offset) => [.. Passenger.App.LiveTree.BindingErrors.Fixes(file, offset, session.FailedBindings.Select(b => b.Failure)),
-            .. session.Web?.Checks.Fixes(file, offset) ?? [], .. assist.AspireFixes(file, offset), .. assist.ComposeReadFixes(file, offset)];
+            .. session.Web?.Checks.Fixes(file, offset) ?? [], .. assist.AspireFixes(file, offset), .. assist.ComposeReadFixes(file, offset), .. MigrationFixes(file, offset)];
         assist.AskValue = AskValueAsync;
         assist.AddActions(actions!);
         usages.AddActions(actions!);

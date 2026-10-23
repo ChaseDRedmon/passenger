@@ -35,6 +35,7 @@
   </Folder>
   <Folder Name="/tests/EfGraphs/">
     <Project Path="tests/EfGraphs/Sqlite/EfGraphs.Sqlite.csproj" />
+    <Project Path="tests/EfGraphs/SqliteOlder/EfGraphs.SqliteOlder.csproj" />
   </Folder>
   <Folder Name="/tests/Debuggees/">
     <Project Path="tests/Debuggees/AsyncEntryConsoleApp/AsyncEntryConsoleApp.csproj" />
