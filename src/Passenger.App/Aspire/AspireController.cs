@@ -43,7 +43,10 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     /// in a run that brings the configuration up again keeps; null when nothing was chosen.</summary>
     public Func<string, string, bool?>? Chosen { get; set; }
     public Func<AspireAppRun, CancellationToken, Task<AspireInteractions?>>? ConnectInteractions { get; set; }
-    public Func<AspireAppRun, AspireResourceRun, LaunchPlan, CancellationToken, Task<ProfilingSession>>? ProfileService { get; set; }
+
+    /// <summary>Has the profiler record the service a configuration's Profile holds at its start, which lets it go once
+    /// recording: the AppHost's run's profiler (<see cref="ServiceRun.Profiler"/>), null once it records, else why not.</summary>
+    public Func<AspireAppRun, IRunService, ServiceProgram, CancellationToken, Task<string?>>? ProfileStart { get; set; }
 
     /// <summary>Whether the Debug window's chosen tab is another program's than any service's (a plain launch beside the
     /// AppHost), which the Aspire window's resources read again do not take back: only a person's choice of a resource does.</summary>
@@ -224,7 +227,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             if (mode == RunStart.Profile)
             {
                 using CancellationTokenSource profiling = CancellationTokenSource.CreateLinkedTokenSource(starting.Token);
-                profiling.CancelAfter(TimeSpan.FromSeconds(60));
+                profiling.CancelAfter(Waits.Of(TimeSpan.FromSeconds(60)));
                 Task winner = await Task.WhenAny(started.Select(app => (Task)app.ProfileStarted.Task)
                     .Concat(started.Select(app => (Task)app.Runner.Ended))).WaitAsync(profiling.Token);
                 AspireAppRun? profiled = started.FirstOrDefault(app => ReferenceEquals(winner, app.ProfileStarted.Task));
@@ -261,7 +264,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation, (string AppHost, string Name)? profileTarget, HttpsChoice https,
         IReadOnlyList<string> said)
     {
-        LaunchPlan plan = await ResolveAppHostAsync(configuration, cancellation);
+        DateTime began = DateTime.UtcNow;
+        LaunchPlan plan = await ResolveAppHostAsync(configuration, build, cancellation);
         if (plan.Build is { } step && await build(step) is { Succeeded: false } failed)
         {
             throw new LaunchException(failed.Message);
@@ -275,12 +279,16 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         {
             throw new LaunchException(why);
         }
+        AspireAppRun? made = null;
         AspireAppRun app = new(configuration, mode, group)
         {
             ProfileTarget = profileTarget,
+            BuildBegan = began,
             OverHttp = https.OverHttp is not null,
             Restarting = (run, resource, build, cancel) => (RestartCommand ?? throw new InvalidOperationException("Aspire resource restart is unavailable"))(run, resource, build, cancel),
+            Profiler = (service, program, stop) => (ProfileStart ?? throw new LaunchException("The service profiler is unavailable"))(made!, service, program, stop),
         };
+        made = app;
         if (https.OverHttp is { } note)
         {
             app.Notes.Add(note);
@@ -502,7 +510,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
     }
 
-    private async Task<LaunchPlan> ResolveAppHostAsync(RunConfiguration configuration, CancellationToken cancellation)
+    private async Task<LaunchPlan> ResolveAppHostAsync(RunConfiguration configuration, Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation)
     {
         if (!Path.GetExtension(configuration.Project).Equals(".cs", StringComparison.OrdinalIgnoreCase))
         {
@@ -512,36 +520,36 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             }
             return await LaunchPlan.ResolveAsync(configuration, workspace.Projects, workspace.Workspace, stateFolder, cancellation);
         }
-        if (!AspireAppHosts.IsSingleFile(configuration.Project))
-        {
-            throw new LaunchException("The selected C# file does not declare the Aspire AppHost SDK");
-        }
-        if (AspireAppHosts.SingleFileWhyNot(configuration.Project,
-            Directory.EnumerateFiles(Path.GetDirectoryName(configuration.Project)!, "*", SearchOption.TopDirectoryOnly)) is { } unsupported)
-        {
-            throw new LaunchException(unsupported);
-        }
         if (configuration.Program.Length > 0 || configuration.Framework.Length > 0)
         {
             throw new LaunchException("Single-file AppHosts use the framework declared in the file; clear Exe path and Target framework");
         }
         string folder = Path.GetDirectoryName(configuration.Project)!;
-        configuration = ReadFileProfile(configuration, folder);
+        // What it reads of the disk (the file, its folder, its launch profile) is read off the UI thread.
+        configuration = await BackgroundWork.Run(() =>
+        {
+            if (!AspireAppHosts.IsSingleFile(configuration.Project))
+            {
+                throw new LaunchException("The selected C# file does not declare the Aspire AppHost SDK");
+            }
+            if (AspireAppHosts.SingleFileWhyNot(configuration.Project, Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly)) is { } unsupported)
+            {
+                throw new LaunchException(unsupported);
+            }
+            return ReadFileProfile(configuration, folder);
+        }, cancellation);
         string output = Path.Combine(stateFolder, "aspire", Convert.ToHexString(SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(PathNames.Canonical(configuration.Project)))), "output");
-        if (configuration.BuildBeforeLaunch)
+        // A build of the Build window's, as a project AppHost's is: Stop ends it, Problems lists what it found.
+        if (configuration.BuildBeforeLaunch && await build(new BuildStep(configuration.Project, null, output)) is { Succeeded: false } failed)
         {
-            ChildResult built = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(
-                ["build", configuration.Project, "--output", output, "--nologo"], folder), cancel: cancellation);
-            if (!built.Succeeded)
-            {
-                throw new LaunchException($"Could not build {configuration.Name}: {built.Error.Trim()} {built.Output.Trim()}");
-            }
+            throw new LaunchException(failed.Message);
         }
+        cancellation.ThrowIfCancellationRequested();
         ChildResult evaluated = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(
             ["build", configuration.Project, "--output", output, "--no-restore", "--nologo", "-getProperty:TargetPath"], folder), cancel: cancellation);
         string target = evaluated.Output.Trim();
-        if (!evaluated.Succeeded || !Path.IsPathFullyQualified(target) || !File.Exists(target))
+        if (!evaluated.Succeeded || !Path.IsPathFullyQualified(target) || !await BackgroundWork.Run(() => File.Exists(target), cancellation))
         {
             throw new LaunchException("MSBuild could not resolve the built single-file AppHost TargetPath");
         }
@@ -640,14 +648,23 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         ProjectModel? known = workspace.Projects.FirstOrDefault(project => PathNames.Same(project.Path, path));
         bool referenced = workspace.Projects.Any(project => project.ProjectReferences.Any(reference => PathNames.Same(reference, path)));
-        if (!File.Exists(path) || !WorkspaceModel.IsProject(path)
-            || (known is null && !referenced && (workspace.Folder is null || !PathNames.IsUnder(path, workspace.Folder))))
+        if (!WorkspaceModel.IsProject(path) || (known is null && !referenced && (workspace.Folder is null || !PathNames.IsUnder(path, workspace.Folder))))
         {
             throw new LaunchException("DCP requested a project outside this workspace and its project references");
         }
         ProjectModel project = known ?? ProjectModel.Unevaluated(path);
         string? profileName = request.DisableLaunchProfile ? null : request.LaunchProfile ?? app.Configuration.LaunchProfile;
-        LaunchProfile? profile = profileName is null ? null : LaunchProfile.Read(project).FirstOrDefault(candidate => candidate.Name == profileName);
+        // The project and its launch profiles are read off the UI thread.
+        (bool exists, LaunchProfile? profile) = await BackgroundWork.Run(() => (File.Exists(path),
+            profileName is null ? null : LaunchProfile.Read(project).FirstOrDefault(candidate => candidate.Name == profileName)), cancellation);
+        if (!exists)
+        {
+            throw new LaunchException("DCP requested a project outside this workspace and its project references");
+        }
+        if (app.Stopping || workspace.IsEnded || disposed)
+        {
+            throw new LaunchException("The Aspire app is stopping or its service limit was reached");
+        }
         RunConfiguration configuration = profile is null
             ? new RunConfiguration { Name = project.Name, Project = path, WorkingDirectory = "$(ProjectDir)" }
             : RunConfiguration.From(project, profile) with { Name = project.Name };
@@ -671,12 +688,14 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             ? [.. plan.Built is { } built && plan.Arguments.FirstOrDefault() == built ? new[] { built } : [], .. given]
             : plan.Arguments;
         plan = plan with { Name = $"{app.Configuration.Name} / {project.Name}", Environment = environment, Arguments = arguments };
+        LaunchPlan stamped = plan;
+        string stamp = await BackgroundWork.Run(() => AspireResourceRun.ReadBuiltStamp(stamped), cancellation);
         cancellation.ThrowIfCancellationRequested();
         if (app.Stopping || workspace.IsEnded || app.Resources.Count >= 200)
         {
             throw new LaunchException("The Aspire application ended or reached its service limit during launch");
         }
-        AspireResourceRun resource = new(request.SessionId, request.DcpInstanceId, path, plan);
+        AspireResourceRun resource = new(request.SessionId, request.DcpInstanceId, path, plan) { BuiltStamp = stamp };
         resource.ResourceName = request.Environment.FirstOrDefault(variable => variable.Name == "OTEL_SERVICE_NAME")?.Value;
         string serviceName = ((IRunService)resource).Name;
         if (app.LeftUnstarted(serviceName, ResourceAction(app.Configuration, resource) == ServiceStart.DontStart))
@@ -699,49 +718,41 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 app.ProfileClaimed = true;
             }
             // Held for the debugger (quietly for Hot Reload) as the run of services holds it: from its first start in this run,
-            // as a person chose it in an earlier one, else as the configuration and DCP's request say.
-            RunStart? held = profiling ? null : app.Starting(resource, () => FirstHold(app, resource, request));
+            // as a person chose it in an earlier one, else as the configuration and DCP's request say; the one Profile records,
+            // held for the profiler.
+            RunStart? chosen = app.Starting(resource, () => FirstHold(app, resource, request));
+            RunStart? held = profiling ? RunStart.Profile : chosen;
             resource.Inspection = held != RunStart.HotReload ? LiveApp.For(plan, workspace.Overlays) : null;
             if (resource.Inspection is { } inspection)
             {
                 inspection.BindingFailed += (_, _) => Changed?.Invoke(this, EventArgs.Empty);
             }
             LaunchPlan inspected = resource.Inspection?.Plan ?? plan;
-            if (profiling)
+            if (held is not null)
             {
-                resource.Profile = await (ProfileService ?? throw new LaunchException("The service profiler is unavailable"))(app, resource, inspected, cancellation);
-                resource.ProcessId = resource.Profile.ProcessId;
-                _ = ProfileEndedAsync(app, resource, resource.Profile);
+                // Held at its runtime's start until what attaches to it lets it go: the debugger, its code open to Hot Reload,
+                // or the profiler, with no code made changeable, which it would measure.
+                Dictionary<string, string> holding = new(inspected.Environment, StringComparer.Ordinal) { [RuntimeVariables.DefaultDiagnosticPortSuspend] = "1" };
+                if (held != RunStart.Profile)
+                {
+                    holding[RuntimeVariables.ModifiableAssemblies] = "debug";
+                }
+                inspected = inspected with { Environment = holding };
             }
-            else
+            ProcessRunner runner = resource.Runner = new ProcessRunner(resource.Console, takesInput: true);
+            runner.OutputReceived += (_, output) => app.Execution?.NotifyServiceLog(request.DcpInstanceId, request.SessionId, output.Text, output.IsError);
+            runner.Exited += (_, code) => Finished(app, resource, code);
+            string? refused = runner.Start(inspected.Program, inspected.Arguments, inspected.WorkingDirectory, inspected.Environment);
+            if (refused is not null)
             {
-                if (held is not null)
-                {
-                    // Held at its runtime's start, its code open to Hot Reload, until the debugger attached to it lets it go.
-                    inspected = inspected with
-                    {
-                        Environment = new Dictionary<string, string>(inspected.Environment, StringComparer.Ordinal)
-                        {
-                            [RuntimeVariables.DefaultDiagnosticPortSuspend] = "1",
-                            [RuntimeVariables.ModifiableAssemblies] = "debug",
-                        },
-                    };
-                }
-                ProcessRunner runner = resource.Runner = new ProcessRunner(resource.Console, takesInput: true);
-                runner.OutputReceived += (_, output) => app.Execution?.NotifyServiceLog(request.DcpInstanceId, request.SessionId, output.Text, output.IsError);
-                runner.Exited += (_, code) => Finished(app, resource, code);
-                string? refused = runner.Start(inspected.Program, inspected.Arguments, inspected.WorkingDirectory, inspected.Environment);
-                if (refused is not null)
-                {
-                    throw new LaunchException(refused);
-                }
-                resource.ProcessId = runner.ProcessId;
-                resource.Held = held;
-                // The run of services' one attach to this start, whose session lets it go.
-                if (held is { } purpose && await (AttachStart ?? throw new LaunchException("The debugger is unavailable"))(app, resource, purpose, cancellation) is { } unattached)
-                {
-                    throw new LaunchException(unattached);
-                }
+                throw new LaunchException(refused);
+            }
+            resource.ProcessId = runner.ProcessId;
+            resource.Held = held == RunStart.Profile ? null : held;
+            // The run of services' one attach to this start, whose session (or recording) lets it go.
+            if (held is { } purpose && await (AttachStart ?? throw new LaunchException("The debugger is unavailable"))(app, resource, purpose, cancellation) is { } unattached)
+            {
+                throw new LaunchException(unattached);
             }
             cancellation.ThrowIfCancellationRequested();
             if (profiling)
@@ -790,30 +801,6 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 ? action : null;
     }
 
-    private async Task ProfileEndedAsync(AspireAppRun app, AspireResourceRun resource, ProfilingSession profile)
-    {
-        try
-        {
-            await profile.ExitedAsync().ConfigureAwait(false);
-            if (resource.Closing)
-            {
-                return;
-            }
-            UiThread.Post(() =>
-            {
-                if (app.Resources.GetValueOrDefault(resource.Id) == resource)
-                {
-                    app.Execution?.NotifyProcessTerminated(resource.InstanceId, resource.Id, null);
-                    BackgroundWork.Track(StopResourceAsync(app, resource.Id));
-                }
-            });
-        }
-        catch (Exception error)
-        {
-            IdeErrors.Report(error);
-        }
-    }
-
     private void Finished(AspireAppRun app, AspireResourceRun resource, int? exitCode)
     {
         UiThread.Check();
@@ -850,7 +837,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         async Task StopOwnedAsync()
         {
             resource.Stopping.Cancel();
-            if (resource.EndProfiling is { } endProfiling)
+            // Its recording before its program, its snapshot read, as Stop's order has it.
+            if (app.Profiled == ((IRunService)resource).Name && app.EndProfiling is { } endProfiling)
             {
                 try
                 {
@@ -860,12 +848,6 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 {
                     IdeErrors.Report(error);
                 }
-            }
-            else if (resource.Profile is { } profile)
-            {
-                profile.Kill();
-                await profile.ExitedAsync();
-                await profile.DisposeAsync();
             }
             // Its session before its program, its own alone: a later start of its service has its own, of the same name.
             if (resource.DebugTab is { } tab)
@@ -937,7 +919,6 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             foreach (AspireResourceRun resource in app.Resources.Values)
             {
                 resource.Runner?.Stop();
-                resource.Profile?.Kill();
             }
             app.Console.SetRunning(false);
             app.Runner.Dispose();
@@ -962,13 +943,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         foreach (AspireAppRun app in owned)
         {
             app.Stopping = true;
-            foreach (AspireResourceRun resource in app.Resources.Values)
-            {
-                resource.Closing = true;
-            }
         }
         lifetime.Cancel();
-        List<Task> profiles = [];
         List<(AspireAppRun App, AspireResourceRun[] Resources, Task Debuggers)> captured = [];
         foreach (AspireAppRun app in owned)
         {
@@ -978,23 +954,6 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             foreach (AspireResourceRun resource in resources)
             {
                 resource.Stopping.Cancel();
-                Task<ProfilingSession>? nativeStart = resource.StartingProfile
-                    ?? (resource.Profile is { Attached: false } profile ? Task.FromResult(profile) : null);
-                if (nativeStart is not null)
-                {
-                    if (nativeStart.IsCompletedSuccessfully && nativeStart.Result is { Attached: false } recording)
-                    {
-                        if (ReferenceEquals(workspace.Profiling, recording))
-                        {
-                            workspace.Profiling = null;
-                        }
-                        if (ReferenceEquals(workspace.Profiled?.Run, recording))
-                        {
-                            workspace.Profiled = null;
-                        }
-                    }
-                    profiles.Add(resource.ProfileCleanup ??= CloseProfileAsync(nativeStart));
-                }
                 // Its own session (in its tab, or quietly for Hot Reload) ends before its program, as Stop's order has it.
                 if ((resource.DebugTab?.Session ?? resource.Debugged) is { } debugged)
                 {
@@ -1010,7 +969,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         apps.Clear();
         startingPaths.Clear();
         SelectedService = null;
-        Task rundown = Task.WhenAll(profiles);
+        // A recording of a service, the profiler's attach, is let go with the folder's profiler (ProjectSession's end).
+        Task rundown = Task.CompletedTask;
         List<Task> endings = [];
         foreach ((AspireAppRun app, AspireResourceRun[] resources, Task debuggers) in captured)
         {
@@ -1076,39 +1036,6 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
     }
 
-    internal static Task CloseProfileAsync(Task<ProfilingSession> starting) => Task.Run(async () =>
-    {
-        ProfilingSession profile;
-        try
-        {
-            profile = await starting.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-        if (profile.Attached)
-        {
-            return;
-        }
-        try
-        {
-            await profile.StopAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            try
-            {
-                profile.Kill();
-                await profile.ExitedAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                await profile.DisposeAsync().ConfigureAwait(false);
-            }
-        }
-    });
-
     public ValueTask DisposeAsync() => new(CloseAsync());
 }
 
@@ -1154,6 +1081,13 @@ public sealed class AspireAppRun : ServiceRun
     public override Telemetry.TelemetrySource? Telemetry => DashboardEndpoint is { } endpoint && DashboardApiKey.Length > 0 ? new(endpoint, DashboardApiKey) : null;
     internal bool ProfileClaimed { get; set; }
     internal (string AppHost, string Name)? ProfileTarget { get; init; }
+
+    /// <summary>When the AppHost's build began (the build its first services run too): its own code changed once a file its
+    /// folder holds was written after it.</summary>
+    internal DateTime BuildBegan { get; init; }
+
+    /// <summary>When the build each service project was built by again for a restart began, by project.</summary>
+    internal Dictionary<string, DateTime> Rebuilt { get; } = new(PathNames.Comparer);
     internal TaskCompletionSource<string?> ProfileStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IReadOnlyList<string> KnownContainerIds { get; internal set; } = [];
     internal AspireInteractions? Interactions { get; set; }
@@ -1221,7 +1155,7 @@ public sealed class AspireAppRun : ServiceRun
             Console.Append($"Restarting {service.Name}{(why is null ? string.Empty : $": {why}")}\n");
             Task<string?> next = NextStart(service.Name);
             await (Restarting ?? throw new InvalidOperationException("Aspire resource restart is unavailable"))(this, running, build, cancel);
-            if (await next.WaitAsync(StartLimit, cancel) is { } failed)
+            if (await next.WaitAsync(Waits.Of(StartLimit), cancel) is { } failed)
             {
                 return $"{service.Name} did not start again: {failed}";
             }
@@ -1285,6 +1219,7 @@ public sealed class AspireAppRun : ServiceRun
         }
         run.DebugTab = tab;
         run.Debugged = debugged;
+        SessionsChanged?.Invoke(this, EventArgs.Empty);
         if (tab is not null)
         {
             tab.StateChanged += (_, _) =>
@@ -1292,10 +1227,14 @@ public sealed class AspireAppRun : ServiceRun
                 if (run.DebugTab == tab && tab.Session is { State: DebugState.Ended })
                 {
                     run.DebugTab = null;
+                    SessionsChanged?.Invoke(this, EventArgs.Empty);
                 }
             };
         }
     }
+
+    /// <summary>A service's start was attached to, or its session ended: what an agent's wait for a resource's session wakes on.</summary>
+    public event EventHandler? SessionsChanged;
 }
 
 /// <summary>One start of a service DCP asked the IDE for, a service of its AppHost's run (<see cref="IRunService"/>, by its
@@ -1306,8 +1245,16 @@ public sealed class AspireResourceRun(string id, string instanceId, string proje
     public string InstanceId { get; } = instanceId;
     public string Project { get; } = project;
     public LaunchPlan Plan { get; } = plan;
-    internal string BuiltStamp { get; } = ReadBuiltStamp(plan);
-    internal bool BuildChanged => BuiltStamp != ReadBuiltStamp(Plan);
+    /// <summary>Its build's output as it started (each assembly's, symbols' and settings' name, length and time), read off
+    /// the UI thread before it starts.</summary>
+    internal string BuiltStamp { get; init; } = string.Empty;
+
+    /// <summary>Whether Rerun builds it again and restarts it: its output changed since it started (a build of another's),
+    /// or a file its build reads was written after the build it runs began (<paramref name="since"/>). Reads the disk: off
+    /// the UI thread.</summary>
+    internal bool ChangedSinceStart(IReadOnlyList<ProjectModel> projects, DateTime since) =>
+        BuiltStamp != ReadBuiltStamp(Plan) || BuiltInputs.ChangedSince(Project, since, projects);
+
     public string? ResourceName { get; internal set; }
     internal string IdentityKey => Plan.Environment.GetValueOrDefault("OTEL_RESOURCE_ATTRIBUTES") is { Length: > 0 } attributes
         ? $"{Project}\n{attributes}" : ResourceName ?? Project;
@@ -1325,11 +1272,6 @@ public sealed class AspireResourceRun(string id, string instanceId, string proje
     public LiveApp? Inspection { get; internal set; }
     public OutputView Console { get; } = new();
     internal ProcessRunner? Runner { get; set; }
-    internal ProfilingSession? Profile { get; set; }
-    internal Task<ProfilingSession>? StartingProfile { get; set; }
-    internal Task? ProfileCleanup { get; set; }
-    internal volatile bool Closing;
-    internal Func<Task>? EndProfiling { get; set; }
     internal Task? Ending { get; set; }
     internal CancellationTokenSource Stopping { get; } = new();
 
@@ -1337,7 +1279,7 @@ public sealed class AspireResourceRun(string id, string instanceId, string proje
 
     bool IRunService.Starts => true;
 
-    private static string ReadBuiltStamp(LaunchPlan launch)
+    internal static string ReadBuiltStamp(LaunchPlan launch)
     {
         string? output = Path.GetDirectoryName(launch.Built ?? launch.Program);
         return output is null || !Directory.Exists(output) ? string.Empty : string.Join('|', Directory.EnumerateFiles(output)

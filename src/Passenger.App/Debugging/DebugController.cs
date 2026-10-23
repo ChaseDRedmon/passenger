@@ -484,7 +484,7 @@ public sealed class DebugController : IDisposable
                 throw new InvalidOperationException(failure);
             }
             DebugSession session = tab.Session ?? throw new InvalidOperationException("The debugging session did not start");
-            int processId = await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30), cancellation);
+            int processId = await session.ProcessStarted.WaitAsync(Waits.Of(TimeSpan.FromSeconds(30)), cancellation);
             if (attachedProcessId is int expected && processId != expected)
             {
                 throw new InvalidOperationException("The debugger attached to a different process");

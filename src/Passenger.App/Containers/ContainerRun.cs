@@ -1194,7 +1194,45 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     /// (<paramref name="why"/>, else that their build changed). A service whose container was made held, or unheld, other
     /// than as it is now chosen is made anew from the override, as are all of them in images mode, from an image built again
     /// from its Dockerfile.</summary>
-    public override async Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null, bool build = false)
+    public override Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null, bool build = false) =>
+        Restarting(() => RestartNowAsync(services, cancel, why));
+
+    /// <summary>A restart, known to be under way until it ends (<see cref="StillUpAsync"/> waits it out).</summary>
+    private async Task<string?> Restarting(Func<Task<string?>> restart)
+    {
+        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        restarts.Add(ended.Task);
+        try
+        {
+            return await restart();
+        }
+        finally
+        {
+            restarts.Remove(ended.Task);
+            ended.TrySetResult();
+        }
+    }
+
+    /// <summary>The restarts under way, on the UI thread.</summary>
+    private readonly List<Task> restarts = [];
+
+    /// <summary>Whether any of its containers is up once the restarts under way have ended (one made anew has none up for a
+    /// moment): what tells a log that ended by itself from one that ended as its services did.</summary>
+    public async Task<bool> StillUpAsync(CancellationToken cancel)
+    {
+        using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
+        while (restarts.Count > 0)
+        {
+            await Task.WhenAll(restarts.ToArray()).WaitAsync(stop.Token);
+        }
+        return (await StatesAsync(stop.Token)).Any(s => s.State is "running" or "restarting" or "created" or "paused");
+    }
+
+    /// <summary>The <c>docker compose logs -f</c> words that follow every service's output again from <paramref name="since"/>
+    /// (RFC 3339), after the run's log ended while its services ran.</summary>
+    public IReadOnlyList<string> LogsSince(string since) => [.. Plan.Compose, "logs", "--follow", "--no-color", "--since", since];
+
+    private async Task<string?> RestartNowAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why)
     {
         if (services.Count == 0)
         {
@@ -1217,11 +1255,6 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
         async Task<string?> RestartEachAsync(CancellationToken stop)
         {
-            // On Podman, stopped while another service keeps the run's log going: Compose's logs --follow crashes on Podman's late die.
-            if (made.Count > 0 && engine.Known is { IsPodman: true } && Plan.Touched.Except(made, StringComparer.Ordinal).Any())
-            {
-                await StreamAsync([.. Plan.Compose, "stop", "--", .. made], stop);
-            }
             foreach ((List<string> named, IReadOnlyList<string> words) in ((List<string>, IReadOnlyList<string>)[])[
                 (kept, [.. Plan.Compose, "restart", "--", .. kept]),
                 // As deployed, a service's image is built again from its Dockerfile and its container made anew from it.
@@ -1262,16 +1295,13 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
     /// <summary>Restarts services the run does not build (its backing services) as they are, saying so in the console;
     /// null once done, else why not. Stop of the run ends it.</summary>
-    public async Task<string?> RestartOthersAsync(IReadOnlyList<string> services, CancellationToken cancel)
-    {
-        if (services.Count == 0)
+    public Task<string?> RestartOthersAsync(IReadOnlyList<string> services, CancellationToken cancel) => services.Count == 0 ? Task.FromResult<string?>(null)
+        : Restarting(async () =>
         {
-            return null;
-        }
-        using CancellationTokenSource restartEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
-        ChildResult restarted = await StreamAsync([.. Plan.Compose, "restart", "--", .. services], restartEnding.Token);
-        return restarted.Succeeded ? null : $"{Plan.Name}'s services did not restart: docker compose restart ended with exit code {restarted.ExitCode}";
-    }
+            using CancellationTokenSource restartEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
+            ChildResult restarted = await StreamAsync([.. Plan.Compose, "restart", "--", .. services], restartEnding.Token);
+            return restarted.Succeeded ? null : $"{Plan.Name}'s services did not restart: docker compose restart ended with exit code {restarted.ExitCode}";
+        });
 
     /// <summary>A build's output as it stands: each assembly's, symbols' and settings' name, length and time.</summary>
     private static string Stamp(string output)

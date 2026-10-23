@@ -717,7 +717,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   -t:PublishContainer` into the engine, `ContainerRun.PublishAsync`, named `passenger-<config>-<folder>:passenger`, which
   carries no label of Passenger's). `ContainerRun` (`ProjectSession.ContainerRun`) is `up
   --detach --wait` streamed into the Run console, then `logs --follow` through the session's `Runner` (so Run's Stop,
-  `IsRunning` and its end are the log's), Compose's own watch for other services that declare one, Rerun's restart of the
+  `IsRunning` and its end are the log's; a log that ends with the run not stopped is followed again from its end,
+  `logs --since`, said in the console, while its containers still run once the restarts under way have ended,
+  `ContainerRun.StillUpAsync`, `BuildRunController.FollowContainersAgainAsync`, Stop kept meanwhile), Compose's own watch for other services that declare one, Rerun's restart of the
   services whose build changed (`Changed`, by the output's stamps, a restart stamping only those it restarted), and
   `StopAsync` (`FolderContainers.TakeDownAsync`: the containers and networks of its project carrying this machine's, process's and
   folder's labels, the .NET services' alone when backing services are kept, which then go with the folder; never `down` or
@@ -829,9 +831,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   Problems' Containers tab as one opens with the setting on (`EngineChecks.Limited`, `EngineState.Limit`). A stopped
   Podman is said as Podman, its socket or machine to start. Compose's `logs --follow`, the run's log, crashes (Compose
   2.40 and 5.0: a nil State read for a die whose container is gone, as Podman's die comes) when a service is made anew,
-  which ended the run: on Podman `ContainerRun.RestartAsync` stops such a service first while another keeps the log going
-  (a run's only service still ends it; following the log again when it ends with the containers up is the run's own,
-  `ServiceRun`'s, to do). So a compose file or a Dockerfile runs, debugs (two services at once, or one service of a run),
+  which the run follows again from its end, its containers still running (`ContainerRun` above). So a compose file or a Dockerfile runs, debugs (two services at once, or one service of a run),
   Hot Reloads and profiles on Podman as on Docker: the ten container classes pass both ways (but for Ubuntu's own
   fault below). An AppHost's container resource runs on the same Podman (DCP takes Docker's CLI on its socket, or Podman's
   own `docker` as Podman), and #397's cleanup reads Podman's bare container names. On Ubuntu 26.04 the pasta AppArmor
@@ -865,7 +865,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   `AspireInteractions` is one
   authenticated connection to an AppHost's resource service (gRPC, `Protocol/dashboard_service.proto`, its C# checked in beside it): its resources,
   their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`, closed with their window or the IDE's quit, still answered, so none holds the window and the AppHost open), the display's streams followed only
-  while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
+  while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden, and a wait on what the
+  resources become (an agent's `run`, `debug_start` and `debug_attach` with `resource`, a service's restart for a tool)
+  following one resource stream for the whole wait (`Follow`, `MainWindow.FollowAspireAsync`: woken by each batch, each
+  change of the runs and each service's attach, never on a timer), so `run` with `resource` answers once it is up; `AspireTelemetry` reads the
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
   window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
@@ -889,9 +892,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   restart's own start is the one attach (a restart waits for it, `AspireAppRun.NextStart`); its session is named by its
   AppHost and resource (`SessionName`), so a restart takes its ended tab. Its restart is its AppHost's own resource
   commands (`MainWindow.RestartAspireCommandAsync`: restart, or stop, its project's build here and start for an edit), the
-  service found by its name and project whether its program still runs; Run without Debugger restarts it unheld. Profile
-  of a configuration holds the chosen service at its start until recording begins (`ProfileAspireAsync`,
-  `AspireServiceDialog` when several run). Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
+  service found by its name and project whether its program still runs, its program gone before its build; Run without
+  Debugger restarts it unheld. Profile of a configuration holds the chosen service at its start through the model, no code
+  made changeable, and the run's profiler records it from there (`ProfilerCommands.RecordHeldServiceAsync`,
+  `ProfilingSession.AttachAsync`'s `resume`), letting it go once recording, Stop reading its snapshot before the programs go
+  (`ProfileAspireAsync`, `AspireServiceDialog` when several run). Rerun reads, before anything is built, what changed since
+  the build each program runs began (`BuiltInputs.ChangedSince`: code, project, XAML and settings files under its folder and
+  those it references, never what a running program writes beside them, as DCP's `.dcp.json`): the services changed are
+  stopped, built and started again through their restart, the rest left running, and an AppHost whose own folder changed
+  is stopped with its services, then built and run again as it ran, so nothing is built over a running program's files
+  (Windows locks them). A single-file AppHost is built in the Build window as a project's is (`BuildStep.Output`, into the
+  state's `aspire/<hash>/output`), Stop and Problems reaching its build. What the controller reads of the disk (a
+  single-file AppHost's head, folder and launch profile, a service's project and launch profiles, its build's stamp) and
+  the container ownership manifest (`AspireContainerOwnership`, read by `Peek`, written at once) are read and written off
+  the UI thread. Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
   `AspireOrchestration`, `AspireOrchestrationDialog`) adds an AppHost and ServiceDefaults from Aspire's templates and
   references them, each service a local of the AppHost, with the backing services Add > Docker Compose's detection finds
   for it (`BackingService.Needs`: a server once by its service's name, a database of Postgres, SQL Server or Mongo by
@@ -1867,7 +1881,10 @@ time a test needs to pass (a debounce it measures, a moment in which nothing may
 `Ui.Stall` (the window's thread blocked) or `Waiting.For`. Every wall-clock limit is written as the time on a
 developer's machine and multiplied by `TestRun.TimeScale` (`PASSENGER_TEST_TIME_SCALE`, 1 when unset, a value that is no
 number above 0 failing every test with why, from the run's fixture; `Limits.Scaled`): Ui's and Waiting's waits scale what they are given, and the settle,
-folder, process, restore, git, debug adapter and MCP call limits go through it. CI sets it per system in `test.yml`
+folder, process, restore, git, debug adapter and MCP call limits go through it; the IDE's own waits on what it started
+(an Aspire service's start for the profiler or a Debug tab, a restart's wait for it, an agent's wait for a resource) are
+`Waits.Of`, as much longer as `PASSENGER_WAIT_SCALE` says (a malformed value fatal as Passenger starts), which the run sets
+to its time scale. CI sets it per system in `test.yml`
 from how much slower its runners are than the Mac (2 on macOS, 2.5 on Windows, 2 on Linux: the 90th percentile of a test's
 time there over its time on the Mac, to the nearest half). `FLAKES.md` is the ledger of CI failures and their
 causes, each a race in the IDE or a test that waited wrong, so a pattern shows.

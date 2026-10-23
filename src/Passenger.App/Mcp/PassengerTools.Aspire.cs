@@ -39,18 +39,12 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException("The selected AppHost is running but does not expose that resource; workspace lists targets");
         }
-        DateTime until = DateTime.UtcNow.AddSeconds(60);
-        do
-        {
-            selected = await window.ResolveOwnedAspireResourceAsync(resource, chosen, cancel, allowMissing: true);
-            CheckWorkspace();
-            if (selected is not null)
-            {
-                return (selected, true);
-            }
-            await Task.Delay(100, cancel);
-        } while (DateTime.UtcNow < until);
-        throw new InvalidOperationException("The AppHost started but the requested resource was not reported within 60 seconds");
+        AspireAppRun app = current.Aspire.FindApp(chosen.Project)
+            ?? throw new InvalidOperationException("The AppHost is no longer owned by the workspace");
+        selected = await window.FollowAspireAsync(current, app, _ => window.ResolveOwnedAspireResourceAsync(resource, chosen, cancel, allowMissing: true),
+            Waits.Of(TimeSpan.FromSeconds(60)), "The AppHost started but the requested resource was not reported within 60 seconds", cancel);
+        CheckWorkspace();
+        return (selected, true);
 
         void CheckWorkspace()
         {
@@ -74,28 +68,20 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
         }
-        DebugSession? debugged = null;
         DateTime until = DateTime.UtcNow.AddSeconds(Math.Clamp(waitSeconds, 1, 120));
-        do
+        AspireAppRun app = current.Aspire.FindApp(selection.AppHostPath)
+            ?? throw new InvalidOperationException("The AppHost is no longer owned by the workspace");
+        DebugSession debugged;
+        try
         {
-            if (Session != current || current.IsEnded)
+            debugged = await window.FollowAspireAsync(current, app, resources =>
             {
-                break;
-            }
-            AspireSelection? fresh = await window.ResolveOwnedAspireResourceAsync($"{selection.AppHostPath}::{selection.Resource.Name}", null, cancel, allowMissing: true);
-            if (Session != current || current.IsEnded)
-            {
-                break;
-            }
-            debugged = fresh is null ? null : current.Aspire.FindService(fresh)?.DebugTab?.Session;
-            if (debugged is not null && (attach || started || debugged != previous))
-            {
-                break;
-            }
-            debugged = null;
-            await Task.Delay(100, cancel);
-        } while (DateTime.UtcNow < until);
-        if (Session != current || current.IsEnded || debugged is null)
+                AspireResource? fresh = resources.FirstOrDefault(resource => resource.Name == selection.Resource.Name);
+                DebugSession? now = fresh is null ? null : current.Aspire.FindService(new AspireSelection(selection.AppHostPath, fresh))?.DebugTab?.Session;
+                return Task.FromResult(now is not null && (attach || started || now != previous) ? now : null);
+            }, until - DateTime.UtcNow, "The requested resource did not establish a debug session in this workspace", cancel);
+        }
+        catch (Exception failed) when (failed is TimeoutException || failed is InvalidOperationException && (Session != current || current.IsEnded))
         {
             throw new InvalidOperationException("The requested resource did not establish a debug session in this workspace");
         }
@@ -105,6 +91,56 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException("The workspace changed while reading the resource's debug session");
         }
         return snapshot;
+    }
+
+    /// <summary>What an agent's run of a resource answers once the resource is up (Running, and not Unhealthy where it reports
+    /// its health) or has ended, or waitSeconds have passed, following its AppHost's resource stream as it goes: how it and its
+    /// AppHost's other resources stand, and its own console. A start that failed is an error.</summary>
+    private async Task<RunResult> AspireResourceUpAsync(AspireSelection target, int waitSeconds, CancellationToken cancel)
+    {
+        ProjectSession current = Session;
+        AspireAppRun app = current.Aspire.FindApp(target.AppHostPath)
+            ?? throw new InvalidOperationException("The AppHost is no longer owned by the workspace");
+        string name = target.Resource.Name;
+        AgentCall.Say($"Waiting up to {Math.Max(0, waitSeconds)} s for {name} to be up");
+        IReadOnlyList<AspireResource> resources;
+        try
+        {
+            resources = await window.FollowAspireAsync(current, app, now => Task.FromResult(now.FirstOrDefault(resource => resource.Name == name) is { } it
+                && (IsUp(it) || HasEnded(it)) ? now : null), TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), $"{name} is not up yet", cancel);
+        }
+        catch (TimeoutException)
+        {
+            resources = await (app.Interactions ?? throw new InvalidOperationException("The AppHost resource connection is still starting")).GetResourcesAsync(cancel);
+        }
+        if (Session != current || current.IsEnded || current.Aspire.FindApp(target.AppHostPath) != app)
+        {
+            throw new InvalidOperationException("The workspace or owned AppHost changed");
+        }
+        AspireResource? resource = resources.FirstOrDefault(resource => resource.Name == name);
+        string states = string.Join('\n', resources.Where(shown => !(shown.Data.TryGetProperty("isHidden", out JsonElement hidden) && hidden.ValueKind == JsonValueKind.True))
+            .Select(shown => $"  {shown.Name}: {shown.State ?? "Unknown"}{(shown.State == "Running" && shown.HealthStatus is { } health ? $" ({health})" : string.Empty)}"));
+        AspireResourceRun? service = app.Services.Where(run => ((IRunService)run).Name == name).MaxBy(run => run.Sequence);
+        service?.Console.Flush();
+        string output = service is null ? string.Empty : Tail(service.Console.Document.Snapshot, 200);
+        string status = resource is null ? $"{name} is no longer one of {app.Name}'s resources"
+            : IsUp(resource) ? $"{name} of {app.Name} is up"
+            : HasEnded(resource) ? $"{name} of {app.Name} ended: {resource.State}"
+            : $"{name} of {app.Name} is not up within {Math.Max(0, waitSeconds)} s: {resource.State ?? "Unknown"}{(resource.HealthStatus is { } said ? $" ({said})" : string.Empty)}";
+        status += $"\nResources of {app.Name}:\n{states}" + string.Concat(app.Notes.Select(note => $"\nNote: {note}"));
+        if (resource?.State == "FailedToStart")
+        {
+            throw new InvalidOperationException($"{status}\n{output}".TrimEnd());
+        }
+        return new RunResult(resource is not null && !HasEnded(resource), resource is null ? null : ExitCode(resource), status, output);
+
+        static bool IsUp(AspireResource resource) => resource.State == "Running" && resource.HealthStatus is not "Unhealthy";
+        static bool HasEnded(AspireResource resource) => resource.State is "Exited" or "Finished" or "FailedToStart";
+        static int? ExitCode(AspireResource resource) => AspireJson.Properties(resource.Data, "properties")
+            .Where(property => property.Name == "resource.exitCode")
+            .Select(property => property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out int code) ? code
+                : property.Value.ValueKind == JsonValueKind.String && int.TryParse(property.Value.GetString(), out int said) ? said : (int?)null)
+            .FirstOrDefault();
     }
 
     private async Task<Workspace> AspireWorkspace(Workspace snapshot, CancellationToken cancel)

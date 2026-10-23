@@ -173,68 +173,9 @@ public partial class MainWindow
             }
         };
         next.Aspire.RestartCommand = (app, service, build, cancel) => RestartAspireCommandAsync(next, app, service, build, cancel);
-        next.Aspire.ProfileService = async (app, service, plan, cancel) =>
-        {
-            if (session != next || next.IsEnded || profiler is not { } commands)
-            {
-                throw new LaunchException("The service profiler is unavailable");
-            }
-            ConsoleSink console = service.Console.Sink;
-            Passenger.Profiler.ProfilingSession recording;
-            try
-            {
-                recording = await commands.StartServiceAsync(plan, (reader, error, lines) =>
-                    console.PumpAsync(reader, error ? ConsoleStream.Error : ConsoleStream.Output, next.Aspire.ClosingToken, lines,
-                        chunks: text => UiThread.Post(() => app.Execution?.NotifyServiceLog(service.InstanceId, service.Id, text, error))),
-                    cancel, nativeStart => service.StartingProfile = nativeStart, () => service.Closing);
-            }
-            catch
-            {
-                if (!service.Closing && service.StartingProfile is { } nativeStart)
-                {
-                    await (service.ProfileCleanup ??= AspireController.CloseProfileAsync(nativeStart));
-                }
-                throw;
-            }
-            if (service.Closing)
-            {
-                throw new OperationCanceledException("The Aspire service is closing");
-            }
-            service.Console.Input = recording.Input is { } input ? ProgramInput.Of(input) : null;
-            CancellationToken closing = next.Aspire.ClosingToken;
-            service.EndProfiling = async () =>
-            {
-                try
-                {
-                    await commands.EndServiceAsync(recording, () => service.Closing,
-                        () => service.ProfileCleanup ??= AspireController.CloseProfileAsync(service.StartingProfile!)).ConfigureAwait(false);
-                }
-                finally
-                {
-                    if (!closing.IsCancellationRequested)
-                    {
-                        try
-                        {
-                            await UiThread.InvokeAsync(() =>
-                            {
-                                if (!closing.IsCancellationRequested && !next.IsEnded && !service.Closing)
-                                {
-                                    service.Console.Input = null;
-                                    service.Console.Sink.End(ConsoleStream.Output);
-                                    service.Console.Sink.End(ConsoleStream.Error);
-                                    service.Console.Flush();
-                                }
-                                return true;
-                            }).WaitAsync(closing).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) when (closing.IsCancellationRequested)
-                        {
-                        }
-                    }
-                }
-            };
-            return recording;
-        };
+        // The service a configuration's Profile holds at its start, recorded through the run of services as it starts.
+        next.Aspire.ProfileStart = (app, service, program, stop) => session == next && !next.IsEnded && profiler is { } commands
+            ? commands.RecordHeldServiceAsync(app, service, program, stop) : Task.FromResult<string?>("The service profiler is unavailable");
         next.Aspire.Changed += (_, _) =>
         {
             if (session == next && !next.IsEnded)
@@ -533,10 +474,16 @@ public partial class MainWindow
         AspireResourceCommand stop = resource.Commands.FirstOrDefault(command => command.Name is "stop" or "resource-stop" && command.Enabled)
             ?? throw new InvalidOperationException($"{resource.DisplayName} advertises no enabled stop command");
         await ExecuteAspireCommandAsync(current, selected, stop.Name, () => !app.Stopping, cancel);
+        // Its program gone before the build writes over its files, which Windows locks while it runs.
+        if (service.Runner is { } runner)
+        {
+            await runner.Ended.WaitAsync(Waits.Of(TimeSpan.FromSeconds(30)), cancel);
+        }
         if (session != current || current.IsEnded)
         {
             throw new InvalidOperationException("The solution was closed");
         }
+        app.Rebuilt[service.Project] = DateTime.UtcNow;
         if (await buildRun.BuildBeforeLaunchAsync(new BuildStep(service.Project, service.Plan.Framework)) is { Succeeded: false } failed)
         {
             throw new InvalidOperationException(failed.Message);

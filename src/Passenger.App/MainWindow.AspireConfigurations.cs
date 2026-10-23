@@ -15,7 +15,7 @@ public partial class MainWindow
         try
         {
             FollowServer(null, EventArgs.Empty);
-            await ready.Task.WaitAsync(TimeSpan.FromSeconds(60), waiting.Token);
+            await ready.Task.WaitAsync(Waits.Of(TimeSpan.FromSeconds(60)), waiting.Token);
             waiting.Token.ThrowIfCancellationRequested();
             if (session != current || current.IsEnded)
             {
