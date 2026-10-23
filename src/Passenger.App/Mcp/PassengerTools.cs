@@ -608,7 +608,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "it has one; a run refused (one running already, nothing to run, a failed build) is an error. A configuration that " +
         "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it. A container configuration " +
         "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state. " +
-        "With resource, that Aspire resource alone.")]
+        "With resource, that Aspire resource or running compose service alone, without the debugger.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -622,6 +622,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             if (hotReload is not null)
             {
                 throw new ArgumentException("resource uses Run Without Debugger; omit hotReload");
+            }
+            if (ComposeService(resource) is { } service)
+            {
+                AgentCall.Follow(window.Actions.Work, AppActions.ServiceRun);
+                await ComposeServiceActionAsync(AppActions.ServiceRun, service);
+                return new RunResult(true, null, $"{service} of {Builds.Containers?.Plan.Name} runs without the debugger", string.Empty);
             }
             AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
             using LaunchBuild resourceBuild = new(Builds);
@@ -668,9 +674,17 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
         "The last lines the program Run runs (or last ran) has written: the Run window's console (under Hot Reload, dotnet " +
-        "watch's words too), or a terminal configuration's tab as it shows now.")]
-    public Task<string> RunOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire service's own.")]
+    public Task<string> RunOutput(int lines = 200, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            Aspire.AspireSelection target = (await window.ResolveOwnedAspireResourceAsync(resource, null, cancel))!;
+            Aspire.AspireResourceRun service = Session.Aspire.FindService(target)
+                ?? throw new InvalidOperationException($"{resource} is no .NET service Passenger runs for its AppHost; aspire_telemetry reads its logs");
+            service.Console.Flush();
+            return Tail(service.Console.Document.Snapshot, lines);
+        }
         if (Session.Configurations.Chosen is { } configuration && Session.Aspire.IsAspire(configuration)
             && (Session.Aspire.FindApp(configuration.Project)?.Console ?? Session.Aspire.LastAppConsole) is { } console)
         {
@@ -700,7 +714,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }
 
     [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does; a container run's containers are taken down. " +
-        "With resource, that Aspire resource alone.")]
+        "With resource, that Aspire resource or compose service alone.")]
     public Task<string> Stop(string? session = null, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (resource is not null)
@@ -708,6 +722,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             if (session is not null)
             {
                 throw new ArgumentException("Name session or resource, not both");
+            }
+            if (ComposeService(resource) is { } service)
+            {
+                global::Passenger.App.Containers.ContainerRow row = await NamedContainer($"{Builds.Containers!.Plan.ProjectName}/{service}", cancel);
+                if (await window.ContainerActAsync(AppActions.ContainerStop, "stop", row) is { } refused)
+                {
+                    throw new InvalidOperationException(refused);
+                }
+                return $"Stopped {service}";
             }
             (Aspire.AspireSelection target, _) = await PrepareAspireResource(resource, null, null, null, cancel);
             if (await window.RunAspireToolResourceAsync(target, "stop", cancel) is { } problem)
@@ -1006,7 +1029,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     [McpServerTool(Name = "debug_start", Title = "Debug a configuration", Destructive = true), Description(
         "Builds and launches a run configuration (the chosen one by default) under the debugger, as Debug does, and waits up " +
         "to waitSeconds for a stop at a breakpoint or exception, its end, or an Avalonia or WPF app's UI to be up. Returns " +
-        "where it is. With resource, that Aspire resource alone, restarted.")]
+        "where it is. With resource, that Aspire resource or compose service alone, restarted.")]
     public Task<DebugSnapshot> DebugStart(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -1014,7 +1037,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         if (resource is not null)
         {
-            return await DebugAspireTarget(resource, configuration, arguments, attach: false, waitSeconds, cancel);
+            return ComposeService(resource) is { } service && configuration is null && arguments is null
+                ? await DebugComposeServiceAsync(service, attach: false, waitSeconds, cancel)
+                : await DebugAspireTarget(resource, configuration, arguments, attach: false, waitSeconds, cancel);
         }
         Choose(configuration);
         AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
@@ -1109,7 +1134,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Attaches the debugger to a running .NET program, as Attach to Process does: by processId, or by program when one " +
         "running program has that name (debug_processes lists them), in container when it runs in one. The breakpoints apply " +
         "at once; it waits up to waitSeconds for a stop or its end and returns where it is. debug_detach lets it go running " +
-        "on; stop ends it. With resource, that Aspire resource.")]
+        "on; stop ends it. With resource, that Aspire resource or compose service.")]
     public Task<DebugSnapshot> DebugAttach(int? processId = null, [Description("A program's name, as debug_processes gives it")] string? program = null,
         string? container = null, int waitSeconds = 10, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
@@ -1119,7 +1144,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             {
                 throw new ArgumentException("Name resource or a process target, not both");
             }
-            return await DebugAspireTarget(resource, null, null, attach: true, waitSeconds, cancel);
+            return ComposeService(resource) is { } service ? await DebugComposeServiceAsync(service, attach: true, waitSeconds, cancel)
+                : await DebugAspireTarget(resource, null, null, attach: true, waitSeconds, cancel);
         }
         IReadOnlyList<DotnetProcess> running = [.. (await window.AttachableAsync()).Where(p => p.Container == container)];
         List<DotnetProcess> named = processId is int id and not 0 ? [.. running.Where(p => p.Id == id)]

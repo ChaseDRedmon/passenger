@@ -40,6 +40,9 @@ public sealed record ServiceProgram(int Id, AdapterPlace? Place, Profiler.Profil
     public string? Caveat { get; init; }
 
     public bool HotReload { get; init; }
+
+    /// <summary>Its inspected app (an Avalonia service's, its inspector started with it), which its Debug tab holds.</summary>
+    public LiveTree.LiveApp? App { get; init; }
 }
 
 /// <summary>Why a service's program could not be reached where its run's kind runs it (its container, its tools, its
@@ -140,28 +143,54 @@ public abstract class ServiceRun
     }
 
     /// <summary>The service of this run by its name, or null.</summary>
-    public IRunService? ServiceNamed(string name) => Services.FirstOrDefault(s => s.Name == name);
+    public virtual IRunService? ServiceNamed(string name) => Services.FirstOrDefault(s => s.Name == name);
 
     /// <summary>Ends what reaches services of the run from here (every one, given none): their debugging sessions (in a tab
     /// or for Hot Reload) and the profiler's recording, its snapshot read; done once they have. Stop's order: these end before
     /// the programs do, so no debugger loses its program under it and the profiler's trace keeps its rundown.</summary>
     public Task EndSessionsAsync(DebugController debug, IEnumerable<IRunService>? services = null)
     {
-        List<string>? named = services?.Select(s => s.Name).ToList();
+        List<IRunService>? given = services?.ToList();
+        List<string>? named = given?.Select(SessionName).ToList();
         List<Task> ending = [.. (named ?? [.. Debugged]).Where(Debugged.Contains).Select(debug.StopAsync)];
-        if ((named is null || Profiled is { } profiled && named.Contains(profiled)) && EndProfiling is { } end)
+        if ((given is null || Profiled is { } profiled && given.Any(s => s.Name == profiled)) && EndProfiling is { } end)
         {
             ending.Add(end());
         }
         return Task.WhenAll(ending);
     }
 
+    /// <summary>The Debug tabs' group of the run's sessions, which Hot Reload's changes reach together: its name, unless its
+    /// kind groups otherwise (an Aspire configuration's AppHosts, linked, are one group).</summary>
+    public virtual string Group => Name;
+
+    /// <summary>The name of a service's debugging session, its Debug tab's (<see cref="Debugged"/> holds these): the
+    /// service's own, unless its kind names it otherwise (an Aspire service by its AppHost too, as two AppHosts' may share a
+    /// resource's name).</summary>
+    public virtual string SessionName(IRunService service) => service.Name;
+
+    /// <summary>Whether each start of a held service is attached to by its kind as it starts, once (an Aspire service, whose
+    /// start DCP asks for): a restart waits for that attach rather than attaching again.</summary>
+    public virtual bool AttachesItsStarts => false;
+
+    /// <summary>Whether Run without Debugger restarts the service unheld (an Aspire service, its program this machine's,
+    /// back in moments), rather than letting its session go with its program running on (a container's).</summary>
+    public virtual bool RestartsToRunWithoutDebugger => false;
+
+    /// <summary>Told once a session attached to a service's program (its tab, null for a quiet one, and its session), which its kind may
+    /// keep (an Aspire service's tab, which the Aspire window chooses).</summary>
+    public virtual void Attached(IRunService service, ServiceProgram program, ToolWindows.DebugTab? tab, DebugSession? debugged)
+    {
+    }
+
     /// <summary>Makes the holds chosen take effect at each service's next start (a container run's override written again).</summary>
     protected abstract Task HoldsChangedAsync(CancellationToken cancel);
 
-    /// <summary>Restarts services (<paramref name="why"/> said in the run's console), each held at its start as now chosen:
-    /// null once done, else why not. The run's Stop ends it.</summary>
-    public abstract Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null);
+    /// <summary>Restarts services (<paramref name="why"/> said in the run's console), each held at its start as now chosen,
+    /// their projects built again first where <paramref name="build"/> asks it and the kind builds between their stop and
+    /// their start (an Aspire service, whose files a build cannot write while it runs on Windows): null once done, else why
+    /// not. The run's Stop ends it.</summary>
+    public abstract Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null, bool build = false);
 
     /// <summary>A service's program once its run has started it (null when the run ended without it), for the debugger or
     /// the profiler to reach; <paramref name="up"/> is the run's start under way, done once it has ended. Throws a

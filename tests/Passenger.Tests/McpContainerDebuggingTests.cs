@@ -56,12 +56,21 @@ public sealed class McpContainerDebuggingTests : McpRig
                 TimeSpan.FromMinutes(1), test), $"web, restarted through the run, did not stop in Main again: {again}");
             Assert.Contains("Program.cs:1:", again.GetProperty("location").GetString(), StringComparison.Ordinal);
 
+            // An agent's resource names a compose service as an Aspire resource, through the run of services: run lets web's
+            // session go, its program running on, and debug_attach attaches to it again as it runs.
+            JsonElement unheld = await Call(client, "run", new() { ["resource"] = "web" });
+            Assert.Contains("runs without the debugger", unheld.GetProperty("status").GetString(), StringComparison.Ordinal);
+            JsonElement reattached = await Call(client, "debug_attach", new() { ["resource"] = "web", ["waitSeconds"] = 2 });
+            Assert.True(reattached.GetProperty("state").GetString() is "running" or "paused", $"debug_attach of the compose service web answered: {reattached}");
+
             // Stop through the run: api's session ends before its container goes, which an adapter losing it would make an error.
             Assert.Equal($"{project}/api: stop done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/api", ["action"] = "stop" })));
             Assert.Equal("exited", ContainerRunsTests.States(project)["api"]);
             JsonElement state = await Call(client, "debug_state");
             Assert.True(!state.TryGetProperty("sessions", out JsonElement live) || !live.EnumerateArray().Any(s => s.GetString()!.StartsWith("api:", StringComparison.Ordinal)
                 && !s.GetString()!.Contains("ended", StringComparison.Ordinal)), $"api is still debugged after its container stopped: {state}");
+            Assert.Equal("Stopped web", Text(await Call(client, "stop", new() { ["resource"] = "web" })));
+            Assert.Equal("exited", ContainerRunsTests.States(project)["web"]);
 
             Assert.Equal("Stopped", Text(await Call(client, "stop")));
             Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2),

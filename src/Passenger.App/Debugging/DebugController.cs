@@ -434,12 +434,14 @@ public sealed class DebugController : IDisposable
     /// started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so Hot Reload is offered as for a launch (while
     /// Settings' Hot Reload while debugging is on); with
     /// <paramref name="elsewhere"/> it runs on another machine, and with <paramref name="place"/> the adapter runs where it
-    /// is (in its container). Null once the session is open, else why it could not.</summary>
-    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null, string? group = null)
+    /// is (in its container). An inspected <paramref name="app"/> (an Aspire service's) is held by its tab. Null once the
+    /// session is open, else why it could not.</summary>
+    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null, string? group = null,
+        LiveApp? app = null)
     {
         bool hotReloadOn = hotReload && HotReloadOn();
         return OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting, hotReloadOn, elsewhere, place), name,
-            launched: false, hotReloadOn: hotReloadOn, place: place, group: group);
+            launched: false, hotReloadOn: hotReloadOn, place: place, group: group, app: app);
     }
 
     /// <summary>Launches another program in a native tab, with hooks installed before its adapter starts.</summary>

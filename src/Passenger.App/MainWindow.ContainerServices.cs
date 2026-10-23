@@ -88,18 +88,8 @@ public partial class MainWindow
             AppActions.ServiceDebug => buildRun.DebugServiceAsync(running.Name),
             AppActions.ServiceAttach => buildRun.AttachServiceAsync(running.Name),
             AppActions.ServiceRun => buildRun.RunServiceAsync(running.Name),
-            _ => ProfileServiceAsync(buildRun.Containers!.Plan.Dotnet.First(d => d.Service == running.Name)),
+            _ => buildRun.ProfileServiceAsync(buildRun.Containers, running.Name),
         };
-
-        async Task<string?> ProfileServiceAsync(DotnetService profiled)
-        {
-            string? refused = await profiler!.AttachServiceAsync(profiled, buildRun.Containers!.Plan.Name);
-            if (refused is not null)
-            {
-                status.Text = refused;
-            }
-            return refused;
-        }
     }
 
     /// <summary>A Containers window action on a row, through the container run when it is one of its .NET services: its

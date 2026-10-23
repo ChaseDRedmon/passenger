@@ -59,6 +59,10 @@ public sealed record BuildRunParts(
     /// <summary>Whether nobody is at the window to ask (an agent's own IDE, <c>--mcp</c>): what would ask the person takes the
     /// way that asks nothing, saying so.</summary>
     public bool AsksNoOne { get; init; }
+
+    /// <summary>Has the window's profiler record a service of a run of services as it runs, where its kind runs it (in its
+    /// container, or on this machine): null once it records, else why not.</summary>
+    public Func<ServiceRun, IRunService, CancellationToken, Task<string?>>? ProfileService { get; init; }
 }
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of
@@ -130,6 +134,19 @@ public sealed partial class BuildRunController
             }
         };
         session.Builder.Exited += (_, code) => OnBuilt(code);
+        // An Aspire service held at its start is attached to as DCP starts it, through the run of services' one attach.
+        session.Aspire.AttachStart = async (app, service, purpose, stop) =>
+        {
+            List<string> notes = [];
+            string? refused = await AttachStartAsync(app, service, purpose, notes, stop);
+            foreach (string note in notes)
+            {
+                app.Console.Append($"{note}\n");
+            }
+            return refused;
+        };
+        session.Aspire.Chosen = (configuration, service) =>
+            chosenDebugged.TryGetValue(configuration, out Dictionary<string, bool>? choices) && choices.TryGetValue(service, out bool debugged) ? debugged : null;
         session.Aspire.Changed += (_, _) =>
         {
             if (!session.IsEnded)
@@ -794,21 +811,20 @@ public sealed partial class BuildRunController
                 {
                     return Said(StoppedStarting(chosen.Name));
                 }
-                if (session.Aspire.RestartBuiltResource is not { } restart)
-                {
-                    return Said("Aspire resource restart is unavailable");
-                }
                 int changed = 0;
                 foreach (AspireAppRun app in apps)
                 {
-                    foreach (AspireResourceRun resource in app.Services.Where(resource => resource.BuildChanged).ToArray())
+                    // Through the run of services, as a container run's Rerun restarts what changed: sessions first, held again.
+                    List<AspireResourceRun> changes = [.. app.Services.Where(resource => resource.BuildChanged)];
+                    if (changes.Count == 0)
                     {
-                        if (!await restart(app, resource, work.Stopping))
-                        {
-                            return Said($"Could not restart {resource.Plan.Name} after its build changed");
-                        }
-                        changed++;
+                        continue;
                     }
+                    if (await RestartServicesAsync(app, changes, work, "its build changed") is { } failed)
+                    {
+                        return Said($"Could not restart {string.Join(", ", changes.Select(resource => resource.Plan.Name))} after their build changed: {failed}");
+                    }
+                    changed += changes.Count;
                 }
                 parts.Say(changed == 0 ? "No service's build changed" : $"Restart requested for {changed} changed services");
                 return null;
