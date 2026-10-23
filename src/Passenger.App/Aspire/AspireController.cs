@@ -264,7 +264,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation, (string AppHost, string Name)? profileTarget, HttpsChoice https,
         IReadOnlyList<string> said)
     {
-        LaunchPlan plan = await ResolveAppHostAsync(configuration, cancellation);
+        DateTime began = DateTime.UtcNow;
+        LaunchPlan plan = await ResolveAppHostAsync(configuration, build, cancellation);
         if (plan.Build is { } step && await build(step) is { Succeeded: false } failed)
         {
             throw new LaunchException(failed.Message);
@@ -282,6 +283,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         AspireAppRun app = new(configuration, mode, group)
         {
             ProfileTarget = profileTarget,
+            BuildBegan = began,
             OverHttp = https.OverHttp is not null,
             Restarting = (run, resource, build, cancel) => (RestartCommand ?? throw new InvalidOperationException("Aspire resource restart is unavailable"))(run, resource, build, cancel),
             Profiler = (service, program, stop) => (ProfileStart ?? throw new LaunchException("The service profiler is unavailable"))(made!, service, program, stop),
@@ -508,7 +510,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
     }
 
-    private async Task<LaunchPlan> ResolveAppHostAsync(RunConfiguration configuration, CancellationToken cancellation)
+    private async Task<LaunchPlan> ResolveAppHostAsync(RunConfiguration configuration, Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation)
     {
         if (!Path.GetExtension(configuration.Project).Equals(".cs", StringComparison.OrdinalIgnoreCase))
         {
@@ -518,36 +520,36 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             }
             return await LaunchPlan.ResolveAsync(configuration, workspace.Projects, workspace.Workspace, stateFolder, cancellation);
         }
-        if (!AspireAppHosts.IsSingleFile(configuration.Project))
-        {
-            throw new LaunchException("The selected C# file does not declare the Aspire AppHost SDK");
-        }
-        if (AspireAppHosts.SingleFileWhyNot(configuration.Project,
-            Directory.EnumerateFiles(Path.GetDirectoryName(configuration.Project)!, "*", SearchOption.TopDirectoryOnly)) is { } unsupported)
-        {
-            throw new LaunchException(unsupported);
-        }
         if (configuration.Program.Length > 0 || configuration.Framework.Length > 0)
         {
             throw new LaunchException("Single-file AppHosts use the framework declared in the file; clear Exe path and Target framework");
         }
         string folder = Path.GetDirectoryName(configuration.Project)!;
-        configuration = ReadFileProfile(configuration, folder);
+        // What it reads of the disk (the file, its folder, its launch profile) is read off the UI thread.
+        configuration = await BackgroundWork.Run(() =>
+        {
+            if (!AspireAppHosts.IsSingleFile(configuration.Project))
+            {
+                throw new LaunchException("The selected C# file does not declare the Aspire AppHost SDK");
+            }
+            if (AspireAppHosts.SingleFileWhyNot(configuration.Project, Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly)) is { } unsupported)
+            {
+                throw new LaunchException(unsupported);
+            }
+            return ReadFileProfile(configuration, folder);
+        }, cancellation);
         string output = Path.Combine(stateFolder, "aspire", Convert.ToHexString(SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(PathNames.Canonical(configuration.Project)))), "output");
-        if (configuration.BuildBeforeLaunch)
+        // A build of the Build window's, as a project AppHost's is: Stop ends it, Problems lists what it found.
+        if (configuration.BuildBeforeLaunch && await build(new BuildStep(configuration.Project, null, output)) is { Succeeded: false } failed)
         {
-            ChildResult built = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(
-                ["build", configuration.Project, "--output", output, "--nologo"], folder), cancel: cancellation);
-            if (!built.Succeeded)
-            {
-                throw new LaunchException($"Could not build {configuration.Name}: {built.Error.Trim()} {built.Output.Trim()}");
-            }
+            throw new LaunchException(failed.Message);
         }
+        cancellation.ThrowIfCancellationRequested();
         ChildResult evaluated = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(
             ["build", configuration.Project, "--output", output, "--no-restore", "--nologo", "-getProperty:TargetPath"], folder), cancel: cancellation);
         string target = evaluated.Output.Trim();
-        if (!evaluated.Succeeded || !Path.IsPathFullyQualified(target) || !File.Exists(target))
+        if (!evaluated.Succeeded || !Path.IsPathFullyQualified(target) || !await BackgroundWork.Run(() => File.Exists(target), cancellation))
         {
             throw new LaunchException("MSBuild could not resolve the built single-file AppHost TargetPath");
         }
@@ -646,14 +648,23 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         ProjectModel? known = workspace.Projects.FirstOrDefault(project => PathNames.Same(project.Path, path));
         bool referenced = workspace.Projects.Any(project => project.ProjectReferences.Any(reference => PathNames.Same(reference, path)));
-        if (!File.Exists(path) || !WorkspaceModel.IsProject(path)
-            || (known is null && !referenced && (workspace.Folder is null || !PathNames.IsUnder(path, workspace.Folder))))
+        if (!WorkspaceModel.IsProject(path) || (known is null && !referenced && (workspace.Folder is null || !PathNames.IsUnder(path, workspace.Folder))))
         {
             throw new LaunchException("DCP requested a project outside this workspace and its project references");
         }
         ProjectModel project = known ?? ProjectModel.Unevaluated(path);
         string? profileName = request.DisableLaunchProfile ? null : request.LaunchProfile ?? app.Configuration.LaunchProfile;
-        LaunchProfile? profile = profileName is null ? null : LaunchProfile.Read(project).FirstOrDefault(candidate => candidate.Name == profileName);
+        // The project and its launch profiles are read off the UI thread.
+        (bool exists, LaunchProfile? profile) = await BackgroundWork.Run(() => (File.Exists(path),
+            profileName is null ? null : LaunchProfile.Read(project).FirstOrDefault(candidate => candidate.Name == profileName)), cancellation);
+        if (!exists)
+        {
+            throw new LaunchException("DCP requested a project outside this workspace and its project references");
+        }
+        if (app.Stopping || workspace.IsEnded || disposed)
+        {
+            throw new LaunchException("The Aspire app is stopping or its service limit was reached");
+        }
         RunConfiguration configuration = profile is null
             ? new RunConfiguration { Name = project.Name, Project = path, WorkingDirectory = "$(ProjectDir)" }
             : RunConfiguration.From(project, profile) with { Name = project.Name };
@@ -677,12 +688,14 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             ? [.. plan.Built is { } built && plan.Arguments.FirstOrDefault() == built ? new[] { built } : [], .. given]
             : plan.Arguments;
         plan = plan with { Name = $"{app.Configuration.Name} / {project.Name}", Environment = environment, Arguments = arguments };
+        LaunchPlan stamped = plan;
+        string stamp = await BackgroundWork.Run(() => AspireResourceRun.ReadBuiltStamp(stamped), cancellation);
         cancellation.ThrowIfCancellationRequested();
         if (app.Stopping || workspace.IsEnded || app.Resources.Count >= 200)
         {
             throw new LaunchException("The Aspire application ended or reached its service limit during launch");
         }
-        AspireResourceRun resource = new(request.SessionId, request.DcpInstanceId, path, plan);
+        AspireResourceRun resource = new(request.SessionId, request.DcpInstanceId, path, plan) { BuiltStamp = stamp };
         resource.ResourceName = request.Environment.FirstOrDefault(variable => variable.Name == "OTEL_SERVICE_NAME")?.Value;
         app.Resources.Add(resource.Id, resource);
         using CancellationTokenSource starting = CancellationTokenSource.CreateLinkedTokenSource(cancellation, app.Lifetime.Token, resource.Stopping.Token);
@@ -1060,6 +1073,13 @@ public sealed class AspireAppRun : ServiceRun
     internal string DashboardApiKey { get; set; } = string.Empty;
     internal bool ProfileClaimed { get; set; }
     internal (string AppHost, string Name)? ProfileTarget { get; init; }
+
+    /// <summary>When the AppHost's build began (the build its first services run too): its own code changed once a file its
+    /// folder holds was written after it.</summary>
+    internal DateTime BuildBegan { get; init; }
+
+    /// <summary>When the build each service project was built by again for a restart began, by project.</summary>
+    internal Dictionary<string, DateTime> Rebuilt { get; } = new(PathNames.Comparer);
     internal TaskCompletionSource<string?> ProfileStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IReadOnlyList<string> KnownContainerIds { get; internal set; } = [];
     internal AspireInteractions? Interactions { get; set; }
@@ -1213,8 +1233,16 @@ public sealed class AspireResourceRun(string id, string instanceId, string proje
     public string InstanceId { get; } = instanceId;
     public string Project { get; } = project;
     public LaunchPlan Plan { get; } = plan;
-    internal string BuiltStamp { get; } = ReadBuiltStamp(plan);
-    internal bool BuildChanged => BuiltStamp != ReadBuiltStamp(Plan);
+    /// <summary>Its build's output as it started (each assembly's, symbols' and settings' name, length and time), read off
+    /// the UI thread before it starts.</summary>
+    internal string BuiltStamp { get; init; } = string.Empty;
+
+    /// <summary>Whether Rerun builds it again and restarts it: its output changed since it started (a build of another's),
+    /// or a file its build reads was written after the build it runs began (<paramref name="since"/>). Reads the disk: off
+    /// the UI thread.</summary>
+    internal bool ChangedSinceStart(IReadOnlyList<ProjectModel> projects, DateTime since) =>
+        BuiltStamp != ReadBuiltStamp(Plan) || BuiltInputs.ChangedSince(Project, since, projects);
+
     public string? ResourceName { get; internal set; }
     internal string IdentityKey => Plan.Environment.GetValueOrDefault("OTEL_RESOURCE_ATTRIBUTES") is { Length: > 0 } attributes
         ? $"{Project}\n{attributes}" : ResourceName ?? Project;
@@ -1239,7 +1267,7 @@ public sealed class AspireResourceRun(string id, string instanceId, string proje
 
     bool IRunService.Starts => true;
 
-    private static string ReadBuiltStamp(LaunchPlan launch)
+    internal static string ReadBuiltStamp(LaunchPlan launch)
     {
         string? output = Path.GetDirectoryName(launch.Built ?? launch.Program);
         return output is null || !Directory.Exists(output) ? string.Empty : string.Join('|', Directory.EnumerateFiles(output)

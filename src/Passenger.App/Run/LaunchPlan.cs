@@ -7,8 +7,9 @@ using Passenger.Host;
 
 namespace Passenger.App.Run;
 
-/// <summary>The project a launch builds first, for one framework when it has several.</summary>
-public sealed record BuildStep(string Project, string? Framework);
+/// <summary>The project a launch builds first, for one framework when it has several, into the folder given where its own
+/// would not do (a single-file AppHost's, kept in the state).</summary>
+public sealed record BuildStep(string Project, string? Framework, string? Output = null);
 
 /// <summary>Why a configuration cannot be launched, in words for the person.</summary>
 public class LaunchException(string message) : Exception(message);

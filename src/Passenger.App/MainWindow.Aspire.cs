@@ -474,10 +474,16 @@ public partial class MainWindow
         AspireResourceCommand stop = resource.Commands.FirstOrDefault(command => command.Name is "stop" or "resource-stop" && command.Enabled)
             ?? throw new InvalidOperationException($"{resource.DisplayName} advertises no enabled stop command");
         await ExecuteAspireCommandAsync(current, selected, stop.Name, () => !app.Stopping, cancel);
+        // Its program gone before the build writes over its files, which Windows locks while it runs.
+        if (service.Runner is { } runner)
+        {
+            await runner.Ended.WaitAsync(Waits.Of(TimeSpan.FromSeconds(30)), cancel);
+        }
         if (session != current || current.IsEnded)
         {
             throw new InvalidOperationException("The solution was closed");
         }
+        app.Rebuilt[service.Project] = DateTime.UtcNow;
         if (await buildRun.BuildBeforeLaunchAsync(new BuildStep(service.Project, service.Plan.Framework)) is { Succeeded: false } failed)
         {
             throw new InvalidOperationException(failed.Message);

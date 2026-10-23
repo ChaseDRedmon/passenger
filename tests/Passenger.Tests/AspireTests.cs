@@ -140,8 +140,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Assert.Equal(apiPid, Service(window, Resource(window, "apiservice")).ProcessId);
             Assert.Equal(webPid, Service(window, Resource(window, "webfrontend")).ProcessId);
 
-            EditSource(window, project.ApiProgram, text => text.Replace("=> 1 + count", "=> 4 + count", StringComparison.Ordinal));
-            Ui.Run(window, AppActions.SaveAll);
+            // Written on disk, as another tool would: Rerun reads what changed since the build each service runs began.
+            File.WriteAllText(project.ApiProgram, File.ReadAllText(project.ApiProgram).Replace("=> 1 + count", "=> 4 + count", StringComparison.Ordinal));
             Ui.Run(window, AppActions.Rerun);
             Ui.WaitFor(() => window.Aspire.ResourceSnapshots.FirstOrDefault(resource => resource.DisplayName == "apiservice") is { } api
                 && window.AspireRuntime.FindService(new(project.Host, api))?.ProcessId is int current && current != apiPid,
@@ -151,6 +151,14 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Assert.Equal(webPid, Service(window, Resource(window, "webfrontend")).ProcessId);
             using HttpClient http = Client();
             Assert.Equal("4", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(Resource(window, "apiservice")), "/passenger-edit")), "the rebuilt API's method"));
+
+            // The AppHost's own code changed: it stops with its services, then is built and run again.
+            File.AppendAllText(Path.Combine(Path.GetDirectoryName(project.Host)!, "AppHost.cs"), "\n// Rerun runs a changed AppHost again.\n");
+            Ui.Run(window, AppActions.Rerun);
+            Ui.WaitFor(() => window.AspireRuntime.Apps is [{ ProcessId: int again }] && again != hostPid
+                && window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "apiservice" && resource.State == "Running"),
+                "Rerun to run the changed AppHost again", TimeSpan.FromMinutes(3));
+            Assert.False(Processes.IsRunning(hostPid), "The AppHost that ran before Rerun still runs");
         }
         finally
         {
@@ -742,6 +750,11 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             string safeOutput = Regex.Replace(output, @"(https?://[^?\s]+)\?[^\s]+", "$1?[redacted]", RegexOptions.IgnoreCase);
             Assert.Fail($"The single-file AppHost did not launch: {refused}{Ui.BuildErrors(window)}\nAppHost output:\n{safeOutput}");
         }
+        // Built in the Build window, as a project AppHost is, where Stop and Problems reach its build.
+        window.BottomPanel.Build.Flush();
+        string built = window.BottomPanel.Build.Document.Snapshot.ToString();
+        Assert.True(built.Contains($"build {file}", StringComparison.Ordinal) && built.Contains("--output", StringComparison.Ordinal),
+            $"The single-file AppHost was not built in the Build window:\n{built}");
         FindAction(window, "Show Aspire Resources");
         Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "aspire-dashboard" && resource.State == "Running"), "the single-file AppHost's native resource stream");
         AspireAppRun app = Assert.Single(window.AspireRuntime.Apps);
