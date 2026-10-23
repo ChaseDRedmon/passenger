@@ -240,13 +240,13 @@ public sealed class VariablesList : ListBox
         PathIcon chevron = new() { Classes = { "chevron" }, IsVisible = node.HasChildren, RenderTransformOrigin = RelativePoint.Center };
         chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
         chevron.RenderTransform = new RotateTransform(node.ChevronAngle);
-        node.PropertyChanged += (_, e) =>
+        node.FollowWhileShown(chevron, (_, e) =>
         {
-            if (e.PropertyName == nameof(VariableNode.ChevronAngle))
+            if (e.PropertyName is null or nameof(VariableNode.ChevronAngle))
             {
                 chevron.RenderTransform = new RotateTransform(node.ChevronAngle);
             }
-        };
+        });
         Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
         toggle.PointerPressed += (_, e) =>
         {
@@ -294,7 +294,7 @@ public sealed class VariablesList : ListBox
             }
         }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         editor.LostFocus += (_, _) => node.IsEditing = false;
-        node.PropertyChanged += (_, e) =>
+        node.FollowWhileShown(editor, (_, e) =>
         {
             if (e.PropertyName != nameof(VariableNode.IsEditing))
             {
@@ -312,7 +312,7 @@ public sealed class VariablesList : ListBox
                     editor.SelectAll();
                 }, DispatcherPriority.Loaded);
             }
-        };
+        });
         // Narrower than its row, the value gives way first, ending in an ellipsis, then its type.
         return new ShrinkingRow
         {

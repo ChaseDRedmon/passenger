@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Avalonia.Threading;
 using Passenger.App.Aspire;
 using Passenger.App.Containers;
 using Passenger.App.CSharp;
@@ -108,6 +109,11 @@ public sealed partial class BuildRunController
 
     /// <summary>Where each failed binding of an app goes in Problems, found once, when it first fails.</summary>
     private readonly Dictionary<(LiveApp App, int Id), Problem> placed = [];
+
+    /// <summary>The XAML texts the failures heard in one turn of the window's thread are placed in, each file read once
+    /// a turn: an app's window tells up to a thousand failures of one file as it opens, each of which read it from the disk
+    /// again. Let go at the next turn, so a failure told later reads the file as it is then.</summary>
+    private Dictionary<string, TextSnapshot?>? failureTexts;
 
     public BuildRunController(ProjectSession session, BuildRunParts parts)
     {
@@ -1191,9 +1197,23 @@ public sealed partial class BuildRunController
     {
         if (!placed.TryGetValue((app, failure.Id), out Problem? problem))
         {
-            problem = placed[(app, failure.Id)] = BindingErrors.Problem(failure, failure.Place is { } at ? BindingErrors.TextOf(at.File, parts.Editors.Documents) : null).Problem;
+            problem = placed[(app, failure.Id)] = BindingErrors.Problem(failure, failure.Place is { } at ? FailureText(at.File) : null).Problem;
         }
         return new BindingProblem(failure, problem);
+    }
+
+    private TextSnapshot? FailureText(string file)
+    {
+        if (failureTexts is null)
+        {
+            failureTexts = new(StringComparer.Ordinal);
+            Dispatcher.UIThread.Post(() => failureTexts = null);
+        }
+        if (!failureTexts.TryGetValue(file, out TextSnapshot? text))
+        {
+            failureTexts[file] = text = BindingErrors.TextOf(file, parts.Editors.Documents);
+        }
+        return text;
     }
 
     /// <summary>The end of a session; done already when there is none.</summary>

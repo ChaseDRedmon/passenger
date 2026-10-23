@@ -1938,7 +1938,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   The engine's `SourcePaths.Match` takes a
   PDB document that exists where the adapter runs while the breakpoint's file does not (the IDE's, outside the
   container) by what they share from the end, and compares a Windows path (C:\…, \\server\…) ignoring case on any
-  system; the engine gives a Windows document's path back with forward slashes. Before
+  system; the engine gives a Windows document's path back with forward slashes. A module matches a breakpoint's file once
+  (`BestDocument`, kept until an update brings documents) and binds it among the methods with a point in that document
+  alone (`MethodsWithPoints(document)`), never every method of the module. Before
   letting a program go (Disconnect without terminating), the engine runs it off any patch or single-step stop and stops
   it again (`ManagedDebugger_LetGo.cs`): under CET a thread resumes from a breakpoint only through the debugger's
   out-of-process SetThreadContext, which mscordbi's Detach waits for only once it has answered one such flare, so a
@@ -2070,7 +2072,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `app`: run, debug (the chosen tab's app while it is debugged, else the only one), a Debug tab's name, or ide
   (`PassengerTools.DebugApp`, `NamedApp`). `App/LiveTree/BindingErrors` is how a
   failed binding shows: a console line with its place first in a compiler message's shape (so `ConsoleLinks` links it),
-  Problems' Bindings tab (`BindingProblem`, by file, each once with its count), and fixes through
+  Problems' Bindings tab (`BindingProblem`, by file, each once with its count, placed as it first fails in its XAML read
+  once for all told in that turn of the window's thread, `BuildRunController.FailureText`), and fixes through
   `CodeAssist.EditorFixes`, Passenger's own fixes that Show Context Actions lists before the server's.
 - `tools/Passenger.Notices`: writes the app's `THIRD-PARTY-NOTICES.txt` (beside `LICENSE.txt` in every build and
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
@@ -2600,7 +2603,8 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   table in a page is `Border.framed`; a rule inside a page is `Passenger.Separator` (`Passenger.Divider` is for edges
   between panels). PopupHost gives each popup room for its frame's shadow. A menu's value in force is `MenuChoice`
   (checked, never greyed); a tool window's tab is `ToolTabs.Tab` (`panelTab`), a choice among a few `segment`; popups
-  take widths from `PopupFrame` and titles from `popupTitle`; every list, menu and popup row is `ListRow.Height` (24); a
+  take widths from `PopupFrame` and titles from `popupTitle`; every list, menu and popup row is `ListRow.Height` (24), and
+  one a template makes hears its item only while shown (`Observable.FollowWhileShown`), never kept by it after; a
   tool window's empty state is `TextBlock.emptyText`; a row that narrows is a `ShrinkingRow`; menus' shadow room and
   placement are `MenuShadow`, scrollbars `ControlThemes.axaml`, the focus ring `FocusRing`; every Window's ground is the
   chrome. `MainWindow.SmallestWidth` is 640: the layout works at half a 1366-wide screen, and the person's first window
