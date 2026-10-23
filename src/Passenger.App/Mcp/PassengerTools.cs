@@ -311,13 +311,24 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false; an Aspire resource's name in a string, " +
         "where its AppHost declares it and its services read it. In XAML: an element's name and its " +
         "code-behind field's uses. In the web languages, their server's; in JSON a property, and in package.json's scripts " +
-        "every npm run of one. MSBuild files have none.")]
+        "every npm run of one; in a compose file its service, volume, network, secret or config, with its override's. MSBuild files have none.")]
     public Task<string> Rename(string path, int line, int column, string newName,
         [Description("Rename a type's files named after it too")] bool renameFiles = true,
         CancellationToken cancel = default) => OnUi(cancel, () => Patience.RunAsync(async patience =>
     {
         Served served = await Serve(path, cancel);
         int offset = Offset(served.Document, line, column);
+        if (served is ServerServed { Web.Kind: WebServerKind.Yaml } yaml && ComposeDeclarations.IsCompose(yaml.Document.Path)
+            && await CodeAssist.ComposeRenamingAsync(yaml.Lsp, yaml.Document, offset) is { } composed)
+        {
+            RefactorOutcome compose = await window.Assist.RenameComposeAsync(yaml.Document, offset, composed.Name, newName);
+            if (compose.Problem is { } refused)
+            {
+                throw new InvalidOperationException(refused);
+            }
+            Editors.SaveAll();
+            return $"{compose.Said}: {string.Join(", ", compose.Files.Select(f => Relative(f.Path)))}";
+        }
         switch (served)
         {
             case XamlServed xaml:

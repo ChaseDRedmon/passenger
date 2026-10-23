@@ -413,7 +413,7 @@ public sealed partial class CodeAssist
 
     private int Caret => Editor.Selections.Primary.Caret;
 
-    /// <summary>Rename at the editor's caret: a C# symbol through the server, a XAML name of its own.</summary>
+    /// <summary>Rename at the editor's caret: a C# symbol through the server, a XAML name and a compose file's of its own.</summary>
     public void Rename() => ShowRename();
 
     /// <summary>Why Rename cannot run at the editor's caret; null when it can.</summary>
@@ -1602,6 +1602,19 @@ public sealed partial class CodeAssist
         if (XamlCurrent is { } xaml && editors.Active is not null)
         {
             _ = Carried("Rename", () => XamlRename(xaml), closeModal: false);
+            return;
+        }
+        // A compose file's own name: where it is declared and every use, its override's too; else the server's (an anchor's).
+        if (WebCurrent is { Lsp: not null } yaml && editors.Active is { } compose && IsComposeFile(yaml, compose))
+        {
+            int caret = Editor.Selections.Primary.Caret;
+            _ = Carried("Rename", async () =>
+            {
+                if (!await ShowComposeRename(yaml, compose, caret) && editors.Active == compose)
+                {
+                    ShowServerRename();
+                }
+            }, closeModal: false);
             return;
         }
         if (WebCurrent is { Lsp: not null } own && !own.Provides("renameProvider") && editors.Active is { } json)

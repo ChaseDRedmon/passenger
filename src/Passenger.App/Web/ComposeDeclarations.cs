@@ -56,10 +56,38 @@ public static partial class ComposeDeclarations
         {
             return Variable(variable, folder, chain, outline, lines, texts);
         }
+        if (chain is not [{ Name: "services" }, _, { } under, ..])
+        {
+            return ComposeAnswer.None(NoDeclaration);
+        }
+        ComposeAnswer answer = under.Name switch
+        {
+            "build" => Build(chain, folder, texts, projects),
+            "image" when under.Detail is { Length: > 0 } image => Image(image),
+            "env_file" => EnvFile(chain, lines) is { Length: > 0 } file ? File(file, folder) : ComposeAnswer.None(NoDeclaration),
+            "extends" => Extends(chain, outline, lines, folder, texts),
+            _ => Named(chain, at, written, column) switch
+            {
+                { Kind: "service" } service => Service(outline, lines, service.Name),
+                { } named => Declared(outline, lines, named.Kind + "s", named.Name),
+                null => ComposeAnswer.None(NoDeclaration),
+            },
+        };
+        // A key of this file is placed in it.
+        return answer with { Places = [.. answer.Places.Select(p => p.Path.Length == 0 ? p with { Path = path } : p)] };
+    }
+
+    /// <summary>The name of the file's own that a place under a service names, read from the server's outline of the file
+    /// (<paramref name="chain"/>, the symbols holding <paramref name="at"/>) and the line written there: a service its
+    /// depends_on (an item, or a mapping's key with the place on it), links, volumes_from, network_mode's <c>service:</c>
+    /// or extends names (with the other file an extends names), or a named volume, network, config or secret it uses (a short
+    /// entry, or a long one's source); null where it names none. Go to Declaration and Rename read a place alike.</summary>
+    internal static ComposeName? Named(List<DocumentSymbol> chain, LspPosition at, string written, int column)
+    {
         string[] names = [.. chain.Select(s => s.Name)];
         if (names is not ["services", _, _, ..])
         {
-            return ComposeAnswer.None(NoDeclaration);
+            return null;
         }
         string key = names[2];
         // An entry under the key: a list's item, or a mapping's key (depends_on's db:) with the caret on its name.
@@ -68,21 +96,22 @@ public static partial class ComposeDeclarations
             : WordAt(written, column).Word is { Length: > 0 } word ? word : null;
         // A long entry's source (a volume's, a secret's, a config's), which names what is declared.
         bool source = chain.Count == 5 && IsIndex(names[3]) && names[4] == "source";
-        ComposeAnswer answer = key switch
+        string? named = key switch
         {
-            "build" => Build(chain, folder, texts, projects),
-            "image" when chain[2].Detail is { Length: > 0 } image => Image(image),
-            "env_file" => EnvFile(chain, lines) is { Length: > 0 } file ? File(file, folder) : ComposeAnswer.None(NoDeclaration),
-            "depends_on" or "links" or "volumes_from" when entry && value is not null =>
-                Service(outline, lines, value.Split(':')[0] is var name && name != "container" ? name : null),
-            "network_mode" when chain[2].Detail is { } mode && mode.StartsWith("service:", StringComparison.Ordinal) => Service(outline, lines, mode["service:".Length..]),
-            "extends" => Extends(chain, outline, lines, folder, texts),
-            "volumes" when (entry || source) && value is not null => Declared(outline, lines, "volumes", VolumeSource(source, value)),
-            "networks" or "configs" or "secrets" when (entry || source) && value is not null => Declared(outline, lines, key, value),
-            _ => ComposeAnswer.None(NoDeclaration),
+            "depends_on" or "links" or "volumes_from" when entry && value is not null => value.Split(':')[0] is var name && name != "container" ? name : null,
+            "network_mode" when chain[2].Detail is { } mode && mode.StartsWith("service:", StringComparison.Ordinal) => mode["service:".Length..],
+            "extends" when chain[2].Children is not { Count: > 0 } => chain[2].Detail,
+            "extends" when !(chain.Count > 3 && chain[3].Name == "file") => chain[2].Children!.FirstOrDefault(p => p.Name == "service")?.Detail,
+            "volumes" when (entry || source) && value is not null => VolumeSource(source, value),
+            "networks" or "configs" or "secrets" when (entry || source) && value is not null => value,
+            _ => null,
         };
-        // A key of this file is placed in it.
-        return answer with { Places = [.. answer.Places.Select(p => p.Path.Length == 0 ? p with { Path = path } : p)] };
+        if (named is not { Length: > 0 })
+        {
+            return null;
+        }
+        string? file = key == "extends" ? chain[2].Children?.FirstOrDefault(p => p.Name == "file")?.Detail : null;
+        return new ComposeName(named, key is "depends_on" or "links" or "volumes_from" or "network_mode" or "extends" ? "service" : key[..^1], file);
     }
 
     public const string NoDeclaration = "Cannot find a declaration to go to";

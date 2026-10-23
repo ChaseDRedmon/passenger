@@ -357,7 +357,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   services of the file an extends names), its volumes under a service's volumes (a short entry's source, a long one's),
   its networks, secrets and configs under theirs; never the service itself nor a name its list holds on another line.
   `CodeAssist.ComposeCompletionAsync` lists them before the server's items, which are kept but for one of the same label
-  or one that would replace another stretch than the name's. The Structure window shows the web servers'
+  or one that would replace another stretch than the name's. `ComposeRename` is Rename of the file's own service,
+  volume, network, secret or config, from the same reading (what the place names is `ComposeDeclarations.Named`'s, or a
+  declaration's key; where each file writes it `ComposeText` and `ComposeFixes.References`, an extends of it too): where
+  it is declared and every use, in the file, the one Compose reads with it (`ComposeCheck.ReadWith`: a base and its
+  override) and, for a service an extends names in another file, that file and the compose files beside it
+  (`ComposeCheck.Unasked`), worked out again as it is made and applied through `ApplyFileChanges` as one command of
+  global undo; a name its kind has in those files, or one Compose's schema refuses, is refused, saying why. Rename tries
+  it before the YAML server's own (an anchor's), and MCP's `rename` takes it (`CodeAssist.RenameComposeAsync`). The
+  Structure window shows the web servers'
   outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
   The Dockerfile server completes a FROM image's tags by asking Docker Hub itself, only while Settings' Complete image
   tags from Docker Hub (its Docker page) is on: it runs with Passenger's preload (`node --require` of `Web/docker-hub.cjs`,
@@ -691,7 +699,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   connection string of the backing service the file runs that it reaches (`BackingService.OfImage`, the service of the
   name read, else the one of the kind its settings' value, name or packages point to, `ConnectionString`'s
   `host`), else, for one never given, a value left for the person to fill in (a localhost one of a kind the file does
-  not run gets no fix). Each `${VAR}` gets a hint of
+  not run gets no fix). Each such warning is also a `ComposeGap` (`EngineChecks.Gaps`, with the files the same
+  ConnectionReads answer has read it in), and while the compose file is open the service's code is marked where it reads
+  it, with the compose file's warning (`CSharpDocument.Compose.cs`: the places asked of the same handler in the file's own
+  pull, so they are the text's as it stands, pulled again as `GapsChanged`), its fix the compose file's, made there as one
+  edit (`CodeAssist.ComposeReadFixes`, `SetInCompose`, worked out again as chosen). Each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one
@@ -985,7 +997,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   a `ConnectionStrings:` key) or service its AppHost never gives
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
-  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
+  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`); a connection string read by a
+  name no resource has (`AspireUnknownConnection`; none for a service whose environment the AppHost sets by hand,
+  WithEnvironment) and that its appsettings.json or appsettings.Development.json do not give (`BackingService.Configured`,
+  a compose file's check's reading too) is marked on the name, its fix Change to the declared name near it (Compose's
+  rule, `Spelling.Near`), one edit worked out again as it is chosen (`CodeAssist.ConnectionFix`); resource names complete in a
   string literal, `AddProject` goes to its project (`AspireProjectDeclaration`) and a resource's name a service reads (a
   connection string's, by GetConnectionString, a client integration's connectionName or a `ConnectionStrings:` key; a
   service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one

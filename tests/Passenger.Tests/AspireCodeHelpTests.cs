@@ -257,6 +257,55 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         window.Close();
     }
 
+    /// <summary>A connection string a service reads by a name no resource of its AppHost has, by GetConnectionString or a
+    /// ConnectionStrings: key, is warned of on the name unless the service's appsettings give it; Show Context Actions there
+    /// offers Passenger's own Change to the declared name near it first, one edit Undo takes back, and its warning goes once
+    /// the name is a resource's. An agent's code_actions lists the same fix first and apply_code_action makes it, saved.</summary>
+    [AvaloniaFact]
+    public void A_connection_string_no_resource_names_is_warned_of_unless_settings_give_it_and_changed_to_the_declared_name_near_it()
+    {
+        string service = Project.Service.Replace("builder.Build().Run();", "var typo = builder.Configuration.GetConnectionString(\"conected\");\n"
+            + "var keyed = builder.Configuration[\"ConnectionStrings:connectd\"];\nvar given = builder.Configuration.GetConnectionString(\"settled\");\nbuilder.Build().Run();",
+            StringComparison.Ordinal);
+        project.Write("Api/Program.cs", service);
+        project.Write("Api/appsettings.json", "{\n  \"ConnectionStrings\": {\n    \"settled\": \"Host=localhost;Database=settled\"\n  }\n}\n");
+        MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            Ui.WaitFor(() => Unknown(window).SetEquals(["conected", "connectd"]), $"the names no resource has, and only those, to be warned of: {string.Join(", ", Unknown(window))}");
+            Assert.Contains(window.EditorArea.Active!.Markers, m => m.Kind == MarkerKind.Warning && m.Message
+                == "No resource of the AppHost is named 'conected', and the service's appsettings give no connection string of that name. Did you mean 'connected'?");
+
+            Ui.PlaceAfter(editor, "GetConnectionString(\"cone");
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Contains("Change to connected"), "the declared name near the one no resource has, offered");
+            Assert.Equal(("Change to connected", "a resource the AppHost declares"), (window.Assist.Offered[0], window.Assist.OfferedDetails[0]));
+            Ui.Press(window, "ENTER");
+            Assert.Equal(service.Replace("(\"conected\")", "(\"connected\")", StringComparison.Ordinal), editor.Document.Snapshot.ToString());
+            Ui.WaitFor(() => Unknown(window).SetEquals(["connectd"]), "the warning to go once the name is a resource's");
+            Ui.Run(window, EditorActions.Undo);
+            Assert.Equal(service, editor.Document.Snapshot.ToString());
+
+            Passenger.App.Mcp.PassengerTools agent = new(window);
+            int at = service.IndexOf("ConnectionStrings:conn", StringComparison.Ordinal) + "ConnectionStrings:conn".Length;
+            int line = service[..at].Count(c => c == '\n') + 1;
+            int column = at - service.LastIndexOf('\n', at - 1);
+            IReadOnlyList<string> actions = Ui.Await(agent.CodeActions("Api/Program.cs", line, column), "the code actions an agent asks for");
+            Assert.Equal("Change to connected [quickfix]", actions[0]);
+            string applied = Ui.Await(agent.ApplyCodeAction("Api/Program.cs", line, column, "Change to connected"), "the agent's fix made");
+            Assert.Equal($"Applied 'Change to connected' to {Path.Combine("Api", "Program.cs")}", applied);
+            Assert.Equal(service.Replace("ConnectionStrings:connectd", "ConnectionStrings:connected", StringComparison.Ordinal), File.ReadAllText(project.PathOf("Api/Program.cs")));
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static HashSet<string> Unknown(MainWindow window) => [.. window.EditorArea.Active!.Markers
+            .Where(m => m.Message.StartsWith("No resource of the AppHost is named '", StringComparison.Ordinal)).Select(m => m.Message.Split('\'')[1])];
+    }
+
     [AvaloniaFact]
     public void A_direct_HttpClient_address_has_a_warning_but_a_stale_fix_does_not_overwrite_the_AppHost()
     {
