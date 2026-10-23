@@ -240,7 +240,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
                 && PathNames.Same(configuration.Project, project.CompanionHost)).LaunchProfile);
             Ui.Launched(window, window.RunAsync(), "both linked official starters", TimeSpan.FromMinutes(4));
             Ui.WaitFor(() => window.AspireRuntime.Apps.Count == 2 && window.AspireRuntime.Apps.All(app => app.Services.Count >= 2), "both apps' DCP-owned services");
-            Assert.Equal(2, window.Aspire.AppSelector.Items.Count);
+            Assert.Equal(2, window.AspireWindow.AppSelector.Items.Count);
             Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "Both starters (2 apps running)");
             int[] owned = OwnedPids(window);
             Assert.True(owned.Length >= 6, "Two AppHosts and four services must have real PIDs");
@@ -363,10 +363,10 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             window.Height = 650;
             Ui.Settle();
             // The window's last tab, AppHost Log, after Telemetry's.
-            Avalonia.Controls.Primitives.ToggleButton lastTab = window.Aspire.GetVisualDescendants()
+            Avalonia.Controls.Primitives.ToggleButton lastTab = window.AspireWindow.GetVisualDescendants()
                 .OfType<Avalonia.Controls.Primitives.ToggleButton>().Single(button => button.Content is TextBlock { Text: "AppHost Log" });
-            Point? tabBottom = lastTab.TranslatePoint(new Point(0, lastTab.Bounds.Height), window.Aspire);
-            Assert.True(lastTab.Bounds.Height > 0 && tabBottom is { } bottom && bottom.Y <= window.Aspire.Bounds.Height,
+            Point? tabBottom = lastTab.TranslatePoint(new Point(0, lastTab.Bounds.Height), window.AspireWindow);
+            Assert.True(lastTab.Bounds.Height > 0 && tabBottom is { } bottom && bottom.Y <= window.AspireWindow.Bounds.Height,
                 "The window's tabs must remain reachable in a narrow, short tool window");
             window.Width = 1200;
             window.Height = 800;
@@ -394,13 +394,13 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             FindAction(window, "Show Aspire Log");
             Uri request = new(HttpUrl(web), "/passenger-test");
             Assert.Equal("5", Ui.Await(http.GetStringAsync(request), "the frontend's cross-service HTTP response"));
-            Ui.WaitFor(() => window.Aspire.Console.Document.Snapshot.ToString().Contains("[apiservice]", StringComparison.Ordinal)
-                && window.Aspire.Console.Document.Snapshot.ToString().Contains("[webfrontend]", StringComparison.Ordinal), "both service prefixes in the merged console");
-            Ui.WaitFor(() => window.Aspire.Console.Document.Snapshot.ToString().Contains("Passenger request", StringComparison.Ordinal), "the API's live console output");
+            Ui.WaitFor(() => window.AspireWindow.Console.Document.Snapshot.ToString().Contains("[apiservice]", StringComparison.Ordinal)
+                && window.AspireWindow.Console.Document.Snapshot.ToString().Contains("[webfrontend]", StringComparison.Ordinal), "both service prefixes in the merged console");
+            Ui.WaitFor(() => window.AspireWindow.Console.Document.Snapshot.ToString().Contains("Passenger request", StringComparison.Ordinal), "the API's live console output");
             FindAction(window, "Find in Aspire Logs");
             window.KeyTextInput("Passenger request");
-            Ui.WaitFor(() => window.Aspire.Find.IsEffectivelyVisible && window.Aspire.Find.CountText.Contains("/", StringComparison.Ordinal)
-                && !window.Aspire.Find.CountText.StartsWith("0", StringComparison.Ordinal),
+            Ui.WaitFor(() => window.AspireWindow.Find.IsEffectivelyVisible && window.AspireWindow.Find.CountText.Contains("/", StringComparison.Ordinal)
+                && !window.AspireWindow.Find.CountText.StartsWith("0", StringComparison.Ordinal),
                 "real Find to select a merged console match");
             Ui.Press(window, "ESCAPE");
             Assert.True(window.IsRunning);
@@ -408,32 +408,32 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             // Its structured log, correlated with its trace, whose spans cross both services.
             Roomy(window);
             FindAction(window, "Show Aspire Structured logs");
-            RefreshUntil(window, () => window.Aspire.Telemetry.Logs
+            RefreshUntil(window, () => window.AspireWindow.Telemetry.Logs
                 .Any(log => log.Data.GetRawText().Contains("Passenger request", StringComparison.Ordinal)), "the API's structured request log");
-            AspireStructuredLog log = window.Aspire.Telemetry.Logs
+            AspireStructuredLog log = window.AspireWindow.Telemetry.Logs
                 .First(item => item.Data.GetRawText().Contains("Passenger request", StringComparison.Ordinal));
-            ClickListItem(window, window.Aspire.StructuredLogs, log);
+            ClickListItem(window, window.AspireWindow.StructuredLogs, log);
             Assert.False(string.IsNullOrWhiteSpace(log.TraceId), "The structured log must retain its trace correlation");
             Assert.False(string.IsNullOrWhiteSpace(log.SpanId), "The structured log must retain its span correlation");
-            Assert.Contains(window.Aspire.GetVisualDescendants().OfType<Passenger.App.ToolWindows.OutputView>(),
+            Assert.Contains(window.AspireWindow.GetVisualDescendants().OfType<Passenger.App.ToolWindows.OutputView>(),
                 output => output.IsEffectivelyVisible && output.Document.Snapshot.ToString().Contains("RequestValue", StringComparison.Ordinal)
                     && output.Document.Snapshot.ToString().Contains("42", StringComparison.Ordinal));
             FindAction(window, "Show Aspire Traces");
-            RefreshUntil(window, () => window.Aspire.Telemetry.Traces.Any(trace =>
+            RefreshUntil(window, () => window.AspireWindow.Telemetry.Traces.Any(trace =>
                 trace.TraceId == log.TraceId && trace.Spans.Select(span => span.Source).Distinct().Count() >= 2), "the API and frontend spans in one trace");
-            AspireTrace trace = window.Aspire.Telemetry.Traces.First(trace => trace.TraceId == log.TraceId);
-            ClickListItem(window, window.Aspire.TraceList, trace);
-            Assert.True(window.Aspire.SpanList.Items.Count >= 2, "The native trace hierarchy must show cross-service spans");
+            AspireTrace trace = window.AspireWindow.Telemetry.Traces.First(trace => trace.TraceId == log.TraceId);
+            ClickListItem(window, window.AspireWindow.TraceList, trace);
+            Assert.True(window.AspireWindow.SpanList.Items.Count >= 2, "The native trace hierarchy must show cross-service spans");
 
             // A child span chosen stays chosen as the next request's trace streams in.
-            Passenger.App.Telemetry.TelemetryView.SpanRow child = window.Aspire.Telemetry.Spans.First(row => row.Depth > 0);
-            ClickListItem(window, window.Aspire.SpanList, child);
-            string[] before = window.Aspire.Telemetry.Traces.Select(item => item.TraceId).ToArray();
+            Passenger.App.Telemetry.TelemetryView.SpanRow child = window.AspireWindow.Telemetry.Spans.First(row => row.Depth > 0);
+            ClickListItem(window, window.AspireWindow.SpanList, child);
+            string[] before = window.AspireWindow.Telemetry.Traces.Select(item => item.TraceId).ToArray();
             Assert.Equal("5", Ui.Await(http.GetStringAsync(request), "the next cross-service trace"));
-            Ui.WaitFor(() => window.Aspire.Telemetry.Traces.Any(item => !before.Contains(item.TraceId)),
+            Ui.WaitFor(() => window.AspireWindow.Telemetry.Traces.Any(item => !before.Contains(item.TraceId)),
                 "the next native telemetry batch");
-            Assert.Equal(trace.TraceId, window.Aspire.Telemetry.SelectedTrace?.TraceId);
-            Assert.Equal(child.Span.SpanId, window.Aspire.Telemetry.SelectedSpan?.Span.SpanId);
+            Assert.Equal(trace.TraceId, window.AspireWindow.Telemetry.SelectedTrace?.TraceId);
+            Assert.Equal(child.Span.SpanId, window.AspireWindow.Telemetry.SelectedSpan?.Span.SpanId);
 
             // The API's own command: a confirmation cancelled, then a form the AppHost validates, answered from the window.
             File.Delete(project.InteractionAnswer);
@@ -688,7 +688,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Ui.Await(Complete(window.Debugger.ChooseAsync(apiTab)), "choosing the attached API's tab to go on with it");
 
             ChooseResource(window, "apiservice");
-            Button noDebug = window.Aspire.Tools[AppActions.ServiceRun];
+            Button noDebug = window.AspireWindow.Tools[AppActions.ServiceRun];
             Ui.WaitFor(() => noDebug.IsEffectivelyVisible && noDebug.IsEnabled, "the selected resource's Run without debugger action");
             Ui.Click(noDebug);
             RefreshUntil(window, () => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "apiservice"
@@ -937,7 +937,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
     /// <summary>Runs the chosen resource's command as a person does: the toolbar's commands button, then its item.</summary>
     private static void RunCommand(MainWindow window, string title)
     {
-        Ui.Click(window.Aspire.Tools[AppActions.AspireCommand]);
+        Ui.Click(window.AspireWindow.Tools[AppActions.AspireCommand]);
         Ui.Choose(window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(menu => menu.IsOpen), title);
     }
 
@@ -997,7 +997,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
     /// (RunRows.Put), so the click lands on it.</summary>
     private static void ClickListItem(MainWindow window, ListBox list, object record)
     {
-        object item = window.Aspire.Telemetry.ItemOf(record) ?? throw new InvalidOperationException($"{record} is not listed");
+        object item = window.AspireWindow.Telemetry.ItemOf(record) ?? throw new InvalidOperationException($"{record} is not listed");
         list.ScrollIntoView(item);
         Ui.Settle();
         Ui.Click(Assert.IsType<ListBoxItem>(list.ContainerFromItem(item)));
@@ -1073,7 +1073,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
     /// AppHost's console said, its secrets masked.</summary>
     private static string TelemetryDiagnostics(MainWindow window)
     {
-        string labels = string.Join("\n", window.Aspire.GetVisualDescendants().OfType<TextBlock>()
+        string labels = string.Join("\n", window.AspireWindow.GetVisualDescendants().OfType<TextBlock>()
             .Where(label => label.IsEffectivelyVisible).Select(label => label.Text)
             .Where(text => text is not null && (text.Contains("telemetry", StringComparison.OrdinalIgnoreCase)
                 || text.StartsWith("Live ·", StringComparison.Ordinal))));
@@ -1169,7 +1169,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
     {
         ChooseResource(window, "apiservice");
         Ui.Run(window, AppActions.MaximizeToolWindow);
-        Ui.WaitFor(() => window.Aspire.Bounds.Height > 400, "the Aspire window maximized");
+        Ui.WaitFor(() => window.AspireWindow.Bounds.Height > 400, "the Aspire window maximized");
     }
 
     /// <summary>A notification connection of a DCP instance to the IDE's execution endpoint, open until disposed or aborted.</summary>

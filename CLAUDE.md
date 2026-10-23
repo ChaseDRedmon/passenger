@@ -575,13 +575,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ProblemsModel` (`ToolViews.Problems`: every build's, server's, binding's and container's problems, the tab shown
   and the row chosen; its view `ProblemsWindow`), the Debug window's a `DebugModel` (`ToolViews.Debug`: each session's
   tab and console, the threads, frames and values shown and what its toolbar can press; its view `DebugWindow`, which
-  the Evaluate field's keys and Variables' rows are), and the Live Visual Tree's and the profiler's controllers keep
-  what they said for a view not yet built (`LiveTreeController`: the status, tree, details and Select Element;
-  `ProfilerCommands`: the folder's kept snapshots, each profile showing its window first). The Build and Run consoles
-  are made up front, their costly part made as first shown: an `OutputView`'s editor (`HasEditor`, over the text and
-  colours it kept), as each Debug console's, the Unit Tests window's details, a `MergedLog`'s Find. Still made up
-  front: Aspire's view, made again at each session bind (`BindAspire`: its resources, selection, consoles and
-  telemetry are `AspireView`'s own, which the Aspire actions' checks read, so a lazy one needs it split first).
+  the Evaluate field's keys and Variables' rows are), the Aspire window's an `AspireModel` (#447, `ToolViews.Aspire`,
+  made anew at each session bind, `BindAspire`, which a built view is bound to, `AspireView.Bind`: the AppHosts and the
+  one chosen, the resources' rows and the row chosen, the tab shown, its words, the engine's word and the AppHost's
+  console, the reads, refreshes and commands, which the Aspire actions' checks read; its view `AspireWindow`, which alone
+  streams the resources' consoles and telemetry, while it shows them), the Requests window's the `RequestLog` (the
+  requests heard and what it says it follows; its view `Requests`), the Migrations window's its `MigrationsController`
+  (its view `MigrationsView`, the migration chosen in it its own), and the Live Visual Tree's and the profiler's
+  controllers keep what they said for a view not yet built (`LiveTreeController`: the status, tree, details and Select
+  Element; `ProfilerCommands`: the folder's kept snapshots, each profile showing its window first). The Build and Run
+  consoles are made up front, their costly part made as first shown: an `OutputView`'s editor (`HasEditor`, over the
+  text and colours it kept), as each Debug console's, the Unit Tests window's details, a `MergedLog`'s Find.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -692,8 +696,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`CodeAssist.Routes.cs`), and an agent's `workspace` with `routes` lists them (`RouteInfo`). `WebRoutesTests`' gRPC
   service restores Grpc.AspNetCore and Google.Protobuf at the versions tests/AspireGraphs' AppHost puts in the package
   cache (Aspire's dashboard client brings them).
-  The Requests window (#418, `RequestsView`, `MainWindow.Requests.cs`, `ToolWindowIds.Requests` at the bottom right, beside
-  Run) lists the live requests of the web apps running from the folder and the database commands each issued, with no change
+  The Requests window (#418, `RequestsView` over the `RequestLog`, built as first shown, `MainWindow.Requests.cs`,
+  `ToolWindowIds.Requests` at the bottom right, beside Run) lists the live requests of the web apps running from the folder and the database commands each issued, with no change
   to the apps: Run's program, Profile's, each live Debug tab's on this machine (once `DebugSession.ProcessStarted` says it
   started) and each started .NET service of a run of services under way (`ServiceRun.ProgramAsync`: an AppHost's on this
   machine, a container's through Passenger's tools there), all at once, one program once (`RequestTargetsAsync`), in passes
@@ -1147,7 +1151,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   change of the runs and each service's attach, never on a timer), so `run` with `resource` answers once it is up; `AspireTelemetry` reads the
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked as the engine's are (`ContainerSecrets.InSaid`). The Aspire
-  window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
+  window (`AspireView` over the session's `AspireModel`, built as first shown, `ToolWindowIds.Aspire`, its stripe icon
+  `Icon.Aspire`; an AppHost's resources reach the model hidden or shown, as its run follows them) is the Containers window's
   parts over an AppHost's resources, the same controls and one layout (`ToolWindows/RunWindows`, which UiRulesTests holds
   both to): its toolbar the AppHost chosen and icon buttons of registered actions (`MainWindow.AspireActions.cs`, each
   bound by `ActionButtons.Bind`, its ring while its work runs: Discover, Refresh, then the service actions' group as the
@@ -1310,8 +1315,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Once `up` has brought it up the run reads its API's port (`compose port`, `ContainerTelemetry.ReadAsync`), said in the
   run's notes when it cannot (an engine on another machine, whose loopback this one cannot read).
 - `src/Passenger.App/Migrations` (#419): EF Core's migrations, Passenger's own Migrations window over the folder's
-  projects that reference EF Core (`MigrationsController`, the window's over each session it binds; `MigrationsView`,
-  `MainWindow.Migrations.cs`): the project, the startup project (those that reference it, the runnable ones first) and the
+  projects that reference EF Core (`MigrationsController`, the window's over each session it binds, finding the gaps
+  whether or not the window shows; `MigrationsView`, built as first shown, a gap's Choose fix showing it to open its
+  chooser; `MainWindow.Migrations.cs`): the project, the startup project (those that reference it, the runnable ones first) and the
   context chosen across its top, never an error naming a flag; the context's migrations, oldest first, each with whether
   the database has it; Refresh, Add Migration… (its name asked), Remove Last (asked), Update Database to the latest or the
   chosen row's (rolling back asks first, naming what goes), Script Migrations… (`MigrationScriptDialog`: from, to,

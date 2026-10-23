@@ -575,8 +575,12 @@ public partial class MainWindow : Window
             ActionTitle = "Debug Tool Window",
             Tools = () => debugView?.HeaderTools,
         });
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Aspire, "Aspire", "Icon.Aspire", Bottom.AspireHost, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowAspire, ActionTitle = "Aspire Tool Window" });
-        Closed += (_, _) => Bottom.AspirePane.Dispose();
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Aspire, "Aspire", "Icon.Aspire", MakeAspire, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowAspire, ActionTitle = "Aspire Tool Window" });
+        Closed += (_, _) =>
+        {
+            Bottom.Aspire.Dispose();
+            aspireView?.Dispose();
+        };
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Tests, "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowTests,

@@ -139,7 +139,7 @@ public partial class MainWindow
         {
             if (c.ToolWindow?.Id == ToolWindowIds.Aspire)
             {
-                Aspire.Find.Next();
+                aspireView?.Find.Next();
             }
             else
             {
@@ -151,7 +151,7 @@ public partial class MainWindow
         {
             if (c.ToolWindow?.Id == ToolWindowIds.Aspire)
             {
-                Aspire.Find.Previous();
+                aspireView?.Find.Previous();
             }
             else
             {

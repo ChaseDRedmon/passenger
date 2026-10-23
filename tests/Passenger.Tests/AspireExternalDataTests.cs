@@ -51,7 +51,7 @@ public sealed class AspireExternalDataTests(AspireApp project) : IClassFixture<A
             window = project.OpenHost();
             Assert.Empty(window.AspireRuntime.Apps);
             FindAction(window, "Discover Aspire AppHosts");
-            Ui.WaitFor(() => window.Aspire.AppSelector.Items.OfType<Passenger.App.Aspire.AspireApp>().Any(app => PathNames.Same(PathNames.Canonical(project.Host), app.AppHostPath)),
+            Ui.WaitFor(() => window.Aspire.Apps.Any(app => PathNames.Same(PathNames.Canonical(project.Host), app.AppHostPath)),
                 $"the window to find the CLI's AppHost ({window.Aspire.Status})");
             ChooseApp(window, PathNames.Canonical(project.Host));
             bool Read() => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "apiservice"
@@ -66,7 +66,7 @@ public sealed class AspireExternalDataTests(AspireApp project) : IClassFixture<A
             // A secret's by its name, masked as Containers' Details mask one.
             Assert.Equal(Passenger.App.Containers.ContainerSecrets.Masked, api.Data.GetProperty("environment").GetProperty(Variable).GetString());
             Assert.DoesNotContain(Secret, api.Data.GetRawText(), StringComparison.Ordinal);
-            Assert.DoesNotContain(window.Aspire.GetVisualDescendants().OfType<TextBlock>(), text => text.Text?.Contains(Secret, StringComparison.Ordinal) == true);
+            Assert.DoesNotContain(window.AspireWindow.GetVisualDescendants().OfType<TextBlock>(), text => text.Text?.Contains(Secret, StringComparison.Ordinal) == true);
             string projectPath = Assert.IsType<string>(api.Data.GetProperty("properties").GetProperty("project.path").GetString());
             Assert.True(PathNames.Same(PathNames.Canonical(Path.Combine(Path.GetDirectoryName(project.ApiProgram)!, $"{AspireApp.Name}.ApiService.csproj")), PathNames.Canonical(projectPath)),
                 $"The CLI's project path was {projectPath}");
@@ -107,7 +107,7 @@ public sealed class AspireExternalDataTests(AspireApp project) : IClassFixture<A
     /// <summary>Chooses an AppHost in the Aspire window's chooser by clicks and keys, as a person does.</summary>
     private static void ChooseApp(MainWindow window, string appHost)
     {
-        ComboBox chooser = window.Aspire.AppSelector;
+        ComboBox chooser = window.AspireWindow.AppSelector;
         int index = chooser.Items.OfType<Passenger.App.Aspire.AspireApp>().ToList().FindIndex(app => PathNames.Same(appHost, app.AppHostPath));
         Assert.True(index >= 0, $"The Aspire window does not offer {appHost}");
         Ui.Click(chooser);

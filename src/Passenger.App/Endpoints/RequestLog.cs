@@ -78,7 +78,8 @@ public sealed class LiveRequest(string trace, string method, string path, string
 public sealed record RequestChanges(IReadOnlyList<LiveRequest> Came, IReadOnlyCollection<LiveRequest> Changed, IReadOnlyCollection<LiveRequest> Went, bool All = false);
 
 /// <summary>The live requests of the app followed, newest last, as many as <see cref="Most"/>: each event the stream thread
-/// hears queued and taken on the UI thread a batch at a time, a command tied to its request by its activity's root id.</summary>
+/// hears queued and taken on the UI thread a batch at a time, a command tied to its request by its activity's root id. What
+/// the Requests window shows, kept whether or not its view is built (#447), with what the window says it follows.</summary>
 public sealed class RequestLog
 {
     /// <summary>The most requests kept, the oldest going first.</summary>
@@ -110,6 +111,26 @@ public sealed class RequestLog
     public RequestLog(Func<string, string, string?, WebRoute?> routeOf) => this.routeOf = routeOf;
 
     public IReadOnlyList<LiveRequest> Requests => requests;
+
+    /// <summary>What the Requests window says it follows, or why it follows nothing.</summary>
+    public string Following
+    {
+        get => following;
+        set
+        {
+            UiThread.Check();
+            if (following != value)
+            {
+                following = value;
+                FollowingChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    private string following = string.Empty;
+
+    /// <summary>What the window says it follows changed.</summary>
+    public event EventHandler? FollowingChanged;
 
     /// <summary>Requests came, ended, issued commands or went: what a batch changed, so a list redraws that alone.</summary>
     public event EventHandler<RequestChanges>? Changed;

@@ -100,12 +100,12 @@ public sealed class LiveRequestsTests
                 TimeSpan.FromMinutes(2));
             try
             {
-                Ui.WaitFor(() => window.Requests.Following.StartsWith("Following", StringComparison.Ordinal) && window.Requests.Following.Contains("process", StringComparison.Ordinal),
+                Ui.WaitFor(() => window.RequestLog.Following.StartsWith("Following", StringComparison.Ordinal) && window.RequestLog.Following.Contains("process", StringComparison.Ordinal),
                     "the Requests window to follow the shop", TimeSpan.FromMinutes(1));
             }
             catch (TimeoutException)
             {
-                throw new Xunit.Sdk.XunitException($"The Requests window did not follow the running shop; it says: {window.Requests.Following}");
+                throw new Xunit.Sdk.XunitException($"The Requests window did not follow the running shop; it says: {window.RequestLog.Following}");
             }
 
             using (HttpClient client = new())
@@ -125,7 +125,7 @@ public sealed class LiveRequestsTests
             catch (TimeoutException)
             {
                 throw new Xunit.Sdk.XunitException($"The requests were not all listed: [{string.Join("; ", window.RequestLog.Requests.Select(r => $"{r.Method} {r.Path} status {r.Status}, {r.Commands.Count} commands"))}], "
-                    + $"the window says: {window.Requests.Following}");
+                    + $"the window says: {window.RequestLog.Following}");
             }
 
             LiveRequest one = window.RequestLog.Requests.Single(r => r.Path == "/orders/2");

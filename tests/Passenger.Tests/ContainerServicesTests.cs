@@ -140,7 +140,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         {
             window.ShowToolWindow(ToolWindowIds.Requests);
             Ui.Launched(window, window.RunAsync(), "the services to come up", TimeSpan.FromMinutes(5));
-            Ui.WaitFor(() => window.Requests.Following.Contains("web of", StringComparison.Ordinal) && window.Requests.Following.Contains("api of", StringComparison.Ordinal),
+            Ui.WaitFor(() => window.RequestLog.Following.Contains("web of", StringComparison.Ordinal) && window.RequestLog.Following.Contains("api of", StringComparison.Ordinal),
                 "the Requests window to follow both services in their containers", TimeSpan.FromMinutes(2));
             Assert.Equal("web 1", ContainerRunDebuggingTests.Get(ContainerRunsTests.Published(project, "web")).GetAwaiter().GetResult());
             Assert.Equal("api 1", ContainerRunDebuggingTests.Get(ContainerRunsTests.Published(project, "api")).GetAwaiter().GetResult());

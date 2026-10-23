@@ -97,6 +97,11 @@ public sealed class MigrationsTests
         MainWindow window = Ui.OpenFolder(folder, languageServer: false);
         try
         {
+            // Found as the projects are read, the window hidden, with no view built until it shows them.
+            string found = string.Empty;
+            Ui.WaitFor(() => (found = string.Join(" | ", window.Migrations.Gaps.Select(g => g.Said))).Contains("dotnet ef is not installed here", StringComparison.Ordinal)
+                && found.Contains("lacks Microsoft.EntityFrameworkCore.Design", StringComparison.Ordinal), () => $"both gaps found with the window hidden ({found})");
+            Assert.False(window.DockHost[ToolWindowIds.Migrations]!.IsBuilt, "Finding what dotnet ef lacks built the hidden Migrations window's view");
             window.ShowToolWindow(ToolWindowIds.Migrations);
             Ui.WaitFor(() => Gaps(window).Contains("dotnet ef is not installed here", StringComparison.Ordinal)
                 && Gaps(window).Contains("lacks Microsoft.EntityFrameworkCore.Design", StringComparison.Ordinal), $"both gaps shown before any command ({Gaps(window)})");

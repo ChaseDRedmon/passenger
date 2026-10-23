@@ -401,7 +401,7 @@ public partial class MainWindow
             {
                 IReadOnlyList<Passenger.App.Aspire.AspireResource> resources = await app.Interactions!.GetResourcesAsync();
                 if (resources.FirstOrDefault(r => r.IsProject && r.Source is { } source && PathNames.Same(source, project)) is { } resource
-                    && Passenger.App.Aspire.AspireView.Links(resource) is { Count: > 0 } links)
+                    && Passenger.App.Aspire.AspireModel.Links(resource) is { Count: > 0 } links)
                 {
                     return (links.FirstOrDefault(l => l.Scheme == "http") ?? links[0]).GetLeftPart(UriPartial.Authority);
                 }

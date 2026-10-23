@@ -40,18 +40,28 @@ public partial class MainWindow
     /// its process id where it runs, and where that is when not on this machine (a container's tools).</summary>
     private sealed record RequestTarget(string Key, string Name, string? Project, int Process, ProfilePlace? Place);
 
-    /// <summary>The Requests window.</summary>
-    public RequestsView Requests => requestsView!;
+    /// <summary>The Requests window's view, built as it is first shown or asked for; what it lists is <see cref="RequestLog"/>,
+    /// kept while it is not.</summary>
+    public RequestsView Requests => requestsView ?? (RequestsView)Dock[ToolWindowIds.Requests]!.Content;
 
-    /// <summary>The live requests heard.</summary>
+    /// <summary>The live requests heard, and what the window says it follows.</summary>
     public RequestLog RequestLog => requestLog!;
 
     private void AddRequests()
     {
-        RequestLog log = new(RouteReached);
-        RequestsView view = new(log);
-        requestLog = log;
-        requestsView = view;
+        requestLog = new RequestLog(RouteReached);
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Requests, "Requests", "Icon.Endpoints", MakeRequests, Docking.ToolAnchor.BottomRight)
+        {
+            Action = AppActions.ShowRequests,
+            Menus = [new MenuPlace("Tools", 0, 4)],
+        });
+        Closed += (_, _) => _ = LetGoOfRequestsAsync();
+    }
+
+    /// <summary>The Requests window's view over the log, as it is first shown or asked for.</summary>
+    private RequestsView MakeRequests()
+    {
+        RequestsView view = requestsView = new RequestsView(RequestLog);
         view.ShownChanged += (_, shown) =>
         {
             // The routes the requests reach are read while the window shows.
@@ -63,12 +73,7 @@ public partial class MainWindow
         };
         view.RequestOpened += (_, request) => OpenRequest(request);
         view.CommandOpened += (_, command) => OpenCommand(command);
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Requests, "Requests", "Icon.Endpoints", view, Docking.ToolAnchor.BottomRight)
-        {
-            Action = AppActions.ShowRequests,
-            Menus = [new MenuPlace("Tools", 0, 4)],
-        });
-        Closed += (_, _) => _ = LetGoOfRequestsAsync();
+        return view;
     }
 
     /// <summary>A session's runs, debugging and profiling began or ended: the programs followed follow them.</summary>
@@ -218,7 +223,7 @@ public partial class MainWindow
             }
             catch (ProfilingException failed)
             {
-                Requests.Following = failed.Message;
+                RequestLog.Following = failed.Message;
                 if (target.Place is not null)
                 {
                     // Tools that answered have said why: asking again would only say it again.
@@ -250,7 +255,7 @@ public partial class MainWindow
             await Task.Delay(TimeSpan.FromMilliseconds(50), cancel);
         }
         await FollowRequestsAsync();
-        StringBuilder said = new(Requests.Following);
+        StringBuilder said = new(RequestLog.Following);
         foreach (LiveRequest request in RequestLog.Requests.TakeLast(Math.Max(1, most)))
         {
             said.Append('\n').Append(request.Method).Append(' ').Append(request.Path).Append(request.Query)
@@ -288,16 +293,16 @@ public partial class MainWindow
     {
         if (followedRequests.Count > 0)
         {
-            Requests.Following = "Following " + string.Join(", ", followedRequests.Values.Select(f =>
+            RequestLog.Following = "Following " + string.Join(", ", followedRequests.Values.Select(f =>
                 f.Target.Place is { } place ? $"{f.Target.Name} in {place.Where} (process {f.Target.Process})" : $"{f.Target.Name} (process {f.Target.Process})"));
         }
         else if (none is { Length: > 0 })
         {
-            Requests.Following = none;
+            RequestLog.Following = none;
         }
         else if (none is null)
         {
-            Requests.Following = RequestsLooked ? "Nothing runs: Run, Debug or Profile a web app, or start its containers or AppHost, to see its requests" : string.Empty;
+            RequestLog.Following = RequestsLooked ? "Nothing runs: Run, Debug or Profile a web app, or start its containers or AppHost, to see its requests" : string.Empty;
         }
     }
 

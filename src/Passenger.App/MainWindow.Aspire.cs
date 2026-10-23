@@ -17,8 +17,14 @@ public partial class MainWindow
 
     private AspireClient AspireCli() => new(AspireCliFrom);
 
-    public AspireView Aspire => Bottom.Aspire;
+    /// <summary>What the Aspire window shows of the session's AppHosts, which the Aspire actions read: its view's model.</summary>
+    public AspireModel Aspire => Bottom.Aspire;
+
+    /// <summary>The Aspire window's view, built as it is first shown or asked for (a person's action on its toolbar's menus).</summary>
+    public AspireView AspireWindow => aspireView ?? (AspireView)Dock[ToolWindowIds.Aspire]!.Content;
+
     public AspireController AspireRuntime => session.Aspire;
+    private AspireView? aspireView;
     private bool choosingAspireProfile;
     private EventHandler? aspireDisplayChanged;
 
@@ -61,11 +67,29 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The Aspire window's view over the session's model, as it is first shown: its actions bound once, and its
+    /// showing and hiding followed by the session's display.</summary>
+    private AspireView MakeAspire()
+    {
+        AspireView view = aspireView = new AspireView(Bottom.Aspire);
+        view.BindActions(Actions, id => Request(id), RowMenuItem);
+        view.RowChosen += (_, _) => lastServiceWindow = ToolWindowIds.Aspire;
+        view.Browse = Browse;
+        view.LinkClicked += (_, link) => OpenLink(link);
+        view.AttachedToVisualTree += (_, _) => aspireDisplayChanged?.Invoke(this, EventArgs.Empty);
+        view.DetachedFromVisualTree += (_, _) => aspireDisplayChanged?.Invoke(this, EventArgs.Empty);
+        return view;
+    }
+
+    /// <summary>Whether the Aspire window shows its resources now: shown, and its view in a window and visible there.</summary>
+    private bool AspireDisplayed => Dock.IsShown(ToolWindowIds.Aspire) && aspireView is { } view
+        && TopLevel.GetTopLevel(view) is not null && view.IsEffectivelyVisible;
+
     private void BindAspire(ProjectSession next)
     {
         Bottom.ResetAspire(AspireCli());
-        AspirePane pane = Bottom.AspirePane;
-        AspireView view = pane.View;
+        AspireModel model = Bottom.Aspire;
+        aspireView?.Bind(model);
         ConditionalWeakTable<AspireInteractions, object> boundConnections = new();
         string[] ownedAppHosts = [];
         LookForLeftovers(next);
@@ -92,26 +116,21 @@ public partial class MainWindow
                 containersView?.OtherEnginesChanged();
             }
         };
-        view.BindActions(Actions, id => Request(id), RowMenuItem);
-        view.RowChosen += (_, _) => lastServiceWindow = ToolWindowIds.Aspire;
-        view.Browse = Browse;
-        view.LeftUnstarted = (path, resource) => next.Aspire.FindApp(path)?.IsLeftUnstarted(resource) == true;
-        view.TelemetryProvider = path => next.Aspire.FindApp(path)?.Telemetry;
-        view.SelectContainer = id => _ = ShowAspireContainerAsync(next, id);
+        model.LeftUnstarted = (path, resource) => next.Aspire.FindApp(path)?.IsLeftUnstarted(resource) == true;
+        model.TelemetryProvider = path => next.Aspire.FindApp(path)?.Telemetry;
+        model.SelectContainer = id => _ = ShowAspireContainerAsync(next, id);
         if (aspireDisplayChanged is not null)
         {
             Dock.LayoutChanged -= aspireDisplayChanged;
         }
         aspireDisplayChanged = (_, _) => UpdateDisplay();
         Dock.LayoutChanged += aspireDisplayChanged;
-        pane.AttachedToVisualTree += (_, _) => aspireDisplayChanged?.Invoke(this, EventArgs.Empty);
-        pane.DetachedFromVisualTree += (_, _) => aspireDisplayChanged?.Invoke(this, EventArgs.Empty);
         next.Tests.BeginAspireTest = next.Aspire.BeginTestAsync;
-        view.ResourceProvider = (path, cancel) => next.Aspire.FindApp(path) is { IsTest: false } app
+        model.ResourceProvider = (path, cancel) => next.Aspire.FindApp(path) is { IsTest: false } app
             ? app.Interactions?.GetResourcesAsync(cancel)
                 ?? Task.FromResult<IReadOnlyList<AspireResource>>([])
             : null;
-        view.ConsoleProvider = (selected, cancel) => next.Aspire.FindApp(selected.AppHostPath)?.Interactions?.WatchConsoleAsync(selected.Resource, cancel);
+        model.ConsoleProvider = (selected, cancel) => next.Aspire.FindApp(selected.AppHostPath)?.Interactions?.WatchConsoleAsync(selected.Resource, cancel);
         next.Aspire.ConnectInteractions = async (app, cancel) =>
         {
             if (app.ResourceServiceEndpoint is not { } endpoint)
@@ -141,15 +160,13 @@ public partial class MainWindow
                     app.Console.Append($"Aspire interactions: {message}\n", error: true);
                 }
             };
+            // Taken whether or not the window shows, as its run follows the stream: a view built later shows what came.
             connection.ResourcesChanged += (_, snapshot) =>
             {
-                if (session != next || next.IsEnded || next.Aspire.FindApp(app.Configuration.Project) != app)
+                if (session == next && !next.IsEnded && next.Aspire.FindApp(app.Configuration.Project) == app
+                    && model.SelectedApp is { } selected && PathNames.Same(selected.AppHostPath, app.Configuration.Project))
                 {
-                    return;
-                }
-                if (session == next && !next.IsEnded && view.SelectedApp is { } selected && PathNames.Same(selected.AppHostPath, app.Configuration.Project))
-                {
-                    view.ApplyResourceSnapshot(snapshot);
+                    model.ApplyResourceSnapshot(snapshot);
                 }
             };
         }
@@ -157,17 +174,16 @@ public partial class MainWindow
         {
             await ResourceCommandAsync(next, selected, command, isCurrent, cancel);
         };
-        view.LinkClicked += (_, link) => OpenLink(link);
-        view.AppSelectionChanged += (_, app) =>
+        model.AppSelectionChanged += (_, app) =>
         {
             AspireAppRun? owned = app is null ? null : next.Aspire.FindApp(app.AppHostPath);
-            pane.SetConsole(app is null ? next.Aspire.LastAppConsole : owned?.Console);
-            view.ArgumentCommand = owned?.Interactions is null ? null : executeCommand;
+            model.SetAppHostConsole(app is null ? next.Aspire.LastAppConsole : owned?.Console);
+            model.ArgumentCommand = owned?.Interactions is null ? null : executeCommand;
             UpdateDisplay();
         };
         AspireResourceRun? selectedResourceService = null;
         string? selectedResourceKey = null;
-        view.ResourceSelectionChanged += (_, selection) =>
+        model.ResourceSelectionChanged += (_, selection) =>
         {
             if (session != next)
             {
@@ -199,8 +215,8 @@ public partial class MainWindow
             FollowEngineForAspire(next);
             if (session == next && !next.IsEnded)
             {
-                AspireApp? previous = view.SelectedApp;
-                AspireApp[] external = view.AppSelector.Items.OfType<AspireApp>()
+                AspireApp? previous = model.SelectedApp;
+                AspireApp[] external = model.Apps
                     .Where(app => !ownedAppHosts.Any(path => PathNames.Same(path, app.AppHostPath))
                         && next.Aspire.FindApp(app.AppHostPath) is null).ToArray();
                 ownedAppHosts = next.Aspire.Apps.Select(app => app.Configuration.Project).ToArray();
@@ -213,15 +229,15 @@ public partial class MainWindow
                         connected |= previous is null || PathNames.Same(previous.AppHostPath, app.Configuration.Project);
                     }
                 }
-                pane.SetConsole(view.SelectedApp is { } selected ? next.Aspire.FindApp(selected.AppHostPath)?.Console ?? next.Aspire.LastAppConsole : next.Aspire.LastAppConsole);
-                view.SetApps(next.Aspire.Apps.Select(app => new AspireApp(app.Configuration.Project,
+                model.SetAppHostConsole(model.SelectedApp is { } selected ? next.Aspire.FindApp(selected.AppHostPath)?.Console ?? next.Aspire.LastAppConsole : next.Aspire.LastAppConsole);
+                model.SetApps(next.Aspire.Apps.Select(app => new AspireApp(app.Configuration.Project,
                     app.ProcessId ?? app.Runner.ProcessId ?? 0, app.IsTest ? "Testing" : app.Interactions is null ? "Starting" : "Running")).Concat(external));
                 UpdateDisplay();
-                if (connected || previous != view.SelectedApp)
+                if (connected || previous != model.SelectedApp)
                 {
-                    view.ArgumentCommand = view.SelectedApp is { } chosen
+                    model.ArgumentCommand = model.SelectedApp is { } chosen
                         && next.Aspire.FindApp(chosen.AppHostPath)?.Interactions is not null ? executeCommand : null;
-                    view.Refresh();
+                    model.Refresh();
                 }
                 ShowStop();
                 ShowChosenConfiguration(next.Configurations);
@@ -230,18 +246,13 @@ public partial class MainWindow
         };
         UpdateDisplay();
 
-        bool Shown(string path) => session == next && !next.IsEnded && Dock.IsShown(ToolWindowIds.Aspire)
-            && TopLevel.GetTopLevel(pane) is not null && pane.IsEffectivelyVisible
-            && view.SelectedApp is { } selected && PathNames.Same(selected.AppHostPath, path);
-
         void UpdateDisplay()
         {
-            bool visible = session == next && !next.IsEnded && Dock.IsShown(ToolWindowIds.Aspire)
-                && TopLevel.GetTopLevel(pane) is not null && pane.IsEffectivelyVisible;
-            pane.SetDisplayVisible(visible);
+            bool visible = session == next && !next.IsEnded && AspireDisplayed;
+            model.SetDisplayVisible(visible);
             foreach (AspireAppRun app in next.Aspire.Apps)
             {
-                app.Interactions?.SetWatching(Shown(app.Configuration.Project));
+                app.Interactions?.SetWatching(visible && model.SelectedApp is { } selected && PathNames.Same(selected.AppHostPath, app.Configuration.Project));
             }
         }
     }
@@ -575,7 +586,7 @@ public partial class MainWindow
             engine = engine with { Status = Containers.EngineStatus.Ready, Problem = null };
         }
         ShowEngine(engine);
-        Bottom.AspirePane.SetContainerStatus(engine.Problem is { } problem ? $"Container resources cannot run: {problem}"
+        Bottom.Aspire.SetContainerStatus(engine.Problem is { } problem ? $"Container resources cannot run: {problem}"
             : $"{engine.EngineName} is running; Aspire reports each container's state and health.");
     }
 

@@ -386,7 +386,7 @@ public sealed class DockingTests
         window.KeepLayout();
         DockHost dock = window.DockHost;
         string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit,
-            ToolWindowIds.Problems, ToolWindowIds.Debug, ToolWindowIds.LiveTree, ToolWindowIds.Profiler];
+            ToolWindowIds.Problems, ToolWindowIds.Debug, ToolWindowIds.LiveTree, ToolWindowIds.Profiler, ToolWindowIds.Aspire, ToolWindowIds.Requests, ToolWindowIds.Migrations];
         foreach (string id in built)
         {
             Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");
@@ -436,6 +436,39 @@ public sealed class DockingTests
         dock.Hide(ToolWindowIds.Debug);
         Ui.Settle();
 
+        // What the IDE writes to the hidden Aspire and Requests windows is there once each is shown: an AppHost's resources,
+        // chosen, and a request heard; the Migrations window says what its controller found meanwhile.
+        string appHost = Path.Combine(settings, "AppHost", "AppHost.csproj");
+        window.Aspire.SetApps([new Passenger.App.Aspire.AspireApp(appHost, 42, "Running")]);
+        window.Aspire.ApplyResourceSnapshot([new Passenger.App.Aspire.AspireResource(System.Text.Json.JsonDocument.Parse(
+            """{"name":"apiservice","displayName":"apiservice","state":"Running","resourceType":"Project"}""").RootElement)]);
+        window.RequestLog.Hear(new Passenger.Profiler.RequestBegan("heard", DateTime.UtcNow, "heard", "GET", "/orders/2", string.Empty), "Shop", null);
+        window.RequestLog.Hear(new Passenger.Profiler.RequestEnded("heard", DateTime.UtcNow, "heard", 200), "Shop", null);
+        Ui.Settle();
+        Assert.All((string[])[ToolWindowIds.Aspire, ToolWindowIds.Requests, ToolWindowIds.Migrations],
+            id => Assert.False(dock[id]!.IsBuilt, $"What the IDE wrote to the hidden {dock[id]!.Title} window built its view"));
+        dock.Show(ToolWindowIds.Aspire);
+        Ui.Settle();
+        Passenger.App.Aspire.AspireView aspire = window.AspireWindow;
+        Assert.Contains(aspire, dock.GetVisualDescendants());
+        Assert.Equal("apiservice", Assert.IsType<Passenger.App.ToolWindows.RunItem<Passenger.App.Aspire.AspireRow>>(aspire.ResourceList.SelectedItem).Data.Resource.Name);
+        Assert.Contains(aspire.ResourceList.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "apiservice");
+        Assert.Contains(aspire.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "Live · 1 resource");
+        Assert.Equal("apiservice", aspire.Details.Resource?.Name);
+        dock.Hide(ToolWindowIds.Aspire);
+        dock.Show(ToolWindowIds.Requests);
+        Ui.Settle();
+        Assert.Contains(window.Requests, dock.GetVisualDescendants());
+        Assert.Equal("/orders/2", Assert.IsType<Passenger.App.Endpoints.LiveRequest>(Assert.Single(window.Requests.Rows)).Path);
+        Assert.Contains(window.Requests.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "/orders/2");
+        dock.Hide(ToolWindowIds.Requests);
+        dock.Show(ToolWindowIds.Migrations);
+        Ui.Settle();
+        Assert.Contains(window.MigrationsView, dock.GetVisualDescendants());
+        Assert.Contains(window.MigrationsView.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "No project here uses EF Core");
+        dock.Hide(ToolWindowIds.Migrations);
+        Ui.Settle();
+
         // The Live Visual Tree says what it would follow, as its controller said it while it was hidden.
         dock.Show(ToolWindowIds.LiveTree);
         Ui.Settle();
@@ -444,10 +477,14 @@ public sealed class DockingTests
         dock.Hide(ToolWindowIds.LiveTree);
         Ui.Settle();
 
-        // A folder's start lists its kept snapshots for the profiler, whose view is built only as it is shown, listing them.
+        // A folder's start lists its kept snapshots for the profiler, whose view is built only as it is shown, listing them; no
+        // folder's start, the second's in a window either, builds a view it hides.
         MainWindow profiled = Ui.OpenFolder(TestFolders.Create("profiled-"), languageServer: false);
-        Assert.False(profiled.DockHost[ToolWindowIds.Profiler]!.IsBuilt || profiled.DockHost[ToolWindowIds.LiveTree]!.IsBuilt,
-            "A folder's start built the profiler's or the Live Visual Tree's view, though both are hidden");
+        string[] followers = [ToolWindowIds.Profiler, ToolWindowIds.LiveTree, ToolWindowIds.Aspire, ToolWindowIds.Requests, ToolWindowIds.Migrations];
+        Assert.All(followers, id => Assert.False(profiled.DockHost[id]!.IsBuilt, $"A folder's start built the {profiled.DockHost[id]!.Title} window's view, though it is hidden"));
+        profiled.OpenFolder(TestFolders.Create("profiled-second-"));
+        Ui.Settle();
+        Assert.All(followers, id => Assert.False(profiled.DockHost[id]!.IsBuilt, $"A second folder's start built the {profiled.DockHost[id]!.Title} window's view, though it is hidden"));
         profiled.DockHost.Show(ToolWindowIds.Profiler);
         Ui.Settle();
         Assert.Contains(profiled.ProfilerView, profiled.DockHost.GetVisualDescendants());

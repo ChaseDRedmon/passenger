@@ -170,7 +170,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         {
             string[] services = [.. Passenger.App.ToolWindows.RunWindows.ServiceActions.Select(service => service.Action)];
             foreach ((string action, Control view, string refresh) in (ReadOnlySpan<(string, Control, string)>)[
-                (AppActions.ShowContainers, window.ContainersWindow, AppActions.ContainersRefresh), (AppActions.ShowAspire, window.Aspire, AppActions.AspireRefresh)])
+                (AppActions.ShowContainers, window.ContainersWindow, AppActions.ContainersRefresh), (AppActions.ShowAspire, window.AspireWindow, AppActions.AspireRefresh)])
             {
                 Assert.True(window.Perform(action), $"{action} did not run");
                 Ui.Settle();

@@ -11,8 +11,8 @@ namespace Passenger.App.Migrations;
 
 /// <summary>The Migrations window: the project, startup project and context chosen across its top, its commands down its
 /// side, what keeps dotnet ef from working each with its fix as buttons, then the context's migrations, oldest first, each
-/// with whether the database has it. A view of <see cref="MigrationsController"/>, which it asks to choose and fix; its
-/// buttons and row menu ask for the window's actions.</summary>
+/// with whether the database has it. A view of <see cref="MigrationsController"/>, which it asks to choose and fix, built as
+/// the window is first shown over what the controller found meanwhile; its buttons and row menu ask for the window's actions.</summary>
 public sealed class MigrationsView : DockPanel
 {
     private readonly MigrationsController controller;
@@ -101,9 +101,11 @@ public sealed class MigrationsView : DockPanel
         Children.Add(gaps);
         Children.Add(new Panel { Children = { list, placeholder } });
         controller.Changed += (_, _) => Show();
-        controller.ChoiceAsked += (_, kind) => (kind == EfFixKind.ChooseContext ? contexts : startups).IsDropDownOpen = true;
         Show();
     }
+
+    /// <summary>Opens the startup project's or the context's chooser, as a gap's Choose fix asks.</summary>
+    public void OpenChooser(EfFixKind kind) => (kind == EfFixKind.ChooseContext ? contexts : startups).IsDropDownOpen = true;
 
     /// <summary>A button or a menu item asked for one of the window's actions.</summary>
     public event EventHandler<string>? ActionRequested;

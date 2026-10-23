@@ -29,19 +29,19 @@ public partial class MainWindow
             }
             else
             {
-                Aspire.ShowCommandChoices();
+                ShownAspire().ShowCommandChoices();
             }
         }, NeedsAspireResource);
-        Add(A.AspireLogFind, "Find in Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage(RunWindows.LogTab); Aspire.OpenFind(); });
-        Add(A.AspireShowTrace, "Show Aspire Log Trace", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowSelectedTrace(); },
-            _ => Aspire.Telemetry.SelectedLog is { TraceId.Length: > 0 } ? null : "No log with a trace is selected");
-        Add(A.AspireShowRelatedLogs, "Show Related Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowRelatedLogs(); },
-            _ => Aspire.Telemetry.SelectedTrace is not null && Aspire.Telemetry.SelectedSpan is not null ? null : "No trace span is selected");
-        foreach (string page in AspireView.Pages)
+        Add(A.AspireLogFind, "Find in Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage(RunWindows.LogTab); AspireWindow.OpenFind(); });
+        Add(A.AspireShowTrace, "Show Aspire Log Trace", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); AspireWindow.ShowSelectedTrace(); },
+            _ => aspireView?.Telemetry.SelectedLog is { TraceId.Length: > 0 } ? null : "No log with a trace is selected");
+        Add(A.AspireShowRelatedLogs, "Show Related Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); AspireWindow.ShowRelatedLogs(); },
+            _ => aspireView?.Telemetry is { SelectedTrace: not null, SelectedSpan: not null } ? null : "No trace span is selected");
+        foreach (string page in AspireModel.Pages)
         {
             // Details is the chosen resource's, beside every resource listed: shown as the window's resources are asked for.
             // Each is found by the name its tab had before the windows shared one vocabulary too.
-            string id = AspireView.PageAction(page);
+            string id = AspireModel.PageAction(page);
             Add(id, id == A.AspireResources ? "Show Aspire Resources" : $"Show Aspire {page}", "Aspire", _ =>
             {
                 ShowToolWindow(ToolWindowIds.Aspire);
@@ -61,7 +61,7 @@ public partial class MainWindow
             Add(id, title, "Aspire", _ =>
             {
                 ShowToolWindow(ToolWindowIds.Aspire);
-                Aspire.ShowTelemetry(page);
+                AspireWindow.ShowTelemetry(page);
             });
         }
         Add(A.AspireOpenLink, "Open Aspire Resource Endpoint", "Aspire", _ =>
@@ -72,10 +72,16 @@ public partial class MainWindow
             }
             else
             {
-                Aspire.ShowEndpointChoices();
+                ShownAspire().ShowEndpointChoices();
             }
         });
-        Add(A.AspireSource, "Open Aspire Resource Source", "Aspire", _ => Aspire.OpenSource(),
+        Add(A.AspireSource, "Open Aspire Resource Source", "Aspire", _ =>
+        {
+            if (Aspire.SelectedResource?.Source is { } source && Path.IsPathFullyQualified(source))
+            {
+                OpenLink(new FileLink(source, new Passenger.Text.TextPosition(0, 0)));
+            }
+        },
             _ => Aspire.SelectedResource?.Source is { } source && Path.IsPathFullyQualified(source) ? null : "No resource source is selected");
         Add(A.AspireContainer, "Show Aspire Resource Container", "Aspire", _ =>
         {
@@ -88,4 +94,14 @@ public partial class MainWindow
     }
 
     private string? NeedsAspireResource(ActionContext _) => Aspire.Selection is null ? "No Aspire resource is selected" : null;
+
+    /// <summary>The Aspire window's view, shown first when it is hidden: a menu of the chosen resource's hangs from its toolbar.</summary>
+    private AspireView ShownAspire()
+    {
+        if (!Dock.IsShown(ToolWindowIds.Aspire))
+        {
+            ShowToolWindow(ToolWindowIds.Aspire);
+        }
+        return AspireWindow;
+    }
 }

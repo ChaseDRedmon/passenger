@@ -12,11 +12,11 @@ public partial class MainWindow
     private MigrationsController? migrations;
     private MigrationsView? migrationsView;
 
-    /// <summary>The Migrations window's model.</summary>
+    /// <summary>The Migrations window's model, which its actions, fixes and an agent's ide_action read and drive.</summary>
     public MigrationsController Migrations => migrations!;
 
-    /// <summary>The Migrations tool window.</summary>
-    public MigrationsView MigrationsView => migrationsView!;
+    /// <summary>The Migrations window's view, built as it is first shown or asked for (a gap's Choose fix opening its chooser).</summary>
+    public MigrationsView MigrationsView => migrationsView ?? (MigrationsView)Dock[ToolWindowIds.Migrations]!.Content;
 
     private void AddMigrations()
     {
@@ -32,14 +32,28 @@ public partial class MainWindow
         {
             built.BeforeInstall = controller.WeighUpdateAsync;
         }
-        MigrationsView view = migrationsView = new MigrationsView(controller);
-        view.ActionRequested += (_, action) => Request(action);
         controller.AddAsked += (_, _) => Request(A.AddMigration);
-        Docking.ToolWindow shown = new(ToolWindowIds.Migrations, "Migrations", "Icon.Database", view, Docking.ToolAnchor.BottomLeft)
+        // A gap's Choose fix opens the chooser it names, the window shown for it when it is hidden.
+        controller.ChoiceAsked += (_, kind) =>
+        {
+            if (!Dock.IsShown(ToolWindowIds.Migrations))
+            {
+                ShowToolWindow(ToolWindowIds.Migrations);
+            }
+            MigrationsView.OpenChooser(kind);
+        };
+        Docking.ToolWindow shown = new(ToolWindowIds.Migrations, "Migrations", "Icon.Database", () =>
+        {
+            MigrationsView view = migrationsView = new MigrationsView(controller);
+            view.ActionRequested += (_, action) => Request(action);
+            // Added after the window marks its tool windows' buttons (ShowActionWork): its own marked as it is built.
+            ActionButtons.ShowMarked(view, actions!);
+            return view;
+        }, Docking.ToolAnchor.BottomLeft)
         {
             Action = A.ShowMigrations,
             Menus = [new MenuPlace("Tools", 0, 5)],
-            Chosen = () => view.Chosen,
+            Chosen = () => migrationsView?.Chosen,
         };
         Dock.Add(shown);
         // Shown however it is (its action, its stripe button, a layout), it lists what it can at once.
@@ -78,14 +92,14 @@ public partial class MainWindow
         });
         actions.Add(new IdeAction(A.UpdateDatabaseTo, "Update Database to Chosen Migration", "Migrations", c =>
         {
-            if (view.Chosen is { } chosen)
+            if (migrationsView?.Chosen is { } chosen)
             {
                 _ = controller.UpdateAsync(A.UpdateDatabaseTo, chosen.Id);
             }
         })
         {
-            WhyNot = context => none(context) ?? (view.Chosen is null ? "No migration is chosen in the Migrations window" : null),
-            TitleIn = _ => view.Chosen is { } chosen ? $"Update Database to {chosen.Name}" : "Update Database to Chosen Migration",
+            WhyNot = context => none(context) ?? (migrationsView?.Chosen is null ? "No migration is chosen in the Migrations window" : null),
+            TitleIn = _ => migrationsView?.Chosen is { } chosen ? $"Update Database to {chosen.Name}" : "Update Database to Chosen Migration",
             Menus = [new MenuPlace("Tools/Migrations", 1, 1)],
             Words = ["Roll Back Migration", "dotnet ef database update"],
         });
@@ -113,7 +127,6 @@ public partial class MainWindow
             TitleIn = _ => FirstFix()?.Title ?? "Fix What Migrations Lack",
             Words = ["dotnet tool install dotnet-ef", "Microsoft.EntityFrameworkCore.Design"],
         });
-        ActionButtons.ShowMarked(view, actions);
 
         EfFix? FirstFix() => controller.Gaps.Concat(controller.Failure is { } failed ? [failed] : []).SelectMany(g => g.Fixes).FirstOrDefault();
     }

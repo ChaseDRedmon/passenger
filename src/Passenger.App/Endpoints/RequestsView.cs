@@ -12,7 +12,8 @@ namespace Passenger.App.Endpoints;
 
 /// <summary>The Requests window: the live requests of the web app Run or Debug runs, newest first, each with its method,
 /// path, status and time, and under it the database commands it issued with their time and rows, a command its request ran
-/// again and again marked as repeated (an N+1) and a slow one as slow. Followed only while the window shows.</summary>
+/// again and again marked as repeated (an N+1) and a slow one as slow. Followed only while the window shows. A view of the
+/// <see cref="RequestLog"/>, built as the window is first shown, listing what it heard before.</summary>
 public sealed class RequestsView : DockPanel
 {
     /// <summary>A command's row, under its request's.</summary>
@@ -74,6 +75,8 @@ public sealed class RequestsView : DockPanel
         Children.Add(bar);
         Children.Add(new Panel { Children = { list, placeholder } });
         log.Changed += (_, told) => Take(told);
+        log.FollowingChanged += (_, _) => following.Text = log.Following;
+        following.Text = log.Following;
         Take(new RequestChanges([], [], [], All: true));
     }
 
@@ -88,13 +91,6 @@ public sealed class RequestsView : DockPanel
 
     /// <summary>Whether the window shows now.</summary>
     public bool IsShown { get; private set; }
-
-    /// <summary>What the window says it follows, or why it follows nothing.</summary>
-    public string Following
-    {
-        get => following.Text ?? string.Empty;
-        set => following.Text = value;
-    }
 
     /// <summary>The rows listed: each request, newest first, followed by its commands.</summary>
     public IReadOnlyList<object> Rows => [.. rows.Select(row => row.Data)];

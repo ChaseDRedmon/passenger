@@ -1,4 +1,3 @@
-using Avalonia.Controls;
 using Passenger.App.Aspire;
 
 namespace Passenger.App.ToolWindows;
@@ -10,7 +9,6 @@ public sealed class ToolViews
     public ToolViews()
     {
         Tests = new TestsView(TestTree);
-        AspireHost.Content = AspirePane;
     }
 
     public OutputView Build { get; } = new();
@@ -19,15 +17,15 @@ public sealed class ToolViews
     public ProblemsModel Problems { get; } = new();
     /// <summary>What the Debug window shows, kept while its view is not built.</summary>
     public DebugModel Debug { get; } = new();
-    public AspirePane AspirePane { get; private set; } = new();
-    public AspireView Aspire => AspirePane.View;
-    public ContentControl AspireHost { get; } = new();
 
-    internal void ResetAspire(Passenger.App.Aspire.AspireClient client)
+    /// <summary>What the Aspire window shows of the session's AppHosts, kept while its view is not built: made anew with each
+    /// session, whose AppHosts write to it.</summary>
+    public AspireModel Aspire { get; private set; } = new();
+
+    internal void ResetAspire(AspireClient client)
     {
-        AspirePane.Dispose();
-        AspirePane = new AspirePane(client);
-        AspireHost.Content = AspirePane;
+        Aspire.Dispose();
+        Aspire = new AspireModel(client);
     }
 
     /// <summary>The Unit Tests window, over the tree the test runner fills.</summary>

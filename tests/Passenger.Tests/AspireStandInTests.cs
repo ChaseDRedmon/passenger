@@ -294,7 +294,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             // Hidden, the window follows no console, and asks the CLI for nothing in its place.
             FindAction(window, "Show Aspire Log");
             ChildProcesses.Started += observe;
-            Ui.Click(window.Aspire.Console.Editor);
+            Ui.Click(window.AspireWindow.Console.Editor);
             Ui.Run(window, AppActions.HideToolWindow);
             Ui.WaitFor(() => next.Closed.Task.IsCompleted, "hiding the Aspire window to end its console's subscription");
             Ui.Settle();
@@ -341,7 +341,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             // landing made those thousand logs' text again, hundreds of KB.
             Assert.True(many < few + 128 * 1024,
                 $"A log landing with {AspireClient.LogLimit} kept allocated {many / 1024} KB on the UI thread, with 10 kept {few / 1024} KB: the list is read again whole at each landing");
-            IReadOnlyList<AspireStructuredLog> listed = window.Aspire.Telemetry.Logs;
+            IReadOnlyList<AspireStructuredLog> listed = window.AspireWindow.Telemetry.Logs;
             Assert.Equal(AspireClient.LogLimit, listed.Count);
             Assert.Equal($"log {sent - AspireClient.LogLimit + 1}", listed[0].Message);
             Assert.Equal($"log {sent}", listed[^1].Message);
@@ -382,8 +382,8 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             sent += count;
         }
 
-        bool Landed(int last) => window.Aspire.StructuredLogs.ItemCount > 0
-            && window.Aspire.StructuredLogs.Items[window.Aspire.StructuredLogs.ItemCount - 1] is Passenger.App.ToolWindows.RunItem<AspireStructuredLog> item
+        bool Landed(int last) => window.AspireWindow.StructuredLogs.ItemCount > 0
+            && window.AspireWindow.StructuredLogs.Items[window.AspireWindow.StructuredLogs.ItemCount - 1] is Passenger.App.ToolWindows.RunItem<AspireStructuredLog> item
             && item.Data.Message == $"log {last}";
     }
 
@@ -436,6 +436,8 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         AspireInteractionHost.ConsoleSubscription Of(string name) => backend.Consoles.Last(console => console.ResourceName == name);
     }
 
+    /// <summary>An AppHost's resources reach the Aspire window while it is hidden, as its run follows them, and show once
+    /// it is (#447); an update in the background keeps the chosen parent and its children open.</summary>
     [AvaloniaFact]
     public void A_resource_update_in_the_background_keeps_the_chosen_parent_and_its_children_open()
     {
@@ -451,13 +453,19 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Name = "worker", DisplayName = "worker", Uid = "worker", ResourceType = "Executable", State = "Running",
             Relationships = { new ResourceRelationship { Type = "Parent", ResourceName = "apiservice" } },
         };
-        backend.PushResource(worker);
         MainWindow window = OpenRunning(backend);
         try
         {
+            // Hidden once the run is up (Run shows it), the window is still told what the resources its run follows become,
+            // the child that came meanwhile listed once it shows.
+            window.DockHost.Hide(ToolWindowIds.Aspire);
+            Ui.Settle();
+            backend.PushResource(worker);
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Count == 2, "the child that came with the window hidden");
+            Assert.False(window.Aspire.IsDisplayed, "The hidden Aspire window still streams its resources");
             FindAction(window, "Show Aspire Resources");
-            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Count == 2, "the parent and its child");
             Assert.Equal([("apiservice", 0), ("worker", 1)], window.Aspire.Rows.Select(row => (row.Resource.Name, row.Depth)));
+            Assert.Contains(Row(window, "worker").GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "worker");
             Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
             Assert.Equal("apiservice", window.Aspire.SelectedResource?.Name);
             // Its chevron closes it and opens it again, as a Compose project's does in Containers.
@@ -524,7 +532,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             // Details: framed tables, the secrets masked and the rest shown.
             Ui.Click(Words(api, "apiservice"));
             Ui.Click(Tab(window, "Details"));
-            AspireDetailsPane details = window.Aspire.Details;
+            AspireDetailsPane details = window.AspireWindow.Details;
             Ui.WaitFor(() => details.Resource?.Name == "apiservice", "the API's details");
             string[] shown = [.. details.GetVisualDescendants().OfType<SelectableTextBlock>().Select(text => text.Text ?? string.Empty)];
             Assert.Contains("hello-shown", shown);
@@ -536,12 +544,12 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
                 "The details are not framed tables as Containers' are");
 
             // The toolbar: icon buttons of the window's actions, each showing its work.
-            foreach ((string action, Button button) in window.Aspire.Tools)
+            foreach ((string action, Button button) in window.AspireWindow.Tools)
             {
                 Assert.True(button.Classes.Contains("tool") && button.GetVisualDescendants().OfType<PathIcon>().Any(), $"{action} is not a toolbar's icon button");
                 Assert.Equal(action, ActionButtons.GetAction(button));
             }
-            Ui.Click(window.Aspire.Tools[AppActions.AspireCommand]);
+            Ui.Click(window.AspireWindow.Tools[AppActions.AspireCommand]);
             ContextMenu commands = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(menu => menu.IsOpen)
                 ?? throw new Xunit.Sdk.XunitException("The commands button opened no menu");
             Assert.Equal(["Restart"], commands.Items.OfType<MenuItem>().Select(item => (string)item.Header!));
@@ -560,8 +568,8 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             cacheLines.Push(new ConsoleLogLine { Text = "cache warms", LineNumber = 1 });
             Ui.WaitFor(() => Console(window).Contains("[apiservice] api says hello", StringComparison.Ordinal)
                 && Console(window).Contains("[cache] cache warms", StringComparison.Ordinal), "both resources' lines merged");
-            Assert.Equal(["apiservice", "cache"], window.Aspire.Log.Toggles.Select(toggle => (string)toggle.Content!));
-            Ui.Click(window.Aspire.Log.Toggles.Single(toggle => Equals(toggle.Content, "cache")));
+            Assert.Equal(["apiservice", "cache"], window.AspireWindow.Log.Toggles.Select(toggle => (string)toggle.Content!));
+            Ui.Click(window.AspireWindow.Log.Toggles.Single(toggle => Equals(toggle.Content, "cache")));
             Ui.WaitFor(() => cacheLines.Closed.Task.IsCompleted, "the cache's toggle turned off to end its stream");
             // The API's console read again from its start, as a project's merged log is; the stand-in sends what it is given.
             Ui.WaitFor(() => backend.Consoles.Count(console => console.ResourceName == "apiservice") == apiRead + 1, "the API's console read again");
@@ -569,8 +577,8 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             backend.Consoles.Last(console => console.ResourceName == "apiservice").Push(new ConsoleLogLine { Text = "api says hello", LineNumber = 1 });
             Ui.WaitFor(() => Console(window).Contains("[apiservice] api says hello", StringComparison.Ordinal), "the API's lines, read again");
             Assert.DoesNotContain("[cache]", Console(window), StringComparison.Ordinal);
-            Ui.Click(window.Aspire.Log.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireLogFind"));
-            Assert.True(window.Aspire.Find.IsEffectivelyVisible, "The console's Find did not open");
+            Ui.Click(window.AspireWindow.Log.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireLogFind"));
+            Assert.True(window.AspireWindow.Find.IsEffectivelyVisible, "The console's Find did not open");
             Assert.Empty(backend.Errors);
         }
         finally
@@ -620,7 +628,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             // Its Details' address the same: an update that changes nothing they show leaves their tables as they are.
             Ui.Click(Words(row, "apiservice"));
             Ui.Click(Tab(window, "Details"));
-            Button detailed = window.Aspire.Details.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireDetailsUrl");
+            Button detailed = window.AspireWindow.Details.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireDetailsUrl");
             detailed.BringIntoView();
             Ui.Settle();
             at = Ui.Centre(detailed, window);
@@ -638,7 +646,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             api.Commands.Add(new ResourceCommand { Name = "passenger-ping", DisplayName = "Ping", State = ResourceCommandState.Enabled });
             backend.PushResource(api);
             Ui.WaitFor(() => window.Aspire.SelectedResource?.Commands.Any(command => command.Name == "passenger-ping") == true, "the API's Ping command");
-            Button commands = window.Aspire.Tools[AppActions.AspireCommand];
+            Button commands = window.AspireWindow.Tools[AppActions.AspireCommand];
             at = Ui.Centre(commands, window);
             window.MouseDown(at, Avalonia.Input.MouseButton.Left);
             api.HealthReports[0].Status = HealthStatus.Healthy;
@@ -979,7 +987,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             // Attach shows the Debug window: the Aspire window's resources are asked for again.
             FindAction(window, "Show Aspire Resources");
             Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
-            Ui.Click(window.Aspire.Tools[AppActions.AspireCommand]);
+            Ui.Click(window.AspireWindow.Tools[AppActions.AspireCommand]);
             ContextMenu commands = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(menu => menu.IsOpen)
                 ?? throw new Xunit.Sdk.XunitException("The commands button opened no menu");
             Ui.Choose(commands, "Restart");
@@ -1079,7 +1087,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Assert.Equal(Colour(window, "Passenger.TextMuted"), (dot.Fill as Avalonia.Media.ISolidColorBrush)?.Color);
             Ui.Click(Words(row, "apiservice"));
             Ui.Click(Tab(window, "Details"));
-            string[] shown = [.. window.Aspire.Details.GetVisualDescendants().OfType<TextBlock>().Select(text => text.Text ?? string.Empty)];
+            string[] shown = [.. window.AspireWindow.Details.GetVisualDescendants().OfType<TextBlock>().Select(text => text.Text ?? string.Empty)];
             Assert.Contains(AspireAppRun.NotStarted, shown);
             Assert.Contains(AspireAppRun.NotStartedWhy, shown);
             Assert.DoesNotContain("FailedToStart", shown);
@@ -1126,7 +1134,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             FindAction(window, "Show Aspire Resources");
             Ui.WaitFor(() => window.Aspire.Rows.Count == 2, "the API's and the cache's rows");
             string[] services = ["Debug Service", "Attach to Service", "Run Service without Debugger", "Profile Service"];
-            Assert.Equal(services, window.Aspire.Tools.Keys.Skip(2).Take(4).Select(id => window.Actions[id]!.Title));
+            Assert.Equal(services, window.AspireWindow.Tools.Keys.Skip(2).Take(4).Select(id => window.Actions[id]!.Title));
 
             // The cache's menu: the service actions first, each greyed saying why.
             ContextMenu menu = RowMenu(window, "cache");
@@ -1169,13 +1177,13 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
     {
         Ui.Click(Words(Row(window, name), name));
         Ui.RightClick(Words(Row(window, name), name));
-        ContextMenu menu = window.Aspire.ResourceList.ContextMenu ?? throw new Xunit.Sdk.XunitException($"{name}'s row has no menu");
+        ContextMenu menu = window.AspireWindow.ResourceList.ContextMenu ?? throw new Xunit.Sdk.XunitException($"{name}'s row has no menu");
         Ui.WaitFor(() => menu.IsOpen, $"{name}'s row menu to open");
         return menu;
     }
 
     /// <summary>A resource's row as the Aspire window shows it, scrolled into view.</summary>
-    internal static Control Row(MainWindow window, string name) => Ui.Row(window.Aspire.ResourceList, window.Aspire.ItemOf(name)
+    internal static Control Row(MainWindow window, string name) => Ui.Row(window.AspireWindow.ResourceList, window.Aspire.ItemOf(name)
         ?? throw new Xunit.Sdk.XunitException($"The Aspire window lists no {name}, only {string.Join(", ", window.Aspire.Rows.Select(row => row.Resource.Name))}"));
 
     /// <summary>Words shown in a row.</summary>
@@ -1186,7 +1194,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         Row(window, name).GetVisualDescendants().OfType<PathIcon>().Single(icon => icon.Name == "rowChevron");
 
     /// <summary>A tab of the Aspire window's pages.</summary>
-    internal static Avalonia.Controls.Primitives.ToggleButton Tab(MainWindow window, string page) => window.Aspire.GetVisualDescendants()
+    internal static Avalonia.Controls.Primitives.ToggleButton Tab(MainWindow window, string page) => window.AspireWindow.GetVisualDescendants()
         .OfType<Avalonia.Controls.Primitives.ToggleButton>().Single(tab => tab.Classes.Contains("panelTab") && tab.Content is TextBlock { Text: var words } && words == page);
 
     [AvaloniaFact]
@@ -1460,8 +1468,8 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
                 File.WriteAllText(Path.Combine(Path.GetDirectoryName(cli)!, "version"), version + "\n");
                 FindAction(window, "Discover Aspire AppHosts");
                 Ui.WaitFor(() => refusal is null
-                    ? window.Aspire.AppSelector.Items.OfType<Passenger.App.Aspire.AspireApp>().Any(app => PathNames.Same(app.AppHostPath, PathNames.Canonical(project.ProjectFile)))
-                    : window.Aspire.Status.Contains(refusal, StringComparison.Ordinal) && window.Aspire.AppSelector.Items.Count == 0,
+                    ? window.Aspire.Apps.Any(app => PathNames.Same(app.AppHostPath, PathNames.Canonical(project.ProjectFile)))
+                    : window.Aspire.Status.Contains(refusal, StringComparison.Ordinal) && window.AspireWindow.AppSelector.Items.Count == 0,
                     $"Discover with aspire {version} ({window.Aspire.Status})");
             }
         }
@@ -1507,14 +1515,14 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         try
         {
             FindAction(window, "Discover Aspire AppHosts");
-            Ui.WaitFor(() => window.Aspire.AppSelector.Items.Count == 1, $"the CLI's AppHost ({window.Aspire.Status})");
-            ComboBox chooser = window.Aspire.AppSelector;
+            Ui.WaitFor(() => window.AspireWindow.AppSelector.Items.Count == 1, $"the CLI's AppHost ({window.Aspire.Status})");
+            ComboBox chooser = window.AspireWindow.AppSelector;
             Ui.Click(chooser);
             Ui.Press(window, "HOME");
             Ui.Press(window, "ENTER");
             Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "api"), $"the CLI's resource ({window.Aspire.Status})");
             FindAction(window, "Show Aspire Resources");
-            string[] Tips() => [.. window.Aspire.ResourceList.GetVisualDescendants().OfType<Button>().Select(button => ToolTip.GetTip(button) as string).OfType<string>()];
+            string[] Tips() => [.. window.AspireWindow.ResourceList.GetVisualDescendants().OfType<Button>().Select(button => ToolTip.GetTip(button) as string).OfType<string>()];
             Ui.WaitFor(() => Tips().Any(tip => tip.TrimEnd('/') == "http://localhost:8080/?view=1"), $"the resource's address as a link ({string.Join(", ", Tips())})");
             string[] tips = Tips();
             Assert.DoesNotContain(tips, tip => tip.Contains("password", StringComparison.Ordinal) || tip.Contains("private", StringComparison.Ordinal)
@@ -1792,7 +1800,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
-    private static string Console(MainWindow window) => window.Aspire.Console.Document.Snapshot.ToString();
+    private static string Console(MainWindow window) => window.AspireWindow.Console.Document.Snapshot.ToString();
 
     /// <summary>Chooses a file for the prompt's file input as a person does in the window's file dialog, which the test
     /// answers for (<see cref="MainWindow.PickFiles"/>): one file, asked for by the input's label.</summary>
@@ -1836,7 +1844,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
 
     private static void ClickConsoleLink(MainWindow window, string text)
     {
-        Passenger.Editor.CodeEditor editor = window.Aspire.Console.Editor;
+        Passenger.Editor.CodeEditor editor = window.AspireWindow.Console.Editor;
         int offset = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
         Assert.True(offset >= 0, $"The Aspire console has no {text} link");
         int line = editor.Document.Snapshot.GetLineFromOffset(offset);
