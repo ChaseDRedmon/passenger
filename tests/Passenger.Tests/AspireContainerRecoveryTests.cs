@@ -20,6 +20,8 @@ public sealed class AspireContainerRecoveryTests
     [InlineData("renamed")]
     [InlineData("engine-mismatch")]
     [InlineData("unknown-id")]
+    [InlineData("persistent")]
+    [InlineData("gone")]
     [InlineData("other-state")]
     [InlineData("other-machine")]
     [InlineData("empty")]
@@ -66,9 +68,9 @@ public sealed class AspireContainerRecoveryTests
             Assert.Equal(0, BackgroundWork.Pending);
             Assert.Same(sharedBefore, ContainerEngine.Shared.Known);
             string[] commands = File.ReadAllLines(log);
-            string inspect = $"--context {Context} container inspect {RecordedId}";
+            string inspect = $"--context {Context} ps -a --no-trunc --filter id={RecordedId} --format json";
             string remove = $"--context {Context} rm -f {RecordedId}";
-            bool eligible = scenario is "dead-owner" or "renamed" or "engine-mismatch" or "unknown-id";
+            bool eligible = scenario is "dead-owner" or "renamed" or "engine-mismatch" or "unknown-id" or "persistent" or "gone";
             if (eligible)
             {
                 Assert.Contains("version --format json", commands);
@@ -88,7 +90,8 @@ public sealed class AspireContainerRecoveryTests
             Assert.Equal(scenario == "dead-owner" ? new[] { remove } : [],
                 commands.Where(command => command.Contains("rm ", StringComparison.Ordinal)));
             Assert.DoesNotContain(commands, command => command.Contains(UnrecordedId, StringComparison.Ordinal));
-            if (scenario == "dead-owner")
+            // Removed, or gone from the engine already: either way no longer in the record.
+            if (scenario is "dead-owner" or "gone")
             {
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(manifest));
                 Assert.Empty(saved.RootElement.GetProperty("entries").EnumerateArray());
@@ -119,11 +122,14 @@ public sealed class AspireContainerRecoveryTests
         {
             new { Name = Context, Endpoints = new { docker = new { Host = endpoint } } },
         }));
-        File.WriteAllText(Path.Combine(folder, "inspect.json"), JsonSerializer.Serialize(new[]
+        // A line of ps's JSON as Docker's CLI writes it, none for a container the engine no longer holds; a Persistent one
+        // carries the orchestrator's label.
+        File.WriteAllText(Path.Combine(folder, "inspect.json"), scenario == "gone" ? string.Empty : JsonSerializer.Serialize(new
         {
-            new { Id = scenario == "unknown-id" ? UnrecordedId : RecordedId,
-                Name = scenario == "renamed" ? "/renamed-by-user" : "/passenger-session-cache" },
-        }));
+            ID = scenario == "unknown-id" ? UnrecordedId : RecordedId,
+            Names = scenario == "renamed" ? "renamed-by-user" : "passenger-session-cache",
+            Labels = scenario == "persistent" ? "com.microsoft.developer.usvc-dev.persistent=true" : "com.microsoft.developer.usvc-dev.persistent=false",
+        }) + "\n");
         File.WriteAllText(cli, string.Join('\n',
             "#!/bin/sh",
             "here=$(dirname \"$0\")",
@@ -132,7 +138,7 @@ public sealed class AspireContainerRecoveryTests
             " 'version --format json') cat \"$here/version.json\" ;;",
             $" 'context inspect --format json'|'context inspect {Context}') cat \"$here/context.json\" ;;",
             " 'compose version --format json'|'buildx version') exit 1 ;;",
-            $" '--context {Context} container inspect {RecordedId}') cat \"$here/inspect.json\" ;;",
+            $" '--context {Context} ps -a --no-trunc --filter id={RecordedId} --format json') cat \"$here/inspect.json\" ;;",
             $" '--context {Context} rm -f {RecordedId}') ;;",
             " *) exit 1 ;;",
             "esac",

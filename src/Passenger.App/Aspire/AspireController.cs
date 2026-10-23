@@ -22,7 +22,36 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     private readonly CancellationTokenSource lifetime = new();
     private bool disposed;
     private Task? closing;
+    private AspireContainerOwnership? containers;
     internal CancellationToken ClosingToken => lifetime.Token;
+
+    /// <summary>The session containers the folder's AppHosts' orchestrators made, recorded as each run's resources tell of
+    /// them and taken down with the run (<see cref="AspireContainerOwnership"/>).</summary>
+    internal AspireContainerOwnership Containers
+    {
+        get
+        {
+            if (containers is null)
+            {
+                containers = new(stateFolder, workspace.Containers.Engine, lifetime.Token);
+                containers.Elsewhere += (_, made) =>
+                {
+                    if (FindApp(made.AppHost) is { } app)
+                    {
+                        string said = $"{app.Configuration.Name}'s orchestrator made {Plural.Of(made.Containers, "container")} on another engine than the one "
+                            + "Passenger's docker reaches (its own runtime: ASPIRE_CONTAINER_RUNTIME, else what it finds), so Passenger cannot list, "
+                            + "follow or remove them: set ASPIRE_CONTAINER_RUNTIME to the engine docker reaches, or docker's context to DCP's";
+                        app.Console.Append(said + "\n", error: true);
+                        ContainersElsewhere?.Invoke(this, said);
+                    }
+                };
+            }
+            return containers;
+        }
+    }
+
+    /// <summary>What a run's orchestrator made on another engine than Passenger's, in words for the status bar.</summary>
+    public event EventHandler<string>? ContainersElsewhere;
 
     public IReadOnlyList<AspireAppRun> Apps => apps.AsReadOnly();
     public OutputView? LastAppConsole { get; private set; }
@@ -354,6 +383,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                     }
                     app.Interactions = await pending;
                     connecting.Token.ThrowIfCancellationRequested();
+                    Follow(app);
                 }
                 catch
                 {
@@ -378,6 +408,45 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         {
             await StopAppAsync(app);
             throw;
+        }
+    }
+
+    /// <summary>The run's resources followed from its connection until it stops, whatever the window shows: each container
+    /// the orchestrator makes is known as the stream tells of it, its session containers recorded at once for every end
+    /// that takes them down (<see cref="Containers"/>).</summary>
+    private void Follow(AspireAppRun app)
+    {
+        if (app.Interactions is not { } connection)
+        {
+            return;
+        }
+        connection.ResourcesChanged += (_, snapshot) =>
+        {
+            if (disposed || app.Stopping || FindApp(app.Configuration.Project) != app)
+            {
+                return;
+            }
+            app.KnownContainerIds = [.. snapshot.SelectMany(resource => AspireJson.Properties(resource.Data, "properties"))
+                .Where(property => property.Name == "container.id" && property.Value.ValueKind == JsonValueKind.String)
+                .Select(property => property.Value.GetString()).OfType<string>().Where(value => value.Length > 0).Distinct(StringComparer.Ordinal)];
+            BackgroundWork.Track(Reported(Containers.Observe(app.Configuration.Project, snapshot)));
+            ContainersChanged?.Invoke(this, app);
+        };
+        app.Following = connection.Follow();
+    }
+
+    /// <summary>The containers a run's resources name changed (<see cref="AspireAppRun.KnownContainerIds"/>).</summary>
+    public event EventHandler<AspireAppRun>? ContainersChanged;
+
+    private static async Task Reported(Task work)
+    {
+        try
+        {
+            await work;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        {
+            IdeErrors.Write($"Aspire containers: {error.Message}");
         }
     }
 
@@ -900,6 +969,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             {
                 await DisposeEndpointAsync(starting);
             }
+            app.Following?.Dispose();
             if (app.Interactions is { } interactions)
             {
                 await interactions.DisposeAsync();
@@ -912,6 +982,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             {
                 await app.Runner.Ended;
             }
+            // Its session containers last, once its AppHost has gone, as a container run's Stop takes its own down.
+            await Containers.TakeDownAsync(app.Configuration.Project, "as its AppHost stopped");
         }
         finally
         {
@@ -992,7 +1064,10 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             {
                 pending.Add(interactions.DisposeAsync().AsTask());
             }
+            app.Following?.Dispose();
             app.Runner.Dispose();
+            // Its session containers once its AppHost and its services have gone, as the folder's own containers go with it.
+            pending.Add(Containers.TakeDownAsync(app.Configuration.Project, "as the folder closed", Task.WhenAll(pending)));
             endings.Add(CompleteAppAsync(app, pending));
         }
         closing = CompleteAll(endings);
@@ -1098,6 +1173,9 @@ public sealed class AspireAppRun : ServiceRun
     internal TaskCompletionSource<string?> ProfileStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IReadOnlyList<string> KnownContainerIds { get; internal set; } = [];
     internal AspireInteractions? Interactions { get; set; }
+
+    /// <summary>The run's hold on its resource stream, which stays open while the run is up (<c>AspireController.Follow</c>).</summary>
+    internal IDisposable? Following { get; set; }
     internal CancellationTokenSource Lifetime { get; } = new();
 
     /// <summary>The services it runs now, in the order they started.</summary>

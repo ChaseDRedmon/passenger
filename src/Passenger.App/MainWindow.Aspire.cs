@@ -68,7 +68,23 @@ public partial class MainWindow
         AspireView view = pane.View;
         ConditionalWeakTable<AspireInteractions, object> boundConnections = new();
         string[] ownedAppHosts = [];
-        PrepareAspireContainerCleanup(next);
+        LookForLeftovers(next);
+        aspireEngine?.Dispose();
+        (aspireEngine, aspireEngineFor) = (null, null);
+        next.Aspire.ContainersElsewhere += (_, said) =>
+        {
+            if (session == next && !next.IsEnded)
+            {
+                Say(said);
+            }
+        };
+        next.Aspire.ContainersChanged += (_, _) =>
+        {
+            if (session == next && !next.IsEnded)
+            {
+                containersView?.Regroup();
+            }
+        };
         view.BindActions(Actions, id => Request(id));
         view.Browse = Browse;
         view.LeftUnstarted = (path, resource) => next.Aspire.FindApp(path)?.IsLeftUnstarted(resource) == true;
@@ -124,10 +140,6 @@ public partial class MainWindow
                 {
                     return;
                 }
-                _ = ReportAspireContainerWorkAsync(AspireContainers.Observe(app.Configuration.Project, snapshot));
-                app.KnownContainerIds = snapshot.SelectMany(resource => AspireJson.Properties(resource.Data, "properties"))
-                    .Where(property => property.Name == "container.id" && property.Value.ValueKind == System.Text.Json.JsonValueKind.String)
-                    .Select(property => property.Value.GetString()).OfType<string>().Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
                 if (session == next && !next.IsEnded && view.SelectedApp is { } selected && PathNames.Same(selected.AppHostPath, app.Configuration.Project))
                 {
                     view.ApplyResourceSnapshot(snapshot);
@@ -180,6 +192,7 @@ public partial class MainWindow
             ? commands.RecordHeldServiceAsync(app, service, program, stop) : Task.FromResult<string?>("The service profiler is unavailable");
         next.Aspire.Changed += (_, _) =>
         {
+            FollowEngineForAspire(next);
             if (session == next && !next.IsEnded)
             {
                 AspireApp? previous = view.SelectedApp;
@@ -516,19 +529,72 @@ public partial class MainWindow
         or OperationCanceledException or System.ComponentModel.Win32Exception;
 
     /// <summary>What an Aspire start asks before its AppHost starts besides its certificate (which is every run's,
-    /// <see cref="BuildRunController"/>'s): the container engine's state, said in the Aspire window. Null unless the folder
-    /// was closed meanwhile.</summary>
+    /// <see cref="BuildRunController"/>'s): the container engine's state, said as a container run's is, and followed while
+    /// the folder's AppHosts run. Null unless the folder was closed meanwhile.</summary>
     private async Task<string?> ShowAspireEngineAsync(RunConfiguration configuration, CancellationToken cancel)
     {
         ProjectSession current = session;
-        Containers.EngineState engine = await Engine.StateAsync(cancel: cancel);
-        string engineStatus = engine.IsReady ? "Container engine is ready; Aspire reports each container's actual state and health."
-            : engine.Problem ?? "Container resources need a running container engine; container-free apps can still run.";
+        Containers.EngineState engine = await Engine.StateAsync(again: true, cancel: cancel);
         if (session != current || current.IsEnded)
         {
             return "The solution was closed";
         }
-        Bottom.AspirePane.SetContainerStatus(engineStatus);
+        ShowAspireEngine(engine);
+        FollowEngineForAspire(current);
         return null;
+    }
+
+    /// <summary>The engine's state during an Aspire run, said where a container run's is (the status bar's place and
+    /// Problems' Containers tab, <see cref="ShowEngine"/>), in the same words, and on the Aspire window's line.</summary>
+    private void ShowAspireEngine(Containers.EngineState engine)
+    {
+        UiThread.Check();
+        ShowEngine(engine);
+        Bottom.AspirePane.SetContainerStatus(engine.Problem is { } problem ? $"Container resources cannot run: {problem}"
+            : $"{engine.EngineName} is running; Aspire reports each container's state and health.");
+    }
+
+    private IDisposable? aspireEngine;
+    private ProjectSession? aspireEngineFor;
+
+    /// <summary>The engine followed while the folder's AppHosts run (its events, ended by the engine's stop and started again
+    /// as it comes back), each change of its state said as <see cref="ShowAspireEngine"/> says it; let go once none runs, its
+    /// folder is left or the window closes.</summary>
+    private void FollowEngineForAspire(ProjectSession current)
+    {
+        UiThread.Check();
+        bool running = session == current && !current.IsEnded && current.Aspire.Apps.Any(app => !app.IsTest && !app.Stopping);
+        if (!running)
+        {
+            if (aspireEngineFor == current)
+            {
+                aspireEngine?.Dispose();
+                (aspireEngine, aspireEngineFor) = (null, null);
+            }
+            return;
+        }
+        if (aspireEngine is not null)
+        {
+            return;
+        }
+        Containers.ContainerEngine engine = Engine;
+        aspireEngineFor = current;
+        aspireEngine = engine.Follow(told =>
+        {
+            if (told.Type != Containers.ContainerEngine.EngineEvent)
+            {
+                return;
+            }
+            UiThread.Post(() => BackgroundWork.Track(ReadAgainAsync()));
+        });
+
+        async Task ReadAgainAsync()
+        {
+            Containers.EngineState state = await BackgroundWork.Run(() => engine.StateAsync(again: true));
+            if (session == current && !current.IsEnded && aspireEngine is not null)
+            {
+                ShowAspireEngine(state);
+            }
+        }
     }
 }

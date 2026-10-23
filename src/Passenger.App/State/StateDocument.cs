@@ -151,6 +151,28 @@ public sealed class StateDocument<T> where T : class, IStateDocument<T>, new()
     /// reads before any window keeps the document.</summary>
     public T Peek() => ReadNow().Value;
 
+    /// <summary>Changes the value as the file holds it now and writes the change at once, merged over the file as a
+    /// <see cref="Set"/>'s is, on any thread: for a document no window keeps (the process's start, before any window; work
+    /// that ends after its window's loop has stopped). A document a window keeps is changed through <see cref="Set"/>.</summary>
+    public void ChangeNow(Func<T, T> change)
+    {
+        lock (writing)
+        {
+            (T read, _, string text) = ReadNow();
+            known = text;
+            string mine = JsonSerializer.Serialize(change(read).Clamped(), StateFile.Options);
+            if (mine == text)
+            {
+                return;
+            }
+            lock (gate)
+            {
+                pending = mine;
+            }
+            Write();
+        }
+    }
+
     /// <summary>The value, read off the UI thread the first time and taken in on it, for a document large enough that
     /// reading it there would hold the window up (a solution's project caches, megabytes each).</summary>
     public async Task<T> ValueAsync()

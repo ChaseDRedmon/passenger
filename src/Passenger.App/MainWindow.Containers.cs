@@ -54,12 +54,17 @@ public partial class MainWindow
         });
         actions.Add(new IdeAction(AppActions.ContainerInspect, "Inspect", "Containers", context => _ = InspectAsync(Chosen()!))
         {
-            WhyNot = _ => Chosen() is { Kind: not ContainerRowKind.Group and not ContainerRowKind.Project } ? null : "No container, image, volume or network is chosen in the Containers window",
+            WhyNot = _ => Chosen() is { Kind: not ContainerRowKind.Group and not ContainerRowKind.Project and not ContainerRowKind.AppHost } ? null
+                : "No container, image, volume or network is chosen in the Containers window",
         });
         actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(Chosen()!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
 
         ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title));
         containersView = view;
+        // An AppHost's containers under it, as its run's resources name them (the folder's AppHosts that run now).
+        view.AppHostOf = container => session is { IsEnded: false } current
+            && current.Aspire.Apps.FirstOrDefault(app => app.KnownContainerIds.Any(id => ContainerRow.SameId(id, container.Id))) is { } run
+            ? (run.Configuration.Project, run.Configuration.Name) : null;
         view.ActionRequested += (_, action) => Request(action);
         view.LinkClicked += (_, link) => OpenLink(link);
         view.StateRead += (_, state) => ShowEngine(state);
