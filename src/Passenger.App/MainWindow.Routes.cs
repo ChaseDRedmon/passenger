@@ -68,7 +68,8 @@ public partial class MainWindow
     /// file open that could declare one (<paramref name="opening"/> one now, which the open files may not list yet).</summary>
     private void WantRoutes(bool opening = false)
     {
-        if (session.Routes.Wants && (opening || Dock.IsShown(ToolWindowIds.Endpoints) || Editors.Documents.Any(d => IsRouteSource(d.Path))))
+        if (session.Routes.Wants && (opening || Dock.IsShown(ToolWindowIds.Endpoints) || Dock.IsShown(ToolWindowIds.Requests)
+            || Editors.Documents.Any(d => IsRouteSource(d.Path))))
         {
             routesLater?.Restart();
         }
@@ -273,7 +274,12 @@ public partial class MainWindow
             }
             found = made;
         }
-        await Endpoints.TestAsync(found.Value.Request, RunningAddress(route.Project), found.Value.File);
+        string? address = await RunningAddressAsync(route.Project);
+        if (session != current || current.IsEnded)
+        {
+            return null;
+        }
+        await Endpoints.TestAsync(found.Value.Request, address, found.Value.File);
         return null;
 
         string Said(string problem)
@@ -363,8 +369,40 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>The address a project's app answers at now: Run's program's, else the program debugged; null when neither
-    /// runs it.</summary>
+    /// <summary>The address a project's app answers at now: Run's program's, else the program debugged, else its .NET
+    /// service's published port in the container run under way, else its project resource's URL in a running AppHost;
+    /// null when none runs it.</summary>
+    private async Task<string?> RunningAddressAsync(string project)
+    {
+        if (RunningAddress(project) is { } here)
+        {
+            return here;
+        }
+        using IDisposable held = BackgroundWork.Scope();
+        try
+        {
+            if (buildRun.Containers is { } run && await run.ServiceAddressAsync(project, CancellationToken.None) is { } published)
+            {
+                return published;
+            }
+            foreach (Passenger.App.Aspire.AspireAppRun app in session.Aspire.Apps.Where(a => !a.IsTest && !a.Stopping && a.Interactions is not null).ToArray())
+            {
+                IReadOnlyList<Passenger.App.Aspire.AspireResource> resources = await app.Interactions!.GetResourcesAsync();
+                if (resources.FirstOrDefault(r => r.IsProject && r.Source is { } source && PathNames.Same(source, project)) is { } resource
+                    && Passenger.App.Aspire.AspireView.Links(resource) is { Count: > 0 } links)
+                {
+                    return (links.FirstOrDefault(l => l.Scheme == "http") ?? links[0]).GetLeftPart(UriPartial.Authority);
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException or TimeoutException or System.Text.Json.JsonException)
+        {
+            // An engine or AppHost that does not answer leaves the file's own address.
+        }
+        return null;
+    }
+
+    /// <summary>The address Run's program or the program debugged answers at, when it is the project's.</summary>
     private string? RunningAddress(string project)
     {
         if (buildRun.IsRunning && buildRun.RunPlan is { Project: { } ran } running && PathNames.Same(ran, project) && AddressOf(running) is { } run)

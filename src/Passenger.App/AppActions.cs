@@ -82,6 +82,9 @@ public static class AppActions
     public const string ShowEndpoints = "app.showEndpoints";
     public const string TestEndpoint = "app.endpoints.test";
 
+    // The Requests window over the running web app's live requests and their database commands: no key of Rider's.
+    public const string ShowRequests = "app.showRequests";
+
     // The Migrations window over the folder's EF Core contexts, its commands, and the fix of what keeps dotnet ef from
     // working that it shows first: no key of Rider's.
     public const string ShowMigrations = "app.showMigrations";
