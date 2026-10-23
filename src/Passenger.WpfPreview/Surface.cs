@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 
 namespace Passenger.WpfPreview;
 
@@ -25,6 +26,10 @@ internal sealed partial class Surface
     /// window's content is laid out, and counts as visible, only while its window is.</summary>
     private static readonly MethodInfo? MarkShown =
         typeof(Window).GetMethod("UpdateVisibilityProperty", BindingFlags.NonPublic | BindingFlags.Instance, [typeof(Visibility)]);
+
+    /// <summary>What WPF attaches to a window given a WindowChrome as the app runs, and leaves to the designer in
+    /// design mode.</summary>
+    private static readonly Type? ChromeWorker = typeof(WindowChrome).Assembly.GetType("System.Windows.Shell.WindowChromeWorker");
 
     private readonly Window? window;
     private HwndSource? host;
@@ -125,6 +130,7 @@ internal sealed partial class Surface
             window.Close();
             throw new InvalidOperationException("This WPF does not let the previewer lay a window out without showing it");
         }
+        KeepChrome(window);
         // As asked, before the system keeps the window within its screens.
         double width = window.Width;
         double height = window.Height;
@@ -141,6 +147,34 @@ internal sealed partial class Surface
         }
         MarkShown.Invoke(window, [Visibility.Visible]);
         source.RootVisual = window;
+    }
+
+    /// <summary>A window's WindowChrome put to work as WPF puts it as the app runs, which in design mode it leaves to
+    /// the designer to draw: so the chrome makes the window's client area what the app's is (the whole window,
+    /// usually), and no title bar is drawn over content that draws its own.</summary>
+    private static void KeepChrome(Window window)
+    {
+        if (WindowChrome.GetWindowChrome(window) is not { } chrome)
+        {
+            return;
+        }
+        const BindingFlags Statics = BindingFlags.Public | BindingFlags.Static;
+        MethodInfo? attached = ChromeWorker?.GetMethod("GetWindowChromeWorker", Statics, [typeof(Window)]);
+        MethodInfo? attach = ChromeWorker?.GetMethod("SetWindowChromeWorker", Statics, [typeof(Window), ChromeWorker]);
+        MethodInfo? apply = ChromeWorker?.GetMethod("SetWindowChrome", BindingFlags.Public | BindingFlags.Instance, [typeof(WindowChrome)]);
+        if (ChromeWorker is null || attached is null || attach is null || apply is null)
+        {
+            Console.Error.WriteLine("This WPF does not let the previewer put a window's WindowChrome to work in design mode: it is drawn in the system's frame");
+            return;
+        }
+        if (attached.Invoke(null, [window]) is not null)
+        {
+            // The project's code took the window out of design mode, and WPF attached one itself.
+            return;
+        }
+        object worker = Activator.CreateInstance(ChromeWorker, nonPublic: true)!;
+        attach.Invoke(null, [window, worker]);
+        apply.Invoke(worker, [chrome]);
     }
 
     /// <summary>Laid out again, at the size its bindings and loading have given it, its title bar a whole number of pixels

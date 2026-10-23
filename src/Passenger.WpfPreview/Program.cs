@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.ComponentModel.Design;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -9,10 +11,11 @@ using Passenger.Core;
 
 namespace Passenger.WpfPreview;
 
-/// <summary>The previewer's start: the project's assembly loaded (its runtime configuration and dependencies are the ones
-/// the previewer runs with), an application of its own that never shows a window, and requests read from standard input
-/// on a thread of their own until it closes, which is Passenger letting go. Standard output is the protocol's alone:
-/// whatever else writes to the console (the project's own code included) goes to standard error.</summary>
+/// <summary>The previewer's start: the project's assembly loaded (its runtime configuration and dependencies are the
+/// ones the previewer runs with), an application of its own that never shows a window, and requests read from standard
+/// input on a thread of their own until it closes, which is Passenger letting go, all of it in design mode. Standard
+/// output is the protocol's alone: whatever else writes to the console (the project's own code included) goes to
+/// standard error.</summary>
 public static class Program
 {
     [STAThread]
@@ -21,6 +24,7 @@ public static class Program
         // Read once, as WPF's diagnostics start: set before anything of WPF's runs, so each element knows its place in the
         // XAML (VisualDiagnostics.GetXamlSourceInfo), which is how a box knows its element.
         Environment.SetEnvironmentVariable(RuntimeVariables.XamlDiagnosticsSourceInfo, "1");
+        DesignMode();
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             // The whole of it, then one line that says it, which is what Passenger shows of a previewer that ended.
@@ -59,6 +63,17 @@ public static class Program
         reading.Start();
         app.Run();
         return 0;
+    }
+
+    /// <summary>Design mode, set as Visual Studio's and Blend's designers set it as they start, before anything of the
+    /// project's loads: IsInDesignMode's default made true for every DependencyObject, so GetIsInDesignMode answers
+    /// true for whatever the preview makes (in its constructor too, before it has a parent, and for a new
+    /// DependencyObject), and LicenseManager given the designers' design-time context, so its UsageMode says
+    /// Designtime.</summary>
+    private static void DesignMode()
+    {
+        DesignerProperties.IsInDesignModeProperty.OverrideMetadata(typeof(DependencyObject), new FrameworkPropertyMetadata(true));
+        LicenseManager.CurrentContext = new DesigntimeLicenseContext();
     }
 
     /// <summary>Has pack://application:,,,/ name the project's own resources, as it does in the running app. WPF lets only a

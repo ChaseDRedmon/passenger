@@ -5,9 +5,11 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Media;
 using Passenger.App;
+using Passenger.App.LiveTree;
 using Passenger.App.Workspace;
 using Passenger.App.Xaml;
 using Passenger.Editor;
+using Passenger.Inspector;
 using Passenger.Text;
 using static Passenger.Tests.XamlTests;
 
@@ -17,8 +19,7 @@ namespace Passenger.Tests;
 /// merged brushes and heading style, a <c>d:DataContext</c> view model, a button template drawing its background) built and
 /// previewed: the window with App.xaml's resources, an edit followed, broken XAML's error with its line over the last frame,
 /// a user control at its design size with its design-time data and inside a window, an element chosen by a click or the
-/// caret, content finding the window or page it is drawn in. Elsewhere they skip, as WPF draws only on Windows
-/// (<see cref="WpfXamlTests"/> checks what the pane says there).</summary>
+/// caret, content finding the window or page it is drawn in, the project's code in design mode; elsewhere they skip.</summary>
 public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
 {
     private const string OnlyOnWindows = "WPF draws only on Windows, so its previewer runs only there";
@@ -222,6 +223,74 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         FindsItsHolder(window, preview, editor, pane, "Page");
         window.Close();
     }
+
+    /// <summary>The preview runs the project's code in design mode, as Visual Studio's designer does, so a control that
+    /// asks as it is made shows what it shows at design time; the app run is not in design mode, and the same control
+    /// shows it is running. The window's WindowChrome, which WPF leaves to a designer in design mode, still makes the
+    /// whole window its content's, as the app draws it, with no title bar drawn above.</summary>
+    [AvaloniaFact]
+    public void A_window_previews_its_controls_in_design_mode_its_window_chrome_kept_and_the_app_run_shows_them_running()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
+        app.Write("ModeSign.xaml", ModeSign);
+        app.Write("ModeSign.xaml.cs", ModeSignCodeBehind);
+        app.Write("MainWindow.xaml.cs", ModesCodeBehind);
+        string modes = app.Write("MainWindow.xaml", Modes);
+        MainWindow window = app.Open(modes);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        XamlPreview preview = Previewed(window, document);
+        Assert.Null(preview.Error);
+        XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+
+        // The chrome makes the whole window the client area: the frame is the window's size, no title bar above it.
+        Assert.True(Math.Abs(preview.FrameSize.Width - 400) <= 1 && Math.Abs(preview.FrameSize.Height - 300) <= 1,
+            $"The window with a WindowChrome is drawn {preview.FrameSize}, not 400 × 300: its chrome was left out and the system's frame drawn");
+
+        // DesignerProperties.GetIsInDesignMode(this) in its constructor: drawn as wide as "design" written out, not "running".
+        PreviewElement sign = ElementOf(preview, editor, "<local:ModeSign");
+        PreviewElement written = ElementOf(preview, editor, "<TextBlock Text=\"design\"");
+        Assert.True(written.Box.Width > 10, $"The word \"design\" written out is drawn {written.Box.Width} wide");
+        Assert.True(Math.Abs(sign.Box.Width - written.Box.Width) < 0.5,
+            $"The control that says whether it is in design mode is drawn {sign.Box.Width} wide, the word \"design\" {written.Box.Width}: the preview ran it out of design mode");
+        // LicenseManager.UsageMode, in its colour.
+        Color licence = Ui.Pixel(window, pane.Frame.TranslatePoint(new Point(sign.Box.X + 3, sign.Box.Bottom - 3), window)!.Value);
+        Assert.True(licence == Found, licence == Missing
+            ? "LicenseManager.UsageMode said Runtime to the control previewed, not Designtime"
+            : $"The control that says LicenseManager's usage mode is drawn {licence}, neither the colour of design time nor of run time");
+
+        // The app itself, run, is not in design mode: the same control in the same window says it is running.
+        Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
+        Ui.WaitFor(() => window.Session.RunApp is { State: LiveAppState.Connected }, $"the app's inspector to say hello ({window.Status})", TimeSpan.FromMinutes(2));
+        Assert.Equal("running", TextOf(window.Session.RunApp!, "Said"));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Runner.IsRunning, "the app to stop");
+        window.Close();
+    }
+
+    /// <summary>What an element of the running app's, by its name, shows as text, once its window has it.</summary>
+    private static string TextOf(LiveApp running, string name)
+    {
+        string? shown = null;
+        Task<AppTree>? asked = null;
+        Ui.WaitFor(() =>
+        {
+            if (asked is { IsCompleted: true })
+            {
+                shown = asked.IsCompletedSuccessfully ? Named(asked.Result.Roots, name)?.Text : null;
+                asked = null;
+            }
+            if (shown is null)
+            {
+                asked ??= running.AgentTreeAsync([]);
+            }
+            return shown is not null;
+        }, $"the running app's window to show its {name}", TimeSpan.FromMinutes(1));
+        return shown!;
+    }
+
+    private static Element? Named(IEnumerable<Element> elements, string name) =>
+        elements.Select(e => e.Name == name ? e : Named(e.Children, name)).FirstOrDefault(e => e is not null);
 
     /// <summary>The title bound through <c>AncestorType</c> drawn as wide as the same words written out, and the user control
     /// whose Loaded asks <c>Window.GetWindow</c> drawn in the colour that says it found one.</summary>
@@ -429,6 +498,76 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
                 <local:WindowFinder Margin="0,8" />
             </StackPanel>
         </Page>
+
+        """;
+
+    /// <summary>A user control that says, as it is made, whether it is in design mode (its words) and whether
+    /// LicenseManager says design time (its colour: <see cref="Found"/> for design time, <see cref="Missing"/> for run
+    /// time).</summary>
+    private const string ModeSign = """
+        <UserControl x:Class="Gallery.ModeSign"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <Border x:Name="Licence" Background="#B22222" Padding="0,0,0,6">
+                <TextBlock x:Name="Said" Foreground="White" />
+            </Border>
+        </UserControl>
+
+        """;
+
+    private const string ModeSignCodeBehind = """
+        using System.ComponentModel;
+        using System.Windows.Controls;
+        using System.Windows.Media;
+
+        namespace Gallery;
+
+        public partial class ModeSign : UserControl
+        {
+            public ModeSign()
+            {
+                InitializeComponent();
+                Said.Text = DesignerProperties.GetIsInDesignMode(this) ? "design" : "running";
+                if (LicenseManager.UsageMode == LicenseUsageMode.Designtime)
+                {
+                    Licence.Background = new SolidColorBrush(Color.FromRgb(0x2E, 0x8B, 0x57));
+                }
+            }
+        }
+
+        """;
+
+    /// <summary>The app's main window in place of the gallery's: its own chrome, the control, and the word it says
+    /// previewed.</summary>
+    private const string Modes = """
+        <Window x:Class="Gallery.MainWindow"
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:local="clr-namespace:Gallery"
+                Title="Modes" Height="300" Width="400">
+            <WindowChrome.WindowChrome>
+                <WindowChrome CaptionHeight="0" GlassFrameThickness="0" ResizeBorderThickness="0" />
+            </WindowChrome.WindowChrome>
+            <StackPanel Margin="12">
+                <local:ModeSign HorizontalAlignment="Left" />
+                <TextBlock Text="design" HorizontalAlignment="Left" />
+            </StackPanel>
+        </Window>
+
+        """;
+
+    private const string ModesCodeBehind = """
+        using System.Windows;
+
+        namespace Gallery;
+
+        public partial class MainWindow : Window
+        {
+            public MainWindow()
+            {
+                InitializeComponent();
+            }
+        }
 
         """;
 
