@@ -608,16 +608,13 @@ public sealed class MarkdownText : SelectableTextBlock
         shown.Append(text);
     }
 
-    /// <summary>The link drawn at a point of the block, or null.</summary>
+    /// <summary>The link drawn at a point of the block, or null: the one whose words are drawn there, on any of its lines.</summary>
     public Uri? LinkAt(Point point)
     {
-        TextHitTestResult hit = TextLayout.HitTestPoint(point);
-        if (!hit.IsInside)
-        {
-            return null;
-        }
-        int at = hit.TextPosition;
-        return links.FirstOrDefault(l => at >= l.Start && at < l.End).Target;
+        // Not the hit's IsInside, which is false below a block's first line, where a link then opened nothing.
+        int at = TextLayout.HitTestPoint(point).TextPosition;
+        (int start, int end, Uri? target) = links.FirstOrDefault(l => at >= l.Start && at < l.End);
+        return target is not null && TextLayout.HitTestTextRange(start, end - start).Any(drawn => drawn.Contains(point)) ? target : null;
     }
 
     /// <summary>Where a link's first word is drawn in the block, for a click on it.</summary>

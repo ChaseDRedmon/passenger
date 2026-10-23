@@ -14,7 +14,7 @@ namespace Passenger.Tests;
 /// version starts after an update, once, in a tab of their own, rendered and read-only, in front of the folder it opens
 /// (whose own tabs come back behind them); never for a fresh state; and again from Help whenever asked. Each window keeps
 /// its state in the test's own folder, as the person's keeps theirs, and is the version whose notes the build carries
-/// (the stand-in docs/release-notes/0.2.0.md), so each reads that real file.</summary>
+/// (docs/release-notes/0.2.0.md), so each reads that real file.</summary>
 public sealed class WhatsNewTests : IDisposable
 {
     private const string Version = "0.2.0";
@@ -54,21 +54,24 @@ public sealed class WhatsNewTests : IDisposable
         Assert.True(window.EditorArea.Documents.Any(d => d.Name == "Program.cs"),
             $"The folder's own tab, Program.cs, did not come back beside the notes: [{Open(window)}]");
         ReleaseNotesView view = Rendered(window);
-        string carried = File.ReadAllText(new ReleaseNotes(ReleaseNotes.CarriedFolder, Version).File);
-        Assert.Contains("The notes of Passenger 0.2.0 are still to be written", carried);
-        Assert.True(view.Text.Contains("The notes of Passenger 0.2.0 are still to be written", StringComparison.Ordinal) && view.Text.Contains("Until then", StringComparison.Ordinal),
-            $"The page does not say what the carried file does; it says:\n{view.Text}");
-        Assert.True(!view.Text.Contains("##", StringComparison.Ordinal) && !view.Text.Contains("**", StringComparison.Ordinal) && !view.Text.Contains("Stand-in", StringComparison.Ordinal),
-            $"The page shows the Markdown's marks or its comment rather than drawing them:\n{view.Text}");
+        string carried = Carried();
+        Assert.False(carried.Contains("<!-- Stand-in", StringComparison.Ordinal), "The carried notes are still the stand-in, which a published release refuses");
+        string[] missing = [.. Headings(carried).Where(heading => !view.Text.Contains(heading, StringComparison.Ordinal))];
+        Assert.True(missing.Length == 0, $"The page does not say what the carried file does, missing its headings [{string.Join(", ", missing)}]; it says:\n{view.Text}");
+        Assert.True(!view.Text.Contains("##", StringComparison.Ordinal) && !view.Text.Contains("**", StringComparison.Ordinal) && !view.Text.Contains("](", StringComparison.Ordinal),
+            $"The page shows the Markdown's marks rather than drawing them:\n{view.Text}");
         Assert.Equal($"What's New in Passenger {Version}", view.Title);
         Assert.True(notes.IsReadOnly && !notes.HoldsText, "The notes' tab can be edited, or reads as text to edit, though it is the installed app's file");
 
-        // Its link opens in the browser, the one way the IDE opens one.
-        MarkdownText linked = view.Blocks.First(b => b.Links.Any());
-        (string words, Uri milestone) = linked.Links.First();
-        Assert.Equal("0.2.0 milestone", words);
-        Ui.Click(linked, linked.PointOf(milestone));
-        Assert.True(window.Browsed.LastOrDefault() == milestone, $"A click on the notes' link opened [{string.Join(", ", window.Browsed)}], not {milestone}");
+        // A link opens in the browser, the one way the IDE opens one, wherever its block draws it: the first drawn below its
+        // block's first line, the file's own words and address.
+        (MarkdownText linked, string words, Uri address) = view.Blocks
+            .SelectMany(block => block.Links.Select(link => (Block: block, link.Words, link.Target)))
+            .First(link => link.Block.PointOf(link.Target).Y > link.Block.TextLayout.TextLines[0].Height);
+        Assert.True(carried.Contains($"[{words}]({address.OriginalString})", StringComparison.Ordinal),
+            $"The page's link '{words}' to {address} is not one the carried file writes");
+        Ui.Click(linked, linked.PointOf(address));
+        Assert.True(window.Browsed.LastOrDefault() == address, $"A click on the notes' link opened [{string.Join(", ", window.Browsed)}], not {address}");
 
         // The person reads them and closes the tab; the window keeps that it showed them.
         Assert.True(window.EditorArea.CloseTab(window.EditorArea.Groups.First(g => g.Has(notes)), notes), "The notes' tab did not close");
@@ -118,7 +121,7 @@ public sealed class WhatsNewTests : IDisposable
         item.Command!.Execute(null);
         Ui.Settle();
         ShownNotes(window);
-        Assert.Contains("still to be written", Rendered(window).Text);
+        Assert.Contains(Headings(Carried()).First(), Rendered(window).Text);
         window.Close();
         Ui.Settle();
         // The fresh state began on this version, so only a newer one's notes show by themselves.
@@ -162,6 +165,13 @@ public sealed class WhatsNewTests : IDisposable
     }
 
     private static string Open(MainWindow window) => string.Join(", ", window.EditorArea.Documents.Select(d => d.Name));
+
+    /// <summary>The notes the build carries beside it, as written.</summary>
+    private static string Carried() => File.ReadAllText(new ReleaseNotes(ReleaseNotes.CarriedFolder, Version).File);
+
+    /// <summary>The words of the notes' section headings, as a person reads them once drawn.</summary>
+    private static IEnumerable<string> Headings(string notes) =>
+        notes.ReplaceLineEndings("\n").Split('\n').Where(line => line.StartsWith("## ", StringComparison.Ordinal)).Select(line => line[3..].Trim());
 
     /// <summary>The version updates.json records as the notes shown, once the windows over the state have closed.</summary>
     private string? Recorded() =>
