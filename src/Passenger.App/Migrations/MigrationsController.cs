@@ -14,7 +14,8 @@ namespace Passenger.App.Migrations;
 /// <summary>What the Migrations window works with: the window's editors (global undo, a script's tab), its Build window and
 /// tool windows, its actions' work and status bar, the session and its builds as they are now, the questions it asks the
 /// person (<c>Choose</c>: a title, a question and its answers, the default among them; null when they cancel), the NuGet
-/// window's one way packages go in (one, or several moved together) and its feeds, and what follows a file Passenger wrote.</summary>
+/// window's one way packages go in (one, or several moved together) and its feeds, what follows a file Passenger wrote, and
+/// Problems, given the contexts whose model has changes no migration covers.</summary>
 public sealed record MigrationsParts(
     EditorArea Editors,
     ToolViews Views,
@@ -29,7 +30,8 @@ public sealed record MigrationsParts(
     Func<Task<IPackageFeed>> Feed,
     Action<IReadOnlyList<string>> FollowWritten,
     Func<string, string?> OpenFile,
-    Func<string> StateFolder)
+    Func<string> StateFolder,
+    Action<IReadOnlyList<Problem>> ShowPending)
 {
     /// <summary>Whether nobody is at the window to ask (an agent's own IDE): a gap is then said with its fix, not asked about.</summary>
     public Func<bool> AsksNoOne { get; init; } = () => false;
@@ -38,6 +40,9 @@ public sealed record MigrationsParts(
 /// <summary>A migration as the Migrations window lists it: its id (its timestamp and name), its name, and whether the
 /// database has it (null until dotnet ef could ask the database).</summary>
 public sealed record MigrationRow(string Id, string Name, bool? Applied);
+
+/// <summary>A context whose model has changes no migration covers, at its class's declaration where it was found.</summary>
+public sealed record EfPending(string Context, string? File, Passenger.Text.TextPosition Position);
 
 /// <summary>A context the project holds, as <c>dotnet ef dbcontext list</c> names it.</summary>
 public sealed record EfContext(string Name, string FullName);
@@ -92,6 +97,16 @@ public sealed class MigrationsController(MigrationsParts parts)
     /// <summary>What keeps dotnet ef from working before any command, each with its fix, as last found.</summary>
     public IReadOnlyList<EfGap> Gaps { get; private set; } = [];
 
+    /// <summary>The contexts whose model has changes no migration covers, as last checked (after a build, a listing or a
+    /// command that changes the migrations).</summary>
+    public IReadOnlyList<EfPending> Pending { get; private set; } = [];
+
+    /// <summary>The code Problems lists a context's pending model changes under.</summary>
+    public const string PendingCode = "Migrations";
+
+    /// <summary>Add Migration asked for by a gap's fix, for a context's pending model changes.</summary>
+    public event EventHandler? AddAsked;
+
     /// <summary>The last command's failure, read into one line with its fix; null once one succeeds.</summary>
     public EfGap? Failure { get; private set; }
 
@@ -103,6 +118,7 @@ public sealed class MigrationsController(MigrationsParts parts)
     {
         UiThread.Check();
         bound = session;
+        Pending = [];
         Project = null;
         Startup = null;
         Context = null;
@@ -221,9 +237,9 @@ public sealed class MigrationsController(MigrationsParts parts)
 
     /// <summary>Lists the chosen project's contexts and the chosen context's migrations, with which the database has: built
     /// first, as every command is. Never asks: what is missing stays in the window with its fix.</summary>
-    public Task<EfDone> ListAsync(string action, CancellationToken cancel = default)
+    public Task<EfDone> ListAsync(string action, CancellationToken cancel = default, bool build = true)
     {
-        Task<EfDone> listed = ListingAsync(action, cancel);
+        Task<EfDone> listed = ListingAsync(action, cancel, build);
         if (!listed.IsCompleted)
         {
             listing = listed;
@@ -234,7 +250,7 @@ public sealed class MigrationsController(MigrationsParts parts)
     /// <summary>The listing under way, which a command asked for meanwhile waits for.</summary>
     private Task? listing;
 
-    private Task<EfDone> ListingAsync(string action, CancellationToken cancel) =>
+    private Task<EfDone> ListingAsync(string action, CancellationToken cancel, bool build) =>
         CommandAsync(action, "Listing migrations", asks: false, cancel, async (setting, work) =>
         {
             EfOutcome contexts = await RunAsync(setting with { Context = null }, ["dbcontext", "list", "--json"], work);
@@ -260,12 +276,13 @@ public sealed class MigrationsController(MigrationsParts parts)
             }
             Migrations = ReadMigrations(listed.Data);
             Listed = true;
+            await CheckPendingAsync(setting with { Context = Context }, work);
             int pending = Migrations.Count(m => m.Applied == false);
             return Done(Migrations.Count == 0 ? $"{Context} has no migrations"
                 : Migrations.All(m => m.Applied is null) ? $"{Context}: {Plural.Of(Migrations.Count, "migration")}; the database could not be read"
                 : pending == 0 ? $"{Context}: {Plural.Of(Migrations.Count, "migration")}, all applied"
                 : $"{Context}: {Plural.Of(Migrations.Count, "migration")}, {pending} pending");
-        });
+        }, build: build);
 
     /// <summary>Adds a migration of the given name to the chosen context, then lists again.</summary>
     public Task<EfDone> AddAsync(string action, string name, CancellationToken cancel = default) =>
@@ -395,7 +412,7 @@ public sealed class MigrationsController(MigrationsParts parts)
     /// <paramref name="asks"/>, the person's commands; listing only says them), built, then run; the listing read again
     /// after a command that changes it.</summary>
     private async Task<EfDone> CommandAsync(string action, string stage, bool asks, CancellationToken cancel, Func<EfSetting, Working, Task<EfDone>> run,
-        Relist relist = Relist.No)
+        Relist relist = Relist.No, bool build = true)
     {
         UiThread.Check();
         ProjectSession session = parts.Session();
@@ -416,7 +433,7 @@ public sealed class MigrationsController(MigrationsParts parts)
         using CancellationTokenRegistration stopping = cancel.Register(parts.Work.Stop);
         try
         {
-            (EfSetting? setting, string? why) = await PrepareAsync(session, work, asks);
+            (EfSetting? setting, string? why) = await PrepareAsync(session, work, asks, build);
             if (setting is null)
             {
                 return Said(new EfDone(false, why!));
@@ -430,6 +447,7 @@ public sealed class MigrationsController(MigrationsParts parts)
                 {
                     Migrations = ReadMigrations(listed.Data);
                     Listed = true;
+                    await CheckPendingAsync(setting with { Context = Context }, work);
                 }
             }
             return Said(done);
@@ -467,7 +485,7 @@ public sealed class MigrationsController(MigrationsParts parts)
 
     /// <summary>What a command runs against, made ready: the choices, the restore (built first when there is none), each gap
     /// asked about and fixed (or refused, saying it), then Passenger's own build of the startup project and the project.</summary>
-    private async Task<(EfSetting? Setting, string? Why)> PrepareAsync(ProjectSession session, Working work, bool asks)
+    private async Task<(EfSetting? Setting, string? Why)> PrepareAsync(ProjectSession session, Working work, bool asks, bool build = true)
     {
         if (session.Folder is null)
         {
@@ -533,7 +551,7 @@ public sealed class MigrationsController(MigrationsParts parts)
         {
             return (null, "Stopped");
         }
-        if (await BuildAsync(project, startup, framework, work) is { } failed)
+        if ((build || changed) && await BuildAsync(project, startup, framework, work) is { } failed)
         {
             return (null, failed);
         }
@@ -626,6 +644,11 @@ public sealed class MigrationsController(MigrationsParts parts)
             ChoiceAsked?.Invoke(this, fix.Kind);
             return null;
         }
+        if (fix.Kind == EfFixKind.AddMigration)
+        {
+            AddAsked?.Invoke(this, EventArgs.Empty);
+            return null;
+        }
         if (Startup is not { } startup || EfRestore.Of(startup.Path)?.Runtime is not { } runtime)
         {
             return Said(new EfDone(false, "Build the startup project first: its restore says which EF Core it has")).Said;
@@ -686,6 +709,9 @@ public sealed class MigrationsController(MigrationsParts parts)
             case EfFixKind.AddFactory:
                 return AddFactory(session);
             case EfFixKind.ScriptPlain:
+                return null;
+            case EfFixKind.AddMigration:
+                AddAsked?.Invoke(this, EventArgs.Empty);
                 return null;
             default:
                 ChoiceAsked?.Invoke(this, fix.Kind);
@@ -927,6 +953,71 @@ public sealed class MigrationsController(MigrationsParts parts)
             Gaps = [.. Gaps, older];
         }
         return outcome;
+    }
+
+    /// <summary>Whether the context's model has changes no migration covers (<c>dotnet ef migrations has-pending-model-changes</c>,
+    /// EF Core 8 and later; an earlier one's refusal says nothing), its class found in the project for Problems to place it,
+    /// and Problems told.</summary>
+    private async Task CheckPendingAsync(EfSetting setting, Working work)
+    {
+        if (setting.Context is not { } context || Migrations.Count == 0)
+        {
+            return;
+        }
+        EfOutcome checkedOut = await RunAsync(setting, ["migrations", "has-pending-model-changes"], work);
+        bool changed = checkedOut.ExitCode != 0 && checkedOut.Errors.Any(e => e.Contains("Changes have been made to the model", StringComparison.Ordinal));
+        List<EfPending> pending = [.. Pending.Where(p => p.Context != context)];
+        if (changed)
+        {
+            (string? file, Passenger.Text.TextPosition at) = await BackgroundWork.Run(() => Declaration(setting.Project.Folder, context));
+            pending.Add(new EfPending(context, file, at));
+        }
+        Pending = pending;
+        parts.ShowPending([.. Pending.Select(p => new Problem(ProblemSeverity.Warning, $"{p.Context}'s model has changes no migration covers: Add Migration… makes one",
+            PendingCode, p.File, p.Position, setting.Project.Name))]);
+    }
+
+    /// <summary>Where a context's class is declared in its project, looked for in its C# files (bin and obj passed over); none
+    /// when no file declares it.</summary>
+    private static (string? File, Passenger.Text.TextPosition At) Declaration(string folder, string context)
+    {
+        string name = context.Split('.').Last();
+        System.Text.RegularExpressions.Regex declared = new($@"\bclass\s+{System.Text.RegularExpressions.Regex.Escape(name)}\b");
+        foreach (string file in Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories))
+        {
+            string relative = Path.GetRelativePath(folder, file);
+            if (relative.StartsWith("bin" + Path.DirectorySeparatorChar, StringComparison.Ordinal) || relative.StartsWith("obj" + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(file);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            for (int line = 0; line < lines.Length; line++)
+            {
+                if (declared.Match(lines[line]) is { Success: true } found)
+                {
+                    return (PathNames.Canonical(file), new Passenger.Text.TextPosition(line, found.Index + found.Length - name.Length));
+                }
+            }
+        }
+        return (null, default);
+    }
+
+    /// <summary>A build the window's own commands did not start ended: once the window has listed, the migrations are listed
+    /// again and the model checked, with no build of its own, so Problems says what the build left pending.</summary>
+    public void AfterBuild(BuildOutcome built)
+    {
+        if (built.Succeeded && running is null && Listed && Gaps.All(g => !g.Blocks) && parts.Session().Folder is not null)
+        {
+            _ = ListAsync(AppActions.MigrationsRefresh, build: false);
+        }
     }
 
     /// <summary>Whether a run's tool restores the folder's local tools first, so it is not restored twice.</summary>

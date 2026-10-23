@@ -35,10 +35,26 @@ public sealed class MigrationsTests
             Tool(window, AppActions.UpdateDatabase);
             Ui.WaitFor(() => Rows(window) is [(_, true)], $"Initial applied to the database ({window.Status})", Slow);
 
-            // A model change and its migration: pending until the database is updated again.
+            // A model change no migration covers: the build after it says so in Problems, at the context, whose Show Context
+            // Actions offers Add Migration…; the migration it adds is pending until the database is updated again.
             ShopApp.AddPrice(folder);
-            Add(window, "AddPrice");
-            Assert.Equal([("Initial", (bool?)true), ("AddPrice", false)], Rows(window));
+            Ui.Run(window, AppActions.Build);
+            string said = "ShopContext's model has changes no migration covers: Add Migration… makes one";
+            Passenger.App.ToolWindows.ProblemsView problems = window.BottomPanel.Problems;
+            Ui.WaitFor(() => problems.Problems.Any(p => p.Message == said) && window.Migrations.Busy is null, $"the pending model changes in Problems after the build ({window.Status})", Slow);
+            Passenger.App.Run.Problem pending = problems.Problems.Single(p => p.Message == said);
+            Assert.Equal(Passenger.Core.PathNames.Canonical(Path.Combine(folder, "Program.cs")), pending.Path);
+            window.ShowToolWindow(ToolWindowIds.Problems);
+            Ui.Settle();
+            ListBox found = problems.GetVisualDescendants().OfType<ListBox>().First();
+            found.SelectedItem = problems.Rows.Single(r => r.Problem == pending);
+            Ui.ChooseFromMenu(found, "Show Context Actions");
+            Ui.WaitFor(() => window.Assist.Offered.Contains("Add Migration…"), "Add Migration… offered at the context");
+            Assert.Equal("Add Migration…", window.Assist.Offered[0]);
+            Ui.Press(window, "ENTER");
+            Name(window, "AddPrice");
+            Ui.WaitFor(() => window.Migrations.Busy is null && Rows(window) is [(_, true), ("AddPrice", false)], $"AddPrice added and listed ({window.Status})", Slow);
+            Assert.DoesNotContain(problems.Problems, p => p.Message == said);
             Tool(window, AppActions.UpdateDatabase);
             Ui.WaitFor(() => Rows(window) is [(_, true), (_, true)], $"both applied ({window.Status})", Slow);
 
@@ -313,9 +329,11 @@ public sealed class MigrationsTests
         Ui.ClickButton(dialog, "Add");
     }
 
-    /// <summary>A click on one of the Migrations window's buttons, by the action it runs.</summary>
+    /// <summary>A click on one of the Migrations window's buttons, by the action it runs, the window shown first.</summary>
     private static void Tool(MainWindow window, string action)
     {
+        window.ShowToolWindow(ToolWindowIds.Migrations);
+        Ui.Settle();
         Button button = window.MigrationsView.GetVisualDescendants().OfType<Button>().Single(b => b.Name == action);
         Ui.Click(button, settle: false);
     }

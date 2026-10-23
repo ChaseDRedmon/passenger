@@ -32,6 +32,9 @@ public enum EfFixKind
 
     /// <summary>The script made again without idempotence, which SQLite cannot take.</summary>
     ScriptPlain,
+
+    /// <summary>Add Migration…, for a context's model changes no migration covers.</summary>
+    AddMigration,
 }
 
 /// <summary>A fix of a gap, with its title as its button says it.</summary>

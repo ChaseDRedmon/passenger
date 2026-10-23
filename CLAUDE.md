@@ -1173,7 +1173,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   run by `dotnet tool run`, else the person's global one by its program), its lines in the Build window, run in the folder
   and environment of the run configuration that runs the startup project (`LaunchPlan`: the database the run uses), a
   multi-targeted startup project given its framework; a manifest's tool never restored whose package the cache holds is
-  restored and the command run again. What it says when it fails is read into one plain line with its fix where one is
+  restored and the command run again. After a listing, a command that changes the migrations, and any build the window's
+  commands did not start (once the window has listed, then listing again with no build of its own), the context is checked
+  for model changes no migration covers (`dotnet ef migrations has-pending-model-changes`, EF Core 8 on; `Pending`): each is
+  a warning in Problems' Build tab (code `Migrations`) at the context's class, whose Show Context Actions offers Add
+  Migration… (`MainWindow.MigrationFixes`, one of `CodeAssist.EditorFixes`), and a gap of the window with the same fix.
+  What it says when it fails is read into one plain line with its fix where one is
   known (`EfGaps.After`: the Design package, a context the tools cannot make, several contexts, no tool, tools not
   restored, an applied migration removed), shown in the window under the gaps with its fix as a button; EF's warning that
   the tool is older than the runtime is read as the gap it is. Without a person to ask (an agent's call or its own IDE)
