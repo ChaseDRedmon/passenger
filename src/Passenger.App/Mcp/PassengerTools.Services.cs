@@ -2,18 +2,113 @@ using System.Text.Json;
 using Passenger.App.Containers;
 using Passenger.App.Debugging;
 using Passenger.App.Run;
+using Passenger.Core;
 
 namespace Passenger.App.Mcp;
 
 /// <summary>An agent's <c>resource</c> names a service of a run of services, an Aspire AppHost's or the container run's (a
 /// compose service): run, debug_start, debug_attach, profile and stop act on a compose service through the run of services
-/// as the Containers window's rows do, as on an Aspire resource as the Aspire window's do; workspace lists the container
-/// run's services as an AppHost's resources are listed.</summary>
+/// as the Containers window's rows do, as on an Aspire resource as the Aspire window's do; with no run under way that has it,
+/// run, debug_start and profile start the configuration that names it, that service alone, as the gutter's run icon does.
+/// What either kind answers is one shape: how the resource and the rest of its run stand, and its own console.</summary>
 public sealed partial class PassengerTools
 {
-    /// <summary>The container run's .NET service an agent's resource names, which its tools act on through the run of
-    /// services; null when it names none (an Aspire resource then).</summary>
-    private string? ComposeService(string resource) => Builds.Containers is not null && Builds.ServiceOfRun(resource).Service is { } service ? service.Name : null;
+    /// <summary>A compose service an agent's resource names: the container run's under way (<see cref="Start"/> null), or one
+    /// the configuration <see cref="Start"/> runs, with whether it runs a .NET project (debugged and profiled; any other only
+    /// run or stopped).</summary>
+    private sealed record ComposeTarget(string Service, RunConfiguration? Start, bool Dotnet);
+
+    /// <summary>The compose service an agent's resource names, or null for an Aspire resource: the container run's under way
+    /// when it has it, else (an owned AppHost having no resource of that name, the chosen configuration no Aspire one) one to
+    /// start where <paramref name="starts"/>: of the configuration named, else the chosen one when Compose's model of its files
+    /// has it, else the one Compose configuration whose model does, refused naming them when several do. A tool that starts
+    /// nothing (attach, stop) is refused saying no run has it.</summary>
+    private async Task<ComposeTarget?> ComposeTargetAsync(string resource, string? configuration, bool starts, CancellationToken cancel)
+    {
+        if (resource.Contains("::", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        ProjectSession current = Session;
+        RunConfiguration? named = configuration is null ? null
+            : current.Configurations.All.FirstOrDefault(c => c.Name.Equals(configuration, StringComparison.OrdinalIgnoreCase))
+                ?? throw new ArgumentException($"No run configuration '{configuration}'");
+        if (named is not null && current.Aspire.IsAspire(named))
+        {
+            return null;
+        }
+        if (Builds.Containers is { } run && OfRun(run, resource) is { } running
+            && (named is null || run.Name == named.Name || run.Name.StartsWith($"{named.Name}: ", StringComparison.Ordinal)))
+        {
+            return running;
+        }
+        bool aspireRuns = current.Aspire.Apps.Any(app => !app.IsTest && !app.Stopping);
+        if (named is null && aspireRuns && await window.ResolveOwnedAspireResourceAsync(resource, null, cancel, allowMissing: true) is not null)
+        {
+            return null;
+        }
+        RunConfiguration? chosen = named ?? current.Configurations.Chosen;
+        if (named is null && chosen is not null && current.Aspire.IsAspire(chosen))
+        {
+            return null;
+        }
+        if (!starts)
+        {
+            return aspireRuns ? null : throw new InvalidOperationException(Builds.Containers is { } up
+                ? Builds.ServiceOf(up, resource).WhyNot ?? $"{up.Name} does not start {resource}" : NoRunHas(resource));
+        }
+        if (named is not null && named.Kind != RunKind.Compose)
+        {
+            throw new ArgumentException($"{named.Name} runs no compose services: name a Compose configuration");
+        }
+        List<RunConfiguration> composing = [.. (chosen is { Kind: RunKind.Compose } ? [chosen] : Array.Empty<RunConfiguration>())
+            .Concat(named is null ? current.Configurations.All.Where(c => c.Kind == RunKind.Compose && c != chosen) : [])];
+        List<ComposeTarget> having = [];
+        foreach (RunConfiguration candidate in composing)
+        {
+            IReadOnlyList<(ComposeService Service, string? Project, bool Built)> services;
+            try
+            {
+                services = await ContainerPlans.ServicesAsync(candidate, current.Projects, window.Engine, cancel);
+            }
+            catch (ContainerCommandException unread) when (candidate != named)
+            {
+                // A configuration whose files Compose cannot read runs none of them: the others may.
+                IdeLog.Write(IdeLog.Ide, $"An agent's {resource}: {candidate.Name}'s compose files did not read ({unread.Message})");
+                continue;
+            }
+            if (Session != current || current.IsEnded)
+            {
+                throw new InvalidOperationException("The workspace changed");
+            }
+            if (services.FirstOrDefault(s => s.Service.Name == resource) is { Service: not null } found)
+            {
+                having.Add(new ComposeTarget(resource, candidate, found.Project is not null));
+                if (candidate == chosen)
+                {
+                    break;
+                }
+            }
+        }
+        return having switch
+        {
+            [{ } only] => only,
+            [] when named is not null => throw new ArgumentException($"{named.Name}'s compose files have no service {resource}"),
+            [] => throw new InvalidOperationException($"{NoRunHas(resource)}, and no Compose configuration's files have a service of that name"),
+            _ => throw new InvalidOperationException($"{resource} is a service of {having.Count} configurations: name one by configuration ("
+                + string.Join(", ", having.Select(h => h.Start!.Name)) + ")"),
+        };
+    }
+
+    /// <summary>A service the container run under way brings up, by its name: a .NET service it starts from Passenger's build,
+    /// or one Compose starts as its files say (a backing service, a .NET one it only depends on).</summary>
+    private static ComposeTarget? OfRun(ContainerRun run, string name) =>
+        run.Plan.Touched.Count > 0 && !run.Plan.Touched.Contains(name) ? null
+            : run.Plan.Dotnet.Any(d => d.Service == name) ? new ComposeTarget(name, null, run.Plan.Starts(name))
+            : run.Plan.Backing.Contains(name) ? new ComposeTarget(name, null, false)
+            : null;
+
+    private static string NoRunHas(string resource) => $"No run under way has {resource} (workspace lists them)";
 
     /// <summary>One of a compose service's actions through the run of services, refused saying why.</summary>
     private async Task ComposeServiceActionAsync(string action, string service)
@@ -24,13 +119,74 @@ public sealed partial class PassengerTools
         }
     }
 
-    /// <summary>debug_start's and debug_attach's compose service: debugged from its start (restarted held), or attached to as
-    /// it runs, through the run of services; where it is once it stops, ends, or waitSeconds pass.</summary>
-    private async Task<DebugSnapshot> DebugComposeServiceAsync(string service, bool attach, int waitSeconds, CancellationToken cancel)
+    /// <summary>The configuration that runs a compose service started for it, that service alone with what it depends on, as
+    /// the gutter's run icon starts one (<see cref="MainWindow.RunTarget"/>): run, debugged (the service alone) or profiled.
+    /// Null once it is up, else why not; given up on by the agent before it is, it comes down as Stop takes it.</summary>
+    private Task<string?> StartComposeServiceAsync(ComposeTarget target, RunStart how, CancellationToken cancel)
     {
-        AgentCall.Follow(window.Actions.Work, attach ? AppActions.ServiceAttach : AppActions.ServiceDebug);
-        await ComposeServiceActionAsync(attach ? AppActions.ServiceAttach : AppActions.ServiceDebug, service);
-        DebugSession debugged = Session.Debug.SessionNamed(service) ?? throw new InvalidOperationException($"{service} has no debugging session");
+        if (how != RunStart.Run)
+        {
+            Debuggable(target, how);
+        }
+        return Started(window.RunTarget(new RunTarget(0, target.Start!, target.Service), how),
+            how switch { RunStart.Debug => AppActions.Debug, RunStart.Profile => AppActions.Profile, _ => AppActions.RunProgram }, cancel);
+    }
+
+    /// <summary>Refuses a compose service the debugger or the profiler cannot reach: one its run does not start from
+    /// Passenger's build (a backing service, a .NET one only depended on).</summary>
+    private void Debuggable(ComposeTarget target, RunStart how)
+    {
+        if (!target.Dotnet)
+        {
+            throw new InvalidOperationException($"{target.Service} is no .NET service {target.Start?.Name ?? Builds.Containers?.Name} starts from Passenger's build, "
+                + $"which {(how == RunStart.Profile ? "profile" : "the debugger")} needs: run starts it");
+        }
+    }
+
+    /// <summary>run's compose service: the configuration that runs it started for it, answered with its services' states
+    /// once up, or, in the run under way, a .NET service's session let go (Run without Debugger).</summary>
+    private async Task<RunResult> RunComposeServiceAsync(ComposeTarget target, CancellationToken cancel)
+    {
+        AgentCall.Follow(window.Actions.Work, AppActions.ServiceRun, AppActions.RunProgram, AppActions.Build);
+        using (LaunchBuild built = new(Builds))
+        {
+            if (target.Start is not null && await StartComposeServiceAsync(target, RunStart.Run, cancel) is { } refused)
+            {
+                throw new InvalidOperationException(WithBuildErrors(refused, built.Ended));
+            }
+        }
+        if (target.Start is not null)
+        {
+            return new RunResult(true, null, await ServicesAsync(Builds.Containers!, cancel), string.Empty);
+        }
+        if (target.Dotnet)
+        {
+            await ComposeServiceActionAsync(AppActions.ServiceRun, target.Service);
+        }
+        return new RunResult(true, null, $"{target.Service} of {Builds.Containers?.Plan.Name} runs without the debugger", string.Empty);
+    }
+
+    /// <summary>debug_start's and debug_attach's compose service: debugged from its start (restarted held, or the configuration
+    /// that runs it started with it held), or attached to as it runs, through the run of services; where it is once it stops,
+    /// ends, or waitSeconds pass.</summary>
+    private async Task<DebugSnapshot> DebugComposeServiceAsync(ComposeTarget target, bool attach, int waitSeconds, CancellationToken cancel)
+    {
+        string action = target.Start is not null ? AppActions.Debug : attach ? AppActions.ServiceAttach : AppActions.ServiceDebug;
+        AgentCall.Follow(window.Actions.Work, action, AppActions.Build);
+        if (target.Start is not null)
+        {
+            using LaunchBuild built = new(Builds);
+            if (await StartComposeServiceAsync(target, RunStart.Debug, cancel) is { } refused)
+            {
+                throw new InvalidOperationException(WithBuildErrors(refused, built.Ended));
+            }
+        }
+        else
+        {
+            Debuggable(target, RunStart.Debug);
+            await ComposeServiceActionAsync(action, target.Service);
+        }
+        DebugSession debugged = Debugging(target.Service) ?? throw new InvalidOperationException($"{target.Service} has no debugging session");
         return await AfterResume(TimeSpan.FromSeconds(Math.Clamp(waitSeconds, 1, 120)), cancel, debugged);
     }
 

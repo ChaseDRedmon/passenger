@@ -608,7 +608,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "it has one; a run refused (one running already, nothing to run, a failed build) is an error. A configuration that " +
         "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it. A container configuration " +
         "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state. " +
-        "With resource, that Aspire resource (answering once it is up) or running compose service alone, without the debugger.")]
+        "With resource, that Aspire resource (answering once it is up) or compose service alone (its configuration started " +
+        "if no run has it), without the debugger.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -623,11 +624,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             {
                 throw new ArgumentException("resource uses Run Without Debugger; omit hotReload");
             }
-            if (ComposeService(resource) is { } service)
+            if (await ComposeTargetAsync(resource, configuration, starts: true, cancel) is { } service)
             {
-                AgentCall.Follow(window.Actions.Work, AppActions.ServiceRun);
-                await ComposeServiceActionAsync(AppActions.ServiceRun, service);
-                return new RunResult(true, null, $"{service} of {Builds.Containers?.Plan.Name} runs without the debugger", string.Empty);
+                return arguments is null ? await RunComposeServiceAsync(service, cancel)
+                    : throw new ArgumentException("A compose service runs as its compose files say; omit arguments");
             }
             AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
             using LaunchBuild resourceBuild = new(Builds);
@@ -721,7 +721,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             {
                 throw new ArgumentException("Name session or resource, not both");
             }
-            if (ComposeService(resource) is { } service)
+            if (await ComposeTargetAsync(resource, null, starts: false, cancel) is { Service: { } service })
             {
                 global::Passenger.App.Containers.ContainerRow row = await NamedContainer($"{Builds.Containers!.Plan.ProjectName}/{service}", cancel);
                 if (await window.ContainerActAsync(AppActions.ContainerStop, "stop", row) is { } refused)
@@ -1035,9 +1035,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         if (resource is not null)
         {
-            return ComposeService(resource) is { } service && configuration is null && arguments is null
-                ? await DebugComposeServiceAsync(service, attach: false, waitSeconds, cancel)
-                : await DebugAspireTarget(resource, configuration, arguments, attach: false, waitSeconds, cancel);
+            if (await ComposeTargetAsync(resource, configuration, starts: true, cancel) is { } service)
+            {
+                return arguments is null ? await DebugComposeServiceAsync(service, attach: false, waitSeconds, cancel)
+                    : throw new ArgumentException("A compose service runs as its compose files say; omit arguments");
+            }
+            return await DebugAspireTarget(resource, configuration, arguments, attach: false, waitSeconds, cancel);
         }
         Choose(configuration);
         AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
@@ -1142,7 +1145,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             {
                 throw new ArgumentException("Name resource or a process target, not both");
             }
-            return ComposeService(resource) is { } service ? await DebugComposeServiceAsync(service, attach: true, waitSeconds, cancel)
+            return await ComposeTargetAsync(resource, null, starts: false, cancel) is { } service ? await DebugComposeServiceAsync(service, attach: true, waitSeconds, cancel)
                 : await DebugAspireTarget(resource, null, null, attach: true, waitSeconds, cancel);
         }
         IReadOnlyList<DotnetProcess> running = [.. (await window.AttachableAsync()).Where(p => p.Container == container)];

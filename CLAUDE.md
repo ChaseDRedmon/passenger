@@ -562,7 +562,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   only the services whose project holds it, in the run whose sessions the edit names (`RestartServicesForEditAsync`). The
   window's service rows (the Containers window's and the Aspire window's), the gutter's menus and an agent's `resource` (an
   Aspire resource, or the container run's compose service, on run, debug_start, debug_attach, profile and stop:
-  `PassengerTools.Services.cs`) all reach those. A kind supplies only what is its own: how its services restart
+  `PassengerTools.Services.cs`; with no run under way that has a compose service, run, debug_start and profile start the
+  configuration that has it as the gutter's icon does, `MainWindow.RunTarget`) all reach those. A kind supplies only what is its own: how its services restart
   (`RestartAsync`, built between their stop and start where `build` asks it of a kind that builds then), how a hold chosen
   takes effect at their next start (`HoldsChangedAsync`), where a service's program is for the debugger and the profiler
   (`ProgramAsync`, a `ServiceProgram`: its id there, the adapter's `AdapterPlace`, the profiler's `ProfilePlace`, its
@@ -1409,7 +1410,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   from a container run's services as from an AppHost's resources (`PassengerTools.Services.cs`): `workspace` lists the
   container run beside the AppHosts (`ContainerRunInfo`: its configuration, Compose project, how it was started, state),
   every resource of either in one shape (`ResourceInfo`; for a .NET service `Reached`: what it is held at its start for,
-  the live Debug tab debugging it and its state, a quiet Hot Reload session, the profiler's recording).
+  the live Debug tab debugging it and its state, a quiet Hot Reload session, the profiler's recording). A compose
+  `resource` no run has is started with the configuration that has it, the one named, else the chosen one, else the one
+  Compose configuration whose model has it (`ComposeTargetAsync`, refused naming them when several do, and for attach and
+  stop refused saying no run has it).
   `McpTests`' actions
   test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
@@ -2152,8 +2156,9 @@ method leads web's own (a web app's idle threads wait in the runtime's code). `C
 service of that solution's run from the Containers window's rows and the gutter, the others never restarted (web published on
 the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
 Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
-dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`
-and reads the run in `workspace`);
+dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`,
+reads the run in `workspace`, and, a second compose file in Web/ making web two configurations', is refused a start of it
+until one is chosen, then starts web and api alone as resources);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
