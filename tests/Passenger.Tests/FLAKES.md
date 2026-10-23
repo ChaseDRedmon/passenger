@@ -43,6 +43,13 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   switch's settle waits out the same 400 ms pause, ten taking 4.05 s on the Mac against an unscaled 5 s. **The test**,
   which held the IDE's own pauses to a time: it holds how long a key waits for the window's thread (0bbb464f), 11 ms on
   the Mac, a window held 1 s failing it.
+- `PublishTests`' Publish greyed for a library and a test project (`Publish_is_greyed_with_why…`), CI run 39992190279 at
+  e25b06d0, Linux and Windows (it passed on the Mac and in the Ubuntu VM): "The Explorer does not show Tools", from the
+  wait for Tools to be offered once its project asks to be published. Writing Tools.csproj makes the window read the
+  solution again as the watcher tells of it (`OnFolderChanged`), which makes every row of the Explorer anew; the test found
+  the row shown, then settled before its right click, and the rows made meanwhile left that row unshown, which threw inside
+  the wait. **The test waited wrong**: a right click whose rows were made anew before its menu opened on them is found and
+  made again.
 - `DebugSessionsTests`' Hot Reload tests (`An_attach_to_a_program_started_held_for_it…` and `A_program_resumed_with_an_edit…`),
   the lead's whole-class runs at bff67d61 and 8dfc252a, whichever ran after the class's rude edit, since a4ba62e3 (each
   passed alone): "The edit was not applied as the program resumed: No managed code changes to apply", Roslyn's warning

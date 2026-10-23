@@ -331,11 +331,41 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
-    /// <summary>A project's Publish... in its Explorer menu: whether it can be chosen, and its tip.</summary>
+    /// <summary>A project's Publish... in its Explorer menu: whether it can be chosen, and its tip. Right-clicked again until
+    /// the menu opens on its row: a project file written is read again with the solution, which makes every row anew
+    /// (MainWindow.OnFolderChanged), whenever the system's watcher tells of the write, so the row found a moment before may
+    /// be gone by the click (at once on Linux's inotify, later on macOS's FSEvents).</summary>
     private static (bool Enabled, string? Tip) MenuItem(MainWindow window, string project)
     {
-        Ui.RightClick(Ui.Row(window.ExplorerView, ProjectRow(window, project)));
-        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException($"No menu opened on {project}");
+        (bool Enabled, string? Tip)? found = null;
+        Ui.WaitFor(() => (found = MenuItemOnce(window, project)) is not null, $"{project}'s menu, opened on its row", TimeSpan.FromMinutes(1));
+        return found!.Value;
+    }
+
+    /// <summary>One right click on a project's row and what its menu says of Publish…, or null when the rows were made anew
+    /// between finding the row and its menu, so the row is to be found again.</summary>
+    private static (bool Enabled, string? Tip)? MenuItemOnce(MainWindow window, string project)
+    {
+        ExplorerNode row = ProjectRow(window, project);
+        bool Remade() => !window.ExplorerView.Tree.Rows.Contains(row);
+        if (window.ExplorerView.Rows().ContainerFromItem(row) is not { } shown)
+        {
+            return null;
+        }
+        try
+        {
+            Ui.RightClick(shown);
+        }
+        catch (Xunit.Sdk.XunitException) when (Remade())
+        {
+            return null;
+        }
+        if (window.ExplorerView.OpenMenu is not { } menu || Remade() || !window.ExplorerView.SelectedNodes.Contains(row))
+        {
+            window.ExplorerView.OpenMenu?.Close();
+            Ui.Settle();
+            return null;
+        }
         Avalonia.Controls.MenuItem publish = menu.Items.OfType<Avalonia.Controls.MenuItem>().FirstOrDefault(i => (string?)i.Header == "Publish…")
             ?? throw new InvalidOperationException($"{project}'s menu has no Publish…: [{string.Join(", ", menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header))}]");
         (bool, string?) found = (publish.IsEnabled, ToolTip.GetTip(publish) as string);
