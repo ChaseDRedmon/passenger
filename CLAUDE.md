@@ -1274,7 +1274,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `display-name` properties; `ToolWindows/TestFramesStrip` shows every picture attachment over the details, and
   `FrameViewer` shows one at its size with zoom.
 - `src/Passenger.App/Navigation`: Recent Files and the Go to popups (Go to File scores every file on every key on the
-  UI thread, so `FuzzyMatch` allocates nothing and first rejects a name without the query's letters in order),
+  UI thread, so `FuzzyMatch` allocates nothing and first rejects a name without the query's letters in order, and
+  `FileIndex.Search` keeps only the best as it goes, never sorting every match; completion's `Shown` does the same),
   `NavigationHistory` (Back and Forward, the places
   edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
   `RecentLocationsPopup`; `Navigator` records the places visited and edited. Base and Derived Symbols use the
