@@ -1016,7 +1016,7 @@ public sealed class AspireView : DockPanel, IDisposable
     };
 
     /// <summary>A resource's addresses a browser opens: its http and https URLs, not those inactive or the AppHost's own.</summary>
-    private static IReadOnlyList<Uri> Links(AspireResource resource) =>
+    internal static IReadOnlyList<Uri> Links(AspireResource resource) =>
     [
         .. AspireJson.Array(resource.Data, "urls")
             .Where(url => !(url.TryGetProperty("isInactive", out JsonElement inactive) && inactive.ValueKind == JsonValueKind.True))

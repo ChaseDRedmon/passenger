@@ -576,10 +576,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   sends it: the first request of the project's .http files that calls it (`RouteRequests.Calls`: a method it takes and a
   path that fits its template, after a leading `{{variable}}` or host), else an entry `RouteRequests.Entry` writes at the
   end of `<Project>.http` beside the project (its `@<Project>_HostAddress` from the first launch profile, a variable per
-  route value, the JSON body; one undo step), sent by `EndpointsView.TestAsync` to the running app's address (Run's
-  program, else Debug's: `ASPNETCORE_URLS`), else the file's; a gRPC method has no icon. Go to Declaration in an .http
-  file goes to the routes its request calls, Find Usages on a route's declaration lists the requests that call it
-  (`CodeAssist.Routes.cs`), and an agent's `workspace` with `routes` lists them (`RouteInfo`).
+  route value and query parameter, each query parameter in the URL as its `{{variable}}`, the JSON body; one undo step),
+  sent by `EndpointsView.TestAsync` to the running app's address (`RunningAddressAsync`: Run's program, else Debug's, by
+  `ASPNETCORE_URLS`; else the project's .NET service in the container run under way, by the port the engine published for
+  its 8080, `ContainerRun.ServiceAddressAsync` through `ContainerPort.LinkOn`; else its project resource's URL in a
+  running AppHost, HTTP's first), else the file's; a gRPC method has no icon. Go to Declaration in an .http file goes to
+  the routes its request calls, Find Usages on a route's declaration lists the requests that call it
+  (`CodeAssist.Routes.cs`), and an agent's `workspace` with `routes` lists them (`RouteInfo`). `WebRoutesTests`' gRPC
+  service restores Grpc.AspNetCore and Google.Protobuf at the versions tests/AspireGraphs' AppHost puts in the package
+  cache (Aspire's dashboard client brings them).
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot

@@ -1415,6 +1415,25 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             : string.Empty;
     }
 
+    /// <summary>Where a project's .NET service of the run answers HTTP from this machine: the port the engine published for
+    /// its container's ASP.NET Core port (8080, else 80, else the first it published), on the engine's machine
+    /// (<see cref="ContainerPort.LinkOn"/>); null when the run has no started service of that project or publishes none.</summary>
+    public async Task<string?> ServiceAddressAsync(string project, CancellationToken cancel)
+    {
+        if (Plan.Dotnet.FirstOrDefault(s => s.Starts && Core.PathNames.Same(s.Project, project)) is not { } service)
+        {
+            return null;
+        }
+        IReadOnlyList<JsonElement> rows = await engine.JsonLinesAsync([.. Plan.Compose, "ps", "--format", "json", "--", service.Service], cancel);
+        List<ContainerPort> published = [.. rows.SelectMany(r => r.TryGetProperty("Publishers", out JsonElement publishers) && publishers.ValueKind == JsonValueKind.Array
+                ? publishers.EnumerateArray() : Enumerable.Empty<JsonElement>())
+            .Where(p => ContainerEngine.Text(p, "PublishedPort") is not (null or "0"))
+            .Select(p => new ContainerPort(ContainerEngine.Text(p, "PublishedPort")!, ContainerEngine.Text(p, "TargetPort") ?? string.Empty, ContainerEngine.Text(p, "Protocol") ?? "tcp"))];
+        ContainerPort? chosen = published.FirstOrDefault(p => p.Inside == "8080") ?? published.FirstOrDefault(p => p.Inside == "80") ?? published.FirstOrDefault();
+        string? endpoint = (await engine.StateAsync(cancel: cancel)).Endpoint;
+        return chosen?.LinkOn(endpoint)?.GetLeftPart(UriPartial.Authority);
+    }
+
     /// <summary>The address the browser opens: the plan's, its <c>{Scheme}</c>, <c>{ServiceHost}</c> and
     /// <c>{ServicePort}</c> filled from the port the engine published for the launched service; null without one.</summary>
     public async Task<string?> BrowserUrlAsync(CancellationToken cancel)
