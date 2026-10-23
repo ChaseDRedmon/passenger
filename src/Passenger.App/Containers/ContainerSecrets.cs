@@ -101,11 +101,12 @@ public static partial class ContainerSecrets
             }
             return string.Join('\n', said.Split('\n').Select(line =>
             {
-                string bare = Assignment().Replace(line, pair => Secret(pair.Groups["name"].Value) ? $"{pair.Groups["head"].Value}{Quoted(pair.Groups["value"].Value)}" : pair.Value);
+                // A Bearer's token first, which a NAME=value would otherwise leave after the scheme it masked.
+                string bare = InValue(line);
+                bare = Assignment().Replace(bare, pair => Secret(pair.Groups["name"].Value) ? $"{pair.Groups["head"].Value}{Quoted(pair.Groups["value"].Value)}" : pair.Value);
                 bare = Member().Replace(bare, pair => Secret(pair.Groups["name"].Value) ? $"{pair.Groups["head"].Value}{Quoted(pair.Groups["value"].Value)}" : pair.Value);
                 bare = AuthorizationHeader().Replace(bare, $"${{head}}{Masked}");
-                bare = UrlUser().Replace(bare, $"${{scheme}}{Masked}@");
-                return InValue(bare);
+                return UrlUser().Replace(bare, $"${{scheme}}{Masked}@");
             }));
         };
 
@@ -311,7 +312,7 @@ public static partial class ContainerSecrets
     [GeneratedRegex("""(?<head>(?<q>["'])(?<name>[A-Za-z_][\w.\-]*)\k<q>\s*:\s*)(?<value>"[^"]*"|'[^']*'|[^\s,}\]]+)""")]
     private static partial Regex Member();
 
-    [GeneratedRegex(@"(?<head>\bAuthorization\s*:\s*)\S.*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<head>\bAuthorization\s*[:=]\s*)\S.*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AuthorizationHeader();
 
     /// <summary>A URL's user information with no password (<c>https://token@host</c>), which can be a token.</summary>
