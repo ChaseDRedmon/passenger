@@ -257,7 +257,7 @@ fails a publish while it is the stand-in) call `test.yml`, every system's suite 
 passenger-ide.net, plain HTML and CSS, deployed by hand (`gh workflow run Site --ref main`, the owner's); its share card
 is named by its content, so a changed one takes a new name. Each page (home, `/containers`, `/agents`, `/linux`) has its
 own title, description, canonical and Open Graph tags and a `sitemap.xml` entry, and loads only the site's files (CSP
-'self'); `just site-shots themes` stacks every `--look`'s capture through `tools/site-shots/themes.py` and sips, and the
+'self'); `just site-shots themes` makes every `--look`'s capture a frame of one animated WebP (img2webp), and the
 aspire and requests scenes run `tools/site-shots/services`, an AppHost that needs no container engine.
 
 ## Traps

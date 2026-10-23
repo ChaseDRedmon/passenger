@@ -205,7 +205,7 @@ each look's colours.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="site/images/themes-light.webp">
-  <img src="site/images/themes-dark.webp" alt="Twelve Passenger windows stacked like a fanned deck, each in one of its looks with the look's name in its title bar: Passenger's own in front, then Harbour, Sorbet, Nocturne, Saffron, Bonbon, Ledger, Slate, Orbit, Nightjar, Moss and Phosphor">
+  <img src="site/images/themes-dark.webp" alt="Passenger's window changing look every two seconds through all twelve, each named in its title bar and Solution view: Passenger, Harbour, Sorbet, Nocturne, Saffron, Bonbon, Ledger, Slate, Orbit, Nightjar, Moss and Phosphor">
 </picture>
 
 ### Project files and the web languages

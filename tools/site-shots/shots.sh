@@ -7,8 +7,8 @@
 # capture's command line; SITE_SHOTS_REUSE=1 takes the pictures in
 # the copy the last run made, without making it again, and SITE_SHOTS_THEMES=dark (or light) takes one theme's.
 # A step's point is in the window's logical units: half the picture's pixels. The agent scene's agent is agent.py, run
-# by python3 through --agent; the themes scene's twelve captures, one per look, are stacked into one picture by
-# themes.py, an SVG that sips draws.
+# by python3 through --agent; the themes scene's twelve captures, one per look, are the frames of one animated picture
+# (img2webp, every frame whole), with a still of Passenger's own look for those who ask for less motion.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -183,7 +183,8 @@ encode() {
 }
 
 # The themes scene: the same window in every look, Themes.cs' Look in its order, each over a copy of the solution file
-# named after its look, so its title bar and Solution view name it; then stacked by themes.py, Passenger's own in front.
+# named after its look, so its title bar and Solution view name it; then one window changing look, Passenger's own first,
+# each held a moment, every frame a key frame so each is whole wherever a viewer joins; and Passenger's own look still.
 looks=(Passenger Harbour Sorbet Nocturne Saffron Bonbon Ledger Slate Orbit Nightjar Moss Phosphor)
 themes() {
     local theme=$1 look lower state
@@ -204,9 +205,13 @@ themes() {
         # Gone again at once: the other scenes' Commit window would list it as a file never added.
         rm -f "$folder/$look.slnx"
     done
-    python3 -I "$repo/tools/site-shots/themes.py" "$theme" "$work/png/themes" "$work/themes-$theme.svg"
-    sips -s format png "$work/themes-$theme.svg" --out "$work/png/themes-$theme.png" > /dev/null
-    encode "$work/png/themes-$theme.png" "$images/themes-$theme.webp"
+    local frames=()
+    for look in "${looks[@]}"; do
+        frames+=("$work/png/themes/$(tr '[:upper:]' '[:lower:]' <<< "$look")-$theme.png")
+    done
+    img2webp -loop 0 -kmin 0 -kmax 1 -lossy -q 78 -m 6 -d 1800 "${frames[@]}" -o "$images/themes-$theme.webp" > /dev/null
+    echo "site-shots: $images/themes-$theme.webp ($(($(wc -c < "$images/themes-$theme.webp") / 1024)) KB)"
+    encode "$work/png/themes/passenger-$theme.png" "$images/themes-still-$theme.webp"
 }
 
 scene() {
