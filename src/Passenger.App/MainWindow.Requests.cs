@@ -131,6 +131,12 @@ public partial class MainWindow
         {
             foreach (IRunService service in services.Services.Where(s => s.Starts && !services.LeftUnstarted(s)).ToArray())
             {
+                // One followed already is kept as it is: finding it again in its container costs docker commands each pass.
+                if (followedRequests.TryGetValue($"{services.Name}:{service.Name}", out (RequestTarget Target, LiveRequests Live) known))
+                {
+                    targets.Add(known.Target);
+                    continue;
+                }
                 try
                 {
                     if (await services.ProgramAsync(service, Task.CompletedTask, CancellationToken.None) is { WhyNot: null } program)
