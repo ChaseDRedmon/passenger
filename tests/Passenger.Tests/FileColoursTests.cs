@@ -575,6 +575,41 @@ public sealed class FileColoursResponsivenessTests : FileColoursFolder
             return least;
         }
     }
+
+    /// <summary>The parse a key starts classifies the lines on screen on its worker, and its landing hands them to the screen
+    /// (#441): the frame after it classifies nothing again on the UI thread, where it classified every line drawn. A key
+    /// classifies again at most the line it changed, counted in the characters classified there, not a time.</summary>
+    [AvaloniaFact]
+    public void A_parse_landing_after_a_key_hands_the_screen_the_colours_its_worker_read()
+    {
+        StringBuilder code = new("namespace Shapes;\n\npublic static class Areas\n{\n");
+        for (int i = 0; i < 400; i++)
+        {
+            code.Append(System.Globalization.CultureInfo.InvariantCulture, $"    public static double Square{i}(double side) => side * side + {i} /* the {i}th square's area */;\n");
+        }
+        string text = code.Append("}\n").ToString();
+        MainWindow window = Window();
+        CodeEditor editor = Open(window, "Areas.cs", text);
+        Passenger.Languages.CSharp.CSharpHighlighter syntax = window.EditorArea.Active!.Syntax!;
+        int line = text.IndexOf("Square200(", StringComparison.Ordinal);
+        editor.Selections = SelectionSet.Single(text.IndexOf("side + 200", line, StringComparison.Ordinal) + "side + 200".Length);
+        editor.Focus();
+        Ui.Settle();
+        int length = text.IndexOf('\n', line) - text.LastIndexOf('\n', line);
+        for (int i = 0; i < 3; i++)
+        {
+            long before = syntax.CharactersClassified;
+            window.KeyTextInput("1");
+            Ui.Settle();
+            long classified = syntax.CharactersClassified - before;
+            TestContext.Current.TestOutputHelper?.WriteLine($"Key {i + 1} and its parse's landing classified {classified} characters on the UI thread, its line {length}");
+            Assert.True(classified <= 2 * length,
+                $"A key and its parse's landing classified {classified} characters on the UI thread, more than twice its {length}-character line: the screen was classified again as the parse landed");
+        }
+        Assert.Equal(TokenKind.Number, KindOf(editor, "200111"));
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "/* the 201th square's area */"));
+        window.Close();
+    }
 }
 
 /// <summary>The folder a colours test writes its files to, and the helpers that open them in a window and read their colours.</summary>
