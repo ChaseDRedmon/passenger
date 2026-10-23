@@ -38,6 +38,10 @@ public static partial class ContainerLabels
     /// removes with the labelled ones.</summary>
     private static readonly SortedSet<string> Unlabelled = new(StringComparer.Ordinal);
 
+    /// <summary>The networks made for this process that carry none of its labels (an AppHost's session network), by name,
+    /// which the watchdog's command removes once the containers on them have gone.</summary>
+    private static readonly SortedSet<string> UnlabelledNetworks = new(StringComparer.Ordinal);
+
     private static readonly object Watchdog = new();
 
     /// <summary>The state folder's <c>containers.json</c>, the process's: whether anything was ever labelled for it, which
@@ -102,24 +106,27 @@ public static partial class ContainerLabels
     }
 
     /// <summary>Containers made for this process that carry none of its labels (an Aspire AppHost's, made by its
-    /// orchestrator), by id: removed with the labelled ones by the watchdog's last command, told again now, as the process
-    /// ends however it ends. Any thread.</summary>
-    public static void MadeUnlabelled(ContainerEngine engine, IEnumerable<string> ids)
+    /// orchestrator), by id, and the networks made with them (its session network), by name, on the engine the IDE's
+    /// commands reach: removed with the labelled ones by the watchdog's last command, told again now, as the process ends
+    /// however it ends. Any thread.</summary>
+    public static void MadeUnlabelled(ContainerEngine engine, IEnumerable<string> ids, IEnumerable<string>? networks = null)
     {
         lock (Watchdog)
         {
             Unlabelled.UnionWith(ids);
+            UnlabelledNetworks.UnionWith(networks ?? []);
         }
         TellWatchdog(engine);
     }
 
-    /// <summary>Containers of <see cref="MadeUnlabelled"/> that have gone (removed, or no longer this process's), which the
-    /// watchdog's command no longer names. Any thread.</summary>
-    public static void EndedUnlabelled(IEnumerable<string> ids)
+    /// <summary>Containers of <see cref="MadeUnlabelled"/> that have gone (removed, or no longer this process's), and
+    /// networks made with them, which the watchdog's command no longer names. Any thread.</summary>
+    public static void EndedUnlabelled(IEnumerable<string> ids, IEnumerable<string>? networks = null)
     {
         lock (Watchdog)
         {
             Unlabelled.ExceptWith(ids);
+            UnlabelledNetworks.ExceptWith(networks ?? []);
         }
         TellWatchdog(null);
     }
@@ -134,7 +141,7 @@ public static partial class ContainerLabels
             {
                 reached = (cli, known.Context);
             }
-            if (reached is { } through && EndCommand(through.Cli, through.Context, Unlabelled) is { } end && end != toldWatchdog)
+            if (EndCommand() is { } end && end != toldWatchdog)
             {
                 toldWatchdog = end;
                 ChildProcesses.AtIdeEnd(end);
@@ -144,10 +151,14 @@ public static partial class ContainerLabels
 
     /// <summary>The shell command that removes this process's containers and networks, for the watchdog, which runs it with
     /// its own environment: the engine the IDE's commands reach is put in it, the CLI's variables as the IDE has them and
-    /// its context by name; the containers made for it without its labels are named by id. Null for a value no line can
-    /// hold.</summary>
-    private static string? EndCommand(string cli, string? context, IEnumerable<string> unlabelled)
+    /// its context by name; what was made for it without its labels is named, its containers by id and then their networks
+    /// by name. Null for a value no line can hold, or with no engine reached yet. Under the lock.</summary>
+    private static string? EndCommand()
     {
+        if (reached is not { } through)
+        {
+            return null;
+        }
         StringBuilder command = new();
         foreach (string variable in EngineVariables)
         {
@@ -156,16 +167,18 @@ public static partial class ContainerLabels
                 command.Append(CultureInfo.InvariantCulture, $"export {variable}={Quoted(value)}; ");
             }
         }
-        string docker = Quoted(cli);
-        if (context is { Length: > 0 } && ContextName().IsMatch(context))
+        string docker = Quoted(through.Cli);
+        if (through.Context is { Length: > 0 } context && ContextName().IsMatch(context))
         {
             docker += $" --context {Quoted(context)}";
         }
         string labels = $"--filter {Quoted($"label={Process}={ProcessValue}")} --filter {Quoted($"label={Machine}={MachineValue}")}";
-        string named = string.Concat(unlabelled.Select(id => $" {Quoted(id)}"));
-        command.Append(CultureInfo.InvariantCulture, $"{docker} rm -f $({docker} ps -aq {labels}){named}; {docker} network rm $({docker} network ls -q {labels})");
+        command.Append(CultureInfo.InvariantCulture,
+            $"{docker} rm -f $({docker} ps -aq {labels}){Named(Unlabelled)}; {docker} network rm $({docker} network ls -q {labels}){Named(UnlabelledNetworks)}");
         string said = command.ToString();
         return said.Contains('\n', StringComparison.Ordinal) || said.Contains('\r', StringComparison.Ordinal) || said.Contains('\0', StringComparison.Ordinal) ? null : said;
+
+        static string Named(IEnumerable<string> words) => string.Concat(words.Select(word => $" {Quoted(word)}"));
     }
 
     /// <summary>A word in single quotes for sh, a quote in it closed, escaped and opened again.</summary>

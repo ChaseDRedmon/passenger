@@ -82,17 +82,61 @@ public sealed class AspireContainersTests : IClassFixture<AspireApp>
         }
     }
 
+    /// <summary>An AppHost with no Persistent container has its orchestrator put its containers on a session network of the
+    /// run's (DCP's <c>aspire-session-network-…</c>, labelled not Persistent), recorded with the session container as it is
+    /// made, and Stop takes it down with the container, as a container run's Stop takes its networks, whatever the
+    /// orchestrator did of it itself as its AppHost went.</summary>
+    [AvaloniaFact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    public void Stop_takes_down_the_runs_session_network_with_its_session_container()
+    {
+        Assert.SkipWhen(WhyNot is not null, WhyNot ?? string.Empty);
+        WithContainers(Path.GetDirectoryName(project.Host)!, project.Write, kept: false);
+        MainWindow window = project.OpenHost(languageServer: false);
+        string? network = null;
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Aspire && PathNames.Same(configuration.Project, project.Host)
+                && configuration.LaunchProfile == "http"), "the generated HTTP Aspire configuration");
+            Assert.True(window.SelectConfiguration($"Aspire: {AspireApp.Name}.AppHost: http"));
+            Ui.Run(window, AppActions.RunProgram);
+            string session = Running(Session);
+            string[] networks = (Docker.Said("inspect", "-f", "{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}", session) ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            network = Assert.Single(networks);
+            Assert.StartsWith("aspire-session-network-", network, StringComparison.Ordinal);
+            string record = Path.Combine(window.StateFolder, "aspire-containers", "ownership.json");
+            Ui.WaitFor(() => File.Exists(record) && Ui.Shared(record).Contains(session, StringComparison.Ordinal) && Ui.Shared(record).Contains(network, StringComparison.Ordinal),
+                "the session container recorded with its network as the orchestrator made them");
+
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Count == 0, "Stop to end the AppHost", TimeSpan.FromMinutes(1));
+            // Stop waits for its containers and network to go.
+            Assert.Null(Docker.State(session));
+            Assert.Null(Docker.Said("network", "inspect", network));
+        }
+        finally
+        {
+            window.Close();
+            RemoveMade();
+            if (network is not null)
+            {
+                Docker.Said("network", "rm", network);
+            }
+        }
+    }
+
     /// <summary>Why no AppHost here can make the tests' containers: no Linux engine, or no busybox in it (none is pulled).</summary>
     internal static string? WhyNot => Docker.WhyNot
         ?? (Docker.Said("image", "inspect", Docker.Image) is null ? $"The engine lacks {Docker.Image}, which these tests do not pull: docker pull {Docker.Image}" : null);
 
-    /// <summary>The starter's AppHost given a busybox container of each lifetime, carrying the run's label.</summary>
-    internal static void WithContainers(string hostFolder, Func<string, string, string> write)
+    /// <summary>The starter's AppHost given a busybox container of each lifetime (the session one alone without
+    /// <paramref name="kept"/>), carrying the run's label.</summary>
+    internal static void WithContainers(string hostFolder, Func<string, string, string> write, bool kept = true)
     {
         string source = Path.Combine(hostFolder, "AppHost.cs");
         string added = $"""
             builder.AddContainer("{Session}", "busybox", "1.37").WithArgs("sleep", "3600").WithContainerRuntimeArgs("--label", "{Docker.RunLabel}");
-            builder.AddContainer("{Kept}", "busybox", "1.37").WithArgs("sleep", "3600").WithLifetime(ContainerLifetime.Persistent).WithContainerRuntimeArgs("--label", "{Docker.RunLabel}");
+            {(kept ? $"builder.AddContainer(\"{Kept}\", \"busybox\", \"1.37\").WithArgs(\"sleep\", \"3600\").WithLifetime(ContainerLifetime.Persistent).WithContainerRuntimeArgs(\"--label\", \"{Docker.RunLabel}\");" : string.Empty)}
 
             """;
         string text = File.ReadAllText(source);
