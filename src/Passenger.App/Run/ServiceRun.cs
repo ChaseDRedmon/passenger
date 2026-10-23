@@ -100,6 +100,10 @@ public abstract class ServiceRun
     /// debugger), which an agent's answer carries too.</summary>
     public List<string> Notes { get; } = [];
 
+    /// <summary>Where its services' logs and traces are read (an AppHost's dashboard, a container run's own), null while it
+    /// has none: the Telemetry view and an agent's <c>telemetry</c> read every kind of run through it.</summary>
+    public virtual Telemetry.TelemetrySource? Telemetry => null;
+
     /// <summary>The .NET services held at their start for the debugger, which a restart holds again.</summary>
     public IReadOnlyList<IRunService> Held => [.. Services.Where(s => holds.ContainsKey(s.Name))];
 

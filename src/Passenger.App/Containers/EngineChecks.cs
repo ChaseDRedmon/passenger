@@ -221,6 +221,9 @@ internal sealed record Finding(ProblemSeverity Severity, string Message, string 
     /// .NET service reads that its environment never sets (<see cref="ComposeFixes.SetVariable"/>).</summary>
     public Func<TextSnapshot, IReadOnlyList<CSharp.EditorFix>>? Fixes { get; init; }
 
+    /// <summary>A warning of less weight, marked as information is (a connection string the settings give at localhost).</summary>
+    public bool Weak { get; init; }
+
     public Uri? Link { get; init; }
 
     public string? LinkText { get; init; }
@@ -369,7 +372,11 @@ internal abstract class EngineCheck : IDisposable
     private void Show(Outcome found)
     {
         web.ShowEngine([.. found.Findings.Where(f => f.Range is not null).Select(f =>
-            new Marker(f.Range!.Value, f.Severity == ProblemSeverity.Error ? MarkerKind.Error : MarkerKind.Warning, f.Message) { Link = f.Link, LinkText = f.LinkText })]);
+            new Marker(f.Range!.Value, f.Severity == ProblemSeverity.Error ? MarkerKind.Error : f.Weak ? MarkerKind.Info : MarkerKind.Warning, f.Message)
+            {
+                Link = f.Link,
+                LinkText = f.LinkText,
+            })]);
         if (Hints)
         {
             Document.InlayHints = found.Hints;

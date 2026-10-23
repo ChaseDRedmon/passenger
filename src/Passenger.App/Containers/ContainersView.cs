@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Passenger.App.Run;
+using Passenger.App.Telemetry;
 using Passenger.App.ToolWindows;
 using Passenger.Editor;
 
@@ -19,7 +20,8 @@ public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Wo
 /// <summary>The Containers window: the engine's Compose projects with their services and containers (stopped ones still
 /// listed), then every other container (Testcontainers' apart), images, volumes and networks, each row with its state,
 /// health, ports (links) and image; and the chosen container's Log, Stats, Files and Details (a service's its container's),
-/// or a project's merged Log and Stats.
+/// or a project's merged Log and Stats; and for a container run that collects them, its Telemetry (the Telemetry view, its
+/// logs and traces, a service's or container's own).
 /// It asks the engine only while shown: its lists once, then again as the engine's events say something changed; a
 /// container's log and stats stream only while their tab is shown. Its toolbar's buttons run the window's actions.</summary>
 public sealed class ContainersView : DockPanel
@@ -28,6 +30,7 @@ public sealed class ContainersView : DockPanel
     private const string StatsTab = "Stats";
     private const string FilesTab = "Files";
     private const string DetailsTab = "Details";
+    private const string TelemetryTab = "Telemetry";
 
     private readonly ContainersParts parts;
     private readonly ListBox list;
@@ -58,6 +61,8 @@ public sealed class ContainersView : DockPanel
         Files = new ContainerFilesPane(parts.Engine, parts.StateFolder);
         Details = new ContainerDetailsPane(parts.Engine, parts.Browse, () => State?.Endpoint);
         Log.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
+        Telemetry.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
+        Telemetry.ShownChanged += (_, _) => ShowChosen();
 
         StackPanel tools = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach ((string action, string icon) in (ReadOnlySpan<(string, string)>)[
@@ -119,7 +124,7 @@ public sealed class ContainersView : DockPanel
         nothingChosen = new TextBlock { Classes = { "emptyText" }, Text = "Choose a container or a Compose project to see its log and stats" };
 
         StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
-        foreach (string name in (string[])[LogTab, StatsTab, FilesTab, DetailsTab])
+        foreach (string name in (string[])[LogTab, StatsTab, FilesTab, DetailsTab, TelemetryTab])
         {
             ToggleButton tab = ToolTabs.Tab(name, name == shownTab);
             tab.Name = $"containers{name}Tab";
@@ -157,6 +162,13 @@ public sealed class ContainersView : DockPanel
 
     public ContainerDetailsPane Details { get; }
 
+    /// <summary>The Telemetry tab's logs and traces.</summary>
+    public TelemetryView Telemetry { get; } = new();
+
+    /// <summary>Where a Compose project's logs and traces are read, by its name: the container run of this window's folder
+    /// that runs Passenger's dashboard for it; null for any other.</summary>
+    public Func<string, TelemetrySource?>? TelemetryOf { get; set; }
+
     /// <summary>What the engine held at the last read.</summary>
     public ContainerSnapshot Snapshot { get; private set; } = ContainerSnapshot.Empty;
 
@@ -188,7 +200,7 @@ public sealed class ContainersView : DockPanel
     /// <summary>The row chosen, which the window's actions act on.</summary>
     public ContainerRow? Chosen => (list.SelectedItem as RunItem<ContainerRow>)?.Data;
 
-    /// <summary>The detail tab shown: Log, Stats, Files or Details.</summary>
+    /// <summary>The detail tab shown: Log, Stats, Files, Details or Telemetry.</summary>
     public string ShownTab => shownTab;
 
     /// <summary>Chooses a row by its key, as a click would.</summary>
@@ -262,7 +274,11 @@ public sealed class ContainersView : DockPanel
         Log.Stop();
         Stats.Stop();
         Details.Show(null);
+        Telemetry.Watch(null, null);
     }
+
+    /// <summary>A run's telemetry came or went (its dashboard up, the run stopped): the tabs follow.</summary>
+    public void TelemetryChanged() => ShowChosen();
 
     /// <summary>Reads the engine's state and what it holds again, off the UI thread; the rows follow, the one chosen kept.</summary>
     public async Task RefreshAsync()
@@ -463,9 +479,11 @@ public sealed class ContainersView : DockPanel
         bool container = row?.Container is not null;
         bool detailed = row is { Kind: ContainerRowKind.Service or ContainerRowKind.Container } && row.Containers.Count > 0;
         bool streams = shown && row is { Kind: ContainerRowKind.Project or ContainerRowKind.Service or ContainerRowKind.Container };
+        TelemetrySource? telemetry = (row?.Project?.Name ?? row?.Container?.Project) is { } project ? TelemetryOf?.Invoke(project) : null;
         tabs[FilesTab].IsVisible = container;
         tabs[DetailsTab].IsVisible = detailed;
-        if ((shownTab == FilesTab && !container) || (shownTab == DetailsTab && !detailed))
+        tabs[TelemetryTab].IsVisible = telemetry is not null;
+        if ((shownTab == FilesTab && !container) || (shownTab == DetailsTab && !detailed) || (shownTab == TelemetryTab && telemetry is null))
         {
             shownTab = LogTab;
         }
@@ -481,12 +499,15 @@ public sealed class ContainersView : DockPanel
             StatsTab => Stats,
             FilesTab => Files,
             DetailsTab => Details,
+            TelemetryTab => Telemetry.Both,
             _ => Log,
         };
         Log.Show(streams && shownTab == LogTab ? row : null);
         Stats.Show(streams && shownTab == StatsTab ? row : null);
         Files.Show(streams && shownTab == FilesTab ? row : null);
         Details.Show(streams && shownTab == DetailsTab ? row : null);
+        // A service's or container's own records; a project's every service's.
+        Telemetry.Watch(streams && shownTab == TelemetryTab ? telemetry : null, Telemetry.Shown, row?.Service ?? row?.Container?.Service);
     }
 
     /// <summary>Runs an action's command on a row as the window's one action of that id under way, the status bar saying

@@ -7,6 +7,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Passenger.App.Containers;
+using Passenger.App.Telemetry;
 using Passenger.App.ToolWindows;
 using Passenger.Editor;
 using Passenger.Text;
@@ -22,11 +23,10 @@ public sealed record AspireRow(AspireResource Resource, int Depth, bool Expands,
 }
 
 /// <summary>The Aspire window, the Containers window's parts over an AppHost's resources: an icon toolbar of the window's
-/// actions (the AppHost chosen, Discover, Refresh, a resource's Debug, Attach, Run without Debugger, Profile, its commands,
-/// address, source and container), the resources as rows (<see cref="RunRows"/>: a chevron over a parent's children, the
-/// state's dot, health's tag and addresses as links), and the chosen one's Details (<see cref="AspireDetailsPane"/>), the
-/// resources' consoles merged with a toggle each and Find (<see cref="MergedLog"/>), the dashboard's structured logs and
-/// traces, and the AppHost's own console. An AppHost the window runs streams live; another is read through the CLI.</summary>
+/// actions, the resources as rows (<see cref="RunRows"/>: a chevron over a parent's children, the state's dot, health's tag
+/// and addresses as links), the chosen one's Details (<see cref="AspireDetailsPane"/>), the resources' consoles merged
+/// (<see cref="MergedLog"/>), the dashboard's structured logs and traces (<see cref="TelemetryView"/>'s pages), and the
+/// AppHost's own console. An AppHost the window runs streams live; another is read through the CLI.</summary>
 public sealed class AspireView : DockPanel, IDisposable
 {
     private const string DetailsPage = "Details";
@@ -47,14 +47,7 @@ public sealed class AspireView : DockPanel, IDisposable
     private readonly TextBlock readiness = new() { Classes = { "muted" }, Margin = new Thickness(8, 6), TextWrapping = TextWrapping.Wrap };
     private readonly Dictionary<string, (ToggleButton Tab, Control Page)> pages = new(StringComparer.Ordinal);
     private readonly TextBlock consoleStatus = Said();
-    private readonly TextBlock logsStatus = Said();
-    private readonly TextBlock tracesStatus = Said();
-    private readonly OutputView logDetails = new(toolbar: false);
-    private readonly OutputView spanDetails = new(toolbar: false);
-    private readonly Button logTrace;
-    private readonly Button spanLogs;
     private IReadOnlyList<AspireResource> resources = [];
-    private IReadOnlyList<AspireTrace> traces = [];
     private CancellationTokenSource? reading;
     private readonly CancellationTokenSource commandLifetime = new();
     private int generation;
@@ -72,17 +65,12 @@ public sealed class AspireView : DockPanel, IDisposable
     /// <summary>Discover or Refresh asked while the window was hidden, which their actions show it for first: done as it shows.</summary>
     private bool discoverWhenShown;
     private bool refreshWhenShown;
-    private CancellationTokenSource? telemetryReading;
-    private (Uri Endpoint, string ApiKey, string Page, string AppHost)? telemetrySource;
     private readonly Dictionary<string, string> streamedResources = new(StringComparer.Ordinal);
     private Func<string, bool>? requestAction;
     private ActionRegistry? actionRegistry;
     private string? pendingCommand;
     private AspireSelection? pendingCommandSelection;
     private Uri? pendingLink;
-    private readonly object telemetryGate = new();
-    private Action? pendingTelemetry;
-    private bool telemetryQueued;
 
     public AspireView(AspireClient? client = null)
     {
@@ -144,17 +132,12 @@ public sealed class AspireView : DockPanel, IDisposable
         Details = new AspireDetailsPane(uri => Browse?.Invoke(uri), OpenFile);
         Log = new MergedLog("aspireLogFind", consoleStatus);
         Log.Toggled += (_, _) => UpdateConsole(again: true);
-        StructuredLogs = List<AspireStructuredLog>(log => log.ToString(), "Aspire structured logs");
-        TraceList = List<AspireTrace>(trace => trace.ToString(), "Aspire traces");
-        SpanList = List<SpanRow>(span => new string(' ', Math.Min(span.Depth, 32) * 2) + span.Span, "Trace span hierarchy");
-        StructuredLogs.SelectionChanged += (_, _) => ShowLog();
-        TraceList.SelectionChanged += (_, _) => ShowTrace();
-        SpanList.SelectionChanged += (_, _) => ShowSpan();
-        logTrace = PageTool("Icon.Locate", "Show the structured log's trace and span", AppActions.AspireShowTrace);
-        spanLogs = PageTool("Icon.DocumentText", "Show a retained log of this trace and span", AppActions.AspireShowRelatedLogs);
-        logTrace.IsEnabled = false;
-        spanLogs.IsEnabled = false;
-        foreach (OutputView output in new[] { Console, logDetails, spanDetails })
+        // A log's trace and a span's logs are the window's actions here, as its other buttons are.
+        Telemetry = new TelemetryView(AppActions.AspireShowTrace, AppActions.AspireShowRelatedLogs, id => requestAction?.Invoke(id) == true);
+        Telemetry.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
+        Telemetry.Folders = () => SelectedApp is { } app ? [Path.GetDirectoryName(app.AppHostPath)!] : [];
+        Telemetry.PageWanted += (_, wanted) => ShowPage(wanted == TelemetryPage.Logs ? LogsPage : TracesPage);
+        foreach (OutputView output in new[] { Console })
         {
             output.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
             output.Links.Folders = () => SelectedApp is { } app ? [Path.GetDirectoryName(app.AppHostPath)!] : [];
@@ -163,14 +146,8 @@ public sealed class AspireView : DockPanel, IDisposable
         StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
         AddPage(DetailsPage, Details, strip);
         AddPage(ConsolePage, Log, strip);
-        AddPage(LogsPage, WithHeader(PageBar(logsStatus, logTrace), Split(StructuredLogs, logDetails)), strip);
-        Grid traceBody = new() { ColumnDefinitions = new ColumnDefinitions("*,1,2*") };
-        traceBody.Children.Add(new Border { Classes = { "framed" }, Child = TraceList });
-        traceBody.Children.Add(new HairlineDivider(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 });
-        Control spanBody = Split(SpanList, spanDetails);
-        spanBody[Grid.ColumnProperty] = 2;
-        traceBody.Children.Add(spanBody);
-        AddPage(TracesPage, WithHeader(PageBar(tracesStatus, spanLogs), traceBody), strip);
+        AddPage(LogsPage, Telemetry.LogsPage, strip);
+        AddPage(TracesPage, Telemetry.TracesPage, strip);
         AddPage(AppHostPage, WithHeader(readiness, appHostConsole), strip);
         Border tabBar = new()
         {
@@ -219,9 +196,12 @@ public sealed class AspireView : DockPanel, IDisposable
 
     public Editors.FindBar Find => Log.Find;
     public OutputView Console => Log.Console;
-    public ListBox StructuredLogs { get; }
-    public ListBox TraceList { get; }
-    public ListBox SpanList { get; }
+
+    /// <summary>The AppHost's structured logs and traces, the Telemetry view every kind of run shows them in.</summary>
+    public TelemetryView Telemetry { get; }
+    public ListBox StructuredLogs => Telemetry.StructuredLogs;
+    public ListBox TraceList => Telemetry.TraceList;
+    public ListBox SpanList => Telemetry.SpanList;
 
     /// <summary>The window's toolbar buttons, by the actions they run.</summary>
     public IReadOnlyDictionary<string, Button> Tools => tools.ToDictionary(t => t.Action, t => t.Button);
@@ -246,7 +226,7 @@ public sealed class AspireView : DockPanel, IDisposable
     public Func<AspireSelection, CancellationToken, IAsyncEnumerable<IReadOnlyList<AspireConsoleLog>>?>? ConsoleProvider { get; set; }
 
     /// <summary>Returns this app's dashboard endpoint and key on the UI thread. Null means no owned telemetry.</summary>
-    public Func<string, (Uri Endpoint, string ApiKey)?>? TelemetryProvider { get; set; }
+    public Func<string, TelemetrySource?>? TelemetryProvider { get; set; }
 
     /// <summary>Whether the run of the AppHost at a path left a resource unstarted, as its configuration says Don't start
     /// (<see cref="AspireAppRun.IsLeftUnstarted"/>); null for an AppHost the window did not start. Called on the UI thread.</summary>
@@ -338,21 +318,9 @@ public sealed class AspireView : DockPanel, IDisposable
 
     public void OpenFind() => Find.Open(replace: false);
 
-    public void ShowSelectedTrace()
-    {
-        if (StructuredLogs.SelectedItem is AspireStructuredLog log)
-        {
-            SelectTrace(log.TraceId, log.SpanId);
-        }
-    }
+    public void ShowSelectedTrace() => Telemetry.ShowSelectedTrace();
 
-    public void ShowRelatedLogs()
-    {
-        if (TraceList.SelectedItem is AspireTrace trace && SpanList.SelectedItem is SpanRow row)
-        {
-            SelectLogs(trace.TraceId, row.Span.SpanId);
-        }
-    }
+    public void ShowRelatedLogs() => Telemetry.ShowRelatedLogs();
 
     public string? TakePendingCommand()
     {
@@ -851,121 +819,9 @@ public sealed class AspireView : DockPanel, IDisposable
         return Task.CompletedTask;
     }
 
-    private void UpdateTelemetry()
-    {
-        (Uri Endpoint, string ApiKey, string Page, string AppHost)? next =
-            !disposed && displayVisible && currentPage is (LogsPage or TracesPage)
-            && SelectedApp is { } selected && TelemetryProvider?.Invoke(selected.AppHostPath) is { } source
-                ? (source.Endpoint, source.ApiKey, currentPage, selected.AppHostPath) : null;
-        if (telemetryReading is not null && telemetrySource == next)
-        {
-            return;
-        }
-        telemetryReading?.Cancel();
-        telemetryReading?.Dispose();
-        telemetryReading = null;
-        telemetrySource = next;
-        if (next is not { } dashboard)
-        {
-            return;
-        }
-        telemetryReading = new CancellationTokenSource();
-        CancellationToken cancel = telemetryReading.Token;
-        _ = WatchTelemetryAsync(dashboard.Endpoint, dashboard.ApiKey, currentPage, cancel);
-    }
-
-    private async Task WatchTelemetryAsync(Uri endpoint, string key, string name, CancellationToken cancel)
-    {
-        TextBlock label = name == TracesPage ? tracesStatus : logsStatus;
-        label.Text = "Connecting to dashboard telemetry…";
-        try
-        {
-            if (name == LogsPage)
-            {
-                await AspireTelemetry.WatchLogsAsync(endpoint, key, logs => PostTelemetry(() =>
-                {
-                    if (disposed || cancel.IsCancellationRequested || !displayVisible || currentPage != name)
-                    {
-                        return;
-                    }
-                    AspireStructuredLog? selected = StructuredLogs.SelectedItem as AspireStructuredLog;
-                    StructuredLogs.ItemsSource = logs;
-                    StructuredLogs.SelectedItem = logs.FirstOrDefault(log => log.Data.GetRawText() == selected?.Data.GetRawText());
-                    logsStatus.Text = $"Live · {Core.Plural.Of(logs.Count, "retained structured log")}";
-                }, cancel), cancel).ConfigureAwait(false);
-            }
-            else
-            {
-                await AspireTelemetry.WatchTracesAsync(endpoint, key, found => PostTelemetry(() =>
-                {
-                    if (disposed || cancel.IsCancellationRequested || !displayVisible || currentPage != name)
-                    {
-                        return;
-                    }
-                    string? selected = (TraceList.SelectedItem as AspireTrace)?.TraceId;
-                    string? selectedSpan = (SpanList.SelectedItem as SpanRow)?.Span.SpanId;
-                    traces = found;
-                    TraceList.ItemsSource = traces;
-                    TraceList.SelectedItem = traces.FirstOrDefault(trace => trace.TraceId == selected);
-                    if (selected is not null && (TraceList.SelectedItem as AspireTrace)?.TraceId == selected
-                        && SpanList.Items.OfType<SpanRow>().FirstOrDefault(row => row.Span.SpanId == selectedSpan) is { } span)
-                    {
-                        SpanList.SelectedItem = span;
-                    }
-                    tracesStatus.Text = $"Live · {Core.Plural.Of(traces.Count, "retained trace")}";
-                }, cancel), cancel).ConfigureAwait(false);
-            }
-            UiThread.Post(() =>
-            {
-                if (!disposed && !cancel.IsCancellationRequested)
-                {
-                    label.Text = "Telemetry ended. Refresh to reconnect.";
-                }
-            });
-        }
-        catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
-        catch (Exception error) when (Expected(error) || error is System.Net.Http.HttpRequestException)
-        {
-            string reason = ContainerSecrets.InValue(error.Message.Replace(key, ContainerSecrets.Masked, StringComparison.Ordinal));
-            reason = reason.Replace('\r', ' ').Replace('\n', ' ');
-            reason = reason.Length > 512 ? reason[..512] : reason;
-            UiThread.Post(() =>
-            {
-                if (!disposed && !cancel.IsCancellationRequested)
-                {
-                    label.Text = $"Dashboard telemetry unavailable: {reason} Refresh to reconnect.";
-                }
-            });
-        }
-    }
-
-    private void PostTelemetry(Action update, CancellationToken cancel)
-    {
-        lock (telemetryGate)
-        {
-            if (cancel.IsCancellationRequested)
-            {
-                return;
-            }
-            pendingTelemetry = update;
-            if (telemetryQueued)
-            {
-                return;
-            }
-            telemetryQueued = true;
-        }
-        UiThread.Post(() =>
-        {
-            Action? apply;
-            lock (telemetryGate)
-            {
-                apply = pendingTelemetry;
-                pendingTelemetry = null;
-                telemetryQueued = false;
-            }
-            apply?.Invoke();
-        });
-    }
+    private void UpdateTelemetry() =>
+        Telemetry.Watch(!disposed && displayVisible && SelectedApp is { } selected ? TelemetryProvider?.Invoke(selected.AppHostPath) : null,
+            currentPage switch { LogsPage => TelemetryPage.Logs, TracesPage => TelemetryPage.Traces, _ => null });
 
     private async Task WorkAsync(int version, CancellationToken cancel, Func<Task> work)
     {
@@ -1021,20 +877,9 @@ public sealed class AspireView : DockPanel, IDisposable
 
     private void ClearTelemetry()
     {
-        telemetryReading?.Cancel();
-        telemetryReading?.Dispose();
-        telemetryReading = null;
-        telemetrySource = null;
         Console.Clear();
-        StructuredLogs.ItemsSource = Array.Empty<AspireStructuredLog>();
-        traces = [];
-        TraceList.ItemsSource = traces;
-        SpanList.ItemsSource = Array.Empty<SpanRow>();
-        logDetails.Clear();
-        spanDetails.Clear();
+        Telemetry.Clear();
         consoleStatus.Text = string.Empty;
-        logsStatus.Text = "Open Structured logs for live dashboard telemetry.";
-        tracesStatus.Text = "Open Traces for live dashboard telemetry.";
     }
 
     /// <summary>What the window says of its AppHost and resources: beside the toolbar, and in the list's place while it is empty.</summary>
@@ -1194,137 +1039,6 @@ public sealed class AspireView : DockPanel, IDisposable
         Details.Show(SelectedResource, Chosen?.LeftUnstarted == true);
     }
 
-    private void ShowLog()
-    {
-        logDetails.Clear();
-        logTrace.IsEnabled = false;
-        if (StructuredLogs.SelectedItem is not AspireStructuredLog log)
-        {
-            return;
-        }
-        logDetails.Append(JsonSerializer.Serialize(log.Data, new JsonSerializerOptions { WriteIndented = true }) + "\n");
-        AppendSource(logDetails, log.Data);
-        AppendException(logDetails, log.Data);
-        logTrace.IsEnabled = !string.IsNullOrEmpty(log.TraceId);
-    }
-
-    public void SelectTrace(string? traceId, string? spanId = null)
-    {
-        UiThread.Check();
-        AspireTrace? trace = traces.FirstOrDefault(item => item.TraceId == traceId);
-        if (trace is null)
-        {
-            logsStatus.Text = "The correlated trace is outside this bounded snapshot. Select its service and refresh Traces.";
-            return;
-        }
-        TraceList.SelectedItem = trace;
-        if (spanId is not null)
-        {
-            SpanList.SelectedItem = SpanList.Items.OfType<SpanRow>().FirstOrDefault(row => row.Span.SpanId == spanId);
-        }
-        ShowPage(TracesPage);
-    }
-
-    public void SelectLogs(string traceId, string? spanId = null)
-    {
-        UiThread.Check();
-        AspireStructuredLog? log = StructuredLogs.Items.OfType<AspireStructuredLog>()
-            .FirstOrDefault(item => item.TraceId == traceId && (spanId is null || item.SpanId == spanId));
-        if (log is null)
-        {
-            tracesStatus.Text = "No correlated log is retained in this resource snapshot. Select the span's service and refresh logs.";
-            return;
-        }
-        StructuredLogs.SelectedItem = log;
-        ShowPage(LogsPage);
-    }
-
-    private void ShowTrace()
-    {
-        spanDetails.Clear();
-        if (TraceList.SelectedItem is not AspireTrace trace)
-        {
-            SpanList.ItemsSource = Array.Empty<SpanRow>();
-            return;
-        }
-        List<SpanRow> rows = [];
-        HashSet<string> visited = new(StringComparer.Ordinal);
-        Dictionary<string, AspireSpan[]> children = trace.Spans.GroupBy(span => span.ParentSpanId ?? string.Empty)
-            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
-        HashSet<string> ids = trace.Spans.Select(span => span.SpanId).ToHashSet(StringComparer.Ordinal);
-        foreach (AspireSpan root in trace.Spans.Where(span => span.ParentSpanId is null || !ids.Contains(span.ParentSpanId)))
-        {
-            Walk(root);
-        }
-        foreach (AspireSpan orphan in trace.Spans)
-        {
-            Walk(orphan);
-        }
-        SpanList.ItemsSource = rows;
-        SpanList.SelectedItem = rows.FirstOrDefault();
-
-        void Walk(AspireSpan root)
-        {
-            Stack<(AspireSpan Span, int Depth)> pending = new();
-            pending.Push((root, 0));
-            while (pending.TryPop(out (AspireSpan Span, int Depth) next))
-            {
-                if (!visited.Add(next.Span.SpanId))
-                {
-                    continue;
-                }
-                rows.Add(new(next.Span, next.Depth));
-                if (children.TryGetValue(next.Span.SpanId, out AspireSpan[]? descendants))
-                {
-                    foreach (AspireSpan child in descendants.Reverse())
-                    {
-                        pending.Push((child, next.Depth + 1));
-                    }
-                }
-            }
-        }
-    }
-
-    private void ShowSpan()
-    {
-        spanDetails.Clear();
-        spanLogs.IsEnabled = false;
-        if (SpanList.SelectedItem is SpanRow row)
-        {
-            spanDetails.Append(JsonSerializer.Serialize(row.Span.Data, new JsonSerializerOptions { WriteIndented = true }) + "\n");
-            AppendSource(spanDetails, row.Span.Data);
-            AppendException(spanDetails, row.Span.Data);
-            spanLogs.IsEnabled = true;
-        }
-    }
-
-    private static void AppendException(OutputView output, JsonElement data)
-    {
-        if (AspireJson.String(data, "exception") is { Length: > 0 } exception)
-        {
-            output.Append($"\n{exception}\n", error: true);
-        }
-        foreach (JsonProperty attribute in AspireJson.Properties(data, "attributes"))
-        {
-            if (attribute.Name == "exception.stacktrace" && attribute.Value.ValueKind == JsonValueKind.String)
-            {
-                output.Append($"\n{attribute.Value.GetString()}\n", error: true);
-            }
-        }
-    }
-
-    private static void AppendSource(OutputView output, JsonElement data)
-    {
-        JsonProperty[] attributes = AspireJson.Properties(data, "attributes").ToArray();
-        string? path = attributes.FirstOrDefault(item => item.Name is "code.file.path" or "code.filepath").Value.ValueKind == JsonValueKind.String
-            ? attributes.First(item => item.Name is "code.file.path" or "code.filepath").Value.GetString() : null;
-        JsonElement line = attributes.FirstOrDefault(item => item.Name is "code.line.number" or "code.lineno").Value;
-        if (path is not null && int.TryParse(line.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : line.ToString(), out int number) && number > 0)
-        {
-            output.Append($"\nSource: at telemetry in {path}:line {number}\n");
-        }
-    }
-
     private void AddPage(string name, Control content, StackPanel strip)
     {
         ToggleButton tab = ToolTabs.Tab(name, false);
@@ -1347,57 +1061,12 @@ public sealed class AspireView : DockPanel, IDisposable
     /// <summary>The pages' names, as their tabs and actions say them.</summary>
     public static IReadOnlyList<string> Pages { get; } = [DetailsPage, ConsolePage, LogsPage, TracesPage, AppHostPage];
 
-    /// <summary>A page's toolbar button, which runs one of the window's actions and shows its work.</summary>
-    private Button PageTool(string icon, string tip, string id)
-    {
-        Button button = ToolButtons.Of(icon, tip, () => requestAction?.Invoke(id));
-        button.Name = id;
-        ActionButtons.Mark(button, id);
-        return button;
-    }
-
-    /// <summary>A page's bar: what it says, its buttons at the right.</summary>
-    private static DockPanel PageBar(TextBlock said, params Button[] buttons)
-    {
-        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, [DockProperty] = Dock.Right };
-        foreach (Button button in buttons)
-        {
-            right.Children.Add(button);
-        }
-        return new DockPanel { Height = 32, Margin = new Thickness(8, 0), Children = { right, said } };
-    }
-
     private static TextBlock Said() => new() { Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-
-    private static ListBox List<T>(Func<T, string> text, string name)
-    {
-        ListBox list = new()
-        {
-            Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<T>((item, _) => item is null ? null : new ShrinkingRow
-            {
-                Height = ListRow.Height,
-                Children = { new TextBlock { Text = text(item), VerticalAlignment = VerticalAlignment.Center } },
-            }),
-        };
-        AutomationProperties.SetName(list, name);
-        return list;
-    }
 
     private static DockPanel WithHeader(Control header, Control body)
     {
         DockPanel.SetDock(header, Dock.Top);
         return new DockPanel { Children = { header, body } };
-    }
-
-    private static Control Split(Control top, Control bottom)
-    {
-        Grid split = new() { RowDefinitions = new RowDefinitions("*,1,*") };
-        split.Children.Add(new Border { Classes = { "framed" }, Child = top });
-        split.Children.Add(new HairlineDivider(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 });
-        bottom[Grid.RowProperty] = 2;
-        split.Children.Add(bottom);
-        return split;
     }
 
     private static bool Expected(Exception error) => error is IOException or InvalidDataException or InvalidOperationException or TimeoutException
@@ -1415,9 +1084,7 @@ public sealed class AspireView : DockPanel, IDisposable
             disposed = true;
             SetAppHostConsole(null);
             Find.Detach();
-            telemetryReading?.Cancel();
-            telemetryReading?.Dispose();
-            telemetryReading = null;
+            Telemetry.Dispose();
             commandLifetime.Cancel();
             commandLifetime.Dispose();
             StopConsole();
@@ -1428,6 +1095,4 @@ public sealed class AspireView : DockPanel, IDisposable
             ResetApp();
         }
     }
-
-    public sealed record SpanRow(AspireSpan Span, int Depth);
 }

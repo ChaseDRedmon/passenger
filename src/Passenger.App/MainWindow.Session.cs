@@ -56,7 +56,11 @@ public partial class MainWindow
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
         OpenBrowserOnceListening, () => StateFolder, work, ShowAspireEngineAsync)
     {
-        Reveal = project => containersView?.Reveal(project),
+        Reveal = project =>
+        {
+            containersView?.Reveal(project);
+            containersView?.TelemetryChanged();
+        },
         Tools = () => ToolsSource,
         DevCertificates = DevCertificates,
         AskCertificate = AskCertificateAsync,

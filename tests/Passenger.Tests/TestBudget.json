@@ -32,6 +32,7 @@
     "McpWpfAppTests": 60,
     "ContainersTests": 150,
     "ContainerRunsTests": 300,
+    "ContainerTelemetryTests": 90,
     "ContainerRunDebuggingTests": 180,
     "ContainerServicesTests": 120,
     "ContainerDebuggingTests": 360,
