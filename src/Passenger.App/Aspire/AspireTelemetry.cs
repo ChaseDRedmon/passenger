@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net.Http;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Passenger.App.Containers;
@@ -10,33 +9,34 @@ namespace Passenger.App.Aspire;
 /// <summary>View-scoped Dashboard streams. Snapshots are bounded recent history, not lossless telemetry storage.</summary>
 public static class AspireTelemetry
 {
-    /// <summary>Calls back on the reader thread with immutable recent-log snapshots until canceled. Does not retry.</summary>
+    /// <summary>Calls back on the reader thread with what each envelope changed of the recent logs kept, until canceled. Does
+    /// not retry.</summary>
     public static Task WatchLogsAsync(Uri baseUri, string dashboardApiKey,
-        Action<IReadOnlyList<AspireStructuredLog>> changed, CancellationToken cancel)
-        => LogsAsync(baseUri, dashboardApiKey, changed, cancel);
+        Action<AspireLogBatch> changed, CancellationToken cancel)
+        => LogsAsync(baseUri, dashboardApiKey, new RecentLogs(), changed, cancel);
 
     /// <summary>Reads bounded recent logs without opening a live stream. An unresolved OTLP resource filter returns no records; call again explicitly to refresh.</summary>
     public static async Task<IReadOnlyList<AspireStructuredLog>> ReadLogsAsync(Uri baseUri, string dashboardApiKey,
         string? resource = null, string? traceId = null, int limit = 200, CancellationToken cancel = default)
     {
-        IReadOnlyList<AspireStructuredLog> result = [];
-        await LogsAsync(baseUri, dashboardApiKey, logs => result = logs, cancel, follow: false,
+        RecentLogs kept = new();
+        await LogsAsync(baseUri, dashboardApiKey, kept, _ => { }, cancel, follow: false,
             SnapshotQuery(resource, traceId, Math.Clamp(limit, 1, AspireClient.LogLimit))).ConfigureAwait(false);
-        return result;
+        return kept.Kept;
     }
 
-    private static Task LogsAsync(Uri baseUri, string dashboardApiKey,
-        Action<IReadOnlyList<AspireStructuredLog>> changed, CancellationToken cancel, bool follow = true, string? query = null)
+    private static Task LogsAsync(Uri baseUri, string dashboardApiKey, RecentLogs logs,
+        Action<AspireLogBatch> changed, CancellationToken cancel, bool follow = true, string? query = null)
     {
         ArgumentNullException.ThrowIfNull(changed);
-        Queue<(AspireStructuredLog Log, int Bytes)> logs = new();
-        int bytes = 0;
         return ReadAsync(baseUri, dashboardApiKey, "logs", envelope =>
         {
+            List<AspireStructuredLog> added = [];
+            List<AspireStructuredLog> evicted = [];
             foreach ((JsonElement row, string resource) in Records(envelope, "resourceLogs", "scopeLogs", "logRecords"))
             {
                 Dictionary<string, string?> attributes = Attributes(row);
-                JsonElement data = JsonSerializer.SerializeToElement(new
+                (JsonElement data, int size) = Masked(new
                 {
                     timestamp = Timestamp(row, "timeUnixNano"),
                     severity = AspireJson.String(row, "severityText") ?? "Unknown",
@@ -46,19 +46,47 @@ public static class AspireTelemetry
                     spanId = Identity(row, "spanId", 16, required: false),
                     exception = attributes.GetValueOrDefault("exception.stacktrace") ?? attributes.GetValueOrDefault("exception.message"),
                     attributes,
-                });
-                data = MaskCredentials(data, dashboardApiKey);
-                int size = Encoding.UTF8.GetByteCount(data.GetRawText());
-                logs.Enqueue((new AspireStructuredLog(data), size));
-                bytes += size;
-                while (logs.Count > AspireClient.LogLimit || bytes > AspireClient.ResponseByteLimit
-                    || logs.Select(item => AspireJson.String(item.Log.Data, "resourceName")).Distinct(StringComparer.Ordinal).Count() > AspireClient.ResourceLimit)
-                {
-                    bytes -= logs.Dequeue().Bytes;
-                }
+                }, dashboardApiKey);
+                added.Add(logs.Add(data, resource, size, evicted));
             }
-            changed(Array.AsReadOnly(logs.Select(item => item.Log).ToArray()));
+            changed(new AspireLogBatch(added, evicted));
         }, cancel, follow, query);
+    }
+
+    /// <summary>The recent logs a reader keeps, oldest first, within the dashboard's bounds: each log counted as it comes and
+    /// goes (its bytes, its resource), so a log costs what it adds, never a look over all those kept.</summary>
+    private sealed class RecentLogs
+    {
+        private readonly Queue<(AspireStructuredLog Log, string Resource, int Bytes)> logs = new();
+        private readonly Dictionary<string, int> resources = new(StringComparer.Ordinal);
+        private int bytes;
+        private long heard;
+
+        public IReadOnlyList<AspireStructuredLog> Kept => Array.AsReadOnly(logs.Select(item => item.Log).ToArray());
+
+        /// <summary>Keeps a log, the oldest past the bounds evicted into <paramref name="evicted"/>, oldest first.</summary>
+        public AspireStructuredLog Add(JsonElement data, string resource, int size, List<AspireStructuredLog> evicted)
+        {
+            AspireStructuredLog log = new(data) { Sequence = ++heard };
+            logs.Enqueue((log, resource, size));
+            bytes += size;
+            resources[resource] = resources.GetValueOrDefault(resource) + 1;
+            while (logs.Count > AspireClient.LogLimit || bytes > AspireClient.ResponseByteLimit || resources.Count > AspireClient.ResourceLimit)
+            {
+                (AspireStructuredLog old, string from, int oldBytes) = logs.Dequeue();
+                bytes -= oldBytes;
+                if (resources[from] == 1)
+                {
+                    resources.Remove(from);
+                }
+                else
+                {
+                    resources[from]--;
+                }
+                evicted.Add(old);
+            }
+            return log;
+        }
     }
 
     /// <summary>Assembles recent traces by trace/span identity. Late spans update retained traces; evicted spans are not recovered.</summary>
@@ -81,10 +109,7 @@ public static class AspireTelemetry
         Action<IReadOnlyList<AspireTrace>> changed, CancellationToken cancel, bool follow = true, string? query = null, string? requestedTraceId = null)
     {
         ArgumentNullException.ThrowIfNull(changed);
-        Dictionary<string, Dictionary<string, AspireSpan>> traces = new(StringComparer.Ordinal);
-        LinkedList<string> recent = new();
-        int bytes = 0;
-        int count = 0;
+        RecentTraces traces = new();
         return ReadAsync(baseUri, dashboardApiKey, follow ? "spans" : requestedTraceId is null ? "traces" : $"traces/{requestedTraceId.ToLowerInvariant()}", envelope =>
         {
             foreach ((JsonElement row, string resource) in Records(envelope, "resourceSpans", "scopeSpans", "spans"))
@@ -99,7 +124,7 @@ public static class AspireTelemetry
                 }
                 int status = row.TryGetProperty("status", out JsonElement statusData)
                     && statusData.TryGetProperty("code", out JsonElement code) && code.TryGetInt32(out int number) ? number : 0;
-                JsonElement data = JsonSerializer.SerializeToElement(new
+                (JsonElement data, int size) = Masked(new
                 {
                     traceId,
                     spanId,
@@ -115,54 +140,108 @@ public static class AspireTelemetry
                     attributes = Attributes(row),
                     events = Optional(row, "events"),
                     links = Optional(row, "links"),
-                });
-                if (!traces.TryGetValue(traceId, out Dictionary<string, AspireSpan>? spans))
-                {
-                    traces.Add(traceId, spans = new(StringComparer.Ordinal));
-                }
-                if (spans.TryGetValue(spanId, out AspireSpan? previous))
-                {
-                    bytes -= SpanBytes(previous);
-                    count--;
-                }
-                AspireSpan span = new(MaskCredentials(data, dashboardApiKey));
-                spans[spanId] = span;
-                bytes += SpanBytes(span);
-                count++;
-                recent.Remove(traceId);
-                recent.AddFirst(traceId);
-                while (traces.Count > AspireClient.TraceLimit || count > AspireClient.SpanLimit || bytes > AspireClient.ResponseByteLimit
-                    || traces.Values.SelectMany(items => items.Values).Select(item => item.Source).Distinct(StringComparer.Ordinal).Count() > AspireClient.ResourceLimit)
-                {
-                    string oldest = recent.Last!.Value;
-                    foreach (AspireSpan removed in traces[oldest].Values)
-                    {
-                        bytes -= SpanBytes(removed);
-                        count--;
-                    }
-                    traces.Remove(oldest);
-                    recent.RemoveLast();
-                }
+                }, dashboardApiKey);
+                traces.Add(traceId, new KeptSpan(new AspireSpan(data), spanId, resource, start, end, size, status == 2));
             }
-            changed(Array.AsReadOnly(recent.Select(id => Trace(id, traces[id].Values)).ToArray()));
+            changed(traces.Snapshot());
         }, cancel, follow, query);
     }
 
-    private static AspireTrace Trace(string id, IEnumerable<AspireSpan> values)
+    /// <summary>A span a reader keeps, with what its trace is made from and what its bounds count, each read once.</summary>
+    private readonly record struct KeptSpan(AspireSpan Span, string Id, string Source, ulong Start, ulong End, int Bytes, bool Failed);
+
+    /// <summary>The recent traces a reader keeps, newest first, within the dashboard's bounds: each span counted as it comes
+    /// and goes (its bytes, its resource), each trace moved to the front in place and made again only when an envelope
+    /// touched it.</summary>
+    private sealed class RecentTraces
     {
-        AspireSpan[] spans = values.OrderBy(span => Nanoseconds(span.Data, "startTimeUnixNano")).ThenBy(span => span.SpanId, StringComparer.Ordinal).ToArray();
-        ulong start = spans.Min(span => Nanoseconds(span.Data, "startTimeUnixNano"));
-        ulong end = spans.Max(span => Nanoseconds(span.Data, "endTimeUnixNano"));
+        private sealed class Kept(LinkedListNode<string> place)
+        {
+            public LinkedListNode<string> Place { get; } = place;
+            public Dictionary<string, KeptSpan> Spans { get; } = new(StringComparer.Ordinal);
+            public AspireTrace? Made { get; set; }
+        }
+
+        private readonly Dictionary<string, Kept> traces = new(StringComparer.Ordinal);
+        private readonly LinkedList<string> recent = new();
+        private readonly Dictionary<string, int> sources = new(StringComparer.Ordinal);
+        private int bytes;
+        private int count;
+
+        public void Add(string traceId, KeptSpan span)
+        {
+            if (traces.TryGetValue(traceId, out Kept? kept))
+            {
+                recent.Remove(kept.Place);
+                recent.AddFirst(kept.Place);
+            }
+            else
+            {
+                traces.Add(traceId, kept = new Kept(recent.AddFirst(traceId)));
+            }
+            if (kept.Spans.Remove(span.Id, out KeptSpan previous))
+            {
+                Forget(previous);
+            }
+            kept.Spans.Add(span.Id, span);
+            kept.Made = null;
+            bytes += span.Bytes;
+            count++;
+            sources[span.Source] = sources.GetValueOrDefault(span.Source) + 1;
+            while (traces.Count > AspireClient.TraceLimit || count > AspireClient.SpanLimit || bytes > AspireClient.ResponseByteLimit
+                || sources.Count > AspireClient.ResourceLimit)
+            {
+                string oldest = recent.Last!.Value;
+                recent.RemoveLast();
+                foreach (KeptSpan removed in traces[oldest].Spans.Values)
+                {
+                    Forget(removed);
+                }
+                traces.Remove(oldest);
+            }
+        }
+
+        private void Forget(KeptSpan span)
+        {
+            bytes -= span.Bytes;
+            count--;
+            if (sources[span.Source] == 1)
+            {
+                sources.Remove(span.Source);
+            }
+            else
+            {
+                sources[span.Source]--;
+            }
+        }
+
+        /// <summary>The traces kept, newest first, each untouched since the last snapshot the same object as in it.</summary>
+        public IReadOnlyList<AspireTrace> Snapshot()
+        {
+            AspireTrace[] made = new AspireTrace[recent.Count];
+            int at = 0;
+            foreach (string id in recent)
+            {
+                Kept kept = traces[id];
+                made[at++] = kept.Made ??= Trace(id, kept.Spans.Values);
+            }
+            return Array.AsReadOnly(made);
+        }
+    }
+
+    private static AspireTrace Trace(string id, IEnumerable<KeptSpan> values)
+    {
+        KeptSpan[] spans = values.OrderBy(span => span.Start).ThenBy(span => span.Id, StringComparer.Ordinal).ToArray();
+        ulong end = spans.Max(span => span.End);
+        AspireSpan root = spans.Select(span => span.Span).FirstOrDefault(span => span.ParentSpanId is null) ?? spans[0].Span;
         return new AspireTrace(JsonSerializer.SerializeToElement(new
         {
             traceId = id,
-            title = AspireJson.String((spans.FirstOrDefault(span => span.ParentSpanId is null) ?? spans[0]).Data, "name"),
-            durationMs = (end - start) / 1_000_000d,
-            hasError = spans.Any(span => AspireJson.String(span.Data, "status") == "Error"),
-        }), Array.AsReadOnly(spans));
+            title = AspireJson.String(root.Data, "name"),
+            durationMs = (end - spans[0].Start) / 1_000_000d,
+            hasError = spans.Any(span => span.Failed),
+        }), Array.AsReadOnly(spans.Select(span => span.Span).ToArray()));
     }
-
-    private static int SpanBytes(AspireSpan span) => Encoding.UTF8.GetByteCount(span.Data.GetRawText());
 
     private static async Task ReadAsync(Uri baseUri, string apiKey, string kind, Action<JsonElement> receive, CancellationToken cancel,
         bool follow = true, string? query = null)
@@ -305,11 +384,15 @@ public static class AspireTelemetry
         }
     }
 
-    private static JsonElement MaskCredentials(JsonElement data, string apiKey)
+    /// <summary>A record as kept, its credentials masked, and its size in bytes, which its bounds count: made once, written once
+    /// and measured as written, never written again to be measured.</summary>
+    private static (JsonElement Data, int Bytes) Masked(object record, string apiKey)
     {
-        JsonNode root = JsonNode.Parse(data.GetRawText())!;
+        JsonNode root = JsonSerializer.SerializeToNode(record)!;
         Mask(root);
-        return JsonSerializer.SerializeToElement(root);
+        byte[] written = JsonSerializer.SerializeToUtf8Bytes(root);
+        Utf8JsonReader reader = new(written);
+        return (JsonElement.ParseValue(ref reader), written.Length);
 
         void Mask(JsonNode? node)
         {
@@ -363,7 +446,7 @@ public static class AspireTelemetry
             {
                 foreach (JsonElement row in AspireJson.Array(scope, records, required: true))
                 {
-                    if (Encoding.UTF8.GetByteCount(row.GetRawText()) > AspireClient.LineByteLimit)
+                    if (System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(row).Length > AspireClient.LineByteLimit)
                     {
                         throw new InvalidDataException("Aspire telemetry record exceeded 1 MiB.");
                     }

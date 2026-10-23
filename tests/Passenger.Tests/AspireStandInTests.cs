@@ -316,6 +316,77 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         static ConsoleLogLine Line(int number) => new() { Text = $"line {number}", LineNumber = number };
     }
 
+    /// <summary>Following an app's logs costs each log what it adds (#437): a log landing while a thousand are kept allocates
+    /// on the UI thread about what one does while ten are, the list keyed by each log's place in arrival, given off the UI
+    /// thread, never by its whole JSON, and the oldest leaving it as the dashboard's bound is passed.</summary>
+    [AvaloniaFact]
+    public void A_log_landing_costs_the_UI_thread_what_it_adds_however_many_are_kept()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        backend.PushResource(new Resource { Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running" });
+        AspireDashboardHost dashboard = Ui.Await(AspireDashboardHost.StartAsync(), "the stand-in dashboard");
+        dashboard.Streams = true;
+        MainWindow window = OpenRunning(backend, dashboard.Endpoint);
+        int sent = 0;
+        try
+        {
+            FindAction(window, "Show Aspire Resources");
+            Ui.Click(Tab(window, "Telemetry"));
+            Ui.WaitFor(() => dashboard.Following("logs") == 1, "the Telemetry tab to follow the dashboard's logs");
+            long few = Costs(10);
+            long many = Costs(AspireClient.LogLimit);
+            // With a thousand kept the oldest log's row leaves the top and another row comes into view, drawn anew (about
+            // 45 KB), where ten kept take the newest below the view; the list keyed again by each kept log's JSON at every
+            // landing made those thousand logs' text again, hundreds of KB.
+            Assert.True(many < few + 128 * 1024,
+                $"A log landing with {AspireClient.LogLimit} kept allocated {many / 1024} KB on the UI thread, with 10 kept {few / 1024} KB: the list is read again whole at each landing");
+            IReadOnlyList<AspireStructuredLog> listed = window.Aspire.Telemetry.Logs;
+            Assert.Equal(AspireClient.LogLimit, listed.Count);
+            Assert.Equal($"log {sent - AspireClient.LogLimit + 1}", listed[0].Message);
+            Assert.Equal($"log {sent}", listed[^1].Message);
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(dashboard.DisposeAsync().AsTask()), "the stand-in dashboard to stop");
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        // The least one log landing allocated on the UI thread, with as many kept as given (the first fill one envelope).
+        long Costs(int kept)
+        {
+            Send(kept - sent);
+            Ui.WaitFor(() => Landed(sent), $"the first {sent} logs to land");
+            Ui.Settle();
+            long least = long.MaxValue;
+            for (int round = 0; round < 5; round++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Send(1);
+                Ui.WaitFor(() => Landed(sent), $"log {sent} to land");
+                Ui.Settle();
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            return least;
+        }
+
+        void Send(int count)
+        {
+            dashboard.Send("logs", "{\"resourceLogs\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"apiservice\"}}]},"
+                + "\"scopeLogs\":[{\"logRecords\":["
+                + string.Join(",", Enumerable.Range(sent + 1, count).Select(number =>
+                    $"{{\"timeUnixNano\":\"1760000000000000000\",\"severityText\":\"Information\",\"body\":{{\"stringValue\":\"log {number}\"}}}}"))
+                + "]}]}]}");
+            sent += count;
+        }
+
+        bool Landed(int last) => window.Aspire.StructuredLogs.ItemCount > 0
+            && window.Aspire.StructuredLogs.Items[window.Aspire.StructuredLogs.ItemCount - 1] is Passenger.App.ToolWindows.RunItem<AspireStructuredLog> item
+            && item.Data.Message == $"log {last}";
+    }
+
     /// <summary>One resource's restart costs what it changed (#435): with three resources' consoles merged and shown, a new
     /// generation of one ends its own stream alone and reads its lines again after those shown; the others' streams go on as
     /// they were, never asked for again, and every line already shown stays.</summary>
@@ -1691,9 +1762,16 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
-    private MainWindow OpenRunning(AspireInteractionHost backend)
+    private MainWindow OpenRunning(AspireInteractionHost backend, Uri? dashboard = null)
     {
-        project.Serve(backend);
+        if (dashboard is null)
+        {
+            project.Serve(backend);
+        }
+        else
+        {
+            project.Serve(backend, dashboard);
+        }
         MainWindow window = project.Open(project.Program, languageServer: false);
         try
         {

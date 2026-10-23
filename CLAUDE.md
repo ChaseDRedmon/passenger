@@ -1244,8 +1244,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
   services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either, a read that fails said
   in the same words by the view and an agent's `telemetry`, as the dashboard's failure, never Passenger's
-  (`TelemetrySource.Unread`, `NoDashboard`). `TelemetryView` is the
-  one view of them (logs, traces put together by id, a span tree, each list kept by key through every snapshot by `RunRows.Put` so a click survives one, a log's trace and a span's logs a click apart, chosen as
+  (`TelemetrySource.Unread`, `NoDashboard`). A record costs what it adds (#437): the reader counts each resource's records
+  and their bytes as they come and go, measures a record once as it writes it (`Masked`), makes a trace again only when an
+  envelope touched it (`RecentTraces`, each span's start and end kept as numbers) and tells the view of logs what each
+  envelope added and evicted (`AspireLogBatch`), each log numbered in order of arrival off the UI thread
+  (`AspireStructuredLog.Sequence`). `TelemetryView` is the
+  one view of them (logs, traces put together by id, a span tree, each list kept by key so a click survives a landing:
+  the logs by their numbers, added after those listed and evicted from the front, a stream's first batch listing them
+  anew, so a landing costs the UI thread what came, as AspireStandInTests hold it with a thousand kept against ten; the
+  traces through `RunRows.Put`, the chosen one's tree walked again only when it changed; a log's trace and a span's logs a click apart, chosen as
   the other page streams them), streaming only the page its host shows: the Aspire and Containers windows' Telemetry tab
   (`TelemetryView.Both`, the two pages under tabs of their own, `ShowPage` choosing one), the Containers window's shown for
   a Compose project of the window's container run that collects telemetry, a service's or container's row its own
