@@ -376,7 +376,7 @@ public partial class MainWindow
             actionItem.ToggleType = MenuItemToggleType.CheckBox;
             actionItem.IsChecked = isChecked(context);
         }
-        if (actions.Gesture(action.Id) is { } gesture)
+        if (actions.MenuBarGesture(action.Id) is { } gesture)
         {
             actionItem.Gesture = gesture;
         }
@@ -548,7 +548,7 @@ public partial class MainWindow
     public bool RunFromMenu(string action, ActionContext? context = null)
     {
         context ??= actions!.Context();
-        if (context.Focused is Terminal.TerminalView terminal && actions!.Gesture(action) is { } keys
+        if (context.Focused is Terminal.TerminalView terminal && actions!.MenuBarGesture(action) is { } keys
             && (!keys.KeyModifiers.HasFlag(KeyModifiers.Meta) || actions[action] is { InEditor: true }))
         {
             // The terminal takes every key but the IDE's Cmd ones (its own copy and paste included): the menu only caught

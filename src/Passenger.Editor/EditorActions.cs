@@ -99,9 +99,10 @@ public enum KeymapPreset
 }
 
 /// <summary>The keymaps Passenger has: Rider's Visual Studio keymap on Windows and its Visual Studio OSX keymap on macOS,
-/// for the actions Passenger has, plus the few platform staples those leave out (Cmd+/ to comment, Cmd+W to close); and
-/// Rider's VSCode and VSCode OSX keymaps, a key IntelliJ gives two actions told apart by where it is pressed given to
-/// one (the editor's own).</summary>
+/// for the actions Passenger has, plus the few platform staples those leave out (Cmd+/ to comment, with the keypad's / as
+/// $default has it, Cmd+W to close); and Rider's VSCode and VSCode OSX keymaps, a key IntelliJ gives two actions told
+/// apart by where it is pressed given to one (the editor's own). The keypad's keys (DIVIDE, SUBTRACT) are bound where
+/// Rider binds them, beside the main keys'.</summary>
 public static class DefaultKeymaps
 {
     public static Keymap ForPlatform() => OperatingSystem.IsMacOS() ? VisualStudioMac() : VisualStudio();
@@ -148,8 +149,9 @@ public static class DefaultKeymaps
         .Bind(EditorActions.DeleteLine, "meta shift L")
         .Bind(EditorActions.MoveLineUp, "alt UP")
         .Bind(EditorActions.MoveLineDown, "alt DOWN")
-        .Bind(EditorActions.ToggleLineComment, "meta SLASH", "meta alt SLASH", "meta K , meta SLASH")
-        .Bind(EditorActions.ToggleBlockComment, "control meta SLASH")
+        .Bind(EditorActions.ToggleLineComment, "meta SLASH", "meta DIVIDE", "meta alt SLASH", "meta alt DIVIDE", "meta K , meta SLASH")
+        // Its keypad key is Shift+Cmd+/, not Ctrl+Cmd+/, as Rider's Visual Studio OSX has it.
+        .Bind(EditorActions.ToggleBlockComment, "control meta SLASH", "meta shift DIVIDE")
         .Bind(EditorActions.Comment, "meta K , C", "meta K , meta C")
         .Bind(EditorActions.Uncomment, "meta K , U", "meta K , meta U")
         .Bind(EditorActions.JoinLines, "control shift J")
@@ -204,8 +206,8 @@ public static class DefaultKeymaps
         .Bind(EditorActions.DeleteLine, "control L", "control shift L")
         .Bind(EditorActions.MoveLineUp, "alt UP")
         .Bind(EditorActions.MoveLineDown, "alt DOWN")
-        .Bind(EditorActions.ToggleLineComment, "control SLASH", "control alt SLASH", "control K , control SLASH")
-        .Bind(EditorActions.ToggleBlockComment, "control shift SLASH")
+        .Bind(EditorActions.ToggleLineComment, "control SLASH", "control DIVIDE", "control alt SLASH", "control alt DIVIDE", "control K , control SLASH")
+        .Bind(EditorActions.ToggleBlockComment, "control shift SLASH", "control shift DIVIDE")
         .Bind(EditorActions.Comment, "control K , C", "control K , control C")
         .Bind(EditorActions.Uncomment, "control K , U", "control K , control U")
         .Bind(EditorActions.JoinLines, "control shift J")

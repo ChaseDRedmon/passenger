@@ -49,6 +49,12 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
     public KeyGesture? Gesture(string id) =>
         Keymap.ShortcutsFor(KeysOf(id)).FirstOrDefault(s => s.Second is null) is { } shortcut ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers) : null;
 
+    /// <summary>An action's one-keystroke shortcut as macOS's menu bar takes it, a key equivalent: none on the keypad, since
+    /// Avalonia gives the bar a keypad key as its character alone, which the main keys' / or - would press too.</summary>
+    public KeyGesture? MenuBarGesture(string id) =>
+        Keymap.ShortcutsFor(KeysOf(id)).FirstOrDefault(s => s.Second is null && !s.First.IsOnKeypad) is { } shortcut
+            ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers) : null;
+
     /// <summary>An action's shortcut in a menu item's column of keys, whoever builds the menu: its one keystroke as the
     /// item's gesture, a chord as its text. The gesture is shown, not bound: the window's keymap runs the keys.</summary>
     public void ShowKeys(MenuItem item, string id)

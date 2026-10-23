@@ -31,7 +31,7 @@ public partial class MainWindow
         NativeMenuItem updates = new(actions[AppActions.CheckForUpdates]!.Title) { Command = new MenuCommand(() => InFront().Request(AppActions.CheckForUpdates)) };
         NativeMenuItem settings = new(actions[AppActions.ShowSettings]!.Title)
         {
-            Gesture = actions.Gesture(AppActions.ShowSettings),
+            Gesture = actions.MenuBarGesture(AppActions.ShowSettings),
             Command = new MenuCommand(() => InFront().Request(AppActions.ShowSettings)),
         };
         return new NativeMenu { Items = { about, updates, new NativeMenuItemSeparator(), settings } };

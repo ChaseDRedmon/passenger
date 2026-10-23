@@ -14,7 +14,8 @@ namespace Passenger.Tests;
 /// dialog takes a chord (the first keystroke, Second stroke, the second), lists the actions it is already assigned to as
 /// the keys are pressed (a chord clashing with the key that begins it too) and warns before it is kept, Remove taking it
 /// from them; the chord then runs its action from the editor and is kept after a restart, Reset Shortcuts giving an
-/// action its own back; and Find Actions by Shortcut narrows the page to the actions a chord runs.</summary>
+/// action its own back; Find Actions by Shortcut narrows the page to the actions a chord runs; and the keypad's / is a key
+/// of its own beside the main keys' /, named as the keypad's, recorded, kept and run apart from it.</summary>
 public sealed class KeymapTests : IDisposable
 {
     private const string Source = "class One { }\n";
@@ -270,6 +271,101 @@ public sealed class KeymapTests : IDisposable
         {
             again.ApplySettings(new AppSettings());
             again.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_shortcut_recorded_on_the_keypads_slash_is_named_as_the_keypads_kept_and_run_by_it_alone()
+    {
+        string keypad = OperatingSystem.IsMacOS() ? "⌘⌨/" : "Ctrl+NumPad /";
+        MainWindow window = Open(keeps: true);
+        try
+        {
+            SettingsDialog dialog = Settings(window, "split right");
+            KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitRight);
+            Ui.Press(keys, $"{Cmd} DIVIDE");
+            Assert.Equal(keypad, keys.Keys.First.Text);
+            // Comment with Line Comment has the keypad's / beside the main keys' /, as Rider's keymaps give it both.
+            Assert.StartsWith("Comment with Line Comment in ", Assert.Single(keys.Conflicts), StringComparison.Ordinal);
+            Ui.Click(keys.OkButton);
+            ConfirmDialog warning = Asked(dialog);
+            Ui.Click(Button(warning, "Remove"));
+            Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
+            Assert.Equal([keypad], dialog.ShortcutsShown(AppActions.SplitRight));
+            IReadOnlyList<string> comment = dialog.ShortcutsShown(EditorActions.ToggleLineComment);
+            Assert.True(!comment.Contains(keypad) && comment.Contains(Keystroke.Parse($"{Cmd} SLASH").Display()),
+                $"Comment with Line Comment shows [{string.Join(", ", comment)}] once the keypad's / was taken from it, not its main keys' / alone");
+            Ui.Click(Button(dialog, "OK"));
+
+            // macOS's menu bar would take a keypad key as its character alone, which the main keys' / presses too.
+            NativeMenuItem split = Ui.Submenu(Ui.Submenu(window.MenuBar, "Window"), "Editor Tabs").Items.OfType<NativeMenuItem>().Single(i => i.Header == "Split Right");
+            Assert.True(split.Gesture is null, $"The menu bar's Split Right was given {split.Gesture} as its key equivalent, which the main keys' / would press too");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        // Kept as Rider's DIVIDE, it is the keypad's key again after a restart, never the main keys' /.
+        MainWindow again = Open(keeps: true);
+        try
+        {
+            again.EditorArea.CodeEditor.Focus();
+            Ui.Press(again, $"{Cmd} SLASH");
+            Assert.True(again.EditorArea.Groups.Count == 1, $"The main keys' / ran Split Right, which {keypad} was recorded for");
+            Assert.StartsWith("//", Text(again), StringComparison.Ordinal);
+            Ui.Press(again, $"{Cmd} DIVIDE");
+            Assert.True(again.EditorArea.Groups.Count == 2, $"{keypad}, recorded for Split Right and kept, split nothing after a restart");
+            Assert.StartsWith("//", Text(again), StringComparison.Ordinal);
+        }
+        finally
+        {
+            again.ApplySettings(new AppSettings());
+            again.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void The_comment_actions_run_from_the_keypads_slash_as_from_the_main_keys_one_each_shown_as_its_own_key()
+    {
+        bool mac = OperatingSystem.IsMacOS();
+        MainWindow window = Open();
+        try
+        {
+            SettingsDialog dialog = Settings(window, null);
+            dialog.Page = SettingsDialog.KeymapPage;
+            Ui.Settle();
+            string[] comment = mac ? ["⌘/", "⌘⌨/", "⌥⌘/", "⌥⌘⌨/", "⌘K, ⌘/"] : ["Ctrl+/", "Ctrl+NumPad /", "Ctrl+Alt+/", "Ctrl+Alt+NumPad /", "Ctrl+K, Ctrl+/"];
+            Assert.Equal(comment, dialog.ShortcutsShown(EditorActions.ToggleLineComment));
+            string[] back = mac ? ["⌘-", "⌘⌨-"] : ["Ctrl+-", "Ctrl+NumPad -"];
+            Assert.Equal(back, dialog.ShortcutsShown(AppActions.Back));
+            dialog.Close();
+
+            window.EditorArea.CodeEditor.Focus();
+            (string Slash, string Keypad)[] lineComment = mac
+                ? [("meta SLASH", "meta DIVIDE"), ("meta alt SLASH", "meta alt DIVIDE")]
+                : [("control SLASH", "control DIVIDE"), ("control alt SLASH", "control alt DIVIDE")];
+            foreach ((string slash, string keypad) in lineComment)
+            {
+                Ui.Press(window, keypad);
+                Assert.True(Text(window).StartsWith("//", StringComparison.Ordinal), $"{Keystroke.Parse(keypad).Display()} did not comment the line");
+                Ui.Press(window, slash);
+                Assert.True(Text(window) == Source, $"{Keystroke.Parse(slash).Display()} did not take the comment off again");
+            }
+
+            // Block Comment's keypad key does what its main keys' does.
+            Ui.Press(window, mac ? "control meta SLASH" : "control shift SLASH");
+            string commented = Text(window);
+            Assert.NotEqual(Source, commented);
+            Ui.Press(window, $"{Cmd} Z");
+            Assert.Equal(Source, Text(window));
+            string blockKeypad = mac ? "meta shift DIVIDE" : "control shift DIVIDE";
+            Ui.Press(window, blockKeypad);
+            Assert.True(Text(window) == commented, $"{Keystroke.Parse(blockKeypad).Display()} left \"{Text(window)}\", not Block Comment's \"{commented}\"");
+        }
+        finally
+        {
+            window.Close();
         }
     }
 

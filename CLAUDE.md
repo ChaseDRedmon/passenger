@@ -172,8 +172,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   them; XML reads back from the caret 4 KB at a time (widening ×4) and forward from the start only where tags don't
   pair up, so Enter costs what is around the caret, while HTML still reads from the start.
 - `src/Passenger.Editor`: the `CodeEditor` control (drawing, input, commands, in partial files),
-  the keymap (`Keymap.cs`, chords included; defaults in `EditorActions.cs` follow Rider's Visual
-  Studio keymaps, and its VS Code keymaps for Settings' choice, `KeymapPreset`) and the highlighting contract
+  the keymap (`Keymap.cs`, chords included, each keypad key a key of its own by Rider's name, DIVIDE, SUBTRACT,
+  NUMPAD0 and the rest, shown as Rider shows the keypad's /, NumPad / and ⌨/; defaults in `EditorActions.cs` follow
+  Rider's Visual Studio keymaps, and its VS Code keymaps for Settings' choice, `KeymapPreset`) and the highlighting contract
   (`IHighlighter`), with JetBrains Mono embedded.
   An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
   goes with the text before it, or a value (`InlayHintKind.Value`: what a compose file's `${VAR}` comes to), which goes
@@ -1376,7 +1377,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `SettingsStore.InForce` (the process's), and its range in `Clamped` when it has one. `SettingsDialog.Keymap.cs` is the Keymap page: Rider's
   Edit Shortcuts menu, the Keyboard Shortcut dialog (chords) and Find Actions by Shortcut; `Keymap.Conflicts` is Rider's
   conflict rule, and a conflict is removed, never kept, since a shortcut runs one action. A chord can't be a native
-  macOS menu key equivalent; in-window menus show it as text. Its drop-down is `AppSettings.Keymap`: Visual Studio's (the
+  macOS menu key equivalent, nor a keypad key, whose key equivalent Avalonia gives as its character alone, which the
+  main keys would press too (`ActionRegistry.MenuBarGesture`); in-window menus show it as text. Its drop-down is `AppSettings.Keymap`: Visual Studio's (the
   default, which a settings.json without one keeps) or VS Code's (`DefaultKeymaps.VSCode`, `AppActions.VSCode`), the
   person's shortcuts over each kept apart (`Shortcuts`, `VSCodeShortcuts`; `OwnShortcuts()` is the chosen one's), put in
   force for the process by `AppActions.Choose`. A tool window's button whose tip names its action's keys takes it through
@@ -2316,8 +2318,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Visual Studio OSX (macOS) keymap gives it, and in the VS Code keymap the one its VSCode or VSCode OSX keymap gives it
   (`plugins/keymap-vscode`), each resolved as IntelliJ does: a keymap's own list (its XML, then the shortcuts plugins'
   descriptors declare for it), else its parent's ($default, or Mac OS X 10.5+ taking $default's Ctrl as Cmd). A key
-  IntelliJ gives two actions, told apart by where it is pressed, goes to one, said where it is bound. Rider's keymap
-  files are in its jars for reference.
+  IntelliJ gives two actions, told apart by where it is pressed, goes to one, said where it is bound. A keypad key Rider
+  binds beside the main keys' (DIVIDE beside SLASH, SUBTRACT beside MINUS) is bound too. Rider's keymap files are in its
+  jars for reference.
 - Commit messages go through a file (`git commit -F msg.txt`): backticks in a `-m` string are zsh command
   substitution.
 
