@@ -308,22 +308,22 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         {
             FindAction(window, "Show Aspire Resources");
             Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Count == 2, "the parent and its child");
-            TreeViewItem parent = window.Aspire.ResourceList.Items.OfType<TreeViewItem>().Single();
-            Assert.Equal("apiservice", Assert.IsType<AspireResource>(parent.Tag).Name);
-            Assert.Equal("worker", Assert.IsType<AspireResource>(Assert.Single(parent.Items.OfType<TreeViewItem>()).Tag).Name);
-            Ui.Click(parent.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "apiservice"));
-            Ui.Press(window, "RIGHT");
-            Ui.WaitFor(() => parent.IsExpanded, "Right to open the parent");
+            Assert.Equal([("apiservice", 0), ("worker", 1)], window.Aspire.Rows.Select(row => (row.Resource.Name, row.Depth)));
+            Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
             Assert.Equal("apiservice", window.Aspire.SelectedResource?.Name);
-            Assert.Contains(parent.GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "worker");
+            // Its chevron closes it and opens it again, as a Compose project's does in Containers.
+            Ui.Click(Chevron(window, "apiservice"));
+            Ui.WaitFor(() => window.Aspire.Rows.Count == 1, "the chevron to close the parent");
+            Ui.Click(Chevron(window, "apiservice"));
+            Ui.WaitFor(() => window.Aspire.Rows.Count == 2, "the chevron to open the parent");
+            Assert.Equal("apiservice", window.Aspire.SelectedResource?.Name);
             worker.State = "Stopped";
             backend.PushResource(worker);
             Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.Name == "worker" && resource.State == "Stopped"),
                 "the child's update");
             Assert.Equal("apiservice", window.Aspire.SelectedResource?.Name);
-            parent = window.Aspire.ResourceList.Items.OfType<TreeViewItem>().Single();
-            Assert.True(parent.IsExpanded, "The child's update closed its parent");
-            Assert.Contains(parent.GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "Healthy");
+            Assert.True(window.Aspire.Rows.Any(row => row.Resource.Name == "worker"), "The child's update closed its parent");
+            Assert.Contains(Row(window, "apiservice").GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "healthy");
             Assert.Empty(backend.Errors);
         }
         finally
@@ -332,6 +332,117 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
         }
     }
+
+    /// <summary>The Aspire window is the Containers window's parts over the AppHost's resources, each driven by clicks: a
+    /// resource's row has its state's dot, its health's tag and its address as a link to the browser; its Details are framed
+    /// tables of what the AppHost said of it, a secret's value masked by the one rule (by its name, a connection string's
+    /// password) and the rest as it is; its toolbar's icon buttons each run one of the window's actions, Refresh showing its
+    /// work as it runs; its commands are a menu; and its console merges every resource's lines with a toggle each, a toggle
+    /// turned off ending that resource's stream, and Find over them.</summary>
+    [AvaloniaFact]
+    public void The_window_shows_a_resources_row_details_commands_and_merged_console_as_Containers_shows_a_services()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        backend.PushResource(new Resource
+        {
+            Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running",
+            HealthReports = { new HealthReport { Key = "ready", Status = HealthStatus.Healthy, Description = "It answers" } },
+            Urls = { new Url { EndpointName = "http", FullUrl = "http://localhost:5310/" } },
+            Environment =
+            {
+                new Passenger.App.Aspire.Protocol.EnvironmentVariable { Name = "GREETING", Value = "hello-shown" },
+                new Passenger.App.Aspire.Protocol.EnvironmentVariable { Name = "API_KEY", Value = "key-never-shown" },
+                new Passenger.App.Aspire.Protocol.EnvironmentVariable { Name = "DATABASE_URL", Value = "postgres://app:pass-never-shown@db/shop" },
+            },
+            Properties = { new ResourceProperty { Name = "project.path", Value = Google.Protobuf.WellKnownTypes.Value.ForString(project.ProjectFile) } },
+            Commands = { new ResourceCommand { Name = "resource-restart", DisplayName = "Restart", State = ResourceCommandState.Enabled } },
+        });
+        backend.PushResource(new Resource { Name = "cache", DisplayName = "cache", Uid = "cache", ResourceType = "Container", State = "Starting" });
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            FindAction(window, "Show Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Rows.Count == 2, "both resources' rows");
+            Control api = Row(window, "apiservice");
+            Assert.Contains(api.GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "healthy");
+            Assert.True(api.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Ellipse>().Single().IsEffectivelyVisible, "The resource's row has no state dot");
+            Button address = api.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireUrl");
+            Assert.Equal("localhost:5310", address.Content);
+            Ui.Click(address);
+            Assert.Equal("http://localhost:5310/", Assert.Single(window.Browsed).AbsoluteUri);
+
+            // Details: framed tables, the secrets masked and the rest shown.
+            Ui.Click(Words(api, "apiservice"));
+            Ui.Click(Tab(window, "Details"));
+            AspireDetailsPane details = window.Aspire.Details;
+            Ui.WaitFor(() => details.Resource?.Name == "apiservice", "the API's details");
+            string[] shown = [.. details.GetVisualDescendants().OfType<SelectableTextBlock>().Select(text => text.Text ?? string.Empty)];
+            Assert.Contains("hello-shown", shown);
+            Assert.Contains(Passenger.App.Containers.ContainerSecrets.Masked, shown);
+            Assert.DoesNotContain(shown, text => text.Contains("never-shown", StringComparison.Ordinal));
+            Assert.Contains(shown, text => text.StartsWith("postgres://app:", StringComparison.Ordinal) && text.EndsWith("@db/shop", StringComparison.Ordinal));
+            Assert.Contains(shown, text => text.Contains("It answers", StringComparison.Ordinal));
+            Assert.True(details.GetVisualDescendants().OfType<Border>().Count(border => border.Classes.Contains("framed")) >= 4,
+                "The details are not framed tables as Containers' are");
+
+            // The toolbar: icon buttons of the window's actions, each showing its work.
+            foreach ((string action, Button button) in window.Aspire.Tools)
+            {
+                Assert.True(button.Classes.Contains("tool") && button.GetVisualDescendants().OfType<PathIcon>().Any(), $"{action} is not a toolbar's icon button");
+                Assert.Equal(action, ActionButtons.GetAction(button));
+            }
+            Ui.Click(window.Aspire.Tools[AppActions.AspireCommand]);
+            ContextMenu commands = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(menu => menu.IsOpen)
+                ?? throw new Xunit.Sdk.XunitException("The commands button opened no menu");
+            Assert.Equal(["Restart"], commands.Items.OfType<MenuItem>().Select(item => (string)item.Header!));
+            commands.Close();
+            Ui.Settle();
+
+            // The console: every resource's lines merged, a toggle each; one turned off ends its stream.
+            Ui.Click(Tab(window, "Console"));
+            Ui.WaitFor(() => backend.Consoles.Length == 2, "both resources' console subscriptions");
+            AspireInteractionHost.ConsoleSubscription apiLines = backend.Consoles.Single(console => console.ResourceName == "apiservice");
+            AspireInteractionHost.ConsoleSubscription cacheLines = backend.Consoles.Single(console => console.ResourceName == "cache");
+            apiLines.Push(new ConsoleLogLine { Text = "api says hello", LineNumber = 1 });
+            cacheLines.Push(new ConsoleLogLine { Text = "cache warms", LineNumber = 1 });
+            Ui.WaitFor(() => Console(window).Contains("[apiservice] api says hello", StringComparison.Ordinal)
+                && Console(window).Contains("[cache] cache warms", StringComparison.Ordinal), "both resources' lines merged");
+            Assert.Equal(["apiservice", "cache"], window.Aspire.Log.Toggles.Select(toggle => (string)toggle.Content!));
+            Ui.Click(window.Aspire.Log.Toggles.Single(toggle => Equals(toggle.Content, "cache")));
+            Ui.WaitFor(() => cacheLines.Closed.Task.IsCompleted, "the cache's toggle turned off to end its stream");
+            // The API's console read again from its start, as a project's merged log is; the stand-in sends what it is given.
+            Ui.WaitFor(() => backend.Consoles.Count(console => console.ResourceName == "apiservice") == 2, "the API's console read again");
+            Assert.DoesNotContain(backend.Consoles, console => console.ResourceName == "cache" && !console.Closed.Task.IsCompleted);
+            backend.Consoles.Last(console => console.ResourceName == "apiservice").Push(new ConsoleLogLine { Text = "api says hello", LineNumber = 1 });
+            Ui.WaitFor(() => Console(window).Contains("[apiservice] api says hello", StringComparison.Ordinal), "the API's lines, read again");
+            Assert.DoesNotContain("[cache]", Console(window), StringComparison.Ordinal);
+            Ui.Click(window.Aspire.Log.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireLogFind"));
+            Assert.True(window.Aspire.Find.IsEffectivelyVisible, "The console's Find did not open");
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>A resource's row as the Aspire window shows it, scrolled into view.</summary>
+    internal static Control Row(MainWindow window, string name) => Ui.Row(window.Aspire.ResourceList,
+        window.Aspire.Rows.FirstOrDefault(row => row.Resource.Name == name || row.Resource.DisplayName == name)
+            ?? throw new Xunit.Sdk.XunitException($"The Aspire window lists no {name}, only {string.Join(", ", window.Aspire.Rows.Select(row => row.Resource.Name))}"));
+
+    /// <summary>Words shown in a row.</summary>
+    internal static TextBlock Words(Control row, string words) => row.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == words);
+
+    /// <summary>A row's chevron, which opens and closes it.</summary>
+    internal static PathIcon Chevron(MainWindow window, string name) =>
+        Row(window, name).GetVisualDescendants().OfType<PathIcon>().Single(icon => icon.Name == "rowChevron");
+
+    /// <summary>A tab of the Aspire window's pages.</summary>
+    internal static Avalonia.Controls.Primitives.ToggleButton Tab(MainWindow window, string page) => window.Aspire.GetVisualDescendants()
+        .OfType<Avalonia.Controls.Primitives.ToggleButton>().Single(tab => tab.Classes.Contains("panelTab") && tab.Content is TextBlock { Text: var words } && words == page);
 
     [AvaloniaFact]
     public void A_confirmation_cancelled_and_a_form_the_AppHost_updates_send_what_the_dialog_shows()
@@ -615,7 +726,70 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
-    /// <summary>A stand-in aspire CLI in a folder of the test's: its version and ps answers files beside it.</summary>
+    /// <summary>An AppHost the window did not start is read through the CLI: its addresses shown without the credentials or
+    /// query keys they carried, one that is no web address not offered at all, and the CLI's failure said with its secrets
+    /// masked.</summary>
+    [AvaloniaFact]
+    public void An_AppHost_read_through_the_CLI_shows_its_addresses_without_credentials_and_its_failure_masked()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in aspire CLI is a shell script, and Windows runs no shell script as a program");
+        project.Reset();
+        string cli = StandInCli();
+        string folder = Path.GetDirectoryName(cli)!;
+        File.WriteAllText(Path.Combine(folder, "version"), "13.6.3\n");
+        File.WriteAllText(Path.Combine(folder, "ps.json"), JsonSerializer.Serialize(new[]
+        {
+            new { appHostPath = PathNames.Canonical(project.ProjectFile), appHostPid = Environment.ProcessId, status = "Running" },
+        }));
+        File.WriteAllText(Path.Combine(folder, "resources.json"), JsonSerializer.Serialize(new
+        {
+            resources = new[]
+            {
+                new
+                {
+                    name = "api",
+                    displayName = "api",
+                    state = "Running",
+                    healthStatus = "Healthy",
+                    properties = new { },
+                    environment = new { },
+                    commands = new { },
+                    urls = new[] { new { url = "http://user:password@localhost:8080/?api_key=private&view=1" }, new { url = "javascript:alert(1)" } },
+                },
+            },
+        }));
+        MainWindow window = OpenWithCli(cli);
+        try
+        {
+            FindAction(window, "Discover Aspire AppHosts");
+            Ui.WaitFor(() => window.Aspire.AppSelector.Items.Count == 1, $"the CLI's AppHost ({window.Aspire.Status})");
+            ComboBox chooser = window.Aspire.AppSelector;
+            Ui.Click(chooser);
+            Ui.Press(window, "HOME");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "api"), $"the CLI's resource ({window.Aspire.Status})");
+            FindAction(window, "Show Aspire Resources");
+            string[] Tips() => [.. window.Aspire.ResourceList.GetVisualDescendants().OfType<Button>().Select(button => ToolTip.GetTip(button) as string).OfType<string>()];
+            Ui.WaitFor(() => Tips().Any(tip => tip.TrimEnd('/') == "http://localhost:8080/?view=1"), $"the resource's address as a link ({string.Join(", ", Tips())})");
+            string[] tips = Tips();
+            Assert.DoesNotContain(tips, tip => tip.Contains("password", StringComparison.Ordinal) || tip.Contains("private", StringComparison.Ordinal)
+                || tip.StartsWith("javascript", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain("password", window.Aspire.ResourceSnapshots.Single().Data.GetRawText(), StringComparison.Ordinal);
+
+            File.WriteAllText(Path.Combine(folder, "failure"), "Configuration failed: Password=synthetic-password; Authorization=Bearer synthetic-token");
+            FindAction(window, "Refresh Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Status.Contains("Configuration failed", StringComparison.Ordinal), $"the CLI's failure said ({window.Aspire.Status})");
+            Assert.DoesNotContain("synthetic-password", window.Aspire.Status, StringComparison.Ordinal);
+            Assert.DoesNotContain("synthetic-token", window.Aspire.Status, StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A stand-in aspire CLI in a folder of the test's: its version, ps and describe answers files beside it, and a
+    /// failure file, when there is one, its error and exit code 9.</summary>
     private static string StandInCli()
     {
         string folder = TestFolders.Create("aspire-cli-");
@@ -833,6 +1007,7 @@ public sealed class StandInAppHost : SharedProject
 
             string keyFile = Environment.GetEnvironmentVariable("PASSENGER_STAND_IN_KEY")!;
             File.WriteAllText(keyFile + ".urls", $"{Environment.GetEnvironmentVariable("ASPNETCORE_URLS")}\n{Environment.GetEnvironmentVariable("ASPIRE_ALLOW_UNSECURED_TRANSPORT")}");
+            File.WriteAllText(keyFile + ".dashboard", Environment.GetEnvironmentVariable("AppHost__DashboardApiKey"));
             File.WriteAllText(keyFile + ".part", Environment.GetEnvironmentVariable("ASPIRE_DASHBOARD_RESOURCESERVICE_APIKEY"));
             File.Move(keyFile + ".part", keyFile, overwrite: true);
             Console.WriteLine("The stand-in AppHost is up");
@@ -854,11 +1029,20 @@ public sealed class StandInAppHost : SharedProject
     /// whether it may serve them unsecured (ASPIRE_ALLOW_UNSECURED_TRANSPORT), a line each, before its key.</summary>
     public string UrlsFile => KeyFile + ".urls";
 
+    /// <summary>Where the stand-in AppHost writes, before its key, the dashboard key the IDE gave it, which the IDE's telemetry
+    /// requests carry.</summary>
+    public string DashboardKeyFile => KeyFile + ".dashboard";
+
     /// <summary>The AppHost's launch profile, naming the stand-in resource service's address, as an AppHost's names its own;
     /// with <paramref name="https"/>, its dashboard served there as an https profile serves it, with no unsecured transport.</summary>
     internal void Serve(AspireInteractionHost backend, string? https = null) => Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint, https));
 
-    private string Profile(Uri? resourceService, string? https = null)
+    /// <summary>The launch profile of <see cref="Serve(AspireInteractionHost, string?)"/>, the AppHost's own address
+    /// (applicationUrl, where the IDE finds its dashboard) the stand-in dashboard's.</summary>
+    internal void Serve(AspireInteractionHost backend, Uri dashboard) =>
+        Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint, applicationUrl: dashboard.AbsoluteUri.TrimEnd('/')));
+
+    private string Profile(Uri? resourceService, string? https = null, string? applicationUrl = null)
     {
         Dictionary<string, string> environment = new()
         {
@@ -876,6 +1060,8 @@ public sealed class StandInAppHost : SharedProject
         {
             environment["ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL"] = resourceService.AbsoluteUri;
         }
-        return JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", environmentVariables = environment } } });
+        return applicationUrl is null
+            ? JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", environmentVariables = environment } } })
+            : JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", applicationUrl, environmentVariables = environment } } });
     }
 }

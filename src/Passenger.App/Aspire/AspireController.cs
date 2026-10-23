@@ -697,6 +697,11 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         AspireResourceRun resource = new(request.SessionId, request.DcpInstanceId, path, plan) { BuiltStamp = stamp };
         resource.ResourceName = request.Environment.FirstOrDefault(variable => variable.Name == "OTEL_SERVICE_NAME")?.Value;
+        string serviceName = ((IRunService)resource).Name;
+        if (app.LeftUnstarted(serviceName, ResourceAction(app.Configuration, resource) == ServiceStart.DontStart))
+        {
+            throw new LaunchException($"{serviceName} is not started: {app.Configuration.Name} says Don't start it; start it from the Aspire window to run it");
+        }
         app.Resources.Add(resource.Id, resource);
         using CancellationTokenSource starting = CancellationTokenSource.CreateLinkedTokenSource(cancellation, app.Lifetime.Token, resource.Stopping.Token);
         cancellation = starting.Token;
@@ -774,16 +779,18 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     }
 
     /// <summary>What a service is held at its start for, its first start in a run: as a person chose it as the configuration
-    /// last ran, else debugged where the configuration or DCP's request says, quietly for Hot Reload under Run with Hot
-    /// Reload, else unheld (and every one unheld under Profile but the one profiled).</summary>
+    /// last ran, else debugged where the configuration marks it Debug, or, with none marked, where DCP's request says (a
+    /// container run's rule: those marked Debug, else every one), quietly for Hot Reload under Run with Hot Reload, else
+    /// unheld (and every one unheld under Profile but the one profiled).</summary>
     private RunStart? FirstHold(AspireAppRun app, AspireResourceRun resource, AspireProjectLaunch request)
     {
         if (app.Mode == RunStart.Profile)
         {
             return null;
         }
+        bool marked = app.Configuration.ServiceActions.Values.Contains(ServiceStart.Debug);
         bool debugging = Chosen?.Invoke(app.Configuration.Name, ((IRunService)resource).Name)
-            ?? (ResourceAction(app.Configuration, resource) is { } action ? action == ServiceStart.Debug : request.Mode == "Debug");
+            ?? (marked ? ResourceAction(app.Configuration, resource) == ServiceStart.Debug : request.Mode == "Debug");
         return debugging ? RunStart.Debug : app.Mode == RunStart.HotReload ? RunStart.HotReload : null;
     }
 
@@ -1181,6 +1188,10 @@ public sealed class AspireAppRun : ServiceRun
         }
         return HeldFor(name);
     }
+
+    /// <summary>Whether a service's start is its first in this run and its configuration says Don't start it: refused then,
+    /// and decided from then on, so a start asked later (the Aspire window's) runs it, unheld.</summary>
+    internal bool LeftUnstarted(string name, bool dontStart) => dontStart && decided.Add(name);
 
     /// <summary>A service's start has landed: started, attached to where held, or failed (<paramref name="failure"/>).</summary>
     internal void Landed(AspireResourceRun resource, string? failure)

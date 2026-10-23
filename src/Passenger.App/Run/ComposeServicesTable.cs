@@ -6,10 +6,12 @@ using Passenger.App.Workspace;
 
 namespace Passenger.App.Run;
 
-/// <summary>A Compose configuration's services as Compose's own model has them, one row each: its name and what it runs
-/// (its image, or the Dockerfile it is built from), the project a .NET service runs (found from its Dockerfile, or chosen
-/// here among the solution's projects), and what Run does with it: a .NET service Run, Debug or Don't start, any other
-/// Start or Don't start. Until the model is read, or when Compose cannot read the files, it says why instead.</summary>
+/// <summary>A run of services' services, one row each, a Compose configuration's and an Aspire AppHost's alike: a Compose
+/// service as Compose's own model has it, its name and what it runs (its image, or the Dockerfile it is built from), the
+/// project a .NET service runs (found from its Dockerfile, or chosen here among the solution's projects); an AppHost's
+/// .NET resource by its name, its project the one its AppHost names (<see cref="SetNamed"/>); and what Run does with each:
+/// a .NET service Run, Debug or Don't start, any other Start or Don't start. Until the services are read, or when they
+/// cannot be, it says why instead.</summary>
 public sealed class ComposeServicesTable : Border
 {
     /// <summary>One service's row: its name, the project chosen (null for none) and what it does.</summary>
@@ -17,6 +19,9 @@ public sealed class ComposeServicesTable : Border
     {
         /// <summary>Whether it runs a project of the solution: a .NET service.</summary>
         public bool IsDotnet => Project.SelectedIndex > 0;
+
+        /// <summary>The project its AppHost names, which is not chosen here; null for a Compose service.</summary>
+        public string? Named { get; init; }
     }
 
     private const string Columns = "*,*,130";
@@ -31,12 +36,13 @@ public sealed class ComposeServicesTable : Border
     /// <summary>Styled as the Border it is, so Border.framed frames it.</summary>
     protected override Type StyleKeyOverride => typeof(Border);
 
-    public ComposeServicesTable()
+    /// <param name="named">What a row stands for, the first column's title: a Compose service, an AppHost's resource.</param>
+    public ComposeServicesTable(string named = "Service")
     {
         Classes.Add("framed");
         ClipToBounds = true;
         Grid header = new() { ColumnDefinitions = new ColumnDefinitions(Columns) };
-        string[] titles = ["Service", "Project", "Run does"];
+        string[] titles = [named, "Project", "Run does"];
         for (int i = 0; i < titles.Length; i++)
         {
             TextBlock title = new() { Text = titles[i], Classes = { "muted" }, Margin = new Thickness(8, 5) };
@@ -80,7 +86,8 @@ public sealed class ComposeServicesTable : Border
             said.Text = services.Count == 0 ? "Compose's model of these files has no services" : string.Empty;
             foreach ((ComposeService service, string? project, bool built) in services)
             {
-                Add(service, project, built, configuration.ServiceActions.GetValueOrDefault(service.Name, ServiceStart.Run), editable);
+                string runs = built && service.Dockerfile is { } file ? file : service.Image ?? string.Empty;
+                Add(service.Name, runs, project, built, named: false, configuration.ServiceActions.GetValueOrDefault(service.Name, ServiceStart.Run), editable);
             }
         }
         finally
@@ -88,6 +95,34 @@ public sealed class ComposeServicesTable : Border
             setting = false;
         }
     }
+
+    /// <summary>An AppHost's .NET resources, each with the project its AppHost names (shown, not chosen here), without
+    /// raising <see cref="Changed"/>.</summary>
+    public void SetNamed(IReadOnlyList<(string Name, string Project)> named, IReadOnlyList<ProjectModel> solution, RunConfiguration configuration, bool editable)
+    {
+        setting = true;
+        try
+        {
+            projects = [.. solution, .. named.Select(n => n.Project).Where(p => !solution.Any(s => Core.PathNames.Same(s.Path, p)))
+                .Distinct(Core.PathNames.Comparer).Select(ProjectModel.Unevaluated)];
+            rows.Clear();
+            table.Children.Clear();
+            said.IsVisible = named.Count == 0;
+            said.Text = named.Count == 0 ? "This AppHost declares no project resources" : string.Empty;
+            foreach ((string name, string project) in named)
+            {
+                Add(name, string.Empty, project, choosable: false, named: true, configuration.ServiceActions.GetValueOrDefault(name, ServiceStart.Run), editable);
+            }
+        }
+        finally
+        {
+            setting = false;
+        }
+    }
+
+    /// <summary>Each AppHost resource's project, as its AppHost names it, by its name.</summary>
+    public Dictionary<string, string> NamedProjects() =>
+        rows.Where(row => row.Named is not null).ToDictionary(row => row.Service, row => row.Named!, StringComparer.Ordinal);
 
     /// <summary>The projects chosen for services, by name: only those the configuration keeps (a service whose project its
     /// Dockerfile names keeps none unless another was chosen).</summary>
@@ -110,14 +145,15 @@ public sealed class ComposeServicesTable : Border
         return chosen;
     }
 
-    /// <summary>What each service does, as the configuration keeps it: those that do not simply run.</summary>
-    public Dictionary<string, ServiceStart> Actions()
+    /// <summary>What each service does, as the configuration keeps it: those that do not simply run, or with
+    /// <paramref name="every"/> each (an AppHost's resource kept as Run is not debugged when the AppHost is).</summary>
+    public Dictionary<string, ServiceStart> Actions(bool every = false)
     {
         Dictionary<string, ServiceStart> actions = new(StringComparer.Ordinal);
         foreach (Row row in rows)
         {
             ServiceStart action = Action(row);
-            if (action != ServiceStart.Run)
+            if (every || action != ServiceStart.Run)
             {
                 actions[row.Service] = action;
             }
@@ -132,11 +168,10 @@ public sealed class ComposeServicesTable : Border
         _ => ServiceStart.Run,
     };
 
-    private void Add(ComposeService service, string? project, bool built, ServiceStart action, bool editable)
+    private void Add(string service, string runs, string? project, bool choosable, bool named, ServiceStart action, bool editable)
     {
         StackPanel name = new() { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
-        name.Children.Add(new TextBlock { Text = service.Name, VerticalAlignment = VerticalAlignment.Center });
-        string runs = built && service.Dockerfile is { } file ? file : service.Image ?? string.Empty;
+        name.Children.Add(new TextBlock { Text = service, VerticalAlignment = VerticalAlignment.Center });
         if (runs.Length > 0)
         {
             name.Children.Add(new TextBlock { Text = runs, Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis });
@@ -146,13 +181,16 @@ public sealed class ComposeServicesTable : Border
             Classes = { "cell" },
             HorizontalAlignment = HorizontalAlignment.Stretch,
             ItemsSource = (string[])[NoProject, .. projects.Select(p => p.Name)],
-            IsEnabled = editable,
+            // An AppHost's resource runs the project its AppHost's code names.
+            IsEnabled = editable && !named,
             // A service that runs its image has no project to choose.
-            IsVisible = built,
+            IsVisible = choosable || named,
         };
         int found = project is null ? -1 : projects.ToList().FindIndex(p => Core.PathNames.Same(p.Path, project));
         projectBox.SelectedIndex = found + 1;
-        ToolTip.SetTip(projectBox, built ? "The project this service runs: Run builds it and runs it in the service's container" : "Runs its image: no project of the solution");
+        ToolTip.SetTip(projectBox, named ? "The project the AppHost runs for this resource, as its code names it"
+            : choosable ? "The project this service runs: Run builds it and runs it in the service's container" : "Runs its image: no project of the solution");
+        ToolTip.SetShowOnDisabled(projectBox, true);
         ComboBox actionBox = new() { Classes = { "cell" }, HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = editable };
         Grid cells = new() { ColumnDefinitions = new ColumnDefinitions(Columns), MinHeight = ListRow.Height };
         Control[] parts = [name, projectBox, actionBox];
@@ -163,7 +201,7 @@ public sealed class ComposeServicesTable : Border
         }
         Border view = new() { Child = cells, BorderThickness = new Thickness(0, 0, 0, 1) };
         view.Bind(BorderBrushProperty, view.GetResourceObservable("Passenger.Separator"));
-        Row row = new(service.Name, projectBox, actionBox, view);
+        Row row = new(service, projectBox, actionBox, view) { Named = named ? project : null };
         Actions(row, action);
         rows.Add(row);
         table.Children.Add(view);

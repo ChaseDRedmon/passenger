@@ -159,7 +159,13 @@ public sealed class AspireClient(string? program = null)
             }
             foreach (string name in values.Select(value => value.Key).ToArray())
             {
-                if (field == "environment" || !VisibleProperties.Contains(name))
+                // An environment variable's value as a container's is shown (ContainerSecrets' rule masks a secret's); of the
+                // properties, whose sensitivity the CLI does not say, only those known to name no secret.
+                if (field == "environment" && values[name] is JsonValue value && value.TryGetValue(out string? text))
+                {
+                    values[name] = ContainerSecrets.Shown(name, text);
+                }
+                else if (field == "environment" || !VisibleProperties.Contains(name))
                 {
                     values[name] = null;
                 }

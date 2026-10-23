@@ -4,8 +4,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Passenger.Editor;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
+using Passenger.Editor;
 
 namespace Passenger.App.Containers;
 
@@ -174,16 +175,15 @@ public sealed record ContainerDetails
 }
 
 /// <summary>A container's Details tab: what <c>docker inspect</c> says of it, read as it is chosen and again each time the
-/// window reads the engine (its events say what changed), laid out in framed tables: the container, its health check's
-/// last outputs, its ports (links to the browser), the services it waits for, its environment (secrets masked), mounts and
-/// networks. A service's row shows its container's (its running one, of several).</summary>
-public sealed class ContainerDetailsPane : DockPanel
+/// window reads the engine (its events say what changed), laid out in the framed tables every Details tab has
+/// (<see cref="DetailsTables"/>): the container, its health check's last outputs, its ports (links to the browser), the
+/// services it waits for, its environment (secrets masked), mounts and networks. A service's row shows its container's (its
+/// running one, of several).</summary>
+public sealed class ContainerDetailsPane : DetailsTables
 {
     private readonly Func<ContainerEngine> engine;
     private readonly Action<Uri> browse;
     private readonly Func<string?> endpoint;
-    private readonly StackPanel sections = new() { Margin = new Thickness(8, 0, 8, 8) };
-    private readonly TextBlock said = new() { Classes = { "emptyText" } };
     private ContainerInfo? container;
     private int reads;
 
@@ -192,9 +192,6 @@ public sealed class ContainerDetailsPane : DockPanel
         this.engine = engine;
         this.browse = browse;
         this.endpoint = endpoint;
-        // Every table's names in one column, as wide as the widest of any, so the values line up down the tab.
-        Grid.SetIsSharedSizeScope(sections, true);
-        Children.Add(new Panel { Children = { new ScrollViewer { Content = sections }, said } });
     }
 
     /// <summary>What was read of the container shown; null while none is, or before its read lands.</summary>
@@ -215,16 +212,13 @@ public sealed class ContainerDetailsPane : DockPanel
         if (next is null)
         {
             Details = null;
-            sections.Children.Clear();
-            said.IsVisible = false;
+            Say(null);
             return;
         }
         if (Details?.Id != next.Id)
         {
             Details = null;
-            sections.Children.Clear();
-            said.Text = $"Reading what the engine says of {next.Name}…";
-            said.IsVisible = true;
+            Say($"Reading what the engine says of {next.Name}…");
         }
         _ = ReadAsync(next, reads);
     }
@@ -251,9 +245,7 @@ public sealed class ContainerDetailsPane : DockPanel
             return;
         }
         Details = details;
-        sections.Children.Clear();
-        said.Text = problem ?? string.Empty;
-        said.IsVisible = details is null;
+        Say(details is null ? problem ?? string.Empty : null);
         if (details is not null)
         {
             Fill(details);
@@ -265,7 +257,7 @@ public sealed class ContainerDetailsPane : DockPanel
         List<(string, Control)> about =
         [
             ("Image", Words(details.Image)),
-            ("State", State(details)),
+            ("State", State(details.State, details.Health)),
             ("Restarts", Words(details.RestartPolicy is { } policy ? $"{details.RestartCount} (restarted {Policy(policy)})" : $"{details.RestartCount}")),
         ];
         if (details.LastExit is { } exit)
@@ -321,84 +313,12 @@ public sealed class ContainerDetailsPane : DockPanel
         }
     }
 
-    /// <summary>A heading over a framed table of names and what each is, the names in the tab's one column of names.</summary>
-    private void Section(string title, IReadOnlyList<(string Name, Control Value)> rows)
-    {
-        TextBlock heading = new() { Text = title, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 10, 0, 4) };
-        Grid table = new()
-        {
-            ColumnDefinitions = { new ColumnDefinition(GridLength.Auto) { SharedSizeGroup = "DetailsNames" }, new ColumnDefinition(GridLength.Star) },
-            Margin = new Thickness(8, 0),
-        };
-        for (int i = 0; i < rows.Count; i++)
-        {
-            table.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            TextBlock name = new()
-            {
-                Text = rows[i].Name, Classes = { "muted" }, MaxWidth = 260, MinHeight = ListRow.Height, Margin = new Thickness(0, 0, 16, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Top, Padding = new Thickness(0, 4),
-                [Grid.RowProperty] = i,
-            };
-            ToolTip.SetTip(name, rows[i].Name);
-            Control value = rows[i].Value;
-            value[Grid.RowProperty] = i;
-            value[Grid.ColumnProperty] = 1;
-            table.Children.Add(name);
-            table.Children.Add(value);
-        }
-        sections.Children.Add(heading);
-        sections.Children.Add(new Border { Classes = { "framed" }, Padding = new Thickness(0, 2), Child = table });
-    }
-
-    /// <summary>A value to read and copy, wrapped rather than cut; a program's words in the editor's font.</summary>
-    private static SelectableTextBlock Words(string text, bool code = false, string? brush = null)
-    {
-        SelectableTextBlock words = new()
-        {
-            Text = text, TextWrapping = TextWrapping.Wrap, MinHeight = ListRow.Height, Padding = new Thickness(0, 4), VerticalAlignment = VerticalAlignment.Top,
-        };
-        if (code)
-        {
-            words.FontFamily = CodeBlock.Font;
-            words.FontSize = 12;
-        }
-        if (brush is not null)
-        {
-            words.Bind(TextBlock.ForegroundProperty, words.GetResourceObservable(brush));
-        }
-        return words;
-    }
-
-    /// <summary>The state in words beside the health's tag, as the list shows it.</summary>
-    private static Control State(ContainerDetails details)
-    {
-        StackPanel state = new() { Orientation = Orientation.Horizontal, Spacing = 8, MinHeight = ListRow.Height };
-        state.Children.Add(new TextBlock { Text = details.State, VerticalAlignment = VerticalAlignment.Center });
-        if (details.Health is { } health)
-        {
-            state.Children.Add(HealthTag(health));
-        }
-        return state;
-    }
-
     /// <summary>A published port: a link to it on the engine's machine while the container runs, else its port in words.</summary>
-    private Control Port(ContainerPort port, bool running)
-    {
-        if (running && port.LinkOn(endpoint()) is { } link)
-        {
-            Button open = new()
-            {
-                Classes = { "link" }, Content = $"{link.Host}:{port.HostPort}", Name = "detailsPort", HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center, MinHeight = ListRow.Height,
-            };
-            ToolTip.SetTip(open, link.ToString());
-            open.Click += (_, _) => browse(link);
-            return open;
-        }
-        return Words($"Host port {port.HostPort}");
-    }
+    private Control Port(ContainerPort port, bool running) => running && port.LinkOn(endpoint()) is { } link
+        ? Link($"{link.Host}:{port.HostPort}", link.ToString(), () => browse(link), "detailsPort")
+        : Words($"Host port {port.HostPort}");
 
-    /// <summary>A health check's state as a tag in its colour, as the list and the Details tab show it.</summary>
+    /// <summary>A health check's state as a tag in its colour, as every list of what runs and every Details tab show it.</summary>
     internal static Border HealthTag(string health)
     {
         TextBlock said = new() { Text = health, FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
@@ -422,7 +342,7 @@ public sealed class ContainerDetailsPane : DockPanel
     };
 
     /// <summary>A time in the person's own zone: its time of day today, else its date too.</summary>
-    private static string When(DateTimeOffset at)
+    internal static string When(DateTimeOffset at)
     {
         DateTimeOffset local = at.ToLocalTime();
         return local.Date == DateTimeOffset.Now.Date

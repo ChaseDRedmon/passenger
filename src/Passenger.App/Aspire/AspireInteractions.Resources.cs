@@ -13,6 +13,7 @@ public sealed partial class AspireInteractions
 {
     public const int ResourceLimit = 256;
     private const string Redacted = "[redacted]";
+    private static readonly TimeSpan ResourcesWait = TimeSpan.FromSeconds(30);
     private readonly object resourceSync = new();
     private readonly Dictionary<string, (Resource Protocol, AspireResource Snapshot)> watchedResources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResourceCommand[]> resourceTypeCommands = new(StringComparer.Ordinal);
@@ -169,10 +170,26 @@ public sealed partial class AspireInteractions
         }
     }
 
+    /// <summary>The AppHost's resources now. A connection that has ended, or an AppHost that sends none in time, is said as
+    /// such (an <see cref="IOException"/> or a <see cref="TimeoutException"/>): only the caller's own cancellation cancels.</summary>
     public async Task<IReadOnlyList<AspireResource>> GetResourcesAsync(CancellationToken cancel = default)
     {
         using CancellationTokenSource request = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellation);
-        request.CancelAfter(TimeSpan.FromSeconds(30));
+        request.CancelAfter(ResourcesWait);
+        try
+        {
+            return await ReadResourcesAsync(request.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            throw cancellation.IsCancellationRequested
+                ? new IOException(Failure ?? "The AppHost's resource connection has ended.")
+                : new TimeoutException($"The AppHost sent no resources within {ResourcesWait.TotalSeconds:0} s.");
+        }
+    }
+
+    private async Task<IReadOnlyList<AspireResource>> ReadResourcesAsync(CancellationToken request)
+    {
         while (true)
         {
             Task? loaded;
@@ -180,13 +197,13 @@ public sealed partial class AspireInteractions
             lock (resourceSync)
             {
                 loaded = resourceWatch is not null ? resourcesLoaded.Task : null;
-                acquire = loaded is null ? resourceReading.WaitAsync(request.Token) : Task.CompletedTask;
+                acquire = loaded is null ? resourceReading.WaitAsync(request) : Task.CompletedTask;
             }
             if (loaded is not null)
             {
                 try
                 {
-                    await loaded.WaitAsync(request.Token).ConfigureAwait(false);
+                    await loaded.WaitAsync(request).ConfigureAwait(false);
                     break;
                 }
                 catch (OperationCanceledException) when (!request.IsCancellationRequested)
@@ -205,7 +222,7 @@ public sealed partial class AspireInteractions
                     }
                     resourceFailure = null;
                 }
-                await ListenResourcesAsync(request.Token, new(TaskCreationOptions.RunContinuationsAsynchronously), singleSnapshot: true).ConfigureAwait(false);
+                await ListenResourcesAsync(request, new(TaskCreationOptions.RunContinuationsAsynchronously), singleSnapshot: true).ConfigureAwait(false);
                 break;
             }
             finally
@@ -213,7 +230,7 @@ public sealed partial class AspireInteractions
                 resourceReading.Release();
             }
         }
-        request.Token.ThrowIfCancellationRequested();
+        request.ThrowIfCancellationRequested();
         lock (resourceSync)
         {
             if (resourceFailure is not null)
@@ -391,26 +408,33 @@ public sealed partial class AspireInteractions
         {
             throw new InvalidDataException("The AppHost sent duplicate resources.");
         }
+        // What a resource says is shown as a container's is (Containers' Details): a secret by Passenger's one rule masked
+        // (ContainerSecrets: by its name, a URL's password, a connection string's part so named), one the AppHost marks
+        // sensitive masked whatever its name, the rest as it is.
         Resource resource = incoming.Clone();
         foreach (ResourceProperty property in resource.Properties)
         {
             if (property.IsSensitive)
             {
-                property.Value = Google.Protobuf.WellKnownTypes.Value.ForString(Redacted);
+                property.Value = Google.Protobuf.WellKnownTypes.Value.ForString(ContainerSecrets.Masked);
+            }
+            else if (property.Value?.KindCase == Google.Protobuf.WellKnownTypes.Value.KindOneofCase.StringValue)
+            {
+                property.Value = Google.Protobuf.WellKnownTypes.Value.ForString(ContainerSecrets.Shown(property.Name, property.Value.StringValue));
             }
         }
         foreach (Protocol.EnvironmentVariable variable in resource.Environment)
         {
             if (variable.HasValue)
             {
-                variable.Value = Redacted;
+                variable.Value = ContainerSecrets.Shown(variable.Name, variable.Value);
             }
         }
         foreach (HealthReport report in resource.HealthReports)
         {
             if (report.Exception.Length > 0)
             {
-                report.Exception = Redacted;
+                report.Exception = ContainerSecrets.InValue(report.Exception);
             }
         }
         ResourceCommand[] commands = resource.Commands.Select(SafeCommand).ToArray();
@@ -484,7 +508,7 @@ public sealed partial class AspireInteractions
             healthStatus = health,
             properties,
             propertyMetadata = resource.Properties.ToDictionary(property => property.Name, property => new { isSensitive = property.IsSensitive, displayName = property.DisplayName }),
-            environment = resource.Environment.ToDictionary(variable => variable.Name, _ => (string?)null),
+            environment = resource.Environment.ToDictionary(variable => variable.Name, variable => variable.HasValue ? variable.Value : null),
             environmentMetadata = resource.Environment.ToDictionary(variable => variable.Name, variable => new { isFromSpec = variable.IsFromSpec, isMasked = variable.HasValue }),
             urls = resource.Urls.Select(url => new { name = url.HasEndpointName ? url.EndpointName : null, displayName = url.DisplayProperties?.DisplayName, url = ContainerSecrets.PublicHttpUrl(url.FullUrl), isInternal = url.IsInternal, isInactive = url.IsInactive }),
             healthReports = resource.HealthReports.ToDictionary(report => report.Key, report => new { status = report.HasStatus ? report.Status.ToString() : null, description = report.Description, exceptionMessage = report.Exception.Length > 0 ? report.Exception : null, lastRunAt = Timestamp(report.LastRunAt) }),

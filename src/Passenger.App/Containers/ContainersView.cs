@@ -90,15 +90,7 @@ public sealed class ContainersView : DockPanel
                 ShowChosen();
             }
         };
-        list.DoubleTapped += (_, _) => Toggle(Chosen);
-        list.KeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Enter && Chosen is { Expands: true } row)
-            {
-                Toggle(row);
-                e.Handled = true;
-            }
-        };
+        RunRows.Toggles(list, () => Chosen is { Expands: true }, () => Toggle(Chosen));
         ListMenus.Attach(list, () => Chosen is not { Kind: not ContainerRowKind.Group } ? [] :
         [
             Item(AppActions.ContainerStart),
@@ -486,96 +478,36 @@ public sealed class ContainersView : DockPanel
         return button;
     }
 
+    /// <summary>A row as every list of what runs draws one (<see cref="RunRows"/>): a heading with its count, a project with
+    /// its status, a service or container with its health and ports (links on the engine's machine while it runs), an
+    /// image, volume or network with what it is.</summary>
     private Control Row(ContainerRow row)
     {
-        DockPanel line = new() { Height = ListRow.Height, Margin = new Thickness(6 + (row.Depth * 16), 0, 6, 0) };
-        PathIcon chevron = new() { Width = 12, Height = 12, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, IsVisible = row.Expands };
-        chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable(row.Expanded ? "Icon.ChevronDown" : "Icon.ChevronRight"));
-        chevron.Bind(PathIcon.ForegroundProperty, chevron.GetResourceObservable("Passenger.TextMuted"));
-        chevron.PointerPressed += (_, e) =>
-        {
-            Toggle(row);
-            e.Handled = true;
-        };
-        DockPanel.SetDock(chevron, Dock.Left);
-        line.Children.Add(chevron);
-        if (row.Kind == ContainerRowKind.Group)
-        {
-            line.Children.Add(Words(row.Detail ?? string.Empty, muted: true, dock: Dock.Right));
-            TextBlock heading = Words(row.Label, muted: false, dock: null);
-            heading.FontWeight = FontWeight.SemiBold;
-            line.Children.Add(heading);
-            return line;
-        }
         IReadOnlyList<ContainerInfo> containers = row.Containers;
-        if (row.Kind is ContainerRowKind.Project or ContainerRowKind.Service or ContainerRowKind.Container)
+        bool runs = row.Kind is ContainerRowKind.Project or ContainerRowKind.Service or ContainerRowKind.Container;
+        bool serves = row.Kind is ContainerRowKind.Service or ContainerRowKind.Container;
+        bool trailing = row.Kind is ContainerRowKind.Project or ContainerRowKind.Group;
+        RunRow shown = new(row.Depth, row.Label)
         {
-            Ellipse state = new() { Width = 8, Height = 8, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-            state.Bind(Shape.FillProperty, state.GetResourceObservable(StateColour(containers)));
-            ToolTip.SetTip(state, string.Join(", ", containers.Select(c => $"{c.Name}: {c.Status}")));
-            DockPanel.SetDock(state, Dock.Left);
-            line.Children.Add(state);
-        }
-        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center, [DockProperty] = Dock.Right };
-        if (row.Kind is ContainerRowKind.Service or ContainerRowKind.Container && containers.Select(c => c.Health).FirstOrDefault(h => h is not null) is { } health)
-        {
-            right.Children.Add(ContainerDetailsPane.HealthTag(health));
-        }
-        if (row.Kind is ContainerRowKind.Service or ContainerRowKind.Container)
-        {
-            foreach (ContainerPort port in containers.SelectMany(c => c.Ports).Distinct().Take(3))
-            {
-                if (port.LinkOn(State?.Endpoint) is { } link && containers.Any(c => c.IsRunning))
-                {
-                    Button open = new() { Classes = { "link" }, Content = port.ToString(), VerticalAlignment = VerticalAlignment.Center, Name = "containerPort" };
-                    ToolTip.SetTip(open, link.ToString());
-                    open.Click += (_, _) => parts.Browse(link);
-                    right.Children.Add(open);
-                }
-                else
-                {
-                    right.Children.Add(Words(port.ToString(), muted: true, dock: null));
-                }
-            }
-        }
-        if (row.Kind == ContainerRowKind.Project)
-        {
-            right.Children.Add(Words(row.Detail ?? string.Empty, muted: true, dock: null));
-        }
-        line.Children.Add(right);
-        TextBlock name = Words(row.Label, muted: false, dock: Dock.Left);
-        name.MaxWidth = 260;
-        name.HorizontalAlignment = HorizontalAlignment.Left;
-        line.Children.Add(name);
-        if (row.Kind != ContainerRowKind.Project && row.Detail is { Length: > 0 } detailed)
-        {
-            TextBlock after = Words(detailed, muted: true, dock: null);
-            after.Margin = new Thickness(8, 0, 0, 0);
-            after.FontSize = 12;
-            line.Children.Add(after);
-        }
-        ToolTip.SetTip(line, row.Container is { } one ? $"{one.Name} ({one.Id})\n{one.Image}\n{one.Status}" : row.Object is { } thing ? $"{thing.Name}\n{thing.Id}" : row.Name);
-        return line;
+            Heading = row.Kind == ContainerRowKind.Group,
+            Expands = row.Expands,
+            Expanded = row.Expanded,
+            State = runs ? StateOf(containers) : RunState.None,
+            StateTip = string.Join(", ", containers.Select(c => $"{c.Name}: {c.Status}")),
+            Health = serves ? containers.Select(c => c.Health).FirstOrDefault(h => h is not null) : null,
+            Links = serves ? [.. containers.SelectMany(c => c.Ports).Distinct().Take(3).Select(port =>
+                new RunLink(port.ToString(), containers.Any(c => c.IsRunning) ? port.LinkOn(State?.Endpoint) : null))] : [],
+            Detail = trailing ? null : row.Detail,
+            Trailing = trailing ? row.Detail ?? string.Empty : null,
+            Tip = row.Container is { } one ? $"{one.Name} ({one.Id})\n{one.Image}\n{one.Status}" : row.Object is { } thing ? $"{thing.Name}\n{thing.Id}" : row.Name,
+        };
+        return RunRows.Of(shown, () => Toggle(row), parts.Browse, "containerPort");
     }
 
-    private static TextBlock Words(string text, bool muted, Dock? dock)
-    {
-        TextBlock words = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-        if (muted)
-        {
-            words.Bind(TextBlock.ForegroundProperty, words.GetResourceObservable("Passenger.TextMuted"));
-        }
-        if (dock is { } side)
-        {
-            DockPanel.SetDock(words, side);
-        }
-        return words;
-    }
-
-    /// <summary>The state dot's colour: running green (red while unhealthy), paused amber, the rest muted.</summary>
-    private static string StateColour(IReadOnlyList<ContainerInfo> containers) =>
-        containers.Any(c => c.IsRunning && c.Health == "unhealthy") ? "Passenger.Error"
-        : containers.Any(c => c.IsRunning) ? "Passenger.Test.Passed"
-        : containers.Any(c => c.IsPaused) ? "Passenger.Warning"
-        : "Passenger.TextMuted";
+    /// <summary>The state dot's: running (unhealthy while its health check fails), paused between states, the rest stopped.</summary>
+    private static RunState StateOf(IReadOnlyList<ContainerInfo> containers) =>
+        containers.Any(c => c.IsRunning && c.Health == "unhealthy") ? RunState.Unhealthy
+        : containers.Any(c => c.IsRunning) ? RunState.Running
+        : containers.Any(c => c.IsPaused) ? RunState.Between
+        : RunState.Stopped;
 }
