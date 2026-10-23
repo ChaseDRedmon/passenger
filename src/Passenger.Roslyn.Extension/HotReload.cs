@@ -87,34 +87,27 @@ internal static class HotReload
                 return Failed("the last update has not been committed or discarded");
             }
         }
-        if (session.Projects is null)
+        // The program's projects: those whose modules it has loaded and what they build on, taken in at every emit, so a
+        // module it loads after an update (a plugin's) takes its edits from then on.
+        HashSet<Guid> loaded = [.. message.Modules, .. message.Locked.Select(module => module.Module)];
+        HashSet<ProjectId> projects = [.. session.Projects ?? []];
+        ProjectDependencyGraph graph = session.Committed.GetProjectDependencyGraph();
+        foreach (Project project in session.Committed.Projects.Where(p => !projects.Contains(p.Id)))
         {
-            HashSet<Guid> loaded = [.. message.Modules, .. message.Locked.Select(module => module.Module)];
-            HashSet<ProjectId> projects = [];
-            ProjectDependencyGraph graph = session.Committed.GetProjectDependencyGraph();
-            foreach (Project project in session.Committed.Projects)
+            if (session.Mvids.GetOrAdd(project.Id, _ => StaleCallers.Mvid(project)) is { } module && loaded.Contains(module))
             {
-                if (StaleCallers.Mvid(project) is { } module && loaded.Contains(module))
-                {
-                    projects.Add(project.Id);
-                    projects.UnionWith(graph.GetProjectsThatThisProjectTransitivelyDependsOn(project.Id));
-                }
-            }
-            if (projects.Count > 0)
-            {
-                session.Projects = projects;
+                projects.Add(project.Id);
+                projects.UnionWith(graph.GetProjectsThatThisProjectTransitivelyDependsOn(project.Id));
             }
         }
-        if (session.Projects is { } scope)
+        if (projects.Count > 0)
         {
-            foreach (ProjectId project in session.Committed.ProjectIds.Where(project => !scope.Contains(project)))
-            {
-                session.Committed = session.Committed.RemoveProject(project);
-            }
-            foreach (ProjectId project in solution.ProjectIds.Where(project => !scope.Contains(project)))
-            {
-                solution = solution.RemoveProject(project);
-            }
+            session.Projects = projects;
+        }
+        IReadOnlySet<ProjectId>? scope = session.Projects;
+        if (scope is not null)
+        {
+            solution = await FrozenAsync(solution, session.Committed, scope, cancel).ConfigureAwait(false);
         }
         session.Debugger.Take(message);
         session.Originals.Take(message.Originals);
@@ -124,7 +117,7 @@ internal static class HotReload
             ImmutableDictionary<ProjectId, RunningProjectOptions>.Empty, NoTrackedSpans, cancel).ConfigureAwait(false);
 
         List<HotReloadProblem> problems = [.. results.GetAllDiagnostics().Select(d => Problem(d, results.Solution))];
-        IReadOnlyList<string> changed = Changed(session.Committed, results.Solution ?? solution);
+        IReadOnlyList<string> changed = Changed(session.Committed, results.Solution ?? solution, scope);
         if (results.ModuleUpdates.Status == ModuleUpdateStatus.None)
         {
             // Nothing to apply: the service has taken the solution as it is as committed.
@@ -134,7 +127,7 @@ internal static class HotReload
         if (results.ModuleUpdates.Status == ModuleUpdateStatus.Ready)
         {
             // A signature changed under callers left as they were would have them call a deleted body: that waits for a restart.
-            problems.AddRange(await StaleCallers.FindAsync(session.Committed, results.Solution ?? solution, [.. message.Modules, .. message.Locked.Select(l => l.Module)], cancel)
+            problems.AddRange(await StaleCallers.FindAsync(session.Committed, results.Solution ?? solution, [.. message.Modules, .. message.Locked.Select(l => l.Module)], scope, cancel)
                 .ConfigureAwait(false));
         }
         if (results.ModuleUpdates.Status == ModuleUpdateStatus.Blocked || problems.Any(p => p.Error))
@@ -213,12 +206,46 @@ internal static class HotReload
     private static ValueTask<ImmutableArray<ActiveStatementSpan>> NoTrackedSpans(DocumentId? document, string path, CancellationToken cancel) =>
         ValueTask.FromResult(ImmutableArray<ActiveStatementSpan>.Empty);
 
-    /// <summary>The files whose text differs between two snapshots, or which one has and the other not.</summary>
-    private static IReadOnlyList<string> Changed(Solution before, Solution after)
+    /// <summary>A solution whose projects outside the program's (<paramref name="scope"/>) are as last committed: each
+    /// document's text as it was, those added since taken out and those removed put back, so the service finds nothing
+    /// changed there (another program's project, whose edits it would name rude to this one) and keeps them as built, to
+    /// take the edits made meanwhile in one update once the program loads the project's module.</summary>
+    private static async Task<Solution> FrozenAsync(Solution solution, Solution committed, IReadOnlySet<ProjectId> scope, CancellationToken cancel)
+    {
+        foreach (Microsoft.CodeAnalysis.ProjectChanges project in solution.GetChanges(committed).GetProjectChanges().Where(p => !scope.Contains(p.ProjectId)).ToList())
+        {
+            Project before = project.OldProject;
+            foreach (DocumentId id in project.GetChangedDocuments(onlyGetDocumentsWithTextChanges: true))
+            {
+                if (before.GetDocument(id) is { } was)
+                {
+                    solution = solution.WithDocumentText(id, await was.GetTextAsync(cancel).ConfigureAwait(false), PreservationMode.PreserveIdentity);
+                }
+            }
+            foreach (DocumentId id in project.GetAddedDocuments())
+            {
+                solution = solution.RemoveDocument(id);
+            }
+            foreach (DocumentId id in project.GetRemovedDocuments())
+            {
+                if (before.GetDocument(id) is { } was)
+                {
+                    SourceText text = await was.GetTextAsync(cancel).ConfigureAwait(false);
+                    solution = solution.AddDocument(DocumentInfo.Create(id, was.Name, was.Folders, was.SourceCodeKind,
+                        TextLoader.From(TextAndVersion.Create(text, VersionStamp.Create(), was.FilePath)), was.FilePath));
+                }
+            }
+        }
+        return solution;
+    }
+
+    /// <summary>The files whose text differs between two snapshots, or which one has and the other not, in the program's
+    /// projects (<paramref name="scope"/>, every one when null).</summary>
+    private static IReadOnlyList<string> Changed(Solution before, Solution after, IReadOnlySet<ProjectId>? scope)
     {
         HashSet<string> paths = new(StringComparer.Ordinal);
         SolutionChanges changes = after.GetChanges(before);
-        foreach (Microsoft.CodeAnalysis.ProjectChanges project in changes.GetProjectChanges())
+        foreach (Microsoft.CodeAnalysis.ProjectChanges project in changes.GetProjectChanges().Where(p => scope?.Contains(p.ProjectId) != false))
         {
             foreach (DocumentId id in project.GetChangedDocuments(onlyGetDocumentsWithTextChanges: true).Concat(project.GetAddedDocuments()))
             {
@@ -235,7 +262,7 @@ internal static class HotReload
                 }
             }
         }
-        foreach (Project added in changes.GetAddedProjects())
+        foreach (Project added in changes.GetAddedProjects().Where(p => scope?.Contains(p.Id) != false))
         {
             paths.UnionWith(added.Documents.Select(d => d.FilePath).OfType<string>());
         }
@@ -279,7 +306,12 @@ internal static class HotReload
         public DebuggingSessionId Id { get; } = id;
         public Debugger Debugger { get; } = debugger;
         public Originals Originals { get; } = originals;
+        /// <summary>The projects whose modules the program has loaded, with what they build on, as its emits have said them;
+        /// null until one names a project's module.</summary>
         public HashSet<ProjectId>? Projects { get; set; }
+
+        /// <summary>Each project's build's module id, read once: the build the program loads its module from.</summary>
+        public ConcurrentDictionary<ProjectId, Guid?> Mvids { get; } = new();
 
         /// <summary>The solution as last committed (as built, at first): what the files changed since are measured from.</summary>
         public Solution Committed { get; set; } = null!;

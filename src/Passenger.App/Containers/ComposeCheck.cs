@@ -29,7 +29,12 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     /// <summary>The most of a value a hint shows.</summary>
     private const int Longest = 48;
 
+    /// <summary>The folder's code as the check under way reads it, taken as it starts.</summary>
+    private volatile ComposeCode? code;
+
     protected override bool AsTyped => true;
+
+    protected override void Starting() => code = Owner.Code?.Invoke();
 
     protected override bool Hints => true;
 
@@ -63,9 +68,9 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         ChildResult? self = alone?.Result;
         List<Finding> found = [];
         List<InlayHint> hints = [];
-        if (!model.Succeeded && !Error(model).Contains(RemoteRefused, StringComparison.Ordinal))
+        if (!model.Succeeded && !Error(model, folder).Contains(RemoteRefused, StringComparison.Ordinal))
         {
-            string said = Error(model);
+            string said = Error(model, folder);
             (string? named, string message) = Named(said);
             string owner;
             if (named is not null)
@@ -75,10 +80,14 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
             else
             {
                 // Named by neither: the file's own when the file alone fails the same way, else its partner's.
-                owner = partner is null || self is null || (!self.Succeeded && Error(self) == said) ? path : partner;
+                owner = partner is null || self is null || (!self.Succeeded && Error(self, folder) == said) ? path : partner;
             }
             bool own = PathNames.Same(owner, path);
             found.Add(Place($"Compose: {message}", owner, own, message, own ? snapshot : Disk(owner)));
+        }
+        if (model.Succeeded && code is { } reading)
+        {
+            found.AddRange(await ComposeConnections.FindAsync(reading, folder, path, snapshot, model.Output, cancel));
         }
         IReadOnlyDictionary<string, string> resolved = values.Result;
         foreach ((int start, int end, string expression) in interpolations)
@@ -304,10 +313,12 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     [GeneratedRegex(@"(?<name>[A-Za-z_][A-Za-z0-9_.\-]*)\s*[=:]\s*[""']?$")]
     private static partial Regex NameJustBefore();
 
-    /// <summary>What Compose said of the failure: its last line that is not one of its log's warnings.</summary>
-    private static string Error(ChildResult result) =>
+    /// <summary>What Compose said of the failure: its last line that is not one of its log's warnings, its secrets masked
+    /// (what it interpolated from the folder's .env among them), as every error of the engine is.</summary>
+    private static string Error(ChildResult result, string folder) =>
         result.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault(l => !l.StartsWith("time=", StringComparison.Ordinal) && !ContainerEngine.ProviderFailed(l)) ?? ContainerEngine.Said(result);
+            .LastOrDefault(l => !l.StartsWith("time=", StringComparison.Ordinal) && !ContainerEngine.ProviderFailed(l)) is { } last
+            ? ContainerSecrets.InSaid(last, folder) : ContainerEngine.Said(result, folder);
 
     /// <summary>The file a message names (its schema's check, its parse), "-" for the text typed, and the message after it.</summary>
     private static (string? File, string Message) Named(string said)
@@ -347,7 +358,10 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         }
         if (ComposeFixes.Read(said) is { } fault && ComposeFixes.Place(text.ToString(), fault) is { } named)
         {
-            return new Finding(ProblemSeverity.Error, message, file, text.GetPosition(named.Start), own ? named : null) { Fault = own ? fault : null };
+            return new Finding(ProblemSeverity.Error, message, file, text.GetPosition(named.Start), own ? named : null)
+            {
+                Fixes = own ? now => ComposeFixes.For(now, fault) : null,
+            };
         }
         TextRange range = Lines(text, 0, 0);
         if (ParserPlace().Match(said) is { Success: true } parsed)

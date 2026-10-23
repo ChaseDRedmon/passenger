@@ -55,6 +55,21 @@ public sealed class EngineChecks : IDisposable
 
     internal ContainerEngine Engine => engine();
 
+    /// <summary>The folder's code as a compose file's check reads it (its projects, its C# language server once loaded),
+    /// asked on the UI thread as a check starts; none without it.</summary>
+    public Func<ComposeCode?>? Code { get; set; }
+
+    /// <summary>The folder's code changed (its language server loaded, a project evaluated again, a C# file written): each
+    /// open compose file is checked again once things settle, for the connection strings its .NET services read.</summary>
+    public void CodeChanged()
+    {
+        UiThread.Check();
+        foreach (ComposeCheck compose in checks.Values.OfType<ComposeCheck>())
+        {
+            compose.Later();
+        }
+    }
+
     /// <summary>Checks an open file the engine has something to say of (a Dockerfile, a compose file), now and as it changes.</summary>
     public void Attach(OpenDocument document, WebDocument web)
     {
@@ -88,14 +103,15 @@ public sealed class EngineChecks : IDisposable
         }
     }
 
-    /// <summary>Files another program changed: an open compose file is checked again once they settle when a compose file
-    /// or the .env beside it changed, since Compose reads them with it.</summary>
+    /// <summary>Files changed on disk: an open compose file is checked again once they settle when a compose file or the
+    /// .env beside it changed, since Compose reads them with it, or a C# file, which may read a connection string.</summary>
     public void FilesChanged(IReadOnlyCollection<string> paths)
     {
         UiThread.Check();
+        bool code = paths.Any(p => p.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
         foreach (ComposeCheck compose in checks.Values.OfType<ComposeCheck>())
         {
-            if (paths.Any(p => Path.GetDirectoryName(p) is { } folder && PathNames.Same(folder, compose.Folder)
+            if (code || paths.Any(p => Path.GetDirectoryName(p) is { } folder && PathNames.Same(folder, compose.Folder)
                 && (ComposeDeclarations.IsCompose(p) || Path.GetFileName(p) == ".env")))
             {
                 compose.Later();
@@ -135,7 +151,8 @@ public sealed class EngineChecks : IDisposable
     });
 
     /// <summary>Passenger's own fixes for what the engine found on the line of an offset of an open file: a compose file's
-    /// name a service uses that it does not declare (<see cref="ComposeFixes"/>), each worked out on its text as it stands.</summary>
+    /// name a service uses that it does not declare, a connection string a .NET service's environment never sets
+    /// (<see cref="ComposeFixes"/>), each worked out on its text as it stands.</summary>
     public IReadOnlyList<CSharp.EditorFix> Fixes(OpenDocument document, int offset)
     {
         UiThread.Check();
@@ -147,7 +164,7 @@ public sealed class EngineChecks : IDisposable
         int line = text.GetLineFromOffset(Math.Clamp(offset, 0, text.Length));
         return [.. check.Faults
             .Where(f => text.GetLineFromOffset(Math.Min(f.Range.Start, text.Length)) <= line && line <= text.GetLineFromOffset(Math.Min(f.Range.End, text.Length)))
-            .SelectMany(f => ComposeFixes.For(text, f.Fault))];
+            .SelectMany(f => f.Fixes(text))];
     }
 
     /// <summary>Follows the engine's state, so a start or stop of it checks every file again (or takes their problems away).</summary>
@@ -199,8 +216,10 @@ public sealed class EngineChecks : IDisposable
 /// file read with it (an override), at <see cref="Position"/> only.</summary>
 internal sealed record Finding(ProblemSeverity Severity, string Message, string Path, TextPosition Position, TextRange? Range)
 {
-    /// <summary>What Compose says a service names that the file does not declare, which Passenger's own fixes take.</summary>
-    public ComposeFault? Fault { get; init; }
+    /// <summary>Passenger's own fixes for it, worked out on the file's text as it stands when they are asked for: a name
+    /// Compose says a service uses that the file does not declare (<see cref="ComposeFixes.For"/>), a connection string a
+    /// .NET service reads that its environment never sets (<see cref="ComposeFixes.SetVariable"/>).</summary>
+    public Func<TextSnapshot, IReadOnlyList<CSharp.EditorFix>>? Fixes { get; init; }
 
     public Uri? Link { get; init; }
 
@@ -256,15 +275,20 @@ internal abstract class EngineCheck : IDisposable
 
     public IReadOnlyList<Problem> Problems { get; private set; } = [];
 
-    /// <summary>The names Compose found a service uses that the file does not declare, each where it is marked, carried with
-    /// the text typed after, as the markers are.</summary>
-    public IReadOnlyList<(TextRange Range, ComposeFault Fault)> Faults { get; private set; } = [];
+    /// <summary>What the check found that Passenger's own fixes take, each where it is marked with its fixes, carried with the
+    /// text typed after, as the markers are.</summary>
+    public IReadOnlyList<(TextRange Range, Func<TextSnapshot, IReadOnlyList<CSharp.EditorFix>> Fixes)> Faults { get; private set; } = [];
 
     /// <summary>Whether the file is checked again once typing pauses, rather than only as it opens and is saved.</summary>
     protected abstract bool AsTyped { get; }
 
     /// <summary>Whether the check gives the file's hints, which it then owns.</summary>
     protected abstract bool Hints { get; }
+
+    /// <summary>A check is starting, on the UI thread: what it reads of the window's own it takes now.</summary>
+    protected virtual void Starting()
+    {
+    }
 
     /// <summary>The check itself, off the UI thread, of the file's text as it stood.</summary>
     protected abstract Task<Outcome> CheckAsync(ContainerEngine engine, string path, TextSnapshot text, string written, CancellationToken cancel);
@@ -286,6 +310,7 @@ internal abstract class EngineCheck : IDisposable
         }
         CancellationTokenSource cancel = new();
         running = cancel;
+        Starting();
         _ = RunAsync(Document.Text.Snapshot, Document.Text.Version, cancel, Document.Checking());
     }
 
@@ -349,7 +374,7 @@ internal abstract class EngineCheck : IDisposable
         {
             Document.InlayHints = found.Hints;
         }
-        Faults = [.. found.Findings.Where(f => f is { Range: not null, Fault: not null }).Select(f => (f.Range!.Value, f.Fault!))];
+        Faults = [.. found.Findings.Where(f => f is { Range: not null, Fixes: not null }).Select(f => (f.Range!.Value, f.Fixes!))];
         IReadOnlyList<Problem> problems = [.. found.Findings.Select(f => f.Problem)];
         if (!problems.SequenceEqual(Problems))
         {
@@ -367,7 +392,7 @@ internal abstract class EngineCheck : IDisposable
         }
         if (Faults.Count > 0)
         {
-            Faults = [.. Faults.Select(f => (TextEditing.MapRange(f.Range, e.Edits), f.Fault))];
+            Faults = [.. Faults.Select(f => (TextEditing.MapRange(f.Range, e.Edits), f.Fixes))];
         }
         if (AsTyped)
         {

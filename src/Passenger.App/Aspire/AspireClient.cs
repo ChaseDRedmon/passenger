@@ -409,22 +409,13 @@ public sealed class AspireClient(string? program = null)
         }
     }
 
+    /// <summary>What the aspire CLI or a resource service said of a failure, as the status bar, the Aspire window and an
+    /// agent say it: its secrets masked by the one rule every CLI's error takes (<see cref="ContainerSecrets.InSaid"/>, the
+    /// <paramref name="secrets"/> the caller holds among them), on one line, 2,048 characters at most.</summary>
     internal static string SanitizeDiagnostic(string value, params string[] secrets)
     {
-        foreach (string secret in secrets.Concat(Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
-            .Where(entry => entry.Key is string name && ContainerSecrets.Secret(name)).Select(entry => entry.Value?.ToString() ?? string.Empty)))
-        {
-            if (secret.Length > 0)
-            {
-                value = value.Replace(secret, ContainerSecrets.Masked, StringComparison.Ordinal);
-            }
-        }
-        value = value[..Math.Min(value.Length, 4096)];
-        value = ContainerSecrets.InValue(value);
-        value = Regex.Replace(value, @"[a-z][a-z0-9+.-]*://[^\s/]*@", "[redacted-url-credentials]@", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        value = Regex.Replace(value, @"(?i)\bauthorization\s*[:=]\s*[^\r\n]*", "[redacted-authorization]", RegexOptions.CultureInvariant);
-        value = Regex.Replace(value, """(?i)(?:["']?[\w.-]*(?:password|passwd|secret|token|credential|api[_-]?key|access[_-]?key)[\w.-]*["']?\s*(?:[:=]\s*|\s+)|\bkey\s*[:=]\s*|bearer\s+)(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s,;&}]+)""",
-            "[redacted-secret]", RegexOptions.CultureInvariant);
+        // Bounded before it is read through: nothing past what is shown is said.
+        value = ContainerSecrets.InSaid(value[..Math.Min(value.Length, 16384)], known: secrets);
         value = new string(value.Select(character => char.IsControl(character) ? ' ' : character).ToArray()).Trim();
         return value.Length == 0 ? "No diagnostic output was returned." : value[..Math.Min(value.Length, 2048)];
     }

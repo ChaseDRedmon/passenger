@@ -145,6 +145,8 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
         session.Web = new Web.WebLanguages(folder, setup.Settings, setup.Engine) { DockerHub = setup.DockerHub };
+        // A compose file's check reads what each .NET service's project reads through the language server, once it is loaded.
+        session.Web.Checks.Code = () => new Containers.ComposeCode(session.Projects, session.CSharp is { IsReady: true } csharp ? csharp.Session : null);
         return session;
     }
 
@@ -501,6 +503,7 @@ public sealed class ProjectSession : IAsyncDisposable
         bool tests = !before.Projects.Where(p => p.IsTestProject).Select(p => p.Path).SequenceEqual(Workspace.Projects.Where(p => p.IsTestProject).Select(p => p.Path));
         bool packages = before.Projects.Zip(Workspace.Projects).Any(p => changed.Contains(p.First.Path) && !p.First.Packages.SequenceEqual(p.Second.Packages));
         ProjectsEvaluated?.Invoke(this, new EvaluatedProjects([.. Workspace.Projects.Where(p => changed.Contains(p.Path))], tests, packages));
+        Web?.Checks.CodeChanged();
         MSBuild.ProjectsEvaluated();
         TimeSolutionView();
     }
@@ -730,6 +733,16 @@ public sealed class ProjectSession : IAsyncDisposable
                     : null,
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
+            CSharpService started = CSharp;
+            bool loaded = false;
+            started.StateChanged += (_, _) =>
+            {
+                // Loaded, the projects' code can be read for what their compose files' services need.
+                if (started.IsReady != loaded && (loaded = started.IsReady) && CSharp == started)
+                {
+                    Web?.Checks.CodeChanged();
+                }
+            };
             CSharp.Start(opening);
             foreach (OpenDocument open in setup.Editors.Documents)
             {

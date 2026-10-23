@@ -110,12 +110,14 @@ public sealed class ConsoleSink
     /// too): a '\r' held back is let go. Each line read is told to <paramref name="lines"/> when given ('\r', '\n' or both
     /// ending it, the last at the end). Once <paramref name="letGo"/> is cancelled (its program ended, what still holds the
     /// stream out of the kill's reach), what comes is dropped and nothing ended, since the console may be another program's
-    /// by then. From any thread; it never throws.</summary>
+    /// by then. With <paramref name="shown"/>, what it shows of its text (a CLI's errors with their secrets masked) is
+    /// written whole lines at a time, so nothing it changes is split between two reads. From any thread; it never throws.</summary>
     public async Task PumpAsync(TextReader reader, ConsoleStream stream, CancellationToken letGo = default, Action<string>? lines = null,
-        Action<string>? chunks = null)
+        Action<string>? chunks = null, Func<string, string>? shown = null)
     {
         ControlCodes codes = new();
         LineSplitter? split = lines is null ? null : new LineSplitter(lines);
+        StringBuilder? held = shown is null ? null : new();
         char[] buffer = new char[8192];
         try
         {
@@ -126,7 +128,21 @@ public sealed class ConsoleSink
                 {
                     return;
                 }
-                Write(buffer.AsSpan(0, read), stream, codes);
+                if (held is null)
+                {
+                    Write(buffer.AsSpan(0, read), stream, codes);
+                }
+                else
+                {
+                    held.Append(buffer, 0, read);
+                    int end = held.ToString().LastIndexOfAny(['\n', '\r']);
+                    if (end >= 0 || held.Length >= LongestLine)
+                    {
+                        int whole = end >= 0 ? end + 1 : held.Length;
+                        Write(shown!(held.ToString(0, whole)), stream, codes);
+                        held.Remove(0, whole);
+                    }
+                }
                 split?.Add(buffer.AsSpan(0, read));
                 chunks?.Invoke(new string(buffer, 0, read));
             }
@@ -138,6 +154,10 @@ public sealed class ConsoleSink
         catch (Exception ended) when (ended is IOException or ObjectDisposedException)
         {
             // Its pipe broken as its program was killed, or its reader put away: the stream has ended all the same.
+        }
+        if (held is { Length: > 0 })
+        {
+            Write(shown!(held.ToString()), stream, codes);
         }
         End(stream, codes);
         split?.End();

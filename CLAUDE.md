@@ -617,7 +617,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ContainerSecrets.Secret` names one, a URL's password, a connection string's part so named) show masked in Details and
   in Inspect's JSON, whose copy is written masked; a copy an earlier Passenger wrote unmasked (one its masking would
   change) is deleted off the UI thread once a process for each state folder, as the window starts and at its Containers
-  window's first use, a tab showing it closed and the status bar saying why (`ContainerSecrets.ForgetUnmasked`). Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
+  window's first use, a tab showing it closed and the status bar saying why (`ContainerSecrets.ForgetUnmasked`). What a
+  CLI says of a failure is shown and logged through one helper, `ContainerSecrets.InSaid` (`Masking` for a stream), the
+  docker CLI's and Compose's (`ContainerEngine.Said`, ComposeCheck's error, a run's line of what failed and Compose's own
+  output in the Run console, `ConsoleSink.PumpAsync`'s `shown`, a whole line at a time) as the aspire CLI's
+  (`AspireClient.SanitizeDiagnostic`): each value it knows to be a secret's (given, this process's environment's
+  secret-named variables', the .env's in the folder Compose ran in, which it interpolates and echoes: `parsing
+  "••••••"`; four characters at least) as the dots wherever it stands, then on each line a `NAME=value` or `"NAME": value`
+  whose name is a secret's, an Authorization header, a URL's credentials and a connection string's part by the rule. Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
   Remove ask first; a project's Remove is `down`, its volumes kept, and `container_action` reaches no volume or image.
   The status bar and Problems' Containers tab say the engine's problem, the link starting Docker Desktop where it is
   installed; a test run of a project referencing a `Testcontainers*` package asks the engine first
@@ -648,7 +655,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   agent's code_actions): Declare X at the top level (under its key, made at the file's end when it has none, as the file
   indents; a secret or config read from `./X.txt`), Remove X from depends_on, Change to Y for a declared name an edit or
   two away; each one edit, worked out again on the text as it stands when chosen (`EditorFix.Again`) and refused, said in
-  the status bar, once it no longer fits. Each `${VAR}` gets a hint of
+  the status bar, once it no longer fits. A .NET service (its build's Dockerfile building one of the solution's projects,
+  `ComposeDeclarations.Built`) whose project reads a connection string its environment never sets, as Compose's model has
+  it (environment, env_file, what it interpolated; `ConnectionStrings__name` or with a colon, letter case aside, set to
+  something) is warned of on the service's name (`ComposeConnections`), what the project reads asked of the Roslyn
+  extension (`Handlers.ConnectionReads`: Aspire's one reading, `AspireSource.ConnectionUses`, by each project's version
+  once, through `ComposeCode`, the folder's projects and its loaded language server, taken as a check starts; the open
+  compose files checked again as the server loads, a project is evaluated or a C# file is written,
+  `EngineChecks.CodeChanged`), its fix Set ConnectionStrings__name in X's environment (`ComposeFixes.SetVariable`, one
+  edit as the environment is written, made under the service when it has none, worked out again as chosen): to the
+  connection string of the backing service the file runs that it reaches (`BackingService.OfImage`, the service of the
+  name read, else the one of the kind its appsettings.json value, name or packages point to, `ConnectionString`'s
+  `host`), else a value left for the person to fill in. Each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one
@@ -664,7 +682,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   run).
   Its tests (`ContainersTests`, `ContainerDetailsTests`, `McpContainersTests`, `EngineChecksTests`; not
   `ContainerConfigurationsTests` nor `ContainerDetailsTests`' test of Inspect's unmasked copies, which need no engine,
-  and `EngineChecksTests`' agent's fix, which needs Node.js too) skip saying why unless `docker info`'s
+  and `EngineChecksTests`' agents' fixes, which need Node.js too; its connection strings' tests restore a web project for
+  the language server) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
   busybox and Compose files they write, and never prune or start or stop Docker Desktop: an engine that stops and starts
   again, or has no Compose v2, is `ContainersTests.StandInEngine`'s, a shell script (so skipped on Windows) whose `state`
@@ -873,7 +892,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   following one resource stream for the whole wait (`Follow`, `MainWindow.FollowAspireAsync`: woken by each batch, each
   change of the runs and each service's attach, never on a timer), so `run` with `resource` answers once it is up; `AspireTelemetry` reads the
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
-  JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
+  JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked as the engine's are (`ContainerSecrets.InSaid`). The Aspire
   window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
   parts over an AppHost's resources, the same controls: its toolbar the AppHost chosen and icon buttons of registered
   actions (`MainWindow.AspireActions.cs`, each bound by `ActionButtons.Bind`, its ring while its work runs: Discover,
@@ -915,7 +934,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   itself), each `WithReference`d and `WaitFor`ed by the services that read it and its hosting integration referenced at
   the AppHost's own Aspire version (its SDK's, under central package management in Directory.Packages.props), prepared
   under the state's `aspire-staging/` before any file is written, as one command of global undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
-  reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
+  reading, never resource names guessed): a service that reads a connection string (`AspireSource.ConnectionUses`, the one
+  reading of them, a compose file's check's too: GetConnectionString's or a client integration's connectionName constant,
+  a `ConnectionStrings:` key) or service its AppHost never gives
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
   actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
@@ -1596,7 +1617,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   while its program has yet to reach the profiler and cancels the start.
   Hot Reload while debugging (Edit and Continue): `Passenger.Roslyn.Extension/HotReload.cs` drives the server's own
   `EditAndContinueService` (its session starting at the debugging session's first C# edit, given each file's pre-edit
-  text, checked against the build PDB's checksums), the runtime's capabilities read from the program's CoreLib; the
+  text, checked against the build PDB's checksums), the runtime's capabilities read from the program's CoreLib; its
+  projects the program's (`Session.Projects`: those whose modules the debugger says it has loaded, with what they build
+  on, taken in at every emit, so a module it loads after an update, a plugin's, takes its project's edits from then on),
+  every other project given to the service as last committed (`HotReload.FrozenAsync`), so another program's edits are
+  never this one's rude edits and wait, as built, for its module to load; the
   deltas reach the engine as Passenger's `applyChanges` request (`Passenger.Dap`, with `hotReloadState`), and
   `ManagedDebugger_HotReload.cs` applies them (`ICorDebugModule2.ApplyChanges`, which needs `GetMetaDataInterface` asked
   first) and remaps frames (`FunctionRemapOpportunity`/`RemapFunction`, a stepper deactivated before the remap).
@@ -2033,7 +2058,8 @@ control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a di
 settle), so a settle between its keys can lose it. Find Usages, Safe Delete and every list of the server's locations
 make each URI a path once (`DocumentUris.ToPath` asks the disk), never once per location on the UI thread. A test that opens a dialog holds it to `DialogButtonsTests.Check`
 (centred words, one height and radius, Rider's order). `HotReloadTests` and `HotReloadEditsTests` (Alone) edit debugged
-programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`); `WpfLiveTreeTests` (Alone,
+programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`; HotReloadTests' `Plugins` loads a
+plugin no project of it references, from the plugin's build, once "load" is typed into its console); `WpfLiveTreeTests` (Alone,
 Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpWpfAppTests` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
 `PublishTests` publish a console app, an ASP.NET Core app and a self-contained app in a folder whose name has spaces,
