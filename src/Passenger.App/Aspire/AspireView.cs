@@ -35,6 +35,7 @@ public sealed class AspireView : DockPanel, IDisposable
     private readonly TextBlock status = new() { Classes = { "muted" }, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Text = "Choose a running Aspire AppHost, or refresh to discover one." };
     private readonly TextBlock empty = new() { Classes = { "emptyText" } };
     private readonly HashSet<string> collapsed = new(StringComparer.Ordinal);
+    private readonly System.Collections.ObjectModel.ObservableCollection<RunItem<AspireRow>> items = [];
     private readonly List<(Button Button, string Action)> tools = [];
     private readonly Button commands;
     private readonly ContentControl page = new();
@@ -101,7 +102,8 @@ public sealed class AspireView : DockPanel, IDisposable
         ResourceList = new ListBox
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<AspireRow>((row, _) => row is null ? new Panel() : Row(row), supportsRecycling: false),
+            ItemsSource = items,
+            ItemTemplate = RunRows.Template<AspireRow>(Row, Toggle, uri => Browse?.Invoke(uri), "aspireUrl"),
         };
         AutomationProperties.SetName(ResourceList, "Aspire resources");
         ResourceList.SelectionChanged += (_, _) =>
@@ -176,7 +178,11 @@ public sealed class AspireView : DockPanel, IDisposable
     public ListBox ResourceList { get; }
 
     /// <summary>The rows listed now.</summary>
-    public IReadOnlyList<AspireRow> Rows => ResourceList.ItemsSource as IReadOnlyList<AspireRow> ?? [];
+    public IReadOnlyList<AspireRow> Rows => [.. items.Select(item => item.Data)];
+
+    /// <summary>The list's item of a resource (by its name or the name it shows), which its row's control is made from.</summary>
+    public RunItem<AspireRow>? ItemOf(string name) =>
+        items.FirstOrDefault(item => item.Key == name) ?? items.FirstOrDefault(item => item.Data.Resource.DisplayName == name);
 
     /// <summary>The chosen resource's Details tab.</summary>
     public AspireDetailsPane Details { get; }
@@ -197,7 +203,7 @@ public sealed class AspireView : DockPanel, IDisposable
     public IReadOnlyDictionary<string, Button> Tools => tools.ToDictionary(t => t.Action, t => t.Button);
 
     public AspireApp? SelectedApp => AppSelector.SelectedItem as AspireApp;
-    private AspireRow? Chosen => ResourceList.SelectedItem as AspireRow;
+    private AspireRow? Chosen => (ResourceList.SelectedItem as RunItem<AspireRow>)?.Data;
     public AspireResource? SelectedResource => Chosen?.Resource;
     public AspireSelection? Selection => SelectedApp is { } app && SelectedResource is { } resource ? new(app.AppHostPath, resource) : null;
     public string Status => status.Text ?? string.Empty;
@@ -450,7 +456,7 @@ public sealed class AspireView : DockPanel, IDisposable
         {
             Fill(SelectedResource?.Name);
         }
-        AspireRow chosen = Rows.First(row => row.Resource.Name == name);
+        RunItem<AspireRow> chosen = items.First(item => item.Key == name);
         ResourceList.SelectedItem = chosen;
         ResourceList.ScrollIntoView(chosen);
     }
@@ -922,7 +928,7 @@ public sealed class AspireView : DockPanel, IDisposable
         AspireResource[] visible = Visible();
         Dictionary<string, string> parents = Parents(visible);
         ILookup<string, AspireResource> children = visible.Where(resource => parents.ContainsKey(resource.Name)).ToLookup(resource => parents[resource.Name], StringComparer.Ordinal);
-        List<AspireRow> rows = [];
+        List<(string, AspireRow)> rows = [];
         foreach (AspireResource root in visible.Where(resource => !parents.ContainsKey(resource.Name)))
         {
             Add(root, 0);
@@ -930,9 +936,10 @@ public sealed class AspireView : DockPanel, IDisposable
         updating = true;
         try
         {
-            ResourceList.ItemsSource = rows;
-            ResourceList.SelectedItem = rows.FirstOrDefault(row => row.Resource.Name == chosen)
-                ?? rows.FirstOrDefault(row => row.Resource.Name == fallback) ?? rows.FirstOrDefault();
+            // A row kept keeps its control, so a click on it lands however often the AppHost's updates come.
+            RunRows.Put(items, rows);
+            ResourceList.SelectedItem = items.FirstOrDefault(item => item.Key == chosen)
+                ?? items.FirstOrDefault(item => item.Key == fallback) ?? items.FirstOrDefault();
         }
         finally
         {
@@ -944,7 +951,7 @@ public sealed class AspireView : DockPanel, IDisposable
         {
             bool expands = children[resource.Name].Any();
             bool open = expands && !collapsed.Contains(resource.Name);
-            rows.Add(new AspireRow(resource, depth, expands, open));
+            rows.Add((resource.Name, new AspireRow(resource, depth, expands, open)));
             if (open)
             {
                 foreach (AspireResource child in children[resource.Name])
@@ -957,10 +964,10 @@ public sealed class AspireView : DockPanel, IDisposable
 
     /// <summary>A resource's row as every list of what runs draws one (<see cref="RunRows"/>): its state's dot, what it runs
     /// after its name, its health's tag and its addresses as links.</summary>
-    private Control Row(AspireRow row)
+    private static RunRow Row(AspireRow row)
     {
         AspireResource resource = row.Resource;
-        RunRow shown = new(row.Depth, resource.DisplayName)
+        return new RunRow(row.Depth, resource.DisplayName)
         {
             Expands = row.Expands,
             Expanded = row.Expanded,
@@ -972,7 +979,6 @@ public sealed class AspireView : DockPanel, IDisposable
                 : AspireJson.String(resource.Data, "resourceType"),
             Tip = resource.ToString(),
         };
-        return RunRows.Of(shown, () => Toggle(row), uri => Browse?.Invoke(uri), "aspireUrl");
     }
 
     /// <summary>A resource's state as the dot says it: Aspire's own style of it first (an error's red), then running (unhealthy

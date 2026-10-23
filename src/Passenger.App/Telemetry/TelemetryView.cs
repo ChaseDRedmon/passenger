@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Automation;
@@ -34,6 +35,11 @@ public sealed class TelemetryView : IDisposable
     private readonly Button spanLogs;
     private readonly object gate = new();
     private IReadOnlyList<AspireTrace> traces = [];
+
+    /// <summary>The lists' items, kept by their keys through each snapshot (<see cref="RunRows.Put"/>), so a click survives one.</summary>
+    private readonly ObservableCollection<RunItem<AspireStructuredLog>> logItems = [];
+    private readonly ObservableCollection<RunItem<AspireTrace>> traceItems = [];
+    private readonly ObservableCollection<RunItem<SpanRow>> spanItems = [];
     private CancellationTokenSource? reading;
     private (TelemetrySource Source, TelemetryPage Page, string? Resource)? watched;
     private (TelemetrySource Source, string? Resource)? shownFor;
@@ -50,9 +56,9 @@ public sealed class TelemetryView : IDisposable
     /// <paramref name="request"/> when it gives them, as the Aspire window's buttons do, else this view's own.</summary>
     public TelemetryView(string? showTrace = null, string? showLogs = null, Func<string, bool>? request = null)
     {
-        StructuredLogs = List<AspireStructuredLog>(log => log.ToString(), "Structured logs");
-        TraceList = List<AspireTrace>(trace => trace.ToString(), "Traces");
-        SpanList = List<SpanRow>(span => new string(' ', Math.Min(span.Depth, 32) * 2) + span.Span, "Trace span hierarchy");
+        StructuredLogs = List(logItems, log => log.ToString(), "Structured logs");
+        TraceList = List(traceItems, trace => trace.ToString(), "Traces");
+        SpanList = List(spanItems, span => new string(' ', Math.Min(span.Depth, 32) * 2) + span.Span, "Trace span hierarchy");
         StructuredLogs.SelectionChanged += (_, _) => ShowLog();
         TraceList.SelectionChanged += (_, _) => ShowTrace();
         SpanList.SelectionChanged += (_, _) => ShowSpan();
@@ -79,6 +85,28 @@ public sealed class TelemetryView : IDisposable
     public ListBox StructuredLogs { get; }
     public ListBox TraceList { get; }
     public ListBox SpanList { get; }
+
+    /// <summary>The structured logs listed, oldest first.</summary>
+    public IReadOnlyList<AspireStructuredLog> Logs => [.. logItems.Select(item => item.Data)];
+
+    /// <summary>The traces listed, newest first.</summary>
+    public IReadOnlyList<AspireTrace> Traces => [.. traceItems.Select(item => item.Data)];
+
+    /// <summary>The chosen trace's spans as a tree, each at its depth.</summary>
+    public IReadOnlyList<SpanRow> Spans => [.. spanItems.Select(item => item.Data)];
+
+    public AspireStructuredLog? SelectedLog => (StructuredLogs.SelectedItem as RunItem<AspireStructuredLog>)?.Data;
+    public AspireTrace? SelectedTrace => (TraceList.SelectedItem as RunItem<AspireTrace>)?.Data;
+    public SpanRow? SelectedSpan => (SpanList.SelectedItem as RunItem<SpanRow>)?.Data;
+
+    /// <summary>The list item that shows a record (a log; a trace or a span by its id), whose row a click finds.</summary>
+    public object? ItemOf(object record) => record switch
+    {
+        AspireStructuredLog log => logItems.FirstOrDefault(item => item.Data.Data.GetRawText() == log.Data.GetRawText()),
+        AspireTrace trace => traceItems.FirstOrDefault(item => item.Key == trace.TraceId),
+        SpanRow span => spanItems.FirstOrDefault(item => item.Key == span.Span.SpanId),
+        _ => null,
+    };
 
     /// <summary>The logs page: the retained logs, the chosen one's details, its trace a click away.</summary>
     public Control LogsPage { get; }
@@ -173,10 +201,10 @@ public sealed class TelemetryView : IDisposable
         Stop();
         watched = null;
         shownFor = null;
-        StructuredLogs.ItemsSource = Array.Empty<AspireStructuredLog>();
+        logItems.Clear();
         traces = [];
-        TraceList.ItemsSource = traces;
-        SpanList.ItemsSource = Array.Empty<SpanRow>();
+        traceItems.Clear();
+        spanItems.Clear();
         logDetails.Clear();
         spanDetails.Clear();
         wantedTrace = null;
@@ -216,14 +244,12 @@ public sealed class TelemetryView : IDisposable
                     }
                     IReadOnlyList<AspireStructuredLog> logs = resource is null ? all
                         : [.. all.Where(log => TelemetrySource.Of(AspireJson.String(log.Data, "resourceName") ?? string.Empty, resource))];
-                    AspireStructuredLog? selected = StructuredLogs.SelectedItem as AspireStructuredLog;
-                    StructuredLogs.ItemsSource = logs;
-                    StructuredLogs.SelectedItem = logs.FirstOrDefault(log => log.Data.GetRawText() == selected?.Data.GetRawText());
+                    RunRows.Put(logItems, Keyed(logs, log => log.Data.GetRawText()));
                     logsStatus.Text = $"Live · {logs.Count} retained structured logs";
                     if (wantedLogs is { } wanted && Correlated(wanted.TraceId, wanted.SpanId) is { } found)
                     {
                         wantedLogs = null;
-                        StructuredLogs.SelectedItem = found;
+                        StructuredLogs.SelectedItem = ItemOf(found);
                     }
                 }, cancel), cancel).ConfigureAwait(false);
             }
@@ -236,16 +262,10 @@ public sealed class TelemetryView : IDisposable
                         return;
                     }
                     IReadOnlyList<AspireTrace> found = resource is null ? all : [.. all.Where(trace => trace.Spans.Any(span => TelemetrySource.Of(span.Source ?? string.Empty, resource)))];
-                    string? selected = (TraceList.SelectedItem as AspireTrace)?.TraceId;
-                    string? selectedSpan = (SpanList.SelectedItem as SpanRow)?.Span.SpanId;
                     traces = found;
-                    TraceList.ItemsSource = traces;
-                    TraceList.SelectedItem = traces.FirstOrDefault(trace => trace.TraceId == selected);
-                    if (selected is not null && (TraceList.SelectedItem as AspireTrace)?.TraceId == selected
-                        && SpanList.Items.OfType<SpanRow>().FirstOrDefault(row => row.Span.SpanId == selectedSpan) is { } span)
-                    {
-                        SpanList.SelectedItem = span;
-                    }
+                    RunRows.Put(traceItems, Keyed(found, trace => trace.TraceId));
+                    // The chosen trace's spans as they stand now (a late span added), the span chosen kept.
+                    ShowTrace(again: true);
                     tracesStatus.Text = $"Live · {traces.Count} retained traces";
                     if (wantedTrace is { } wanted && traces.FirstOrDefault(trace => trace.TraceId == wanted.TraceId) is { } listed)
                     {
@@ -311,7 +331,7 @@ public sealed class TelemetryView : IDisposable
     /// <summary>The chosen log's trace, its span chosen, on the traces page.</summary>
     public void ShowSelectedTrace()
     {
-        if (StructuredLogs.SelectedItem is AspireStructuredLog log)
+        if (SelectedLog is { } log)
         {
             SelectTrace(log.TraceId, log.SpanId);
         }
@@ -320,7 +340,7 @@ public sealed class TelemetryView : IDisposable
     /// <summary>A log of the chosen span's trace and span, on the logs page.</summary>
     public void ShowRelatedLogs()
     {
-        if (TraceList.SelectedItem is AspireTrace trace && SpanList.SelectedItem is SpanRow row)
+        if (SelectedTrace is { } trace && SelectedSpan is { } row)
         {
             SelectLogs(trace.TraceId, row.Span.SpanId);
         }
@@ -351,7 +371,7 @@ public sealed class TelemetryView : IDisposable
         UiThread.Check();
         if (Correlated(traceId, spanId) is { } log)
         {
-            StructuredLogs.SelectedItem = log;
+            StructuredLogs.SelectedItem = ItemOf(log);
         }
         else
         {
@@ -360,15 +380,15 @@ public sealed class TelemetryView : IDisposable
         PageWanted?.Invoke(this, TelemetryPage.Logs);
     }
 
-    private AspireStructuredLog? Correlated(string traceId, string? spanId) => StructuredLogs.Items.OfType<AspireStructuredLog>()
+    private AspireStructuredLog? Correlated(string traceId, string? spanId) => logItems.Select(item => item.Data)
         .FirstOrDefault(item => item.TraceId == traceId && (spanId is null || item.SpanId == spanId));
 
     private void Choose(AspireTrace trace, string? spanId)
     {
-        TraceList.SelectedItem = trace;
-        if (spanId is not null)
+        TraceList.SelectedItem = ItemOf(trace);
+        if (spanId is not null && spanItems.FirstOrDefault(item => item.Key == spanId) is { } span)
         {
-            SpanList.SelectedItem = SpanList.Items.OfType<SpanRow>().FirstOrDefault(row => row.Span.SpanId == spanId);
+            SpanList.SelectedItem = span;
         }
     }
 
@@ -376,7 +396,7 @@ public sealed class TelemetryView : IDisposable
     {
         logDetails.Clear();
         logTrace.IsEnabled = false;
-        if (StructuredLogs.SelectedItem is not AspireStructuredLog log)
+        if (SelectedLog is not { } log)
         {
             return;
         }
@@ -386,12 +406,17 @@ public sealed class TelemetryView : IDisposable
         logTrace.IsEnabled = !string.IsNullOrEmpty(log.TraceId);
     }
 
-    private void ShowTrace()
+    /// <summary>The chosen trace's spans: anew as it is chosen, the first span chosen; or <paramref name="again"/>, as a
+    /// snapshot brings it more, the span chosen kept.</summary>
+    private void ShowTrace(bool again = false)
     {
-        spanDetails.Clear();
-        if (TraceList.SelectedItem is not AspireTrace trace)
+        if (!again)
         {
-            SpanList.ItemsSource = Array.Empty<SpanRow>();
+            spanDetails.Clear();
+        }
+        if (SelectedTrace is not { } trace)
+        {
+            spanItems.Clear();
             return;
         }
         List<SpanRow> rows = [];
@@ -407,8 +432,11 @@ public sealed class TelemetryView : IDisposable
         {
             Walk(orphan);
         }
-        SpanList.ItemsSource = rows;
-        SpanList.SelectedItem = rows.FirstOrDefault();
+        RunRows.Put(spanItems, Keyed(rows, row => row.Span.SpanId));
+        if (!again || SpanList.SelectedItem is null)
+        {
+            SpanList.SelectedItem = spanItems.FirstOrDefault();
+        }
 
         void Walk(AspireSpan root)
         {
@@ -436,7 +464,7 @@ public sealed class TelemetryView : IDisposable
     {
         spanDetails.Clear();
         spanLogs.IsEnabled = false;
-        if (SpanList.SelectedItem is SpanRow row)
+        if (SelectedSpan is { } row)
         {
             spanDetails.Append(JsonSerializer.Serialize(row.Span.Data, new JsonSerializerOptions { WriteIndented = true }) + "\n");
             AppendSource(spanDetails, row.Span.Data);
@@ -503,19 +531,48 @@ public sealed class TelemetryView : IDisposable
         return new DockPanel { Height = 32, Margin = new Thickness(8, 0), Children = { right, said } };
     }
 
-    private static ListBox List<T>(Func<T, string> text, string name)
+    private static ListBox List<T>(ObservableCollection<RunItem<T>> items, Func<T, string> text, string name)
+        where T : class
     {
         ListBox list = new()
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<T>((item, _) => item is null ? null : new ShrinkingRow
-            {
-                Height = ListRow.Height,
-                Children = { new TextBlock { Text = text(item), VerticalAlignment = VerticalAlignment.Center } },
-            }),
+            ItemsSource = items,
+            ItemTemplate = new FuncDataTemplate<RunItem<T>>((item, _) => item is null ? null : Row(item, text), supportsRecycling: false),
         };
         AutomationProperties.SetName(list, name);
         return list;
+    }
+
+    /// <summary>A record's row, its words shown anew in place as its item changes (a trace's late spans).</summary>
+    private static Control Row<T>(RunItem<T> item, Func<T, string> text)
+        where T : class
+    {
+        TextBlock words = new() { Text = text(item.Data), VerticalAlignment = VerticalAlignment.Center };
+        void Changed(object? sender, EventArgs e) => words.Text = text(item.Data);
+        words.AttachedToVisualTree += (_, _) =>
+        {
+            item.Changed -= Changed;
+            item.Changed += Changed;
+            words.Text = text(item.Data);
+        };
+        words.DetachedFromVisualTree += (_, _) => item.Changed -= Changed;
+        return new ShrinkingRow { Height = ListRow.Height, Children = { words } };
+    }
+
+    /// <summary>Each record with its key, a key that recurs numbered after its first, as <see cref="RunRows.Put"/> takes them.</summary>
+    private static IReadOnlyList<(string Key, T Data)> Keyed<T>(IEnumerable<T> records, Func<T, string> key)
+    {
+        Dictionary<string, int> seen = new(StringComparer.Ordinal);
+        List<(string, T)> keyed = [];
+        foreach (T record in records)
+        {
+            string named = key(record);
+            int count = seen.GetValueOrDefault(named);
+            seen[named] = count + 1;
+            keyed.Add((count == 0 ? named : $"{named}#{count}", record));
+        }
+        return keyed;
     }
 
     private static DockPanel WithHeader(Control header, Control body)

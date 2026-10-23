@@ -35,9 +35,9 @@ public partial class MainWindow
         }, NeedsAspireResource);
         Add(A.AspireLogFind, "Find in Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage("Console"); Aspire.OpenFind(); });
         Add(A.AspireShowTrace, "Show Aspire Log Trace", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowSelectedTrace(); },
-            _ => Aspire.StructuredLogs.SelectedItem is AspireStructuredLog { TraceId.Length: > 0 } ? null : "No log with a trace is selected");
+            _ => Aspire.Telemetry.SelectedLog is { TraceId.Length: > 0 } ? null : "No log with a trace is selected");
         Add(A.AspireShowRelatedLogs, "Show Related Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowRelatedLogs(); },
-            _ => Aspire.TraceList.SelectedItem is AspireTrace && Aspire.SpanList.SelectedItem is Telemetry.TelemetryView.SpanRow ? null : "No trace span is selected");
+            _ => Aspire.Telemetry.SelectedTrace is not null && Aspire.Telemetry.SelectedSpan is not null ? null : "No trace span is selected");
         foreach (string page in AspireView.Pages)
         {
             // Details is the chosen resource's, beside every resource listed: shown as the window's resources are asked for.

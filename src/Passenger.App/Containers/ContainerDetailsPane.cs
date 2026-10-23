@@ -245,10 +245,14 @@ public sealed class ContainerDetailsPane : DetailsTables
             return;
         }
         Details = details;
-        Say(details is null ? problem ?? string.Empty : null);
-        if (details is not null)
+        if (details is null)
         {
-            Fill(details);
+            Say(problem ?? string.Empty);
+        }
+        else
+        {
+            // Read again as the engine's events come: tables that show what they showed stay, a press on a port's link kept.
+            Show(() => Fill(details));
         }
     }
 

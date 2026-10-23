@@ -1,17 +1,26 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 
 namespace Passenger.App.ToolWindows;
 
 /// <summary>A Details tab's page, the Containers window's and the Aspire window's alike: headings over framed tables of names
 /// and what each is, every table's names in one column as wide as the widest of any so the values line up down the page, and
-/// in their place a word of why there is nothing to show (being read, a failure).</summary>
+/// in their place a word of why there is nothing to show (being read, a failure). Shown again with nothing it shows changed,
+/// its tables stay as they are, so a click on a link in them lands however often what they show is read again.</summary>
 public class DetailsTables : DockPanel
 {
     private readonly StackPanel sections = new() { Margin = new Thickness(8, 0, 8, 8) };
     private readonly TextBlock said = new() { Classes = { "emptyText" } };
+
+    /// <summary>The tables a <see cref="Show"/> is making, and what they show in words; null outside one.</summary>
+    private List<Control>? making;
+    private System.Text.StringBuilder? words;
+
+    /// <summary>What the tables shown show, in words; null while none are.</summary>
+    private string? shownWords;
 
     public DetailsTables()
     {
@@ -27,13 +36,43 @@ public class DetailsTables : DockPanel
     public void Say(string? why)
     {
         sections.Children.Clear();
+        shownWords = null;
         said.Text = why ?? string.Empty;
         said.IsVisible = why is not null;
+    }
+
+    /// <summary>Shows the tables <paramref name="fill"/> makes by its <see cref="Section"/>s in place of those shown, unless
+    /// they show what those show, which then stay (a link's press under way kept).</summary>
+    public void Show(Action fill)
+    {
+        making = [];
+        words = new System.Text.StringBuilder();
+        try
+        {
+            fill();
+            said.IsVisible = false;
+            string now = words.ToString();
+            if (now != shownWords)
+            {
+                sections.Children.Clear();
+                foreach (Control made in making)
+                {
+                    sections.Children.Add(made);
+                }
+                shownWords = now;
+            }
+        }
+        finally
+        {
+            making = null;
+            words = null;
+        }
     }
 
     /// <summary>A heading over a framed table of names and what each is, the names in the page's one column of names.</summary>
     public void Section(string title, IReadOnlyList<(string Name, Control Value)> rows)
     {
+        words?.Append(title).Append('\u0001');
         TextBlock heading = new() { Text = title, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 10, 0, 4) };
         Grid table = new()
         {
@@ -51,14 +90,30 @@ public class DetailsTables : DockPanel
             };
             ToolTip.SetTip(name, rows[i].Name);
             Control value = rows[i].Value;
+            words?.Append(rows[i].Name).Append('\u0002').Append(Described(value)).Append('\u0003');
             value[Grid.RowProperty] = i;
             value[Grid.ColumnProperty] = 1;
             table.Children.Add(name);
             table.Children.Add(value);
         }
-        sections.Children.Add(heading);
-        sections.Children.Add(new Border { Classes = { "framed" }, Padding = new Thickness(0, 2), Child = table });
+        Border framed = new() { Classes = { "framed" }, Padding = new Thickness(0, 2), Child = table };
+        if (making is { } made)
+        {
+            made.Add(heading);
+            made.Add(framed);
+        }
+        else
+        {
+            sections.Children.Add(heading);
+            sections.Children.Add(framed);
+        }
     }
+
+    /// <summary>What a value shows in words: its texts, a link's words and its tip.</summary>
+    private static string Described(Control value) => string.Join('\u0004', value.GetLogicalDescendants().Prepend((ILogical)value)
+        .SelectMany(part => (string?[])[part switch { TextBlock text => text.Text, ContentControl { Content: string content } => content, _ => null },
+            part is Control shown ? ToolTip.GetTip(shown) as string : null, (part as Control)?.Name])
+        .OfType<string>());
 
     /// <summary>A value to read and copy, wrapped rather than cut; a program's words in the editor's font.</summary>
     public static SelectableTextBlock Words(string text, bool code = false, string? brush = null)

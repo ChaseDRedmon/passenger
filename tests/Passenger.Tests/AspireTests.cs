@@ -465,19 +465,19 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Uri request = new(HttpUrl(Resource(window, "webfrontend")), "/passenger-test");
             Assert.Equal("5", Ui.Await(http.GetStringAsync(request), "the first cross-service trace"));
             FindAction(window, "Show Aspire Traces");
-            Ui.WaitFor(() => window.Aspire.TraceList.Items.OfType<AspireTrace>().Any(trace => trace.Spans.Count >= 2),
+            Ui.WaitFor(() => window.Aspire.Telemetry.Traces.Any(trace => trace.Spans.Count >= 2),
                 "a live trace with a child span");
-            AspireTrace trace = window.Aspire.TraceList.Items.OfType<AspireTrace>().First(trace => trace.Spans.Count >= 2);
+            AspireTrace trace = window.Aspire.Telemetry.Traces.First(trace => trace.Spans.Count >= 2);
             ClickListItem(window, window.Aspire.TraceList, trace);
-            Passenger.App.Telemetry.TelemetryView.SpanRow child = window.Aspire.SpanList.Items.OfType<Passenger.App.Telemetry.TelemetryView.SpanRow>().First(row => row.Depth > 0);
+            Passenger.App.Telemetry.TelemetryView.SpanRow child = window.Aspire.Telemetry.Spans.First(row => row.Depth > 0);
             ClickListItem(window, window.Aspire.SpanList, child);
             string spanId = child.Span.SpanId;
-            string[] before = window.Aspire.TraceList.Items.OfType<AspireTrace>().Select(item => item.TraceId).ToArray();
+            string[] before = window.Aspire.Telemetry.Traces.Select(item => item.TraceId).ToArray();
             Assert.Equal("5", Ui.Await(http.GetStringAsync(request), "the next cross-service trace"));
-            Ui.WaitFor(() => window.Aspire.TraceList.Items.OfType<AspireTrace>().Any(item => !before.Contains(item.TraceId)),
+            Ui.WaitFor(() => window.Aspire.Telemetry.Traces.Any(item => !before.Contains(item.TraceId)),
                 "the next native telemetry batch");
-            Assert.Equal(trace.TraceId, Assert.IsType<AspireTrace>(window.Aspire.TraceList.SelectedItem).TraceId);
-            Assert.Equal(spanId, Assert.IsType<Passenger.App.Telemetry.TelemetryView.SpanRow>(window.Aspire.SpanList.SelectedItem).Span.SpanId);
+            Assert.Equal(trace.TraceId, window.Aspire.Telemetry.SelectedTrace?.TraceId);
+            Assert.Equal(spanId, window.Aspire.Telemetry.SelectedSpan?.Span.SpanId);
         }
         catch (TimeoutException error)
         {
@@ -489,67 +489,15 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         }
     }
 
-    private static void ClickListItem(MainWindow window, ListBox list, object item)
+    /// <summary>A record's row clicked, as a person chooses it: its item is kept through the snapshots streamed meanwhile
+    /// (RunRows.Put), so the click lands on it.</summary>
+    private static void ClickListItem(MainWindow window, ListBox list, object record)
     {
-        int index = list.Items.IndexOf(item);
-        Assert.True(index >= 0);
-        list.ScrollIntoView(0);
+        object item = window.Aspire.Telemetry.ItemOf(record) ?? throw new InvalidOperationException($"{record} is not listed");
+        list.ScrollIntoView(item);
         Ui.Settle();
-        index = item switch
-        {
-            AspireTrace trace => list.Items.OfType<AspireTrace>().ToList().FindIndex(current => current.TraceId == trace.TraceId),
-            Passenger.App.Telemetry.TelemetryView.SpanRow span => list.Items.OfType<Passenger.App.Telemetry.TelemetryView.SpanRow>().ToList().FindIndex(current => current.Span.SpanId == span.Span.SpanId),
-            _ => list.Items.IndexOf(item),
-        };
-        Assert.True(index >= 0);
-        ListBoxItem row = Assert.IsType<ListBoxItem>(list.ContainerFromIndex(0));
-        string geometry = $"index={index}, depth={(item as Passenger.App.Telemetry.TelemetryView.SpanRow)?.Depth}, selectedBefore={Identity(list.SelectedItem)}";
-        try
-        {
-            Ui.Click(row, settle: false);
-        }
-        catch (Exception error) when (error is not OutOfMemoryException)
-        {
-            // What covers the row says why: its list too short for it, or a pane over it.
-            Point? at = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), window);
-            Visual? hit = at is { } p ? window.GetVisualAt(p) : null;
-            string chain = string.Join(" < ", hit?.GetSelfAndVisualAncestors().Take(8).Select(v => $"{v.GetType().Name}{(v is Control c && c.Classes.Count > 0 ? "." + string.Join(".", c.Classes) : "")}[{v.Bounds}]") ?? []);
-            throw new InvalidOperationException($"{error.Message}\nrow={row.Bounds} at={at} list={list.Bounds} listVisible={list.IsEffectivelyVisible}\nhit: {chain}", error);
-        }
-        Press(Avalonia.Input.Key.Home);
-        for (int step = 0; step < index; step++)
-        {
-            Press(Avalonia.Input.Key.Down);
-        }
-        string afterInput = Identity(list.SelectedItem);
-        Ui.Settle();
-        Assert.True(Identity(list.SelectedItem) == Identity(item),
-            $"{geometry}, expected={Identity(item)}, selectedAfterInput={afterInput}, selectedAfterSettle={Identity(list.SelectedItem)}, selectedIndex={list.SelectedIndex}");
-        if (item is AspireTrace traceItem)
-        {
-            Assert.Equal(traceItem.TraceId, Assert.IsType<AspireTrace>(list.SelectedItem).TraceId);
-        }
-        else if (item is Passenger.App.Telemetry.TelemetryView.SpanRow spanItem)
-        {
-            Assert.Equal(spanItem.Span.SpanId, Assert.IsType<Passenger.App.Telemetry.TelemetryView.SpanRow>(list.SelectedItem).Span.SpanId);
-        }
-        else
-        {
-            Assert.Equal(item, list.SelectedItem);
-        }
-
-        static string Identity(object? value) => value switch
-        {
-            AspireTrace trace => trace.TraceId,
-            Passenger.App.Telemetry.TelemetryView.SpanRow span => span.Span.SpanId,
-            _ => value?.ToString() ?? "<none>",
-        };
-
-        void Press(Avalonia.Input.Key key)
-        {
-            window.KeyPress(key, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
-            window.KeyRelease(key, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
-        }
+        Ui.Click(Assert.IsType<ListBoxItem>(list.ContainerFromItem(item)));
+        Assert.Same(item, list.SelectedItem);
     }
 
     [AvaloniaFact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
@@ -649,9 +597,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(web), "/passenger-test")), "the frontend's cross-service HTTP response"));
         Roomy(window);
         FindAction(window, "Show Aspire Structured logs");
-        RefreshUntil(window, () => window.Aspire.StructuredLogs.Items.OfType<AspireStructuredLog>()
+        RefreshUntil(window, () => window.Aspire.Telemetry.Logs
             .Any(log => log.Data.GetRawText().Contains("Passenger request", StringComparison.Ordinal)), "the API's structured request log");
-        AspireStructuredLog log = window.Aspire.StructuredLogs.Items.OfType<AspireStructuredLog>()
+        AspireStructuredLog log = window.Aspire.Telemetry.Logs
             .First(item => item.Data.GetRawText().Contains("Passenger request", StringComparison.Ordinal));
         ClickListItem(window, window.Aspire.StructuredLogs, log);
         Assert.False(string.IsNullOrWhiteSpace(log.TraceId), "The structured log must retain its trace correlation");
@@ -660,9 +608,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             output => output.IsEffectivelyVisible && output.Document.Snapshot.ToString().Contains("RequestValue", StringComparison.Ordinal)
                 && output.Document.Snapshot.ToString().Contains("42", StringComparison.Ordinal));
         FindAction(window, "Show Aspire Traces");
-        RefreshUntil(window, () => window.Aspire.TraceList.Items.OfType<AspireTrace>().Any(trace =>
+        RefreshUntil(window, () => window.Aspire.Telemetry.Traces.Any(trace =>
             trace.TraceId == log.TraceId && trace.Spans.Select(span => span.Source).Distinct().Count() >= 2), "the API and frontend spans in one trace");
-        ClickListItem(window, window.Aspire.TraceList, window.Aspire.TraceList.Items.OfType<AspireTrace>().First(trace => trace.TraceId == log.TraceId));
+        ClickListItem(window, window.Aspire.TraceList, window.Aspire.Telemetry.Traces.First(trace => trace.TraceId == log.TraceId));
         Assert.True(window.Aspire.SpanList.Items.Count >= 2, "The native trace hierarchy must show cross-service spans");
 
         FindAction(window, "Show Aspire Console");

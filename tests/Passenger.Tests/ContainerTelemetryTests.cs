@@ -75,12 +75,12 @@ public sealed class ContainerTelemetryTests : McpRig
             Assert.StartsWith("web", log.Data.GetProperty("resourceName").GetString(), StringComparison.Ordinal);
             Assert.False(string.IsNullOrEmpty(log.TraceId), "web's log has no trace, though it was written handling a request");
             // The log chosen, its trace a click away: the traces page shown, the log's own span chosen there.
-            view.Telemetry.StructuredLogs.ScrollIntoView(log);
+            view.Telemetry.StructuredLogs.ScrollIntoView(view.Telemetry.ItemOf(log)!);
             Ui.Settle();
-            Ui.Click(Assert.IsType<ListBoxItem>(view.Telemetry.StructuredLogs.ContainerFromItem(log)));
+            Ui.Click(Assert.IsType<ListBoxItem>(view.Telemetry.StructuredLogs.ContainerFromItem(view.Telemetry.ItemOf(log)!)));
             Ui.Click(view.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "telemetryShowTrace" && b.IsEffectivelyVisible));
-            Ui.WaitFor(() => view.Telemetry.Shown == TelemetryPage.Traces && view.Telemetry.TraceList.SelectedItem is AspireTrace { Spans.Count: >= 3 } chosen
-                && chosen.TraceId == log.TraceId && view.Telemetry.SpanList.SelectedItem is TelemetryView.SpanRow row && row.Span.SpanId == log.SpanId,
+            Ui.WaitFor(() => view.Telemetry.Shown == TelemetryPage.Traces && view.Telemetry.SelectedTrace is { Spans.Count: >= 3 } chosen
+                && chosen.TraceId == log.TraceId && view.Telemetry.SelectedSpan?.Span.SpanId == log.SpanId,
                 $"the request's trace, with web's request to itself, its log's span chosen ({view.Telemetry.TracesStatus})", TimeSpan.FromMinutes(1));
 
             // An agent reads the same, by the service's name.
@@ -109,7 +109,7 @@ public sealed class ContainerTelemetryTests : McpRig
 
     /// <summary>web's log of the order it placed, once the Telemetry tab lists it.</summary>
     private static AspireStructuredLog? Logged(TelemetryView telemetry) =>
-        telemetry.StructuredLogs.Items.OfType<AspireStructuredLog>().FirstOrDefault(log => log.ToString().Contains("Passenger order 42", StringComparison.Ordinal));
+        telemetry.Logs.FirstOrDefault(log => log.ToString().Contains("Passenger order 42", StringComparison.Ordinal));
 
     private static string? Answer(int port)
     {

@@ -592,7 +592,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
   (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, its rows drawn as every
   list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, the health's
-  tag, `ContainerDetailsPane.HealthTag`, addresses as links), a port's link on the
+  tag, `ContainerDetailsPane.HealthTag`, addresses as links; kept by their keys as a list is read again, `RunRows.Put`, each
+  row's control shown anew in place, `RunRowView`, never the list made anew, whose controls a click's press and release
+  would straddle while the engine's events or an AppHost's updates stream, the click then lost), a port's link on the
   engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
   container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
@@ -602,7 +604,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
   Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
   as it is chosen and as the window reads the engine again, in the framed tables every Details tab has, one column of
-  names (`ToolWindows/DetailsTables`, the Aspire window's too): state, restarts and
+  names (`ToolWindows/DetailsTables`, the Aspire window's too; tables shown again that show what they showed stay,
+  `DetailsTables.Show`, so a press on a link in them lands): state, restarts and
   last exit, the health check's last outputs, ports as links, Compose's `com.docker.compose.depends_on`, environment,
   mounts, networks) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
   -L …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
@@ -954,7 +957,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ServiceRun.Telemetry` is where a run's are read (`TelemetrySource`: an Aspire dashboard's telemetry API on this machine
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
   services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either. `TelemetryView` is the
-  one view of them (logs, traces put together by id, a span tree, a log's trace and a span's logs a click apart, chosen as
+  one view of them (logs, traces put together by id, a span tree, each list kept by key through every snapshot by `RunRows.Put` so a click survives one, a log's trace and a span's logs a click apart, chosen as
   the other page streams them), streaming only the page its host shows: the Aspire window's Structured logs and Traces
   pages, and the Containers window's Telemetry tab (`TelemetryView.Both`, the two pages under tabs of their own), shown for
   a Compose project of the window's container run that collects telemetry, a service's or container's row its own
@@ -2121,7 +2124,9 @@ runs an AppHost skips saying so (`AspireApp.Unavailable`);
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
 stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key), so its console, resources and
 prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
-(BannedSymbols);
+(BannedSymbols); the stand-in AppHost also writes the IDE's execution endpoint and token (`StandInAppHost.SessionFile`),
+with which a test asks the IDE to start its built service (`StandIn.Api`) as DCP does, by the execution protocol, so its
+Profile asks which service in `AspireServiceDialog`;
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
 its execution listener; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
 have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
@@ -2198,7 +2203,8 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   `DialogFooter.Page(page, DialogFooter.Bar(buttons[, left]))`; a rounded Border takes `Border.kindBadge` or
   `Border.tag` (the badge radius) or `Border.box` (the controls' radius), never a literal radius (UiRulesTests); a
   toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A list of what runs (the
-  Containers and Aspire windows') draws its rows through `RunRows`, a Details tab is `DetailsTables`, and a console of
+  Containers and Aspire windows') draws its rows through `RunRows`, kept by key and changed in place, never made anew on
+  an update, a Details tab is `DetailsTables`, and a console of
   several sources merged is `MergedLog`. A toolbar's icon button is
   `ToolButtons.Of` (`Toggle` for one that stays pressed): never focusable, its icon the one size, as UiRulesTests holds
   every tool window's; words of less weight beside a row's are `MutedText`; a search field's keys over its list (Up,
