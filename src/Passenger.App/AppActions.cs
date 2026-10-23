@@ -67,6 +67,9 @@ public static class AppActions
     public const string About = "app.about";
     public const string CheckForUpdates = "app.checkForUpdates";
     public const string RestartToUpdate = "app.restartToUpdate";
+
+    // The running version's release notes, as Rider's What's New in Rider: no key of Rider's.
+    public const string WhatsNew = "app.whatsNew";
     public const string ShowNuGet = "app.showNuGet";
     public const string Profile = "app.profile";
     public const string ShowProfiler = "app.showProfiler";

@@ -106,8 +106,8 @@ public static class PassengerApp
     }
 
     /// <summary>A window made as another is: its state folder, its layout and settings kept or not, its agents, its
-    /// Discord, its updates' feed and whether it starts the language server, beside it at its size; shown with nothing
-    /// open.</summary>
+    /// Discord, its updates' feed and release notes and whether it starts the language server, beside it at its size;
+    /// shown with nothing open.</summary>
     public static MainWindow NewWindow(MainWindow like)
     {
         UiThread.Check();
@@ -119,6 +119,7 @@ public static class PassengerApp
             Autosaves = like.Autosaves,
             StartsLanguageServer = like.StartsLanguageServer,
             Releases = like.Releases,
+            Notes = like.Notes,
             DiscordIpc = like.DiscordIpc,
             DiscordIdleAfter = like.DiscordIdleAfter,
             Width = like.ClientSize.Width > 0 ? like.ClientSize.Width : like.Width,

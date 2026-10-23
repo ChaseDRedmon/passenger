@@ -537,7 +537,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   banner. Only the folder watcher's word decodes it again (`FollowDisk`): `ChangedOnDisk`, an agent's lookup and Git's
   reload of open files read nothing of it. Its `Language` is Image or Font, which the status bar names; its `HoldsText`
   is false, as a workbook's is, so the status bar's text widgets, Find and Replace in Files, Local History's look at an
-  opened file, a line's actions and agents' `editor_text` and `edit` pass it over.
+  opened file, a line's actions and agents' `editor_text` and `edit` pass it over. Release notes the app carries take the
+  editor's place the same way, rendered (`ReleaseNotesView`, What's New under Updates below), their text held but not
+  `HoldsText`.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places. `DockHost` is the layout and what
   it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows, its keys and
   popups the IDE's through `DockHost.WindowOpened`) are its parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
@@ -1351,6 +1353,25 @@ window or takes the focus; it shows everything but the system's own window chrom
   `UpdatesState` (`updates.json`) keeps the version announced and the one being installed. `MainWindow.Updates.cs`
   is the status bar's notice, Check for Updates, Restart to Update and the daily check while Settings' Check for
   updates is on; `Program.Main` installs a ready update last.
+  What's New (#416) is the running version's release notes, carried, never fetched: the repository's
+  `docs/release-notes/X.Y.Z.md` beside the app as `release-notes/X.Y.Z.md` (`ReleaseNotes`; the site takes none), which
+  `tools/release-notes.sh` also makes the GitHub release's body, so the release and the app say the same (a paragraph on
+  one line, since GitHub's release page breaks lines where the file does; notes still holding the stand-in's
+  `<!-- Stand-in` line fail a published release, `PUBLISH`, and only warn in a dry run). They open in an editor tab of
+  their own (`MainWindow.WhatsNew.cs`, "What's New in X.Y.Z", `OpenDocument.IsReleaseNotes`), read-only and holding no
+  text, drawn in the editor's place as an asset's preview is (`Editors/ReleaseNotesView` over `Editors/Markdown`:
+  CommonMark's common blocks and inlines as Passenger's own controls, styled in Shell.axaml, images left out, an http or
+  https link opening through `Browse`). Only the person's window shows them by itself (App's `ShowWhatsNewOnce`: never
+  `--mcp`, `--headless`, a screenshot, a test's window unless the test asks, nor a Passenger an agent's `--mcp-attach`
+  started, which `PASSENGER_STARTED_FOR=agent` tells, `McpProxy.StartedForAgent`, taken out of its environment as it
+  starts, so the person's next start shows them): once, when `UpdatesState.NotesShown` names an older version or is
+  missing from a state an older Passenger kept (`StateStore.UsedBefore`: its documents there as the process opened the
+  store), with the folder the start opens once that folder's own tabs are back (`Begin`'s `ShowWaitingNotes`, since a
+  file open before a folder keeps the folder's tabs from coming back), else with the first folder opened, and recorded
+  as shown then; a fresh state records its version and shows nothing, the Welcome screen greeting a first start. Help,
+  What's New (`AppActions.WhatsNew`, Find Action's Release Notes too, an agent's `ide_action`) shows them whenever asked,
+  greyed for a version that carries none (a build at Directory.Build.props' version before its notes are written).
+  `WhatsNewTests` hold it, each window the version whose stand-in the build carries (`MainWindow.Notes`).
 - `src/Passenger.App/Templates`: New Solution and Add > New Project. `ProjectTemplates` reads `dotnet new`'s installed
   templates once per SDK from its own cache (`templatecache.json`, refreshed by `dotnet new list`) and each template's
   `ide.host.json` for the options an IDE shows; `NewProjectDialog` is Rider's New Project dialog;
@@ -2163,7 +2184,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   choice, to spend Actions' minutes on purpose): `ci.yml` (`gh workflow run CI --ref main`, with the packages' and
   notices' jobs) calls it, and so does `release.yml`, run from a `vX.Y.Z` tag with dry run unticked: the tests, then the Apple Silicon disk image (no
   Intel Mac build, the owner's call), both Windows installers, both Linux archives and the four container tools' archives at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
-  names the site and the updater link to. Its Run workflow with dry run builds it all and publishes nothing. ci.yml
+  names the site and the updater link to, its body the version's `docs/release-notes/X.Y.Z.md` (What's New's, above). Its Run workflow with dry run builds it all and publishes nothing. ci.yml
   makes one disk image, so it and the four macOS shards fit GitHub's five macOS runners at once.
 
 ## Rules

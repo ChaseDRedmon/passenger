@@ -25,6 +25,14 @@ public sealed class McpProxy
     /// the state PASSENGER_SETTINGS names, never the person's installed Passenger.</summary>
     public const string StartVariable = "PASSENGER_START";
 
+    /// <summary>What the proxy tells a Passenger it starts for an agent (<c>agent</c>), which takes it out of its own
+    /// environment as it starts, so nothing it runs inherits it.</summary>
+    public const string StartedForVariable = "PASSENGER_STARTED_FOR";
+
+    /// <summary>Whether an agent's --mcp-attach started this Passenger, to open a folder for it: its window shows the person
+    /// no What's New, which waits for a start of their own.</summary>
+    public static bool StartedForAgent { get; private set; }
+
     /// <summary>How long joining may take, including old connection cleanup, opening a window and initialization.</summary>
     private static readonly TimeSpan StartLimit = TimeSpan.FromMinutes(2);
 
@@ -62,12 +70,22 @@ public sealed class McpProxy
         this.here = here;
     }
 
-    /// <summary>Fails a start whose <see cref="StartVariable"/> is not one this build knows, as a malformed flag does.</summary>
+    /// <summary>Fails a start whose <see cref="StartVariable"/> or <see cref="StartedForVariable"/> is not one this build
+    /// knows, as a malformed flag does; the second is read into <see cref="StartedForAgent"/> and taken out.</summary>
     public static void CheckVariable()
     {
         if (Environment.GetEnvironmentVariable(StartVariable) is { Length: > 0 } how && how != "headless")
         {
             throw new FormatException($"{StartVariable} takes headless (the test run's), not '{how}'");
+        }
+        if (Environment.GetEnvironmentVariable(StartedForVariable) is { Length: > 0 } started)
+        {
+            if (started != "agent")
+            {
+                throw new FormatException($"{StartedForVariable} takes agent (a Passenger an agent's --mcp-attach started), not '{started}'");
+            }
+            StartedForAgent = true;
+            Environment.SetEnvironmentVariable(StartedForVariable, null);
         }
     }
 
@@ -462,13 +480,14 @@ public sealed class McpProxy
 
     /// <summary>Starts Passenger on the folder: the installed app this is, through LaunchServices on macOS (which hands it
     /// to a Passenger already running there), else apart from this process, which it outlives; the test run's headless,
-    /// as a child.</summary>
+    /// as a child. Each is told it was started for an agent (<see cref="StartedForVariable"/>).</summary>
     private async Task LaunchAsync(CancellationToken cancel)
     {
         string self = Environment.ProcessPath ?? throw new NotJoined("Passenger cannot tell where it is installed, to start it.");
         if (Environment.GetEnvironmentVariable(StartVariable) == "headless")
         {
             ProcessStartInfo start = ChildProcesses.Command(self, ["--headless", here], here);
+            start.Environment[StartedForVariable] = "agent";
             // Its input kept: its end, with this process, ends it; its output is never the agent's protocol, nor its error the
             // agent's to read.
             start.RedirectStandardInput = true;
@@ -481,7 +500,9 @@ public sealed class McpProxy
         }
         if (OperatingSystem.IsMacOS() && Bundle(self) is { } app)
         {
-            ChildResult opened = await ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/open", ["-a", app, here]), limit: TimeSpan.FromSeconds(30), cancel: cancel);
+            // The variable reaches only a Passenger LaunchServices starts; one running already opens the folder as it is.
+            ChildResult opened = await ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/open", ["--env", $"{StartedForVariable}=agent", "-a", app, here]),
+                limit: TimeSpan.FromSeconds(30), cancel: cancel);
             if (!opened.Succeeded)
             {
                 throw new NotJoined($"LaunchServices did not start Passenger: {opened.Error.Trim()}");
@@ -490,7 +511,9 @@ public sealed class McpProxy
         }
         try
         {
-            ChildProcesses.StartApart(ChildProcesses.Command(self, [here], here));
+            ProcessStartInfo apart = ChildProcesses.Command(self, [here], here);
+            apart.Environment[StartedForVariable] = "agent";
+            ChildProcesses.StartApart(apart);
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
         {

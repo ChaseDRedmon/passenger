@@ -66,7 +66,7 @@ public partial class MainWindow
         actions!.Add(new IdeAction(AppActions.CheckForUpdates, "Check for Updates…", "Help",
             context => _ = CheckForUpdatesAsync(asked: true))
         {
-            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 0)],
+            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 1)],
         });
         actions.Add(new IdeAction(AppActions.RestartToUpdate, "Restart to Update", "Help", _ => RestartToUpdate())
         {

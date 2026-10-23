@@ -66,6 +66,15 @@ public partial class App : Application
                 IdeErrors.Write(updater is null ? $"Updates: this copy only says when a newer release is out: {notUpdating}"
                     : $"Updates: this copy installs updates, in {updater.Installed}");
                 window.WatchForUpdates();
+                // The notes of a version updated to, once; one an agent started to work in leaves them to the person's next start.
+                if (Mcp.McpProxy.StartedForAgent)
+                {
+                    IdeErrors.Write("What's New: started for an agent, so no notes are shown");
+                }
+                else
+                {
+                    window.ShowWhatsNewOnce();
+                }
                 // The person's windows show their activity in Discord, the one in front, while Settings says so.
                 window.ShowActivityInDiscord();
             };

@@ -486,6 +486,12 @@ public sealed class OpenDocument : Observable
     public string Path { get; private set; }
     public string Name => System.IO.Path.GetFileName(Path);
 
+    /// <summary>What its tab is called: its name, or for release notes the app carries what they are ("What's New in 0.2.0").</summary>
+    public string Title => Updates.ReleaseNotes.VersionOf(Path) is { } version ? Updates.ReleaseNotes.TitleOf(version) : Name;
+
+    /// <summary>Whether this is release notes the app carries, which its tab shows rendered (What's New), read-only.</summary>
+    public bool IsReleaseNotes => Updates.ReleaseNotes.VersionOf(Path) is not null;
+
     /// <summary>Takes the file's new path once it moved on disk, keeping its text, undo, carets and folds; a new name
     /// of another language takes that language's parser. An asset keeps its preview, and a binary file its bytes' plain
     /// text, rather than becoming another language's.</summary>
@@ -897,11 +903,11 @@ public sealed class OpenDocument : Observable
     /// own, and nothing typed there would reach the library.</summary>
     public bool IsDecompiled => Path.Contains($"{System.IO.Path.DirectorySeparatorChar}MetadataAsSource{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal);
 
-    /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence or notices the
-    /// app carries, a workbook, an asset preview, a binary file shown as its bytes, or an MSBuild file of the .NET SDK or
-    /// a package that Go to Declaration went into, or a copy of a container's file or of what the engine says of one.</summary>
-    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path)
-        || Containers.ContainerFilesPane.IsCopy(Path) || Endpoints.RequestLog.IsCommandCopy(Path);
+    /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence, notices or release
+    /// notes the app carries, a workbook, an asset preview, a binary file shown as its bytes, or an MSBuild file of the .NET
+    /// SDK or a package that Go to Declaration went into, or a copy of a container's file or of what the engine says of one.</summary>
+    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || IsReleaseNotes
+        || MSBuild.MSBuildFiles.IsInstalled(Path) || Containers.ContainerFilesPane.IsCopy(Path) || Endpoints.RequestLog.IsCommandCopy(Path);
 
     /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
     /// written over it.</summary>
@@ -911,22 +917,24 @@ public sealed class OpenDocument : Observable
     /// which written back would no longer be the file.</summary>
     public bool IsBinary { get; }
 
-    /// <summary>Whether its tab holds the file's text: an asset preview's and a workbook's hold an empty stand-in and a
-    /// binary file's its bytes drawn as signs, so nothing searches, reads, edits or writes it as the file's
-    /// (<see cref="ShownAs"/> says what the file is instead).</summary>
-    public bool HoldsText => Asset is null && !IsWorkbook && !IsBinary;
+    /// <summary>Whether its tab holds the file's text: an asset preview's and a workbook's hold an empty stand-in, a
+    /// binary file's its bytes drawn as signs and release notes' their Markdown shown rendered, so nothing searches, reads,
+    /// edits or writes it as the file's (<see cref="ShownAs"/> says what the file is instead).</summary>
+    public bool HoldsText => Asset is null && !IsWorkbook && !IsBinary && !IsReleaseNotes;
 
     /// <summary>What a file whose tab holds no text is shown as, for what refuses its text to say; null for text.</summary>
     public string? ShownAs => Asset is { Kind: AssetKind.Image } ? "an image, shown as a read-only preview"
         : Asset is not null ? "a font, shown as a read-only preview"
         : IsWorkbook ? "an Excel workbook, shown as its sheets' cells"
-        : IsBinary ? "a binary file, shown as its bytes' text" : null;
+        : IsBinary ? "a binary file, shown as its bytes' text"
+        : IsReleaseNotes ? "Passenger's release notes, shown rendered" : null;
 
     /// <summary>What the bar over a read-only file says it is and where it came from.</summary>
     public string Origin => Asset is { Kind: AssetKind.Image } ? "An image, shown as its pixels, read-only"
         : Asset is not null ? "A font, shown in its own glyphs, read-only"
         : IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
         : IsBinary ? "A binary file, shown as its bytes' text, read-only"
+        : IsReleaseNotes ? "Passenger's release notes, as the app carries them, read-only"
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
         : Containers.ContainerFilesPane.IsCopy(Path) ? "A copy of what a container holds, or of what the engine says of it, read-only"

@@ -117,6 +117,12 @@
     <None Include="../../LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
+  <!-- Every version's release notes beside the app (release-notes/X.Y.Z.md), which What's New shows and the release
+       workflow makes the GitHub release's body (tools/release-notes.sh): carried, never fetched. -->
+  <ItemGroup>
+    <None Include="../../docs/release-notes/*.md" Link="release-notes/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
   <Target Name="NoticeInputs" DependsOnTargets="ResolvePackageAssets;ResolveRuntimePackAssets;IncludeDebugAdapter;IncludeProjectHost">
     <MSBuild Projects="../../tools/Passenger.Notices/Passenger.Notices.csproj" Targets="GetTargetPath"
              RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
