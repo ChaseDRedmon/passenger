@@ -386,7 +386,7 @@ public sealed class DockingTests
         window.KeepLayout();
         DockHost dock = window.DockHost;
         string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit,
-            ToolWindowIds.Problems, ToolWindowIds.Debug];
+            ToolWindowIds.Problems, ToolWindowIds.Debug, ToolWindowIds.LiveTree];
         foreach (string id in built)
         {
             Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");
@@ -434,6 +434,14 @@ public sealed class DockingTests
         Assert.Contains(debug.HeaderTools.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Hello");
         Assert.Contains(debug.GetVisualDescendants().OfType<ToggleButton>(), t => t.IsChecked == true && ToolTip.GetTip(t) is string tip && tip.StartsWith("Mute Breakpoints", StringComparison.Ordinal));
         dock.Hide(ToolWindowIds.Debug);
+        Ui.Settle();
+
+        // The Live Visual Tree says what it would follow, as its controller said it while it was hidden.
+        dock.Show(ToolWindowIds.LiveTree);
+        Ui.Settle();
+        Assert.Contains(window.LiveTree, dock.GetVisualDescendants());
+        Assert.Contains(window.LiveTree.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "Debug an Avalonia or WPF app to see its windows and controls here.");
+        dock.Hide(ToolWindowIds.LiveTree);
         Ui.Settle();
 
         // Shown, a window's view is built; the layout kept with it shown builds it as the next window opens, and no other.

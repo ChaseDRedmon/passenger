@@ -43,27 +43,87 @@ public sealed class LiveTreeController
     /// <summary>The chosen element's properties with a breakpoint, as its rows last showed them.</summary>
     private string watchedShown = string.Empty;
 
+    /// <summary>The window's view once it is first shown or asked for (#441), and what it shows, kept until then.</summary>
+    private LiveTreeView? view;
+    private (string? Message, string? Line) status;
+    private string? banner;
+    private AppTree? tree;
+    private (ElementDetails? Details, string? Problem) details;
+    private bool picking;
+
     public LiveTreeController(LiveTreeParts parts)
     {
         this.parts = parts;
-        View = new LiveTreeView();
-        window = new ToolWindow(ToolWindowIds.LiveTree, "Live Visual Tree", "Icon.LiveTree", View, ToolAnchor.RightTop) { Action = AppActions.ShowLiveTree };
+        window = new ToolWindow(ToolWindowIds.LiveTree, "Live Visual Tree", "Icon.LiveTree", Make, ToolAnchor.RightTop) { Action = AppActions.ShowLiveTree };
         parts.Dock.Add(window);
         window.PropertyChanged += OnWindowChanged;
-        parts.Actions.Add(new IdeAction(AppActions.SelectElement, "Select Element", "Debug", context => _ = PickAsync(View.SelectElement.IsChecked != true))
+        parts.Actions.Add(new IdeAction(AppActions.SelectElement, "Select Element", "Debug", context => _ = PickAsync(!picking))
         {
             WhyNot = _ => WhyNotAsk(),
         });
-        View.ElementChosen += (_, id) => _ = ChooseAsync(id);
-        View.PickRequested += (_, on) => _ = PickAsync(on);
-        View.RefreshRequested += (_, _) => _ = RefreshAsync();
-        View.GoToRequested += (_, place) => GoTo(place);
-        View.BreakRequested += (_, value) => ToggleBreak(value);
-        View.Watched = value => View.Details is { } details && Debugged() is { } debugged && session!.Debug.Breakpoints.FindProperty(debugged, details.Id, value.Name) is not null;
-        View.WhyNotBreak = () => Debugged() is { State: not DebugState.Ended } ? null : "Break When Value Changes needs the app debugged";
+        // What it says before any app is followed, as it says once one has gone from it.
+        ShowState();
     }
 
-    public LiveTreeView View { get; }
+    /// <summary>The Live Visual Tree's view, built as it is asked for.</summary>
+    public LiveTreeView View => view ?? (LiveTreeView)window.Content;
+
+    /// <summary>The view, as it is first shown or asked for, wired and showing what the controller kept for it.</summary>
+    private LiveTreeView Make()
+    {
+        LiveTreeView made = view = new LiveTreeView();
+        made.ElementChosen += (_, id) => _ = ChooseAsync(id);
+        made.PickRequested += (_, on) => _ = PickAsync(on);
+        made.RefreshRequested += (_, _) => _ = RefreshAsync();
+        made.GoToRequested += (_, place) => GoTo(place);
+        made.BreakRequested += (_, value) => ToggleBreak(value);
+        made.Watched = value => details.Details is { } shown && Debugged() is { } debugged && session!.Debug.Breakpoints.FindProperty(debugged, shown.Id, value.Name) is not null;
+        made.WhyNotBreak = () => Debugged() is { State: not DebugState.Ended } ? null : "Break When Value Changes needs the app debugged";
+        made.ShowTree(tree);
+        made.ShowDetails(details.Details, details.Problem);
+        if (chosen is long id && tree is not null)
+        {
+            made.Choose(id);
+        }
+        made.ShowStatus(status.Message, status.Line);
+        made.ShowBanner(banner);
+        made.SelectElement.IsChecked = picking;
+        return made;
+    }
+
+    private void ShowStatus(string? message, string? line)
+    {
+        status = (message, line);
+        view?.ShowStatus(message, line);
+    }
+
+    private void ShowBanner(string? text)
+    {
+        banner = text;
+        view?.ShowBanner(text);
+    }
+
+    private void ShowTree(AppTree? shown)
+    {
+        tree = shown;
+        view?.ShowTree(shown);
+    }
+
+    private void ShowDetails(ElementDetails? shown, string? problem)
+    {
+        details = (shown, problem);
+        view?.ShowDetails(shown, problem);
+    }
+
+    /// <summary>Select Element shown pressed while the app waits for a control to be pointed at.</summary>
+    private void Picking(bool on)
+    {
+        picking = on;
+        if (view is not null)
+        {
+            view.SelectElement.IsChecked = on;
+        }
+    }
 
     /// <summary>The app the window follows, or null.</summary>
     public LiveApp? App => app;
@@ -137,17 +197,17 @@ public sealed class LiveTreeController
     /// taken away.</summary>
     private void ToggleBreak(PropertyValue value)
     {
-        if (session is not { } current || View.Details is not { } details || Debugged() is not { } debugged)
+        if (session is not { } current || details.Details is not { } shown || Debugged() is not { } debugged)
         {
             return;
         }
         BreakpointStore store = current.Debug.Breakpoints;
-        if (store.FindProperty(debugged, details.Id, value.Name) is { } existing)
+        if (store.FindProperty(debugged, shown.Id, value.Name) is { } existing)
         {
             store.Remove(existing);
             return;
         }
-        PropertyBreakpoint added = store.AddProperty(debugged, details.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, value.Name);
+        PropertyBreakpoint added = store.AddProperty(debugged, shown.Id, shown.Name is { Length: > 0 } name ? $"{shown.Type}#{name}" : shown.Type, value.Name);
         parts.Say($"Break When Value Changes: the app stops where {added.Location} is changed");
     }
 
@@ -158,12 +218,12 @@ public sealed class LiveTreeController
         if (now != watchedShown)
         {
             watchedShown = now;
-            View.RefreshProperties();
+            view?.RefreshProperties();
         }
     }
 
-    private string WatchedNow() => View.Details is { } details && session is { } current && Debugged() is { } debugged
-        ? string.Join(';', current.Debug.Breakpoints.Properties.Where(p => p.Session == debugged && p.Element == details.Id).Select(p => p.Property).Order(StringComparer.Ordinal))
+    private string WatchedNow() => details.Details is { } shown && session is { } current && Debugged() is { } debugged
+        ? string.Join(';', current.Debug.Breakpoints.Properties.Where(p => p.Session == debugged && p.Element == shown.Id).Select(p => p.Property).Order(StringComparer.Ordinal))
         : string.Empty;
 
     /// <summary>The inspectors in the apps told of the property breakpoints as they are now (while each runs), which an
@@ -292,10 +352,10 @@ public sealed class LiveTreeController
         Choose(null);
         treeAsks++;
         detailAsks++;
-        View.SelectElement.IsChecked = false;
-        View.ShowBanner(null);
-        View.ShowTree(null);
-        View.ShowDetails(null, null);
+        Picking(false);
+        ShowBanner(null);
+        ShowTree(null);
+        ShowDetails(null, null);
         if (next is not null)
         {
             next.StateChanged += OnAppState;
@@ -317,23 +377,23 @@ public sealed class LiveTreeController
         switch (app)
         {
             case null:
-                View.ShowStatus("Debug an Avalonia or WPF app to see its windows and controls here.", null);
+                ShowStatus("Debug an Avalonia or WPF app to see its windows and controls here.", null);
                 break;
             case { State: LiveAppState.Waiting }:
-                View.ShowStatus($"Waiting for {app.Name} to show its windows…", null);
+                ShowStatus($"Waiting for {app.Name} to show its windows…", null);
                 break;
             case { State: LiveAppState.Refused }:
-                View.ShowStatus(app.Problem, null);
+                ShowStatus(app.Problem, null);
                 break;
             case { State: LiveAppState.Ended }:
-                View.ShowTree(null);
-                View.ShowDetails(null, null);
-                View.ShowBanner(null);
-                View.SelectElement.IsChecked = false;
-                View.ShowStatus($"{app.Name} has ended.", null);
+                ShowTree(null);
+                ShowDetails(null, null);
+                ShowBanner(null);
+                Picking(false);
+                ShowStatus($"{app.Name} has ended.", null);
                 break;
             default:
-                View.ShowStatus(null, $"{app.Name} · {app.Framework}");
+                ShowStatus(null, $"{app.Name} · {app.Framework}");
                 break;
         }
     }
@@ -394,7 +454,7 @@ public sealed class LiveTreeController
     private void OnDebugState()
     {
         bool paused = Paused && app is { State: LiveAppState.Connected };
-        View.ShowBanner(paused ? $"{app!.Name} is paused: its tree and values are as it last ran, and are asked again once it runs." : null);
+        ShowBanner(paused ? $"{app!.Name} is paused: its tree and values are as it last ran, and are asked again once it runs." : null);
         if (!paused && stale)
         {
             _ = RefreshAsync();
@@ -445,7 +505,7 @@ public sealed class LiveTreeController
             {
                 // Asked again once the app runs, should it have paused while asked.
                 stale = true;
-                View.ShowStatus(null, error.Message);
+                ShowStatus(null, error.Message);
             }
             return;
         }
@@ -453,7 +513,7 @@ public sealed class LiveTreeController
         {
             return;
         }
-        View.ShowTree(tree);
+        ShowTree(tree);
         ShowState();
         if (chosen is long id)
         {
@@ -464,7 +524,7 @@ public sealed class LiveTreeController
             else
             {
                 Choose(null);
-                View.ShowDetails(null, "The control chosen has left the app.");
+                ShowDetails(null, "The control chosen has left the app.");
             }
         }
     }
@@ -496,9 +556,9 @@ public sealed class LiveTreeController
         }
         if (Paused)
         {
-            if (View.Details?.Id != id)
+            if (details.Details?.Id != id)
             {
-                View.ShowDetails(null, $"{live.Name} is paused: a control's properties show once it runs again.");
+                ShowDetails(null, $"{live.Name} is paused: a control's properties show once it runs again.");
             }
             return;
         }
@@ -509,7 +569,7 @@ public sealed class LiveTreeController
             ElementDetails details = await live.DetailsAsync(id);
             if (ask == detailAsks && app == live)
             {
-                View.ShowDetails(AppPlaces.InEditor(details, parts.Editors), null);
+                ShowDetails(AppPlaces.InEditor(details, parts.Editors), null);
                 watchedShown = WatchedNow();
             }
         }
@@ -517,7 +577,7 @@ public sealed class LiveTreeController
         {
             if (ask == detailAsks && app == live)
             {
-                View.ShowDetails(null, error.Message);
+                ShowDetails(null, error.Message);
             }
         }
     }
@@ -526,10 +586,10 @@ public sealed class LiveTreeController
     public async Task PickAsync(bool on)
     {
         UiThread.Check();
-        View.SelectElement.IsChecked = on;
+        Picking(on);
         if (WhyNotAsk() is { } why)
         {
-            View.SelectElement.IsChecked = false;
+            Picking(false);
             parts.Say($"Select Element: {why}");
             return;
         }
@@ -540,7 +600,7 @@ public sealed class LiveTreeController
         }
         catch (LiveAppException error)
         {
-            View.SelectElement.IsChecked = false;
+            Picking(false);
             parts.Say($"Select Element: {error.Message}");
             return;
         }
@@ -572,7 +632,7 @@ public sealed class LiveTreeController
         {
             return;
         }
-        View.SelectElement.IsChecked = false;
+        Picking(false);
         if (id is long element)
         {
             Choose(element);
