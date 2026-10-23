@@ -44,9 +44,10 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     public Func<string, string, bool?>? Chosen { get; set; }
     public Func<AspireAppRun, CancellationToken, Task<AspireInteractions?>>? ConnectInteractions { get; set; }
 
-    /// <summary>Has the profiler record the service a configuration's Profile holds at its start, which lets it go once
-    /// recording: the AppHost's run's profiler (<see cref="ServiceRun.Profiler"/>), null once it records, else why not.</summary>
-    public Func<AspireAppRun, IRunService, ServiceProgram, CancellationToken, Task<string?>>? ProfileStart { get; set; }
+    /// <summary>How long Profile of a configuration waits for the service it records to reach the profiler, counted from DCP's
+    /// request to start that service (however long its AppHost takes to ask, which Stop ends): past it the start is given up,
+    /// said as the time limit it is. A test's shorter one gives it up at once.</summary>
+    public TimeSpan ProfileLimit { get; set; } = TimeSpan.FromMinutes(1);
 
     /// <summary>Whether the Debug window's chosen tab is another program's than any service's (a plain launch beside the
     /// AppHost), which the Aspire window's resources read again do not take back: only a person's choice of a resource does.</summary>
@@ -226,14 +227,38 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             }
             if (mode == RunStart.Profile)
             {
-                using CancellationTokenSource profiling = CancellationTokenSource.CreateLinkedTokenSource(starting.Token);
-                profiling.CancelAfter(Waits.Of(TimeSpan.FromSeconds(60)));
-                Task winner = await Task.WhenAny(started.Select(app => (Task)app.ProfileStarted.Task)
-                    .Concat(started.Select(app => (Task)app.Runner.Ended))).WaitAsync(profiling.Token);
-                AspireAppRun? profiled = started.FirstOrDefault(app => ReferenceEquals(winner, app.ProfileStarted.Task));
-                if (profiled is null)
+                // However long the AppHost takes to ask for the service it records (Stop ends the wait), then the limit from its ask.
+                // The AppHost's own pace is not drawing: Run's start, its caller, lets go of its hold on what is drawn meanwhile.
+                Task asked;
+                BackgroundWork.End();
+                try
+                {
+                    asked = await Task.WhenAny(started.Select(app => (Task)app.ProfileAsked.Task)
+                        .Concat(started.Select(app => (Task)app.Runner.Ended))).WaitAsync(starting.Token);
+                }
+                finally
+                {
+                    BackgroundWork.Begin();
+                }
+                if (started.FirstOrDefault(app => ReferenceEquals(asked, app.ProfileAsked.Task)) is not { } profiled)
                 {
                     throw new LaunchException("The AppHost ended before a service could be profiled");
+                }
+                (string service, DateTime at) = await profiled.ProfileAsked.Task;
+                TimeSpan limit = Waits.Of(ProfileLimit);
+                TimeSpan left = limit - (DateTime.UtcNow - at);
+                Task winner;
+                try
+                {
+                    winner = await Task.WhenAny(profiled.ProfileStarted.Task, profiled.Runner.Ended).WaitAsync(left > TimeSpan.Zero ? left : TimeSpan.Zero, starting.Token);
+                }
+                catch (TimeoutException)
+                {
+                    throw new LaunchException($"{service} did not start under the profiler within {limit.TotalSeconds:0.##} s of its AppHost asking for it");
+                }
+                if (!ReferenceEquals(winner, profiled.ProfileStarted.Task))
+                {
+                    throw new LaunchException($"The AppHost ended before {service} could be profiled");
                 }
                 if (await profiled.ProfileStarted.Task is { } failed)
                 {
@@ -642,6 +667,38 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     private async Task<AspireProjectSession> StartResourceAsync(AspireAppRun app, AspireProjectLaunch request, CancellationToken cancellation)
     {
         UiThread.Check();
+        // Profile's limit counts from DCP's request for the service it records, which this start claims as it is asked.
+        bool profiling = ClaimsProfile(app, request);
+        try
+        {
+            return await StartRequestedAsync(app, request, profiling, cancellation);
+        }
+        catch (Exception error) when (profiling)
+        {
+            app.ProfileStarted.TrySetResult(error is OperationCanceledException ? "Its start was stopped" : error.Message);
+            throw;
+        }
+    }
+
+    /// <summary>Whether this start is the one Profile of its configuration records: the first asked for of its run's AppHosts,
+    /// or of the service Profile chose; claimed, its ask's time noted.</summary>
+    private bool ClaimsProfile(AspireAppRun app, AspireProjectLaunch request)
+    {
+        string path = PathNames.Canonical(request.ProjectPath);
+        string? name = request.Environment.FirstOrDefault(variable => variable.Name == "OTEL_SERVICE_NAME")?.Value;
+        if (app.Mode != RunStart.Profile || apps.Any(candidate => candidate.Group == app.Group && candidate.ProfileClaimed)
+            || app.ProfileTarget is { } selected && !(PathNames.Same(selected.AppHost, app.Configuration.Project) && name == selected.Name
+                && app.Configuration.ServiceProjects.TryGetValue(selected.Name, out string? selectedProject) && PathNames.Same(selectedProject, path)))
+        {
+            return false;
+        }
+        app.ProfileClaimed = true;
+        app.ProfileAsked.TrySetResult((name ?? Path.GetFileNameWithoutExtension(path), DateTime.UtcNow));
+        return true;
+    }
+
+    private async Task<AspireProjectSession> StartRequestedAsync(AspireAppRun app, AspireProjectLaunch request, bool profiling, CancellationToken cancellation)
+    {
         cancellation.ThrowIfCancellationRequested();
         if (app.Stopping || workspace.IsEnded || disposed || app.Resources.Count >= 200)
         {
@@ -711,18 +768,9 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         app.Resources.Add(resource.Id, resource);
         using CancellationTokenSource starting = CancellationTokenSource.CreateLinkedTokenSource(cancellation, app.Lifetime.Token, resource.Stopping.Token);
         cancellation = starting.Token;
-        bool profiling = false;
         string? failure = null;
         try
         {
-            profiling = app.Mode == RunStart.Profile && !apps.Any(candidate => candidate.Group == app.Group && candidate.ProfileClaimed)
-                && (app.ProfileTarget is not { } selected || PathNames.Same(selected.AppHost, app.Configuration.Project)
-                    && resource.ResourceName == selected.Name && app.Configuration.ServiceProjects.TryGetValue(selected.Name, out string? selectedProject)
-                    && PathNames.Same(selectedProject, resource.Project));
-            if (profiling)
-            {
-                app.ProfileClaimed = true;
-            }
             // Held for the debugger (quietly for Hot Reload) as the run of services holds it: from its first start in this run,
             // as a person chose it in an earlier one, else as the configuration and DCP's request say; the one Profile records,
             // held for the profiler.
@@ -771,10 +819,6 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         catch (Exception error)
         {
             failure = error.Message;
-            if (profiling && !app.ProfileStarted.Task.IsCompleted)
-            {
-                app.ProfileStarted.TrySetResult(error.Message);
-            }
             await StopResourceAsync(app, resource.Id);
             throw;
         }
@@ -1080,6 +1124,10 @@ public sealed class AspireAppRun : ServiceRun
     /// <summary>When the build each service project was built by again for a restart began, by project.</summary>
     internal Dictionary<string, DateTime> Rebuilt { get; } = new(PathNames.Comparer);
     internal TaskCompletionSource<string?> ProfileStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>DCP's request to start the service Profile records: its name, and when it was asked, from which the profile's
+    /// time limit counts.</summary>
+    internal TaskCompletionSource<(string Service, DateTime Asked)> ProfileAsked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IReadOnlyList<string> KnownContainerIds { get; internal set; } = [];
     internal AspireInteractions? Interactions { get; set; }
     internal CancellationTokenSource Lifetime { get; } = new();

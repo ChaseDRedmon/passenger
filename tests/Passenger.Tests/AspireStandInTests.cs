@@ -664,6 +664,44 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>Profile of an AppHost waits as long as the AppHost takes to ask for the service it records, then gives that
+    /// service its time to reach the profiler, counted from the ask: past it, the start is given up as the time limit it is,
+    /// never as a stop nobody pressed, and the AppHost is stopped. Here the window's limit is a moment, which no start meets.</summary>
+    [AvaloniaFact]
+    public void Profile_of_an_AppHost_gives_up_on_a_service_past_its_time_saying_so()
+    {
+        project.Reset();
+        File.Delete(project.KeyFile);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            window.AspireRuntime.ProfileLimit = TimeSpan.FromMilliseconds(10);
+            Task<string?> profiling = window.ProfileAsync();
+            Ui.PumpUntil(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1 || profiling.IsCompleted,
+                "the AppHost to come up for Profile", TimeSpan.FromMinutes(2));
+            Assert.False(profiling.IsCompleted, $"Profile ended before its AppHost asked for a service: {(profiling.IsCompleted ? profiling.Result : null)}");
+            Ui.Hold(TimeSpan.FromSeconds(1), "Profile to wait on with no service asked for, however long its AppHost takes");
+            Assert.False(profiling.IsCompleted, $"Profile gave up before its AppHost asked for a service: {(profiling.IsCompleted ? profiling.Result : null)}");
+
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode _) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            string? why = Ui.Await(profiling, "Profile to give up on the API");
+            Assert.True(why?.StartsWith("apiservice did not start under the profiler within ", StringComparison.Ordinal) == true
+                && why.EndsWith(" s of its AppHost asking for it", StringComparison.Ordinal), $"Profile's time limit was said as {why}");
+            Assert.Equal(why, window.Status);
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Count == 0, "the AppHost to stop as Profile gave up");
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>The stand-in API's program, once the IDE has started it as DCP asked.</summary>
     private static int Api(MainWindow window)
     {
@@ -1375,8 +1413,16 @@ public sealed class StandInAppHost : SharedProject
         };
         start.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session[1]);
         start.Headers.Add("Microsoft-Developer-DCP-Instance-ID", Instance);
-        using HttpResponseMessage answered = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
-        return (notified, answered.StatusCode);
+        try
+        {
+            using HttpResponseMessage answered = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
+            return (notified, answered.StatusCode);
+        }
+        catch (HttpRequestException)
+        {
+            // The IDE closed its endpoint as it stopped the AppHost, the request unanswered: no status at all.
+            return (notified, 0);
+        }
     }
 
     /// <summary>The stand-in AppHost's configuration with its service, apiservice, marked Don't start.</summary>

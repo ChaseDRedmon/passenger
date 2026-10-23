@@ -935,7 +935,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Debugger restarts it unheld. Profile of a configuration holds the chosen service at its start through the model, no code
   made changeable, and the one recording of a service records it from there (`ProfilerCommands.RecordServiceAsync`,
   `ProfilingSession.AttachAsync`'s `resume`), letting it go once recording, Stop reading its snapshot before the programs go
-  (`ProfileAspireAsync`, `AspireServiceDialog` when several run). Rerun reads, before anything is built, what changed since
+  (`ProfileAspireAsync`, `AspireServiceDialog` when several run); the start waits as long as the AppHost takes to ask for
+  that service (Stop ends the wait, its hold on what is drawn let go meanwhile), then `AspireController.ProfileLimit` (a
+  minute) from DCP's ask, past which it is given up as the time limit it is. A service Profiled as it runs (the Aspire
+  window's Profile, Attach Profiler with it chosen) is recorded the same way, so Stop reads its snapshot first too. Rerun reads, before anything is built, what changed since
   the build each program runs began (`BuiltInputs.ChangedSince`: code, project, XAML and settings files under its folder and
   those it references, never what a running program writes beside them, as DCP's `.dcp.json`): the services changed are
   stopped, built and started again through their restart, the rest left running, and an AppHost whose own folder changed
