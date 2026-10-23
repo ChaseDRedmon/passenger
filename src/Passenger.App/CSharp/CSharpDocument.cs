@@ -191,14 +191,6 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
                 .Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })
                 .ToList();
         }
-        if (document.InlayHints.Count > 0)
-        {
-            // Text typed at a parameter's name goes after it, into the argument; at a type, before it, onto the name.
-            document.InlayHints = [.. document.InlayHints.Select(h => h with
-            {
-                Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: h.Kind == InlayHintKind.Type),
-            })];
-        }
         Pull(Settle);
         // An AppHost's edit may change what its services are told is missing; any other file's changes only its own.
         if (AspireRole == Aspire.AspireRole.AppHost)
@@ -228,9 +220,18 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
             return;
         }
         (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
+        if (cancel.IsCancellationRequested || hinted != document.Text.Version)
+        {
+            return;
+        }
+        // Placed on the thread pool, in the text and syntax they were asked for: a file of thousands of calls has as many.
+        TextSnapshot text = document.Text.Snapshot;
+        ParsedText? syntax = hints.Any(h => h.Kind == 1) ? document.Syntax?.Current : null;
+        bool razor = lsp.IsRazor;
+        HintList shown = await BackgroundWork.Run(() => Shown(text, syntax, razor, hints), cancel);
         if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
         {
-            document.InlayHints = Shown(lsp, hints);
+            document.InlayHints = shown;
         }
     }
 
@@ -282,38 +283,36 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         }
     }
 
-    /// <summary>The hints Rider would show of those the server gave for the text as it stands: parameter names but those
-    /// that say nothing, and types where Rider puts them (<see cref="TypeHints"/>), each kept with the server's own for
-    /// its hover card.</summary>
-    private IReadOnlyList<InlayHint> Shown(LspDocument lsp, IReadOnlyList<LspInlayHint> hints)
+    /// <summary>The hints Rider would show of those the server gave for a text: parameter names but those that say nothing,
+    /// and types where Rider puts them (<see cref="TypeHints"/>, by the text's <paramref name="syntax"/>), each kept with the
+    /// server's own for its hover card. Reads nothing but what it is given, so it runs off the UI thread.</summary>
+    private static HintList Shown(TextSnapshot text, ParsedText? syntax, bool razor, IReadOnlyList<LspInlayHint> hints)
     {
-        ParsedText? syntax = hints.Any(h => h.Kind == 1) ? document.Syntax?.Current : null;
-        List<InlayHint> shown = [];
+        ServerLines lines = ServerLines.Of(text);
+        List<InlayHint> shown = new(hints.Count);
         foreach (LspInlayHint hint in hints)
         {
             string label = hint.Label.Trim();
+            int offset = lines.OffsetOf(hint.Position);
             if (hint.Kind == 1)
             {
-                if (syntax is not null && TypeHints.Place(syntax, lsp.OffsetOf(hint.Position), label) is { } placed)
+                if (syntax is not null && TypeHints.Place(syntax, offset, label) is { } placed)
                 {
                     shown.Add(placed with { Data = hint });
                 }
             }
-            else if (!Generic.Contains(label) && !(lsp.IsRazor && OnDirective(lsp.OffsetOf(hint.Position))))
+            else if (!Generic.Contains(label) && !(razor && OnDirective(text, offset)))
             {
-                shown.Add(new InlayHint(lsp.OffsetOf(hint.Position), label, hint.PaddingLeft, hint.PaddingRight, InlayHintKind.Parameter, hint));
+                shown.Add(new InlayHint(offset, label, hint.PaddingLeft, hint.PaddingRight, InlayHintKind.Parameter, hint));
             }
         }
-        return shown;
+        return HintList.Of(shown);
     }
 
     /// <summary>Whether a place is on a Razor directive's line (<c>@page "/counter"</c>), whose value Razor's generated C#
     /// passes to an attribute: the server names the attribute's parameter there, which Rider never shows.</summary>
-    private bool OnDirective(int offset)
-    {
-        TextSnapshot text = document.Text.Snapshot;
-        return Directive.IsMatch(text.GetLineText(text.GetLineFromOffset(Math.Min(offset, text.Length))));
-    }
+    private static bool OnDirective(TextSnapshot text, int offset) =>
+        Directive.IsMatch(text.GetLineText(text.GetLineFromOffset(Math.Min(offset, text.Length))));
 
     private static readonly System.Text.RegularExpressions.Regex Directive =
         new(@"^\s*@(page|layout|inherits|implements|namespace|attribute|typeparam|rendermode|preservewhitespace|model|inject|section)\b");

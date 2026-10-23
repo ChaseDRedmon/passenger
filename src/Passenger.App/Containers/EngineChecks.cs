@@ -417,11 +417,7 @@ internal abstract class EngineCheck : IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (Hints && Document.InlayHints.Count > 0)
-        {
-            // A value ends the text before it: what is typed at it goes before it.
-            Document.InlayHints = [.. Document.InlayHints.Select(h => h with { Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: true) })];
-        }
+        // The hints move with the text itself (OpenDocument.InlayHints), a value's before what is typed at it.
         if (Faults.Count > 0)
         {
             Faults = [.. Faults.Select(f => (TextEditing.MapRange(f.Range, e.Edits), f.Fixes))];

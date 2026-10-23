@@ -366,10 +366,19 @@ public sealed partial class CodeEditor
         }
     }
 
+    /// <summary>Ahead of everyone who hears of an edit (<see cref="TextDocument.ChangedFirst"/>): the hints carried through it,
+    /// then the wraps, so the lines it touched wrap with their hints where they now stand, and the host's hints carried
+    /// alike after it change no line's rows.</summary>
+    private void OnChangedFirst(object? sender, DocumentChangedEventArgs change)
+    {
+        hintList = hintList.Through(change.Edits);
+        FollowWraps(change);
+    }
+
     /// <summary>The wraps carried through an edit: a line it did not touch keeps its rows, the ones it did are wrapped again.
-    /// Ahead of everyone who hears of the edit (<see cref="TextDocument.ChangedFirst"/>), since the host moving its folds
-    /// through it asks for the rows, and what follows it asks where the carets are drawn.</summary>
-    private void FollowWraps(object? sender, DocumentChangedEventArgs change)
+    /// Ahead of everyone else who hears of the edit, since the host moving its folds through it asks for the rows, and what
+    /// follows it asks where the carets are drawn.</summary>
+    private void FollowWraps(DocumentChangedEventArgs change)
     {
         if (wraps is not { } map || !ReferenceEquals(map.Text, change.Before))
         {
@@ -412,18 +421,20 @@ public sealed partial class CodeEditor
         wraps = made.Build(after, map.Width, map.Look);
     }
 
-    /// <summary>The hints changed: the lines that had or have some are wrapped again, since a hint takes room on its row.</summary>
-    private void FollowHints(IReadOnlyList<InlayHint> before, IReadOnlyList<InlayHint> after)
+    /// <summary>The hints changed: the lines where one is drawn otherwise than before (where it stands, what it says) are
+    /// wrapped again, since a hint takes room on its row; a host's hints carried through a key as the editor's were draw
+    /// alike, and wrap nothing again.</summary>
+    private void FollowHints(HintList before, HintList after)
     {
         TextSnapshot text = document.Snapshot;
-        if (wraps is not { } map || !ReferenceEquals(map.Text, text) || before.SequenceEqual(after))
+        if (wraps is not { } map || !ReferenceEquals(map.Text, text) || HintList.Differing(before, after) is not { } moved)
         {
             return;
         }
         SortedSet<int> touched = [];
-        foreach (InlayHint hint in before.Concat(after))
+        foreach (int offset in moved)
         {
-            touched.Add(text.GetLineFromOffset(Math.Clamp(hint.Offset, 0, text.Length)));
+            touched.Add(text.GetLineFromOffset(Math.Clamp(offset, 0, text.Length)));
         }
         WrapBuilder made = new(map.Runs + touched.Count + 1);
         Advances measure = Measures();

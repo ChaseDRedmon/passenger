@@ -360,6 +360,69 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         return largest;
     }
 
+    /// <summary>A key typed above four thousand calls, a parameter's name hint before each argument, costs the UI thread
+    /// about what it does above sixty (a screen of them, the rest naming their parameters), soft-wrapped or not: the hints
+    /// past it are carried in runs, those it reaches moved and the rest shifted whole, never copied, sorted again or, with
+    /// soft wrap on, their lines wrapped again (the key's line is). Each hint still stands before its argument.</summary>
+    [AvaloniaFact]
+    public void A_key_above_thousands_of_hinted_calls_costs_what_it_does_above_a_few_and_wraps_only_its_line()
+    {
+        MainWindow window = project.Open("Few.cs");
+        foreach (bool wrapping in new[] { false, true })
+        {
+            (int few, long fewBytes, long fewWrapped) = HintedKeys(window, "Few.cs", wrapping);
+            (int many, long manyBytes, long manyWrapped) = HintedKeys(window, "Calls.cs", wrapping);
+            string how = wrapping ? "soft-wrapped" : "not wrapped";
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"A key {how} above {few} hints allocated {fewBytes / 1024} KB on the UI thread and wrapped {fewWrapped} characters; above {many}, {manyBytes / 1024} KB and {manyWrapped}");
+            Assert.True(manyBytes <= fewBytes + (32 * 1024),
+                $"A key {how} above {many} hints allocated {manyBytes / 1024} KB on the UI thread, {(manyBytes - fewBytes) / 1024} KB more than above {few}: it copied or sorted every hint");
+            Assert.True(manyWrapped <= fewWrapped,
+                $"A key {how} above {many} hints wrapped {manyWrapped} characters, more than the {fewWrapped} it wraps above {few}: it wrapped the hinted lines again");
+        }
+        window.Close();
+    }
+
+    /// <summary>Keys typed above a file's calls once its hints have come, with soft wrap on or off: how many hints, and the
+    /// bytes each key and the frame after it allocate on the UI thread and the characters each wraps, on average; every hint
+    /// then still stands before its argument.</summary>
+    private (int Hints, long Bytes, long Wrapped) HintedKeys(MainWindow window, string file, bool wrapping)
+    {
+        window.OpenFile(project.PathOf(file));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        int calls = (document.Text.Snapshot.ToString().Length - document.Text.Snapshot.ToString().Replace("Of(3, 4)", string.Empty, StringComparison.Ordinal).Length) / "Of(3, 4)".Length;
+        Ui.WaitFor(() => editor.InlayHints.Count == 2 * calls, $"the hints of {file}'s {calls} calls");
+        if (document.SoftWrap != wrapping)
+        {
+            Ui.Run(window, AppActions.SoftWrap);
+        }
+        Ui.PlaceAfter(editor, "int total = 0");
+        editor.Focus();
+        Ui.Settle();
+        const int Keys = 5;
+        long wrapped = editor.CharactersWrapped;
+        long bytes = 0;
+        for (int i = 0; i < Keys; i++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("1");
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key, whose allocations are measured");
+            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        wrapped = editor.CharactersWrapped - wrapped;
+        TextSnapshot text = document.Text.Snapshot;
+        foreach (InlayHint hint in editor.InlayHints)
+        {
+            string argument = hint.Label == "width:" ? "3" : "4";
+            Assert.True(text.GetText(hint.Offset, 1) == argument,
+                $"After {Keys} keys above them, {file}'s hint '{hint.Label}' stands before '{text.GetText(hint.Offset, Math.Min(8, text.Length - hint.Offset))}' on line {text.GetLineFromOffset(hint.Offset) + 1}");
+        }
+        Assert.Equal(2 * calls, editor.InlayHints.Count);
+        return (2 * calls, bytes / Keys, wrapped / Keys);
+    }
+
     /// <summary>A small console project on disk with two files of 20,000 lines and two of calls, restored once for every
     /// test, and the warm server they share on it, which loads and compiles the files once.</summary>
     public sealed class Project : SharedProject

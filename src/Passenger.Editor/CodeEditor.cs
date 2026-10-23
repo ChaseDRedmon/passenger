@@ -81,7 +81,7 @@ public sealed partial class CodeEditor : Control
             caretOn = !caretOn;
             InvalidateVisual();
         });
-        document.ChangedFirst += FollowWraps;
+        document.ChangedFirst += OnChangedFirst;
         document.Changed += OnDocumentChanged;
         caretsText = document.Snapshot;
         ActualThemeVariantChanged += (_, _) => RefreshStyle();
@@ -422,10 +422,10 @@ public sealed partial class CodeEditor : Control
         get => document;
         set
         {
-            document.ChangedFirst -= FollowWraps;
+            document.ChangedFirst -= OnChangedFirst;
             document.Changed -= OnDocumentChanged;
             document = value;
-            document.ChangedFirst += FollowWraps;
+            document.ChangedFirst += OnChangedFirst;
             document.Changed += OnDocumentChanged;
             lineShape++;
             // A template's places, a composition, a GoTo waiting for layout and the folds are offsets in the text left behind.

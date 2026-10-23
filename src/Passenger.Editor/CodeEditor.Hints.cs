@@ -54,14 +54,24 @@ public sealed partial class CodeEditor
         }
     }
 
-    /// <summary>The hints, in offset order, a type's before a parameter's name at the same offset (it ends the text before).</summary>
-    public IReadOnlyList<InlayHint> InlayHints { get; private set; } = [];
+    /// <summary>The hints as they stand in the text: carried through each edit ahead of everyone who hears of it
+    /// (<see cref="OnChangedFirst"/>), as the host carries its own, whose list then costs the editor only the runs it reached.</summary>
+    private HintList hintList = HintList.Empty;
 
+    /// <summary>The hints, in offset order, a type's before a parameter's name at the same offset (it ends the text before).</summary>
+    public IReadOnlyList<InlayHint> InlayHints => hintList;
+
+    /// <summary>The host's hints for the text as it stands, taken as they are when in order (a <see cref="HintList"/> always
+    /// is); with soft wrap on, only the lines whose hints are drawn otherwise are wrapped again.</summary>
     public void SetInlayHints(IReadOnlyList<InlayHint> hints)
     {
-        IReadOnlyList<InlayHint> before = InlayHints;
-        InlayHints = [.. hints.OrderBy(h => h.Offset).ThenBy(h => Trails(h) ? 0 : 1)];
-        FollowHints(before, InlayHints);
+        HintList before = hintList;
+        hintList = HintList.Of(hints);
+        if (ReferenceEquals(before, hintList))
+        {
+            return;
+        }
+        FollowHints(before, hintList);
         InvalidateVisual();
         FollowInputMethod();
     }
@@ -79,7 +89,7 @@ public sealed partial class CodeEditor
     };
 
     /// <summary>Whether a hint ends the text before it (a type, a value) rather than beginning the text after it.</summary>
-    private static bool Trails(InlayHint hint) => hint.Kind != InlayHintKind.Parameter;
+    private static bool Trails(InlayHint hint) => HintList.Trails(hint);
 
     /// <summary>The hints on a row, in column order, and the composition where the primary caret stands among them.</summary>
     private Gap[] GapsOn(RowSpan span)
@@ -112,7 +122,7 @@ public sealed partial class CodeEditor
     /// <summary>The first hint at or after an offset, shown or not.</summary>
     private int FirstHintFrom(int offset)
     {
-        IReadOnlyList<InlayHint> hints = InlayHints;
+        HintList hints = hintList;
         int low = 0;
         int high = hints.Count;
         while (low < high)
@@ -133,7 +143,7 @@ public sealed partial class CodeEditor
     /// <summary>The hints shown on a row: those at a wrap go on the row it starts.</summary>
     private Gap[] HintsOn(RowSpan span)
     {
-        IReadOnlyList<InlayHint> hints = InlayHints;
+        HintList hints = hintList;
         int low = FirstHintFrom(span.Start);
         int end = span.IsLast ? span.End : span.End - 1;
         if (low >= hints.Count || hints[low].Offset > end)
@@ -159,7 +169,7 @@ public sealed partial class CodeEditor
     /// <summary>Whether shown hints stand at an offset, and whether one of them ends the text before it (a type).</summary>
     private (bool Any, bool Trailing) HintsAt(int offset)
     {
-        IReadOnlyList<InlayHint> hints = InlayHints;
+        HintList hints = hintList;
         bool any = false;
         bool trailing = false;
         for (int i = FirstHintFrom(offset); i < hints.Count && hints[i].Offset == offset; i++)

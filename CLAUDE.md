@@ -163,7 +163,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
   goes with the text before it, or a value (`InlayHintKind.Value`: what a compose file's `${VAR}` comes to), which goes
   with the text before it as a type does and shows whatever Settings say of the other two; the hints at an offset are a
-  caret place of their own, as IntelliJ's inlays are.
+  caret place of their own, as IntelliJ's inlays are. A file's hints are a `HintList` (runs, as `FoldList`'s regions are:
+  an edit moves the runs it reaches, the rest shifted whole), which the open file carries through each edit
+  (`OpenDocument.InlayHints`, as its folds) and each editor carries too, ahead of everyone (`OnChangedFirst`, before the
+  wraps, so the key's lines wrap with their hints where they now stand); the editor takes a host's list as it is when in
+  order and, with soft wrap on, wraps again only the lines whose hints are drawn otherwise (`HintList.Differing`), so a key
+  costs the hints it reached, never the file's. `CSharpDocument` places the server's hints off the UI thread.
   `CodeEditor.Usages.cs` is what the caret lights up: the host's usage highlights (an edit takes them away unless
   kept, as Highlight Usages in File's are) and the bracket pair from a highlighter that is an `IBraceMatcher`
   (`CSharpHighlighter`, from the bracket's own node, never the server); a grammar's bracket or tag pair

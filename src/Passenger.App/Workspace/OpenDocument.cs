@@ -204,6 +204,11 @@ public sealed class OpenDocument : Observable
                 // Moved where the edit reaches them, the runs of regions past it shifted whole.
                 FoldRegions = FoldList.Of(foldRegions).Through(change.Edits);
             }
+            if (inlayHints.Count > 0)
+            {
+                // The same way: each editor has carried its own already, which this draws alike, so none wraps a line again.
+                InlayHints = HintList.Of(inlayHints).Through(change.Edits);
+            }
             FollowHeld(change.Edits);
             Raise(nameof(IsModified));
         };
@@ -426,11 +431,12 @@ public sealed class OpenDocument : Observable
         set => Set(ref gutterAnnotations, value);
     }
 
-    /// <summary>The language service's words inside lines (parameter names before arguments), in this text's offsets.</summary>
+    /// <summary>The language service's words inside lines (parameter names before arguments), in this text's offsets: a
+    /// <see cref="HintList"/>, which the text carries through each edit, as its editors carry theirs.</summary>
     public IReadOnlyList<InlayHint> InlayHints
     {
         get => inlayHints;
-        set => Set(ref inlayHints, value);
+        set => Set(ref inlayHints, HintList.Of(value));
     }
 
     /// <summary>The debugger's text after lines: inline values, the exception it stopped on.</summary>
