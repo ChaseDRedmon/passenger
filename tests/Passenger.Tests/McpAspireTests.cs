@@ -102,6 +102,52 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         }
     }
 
+    /// <summary>An agent's workspace says a service its run configuration says not to start is Not started, as the window
+    /// does, never the FailedToStart DCP calls the start the IDE refused. The AppHost is AspireStandInTests' stand-in, its
+    /// service's start asked of the IDE as DCP asks it.</summary>
+    [AvaloniaFact]
+    public void An_agents_workspace_says_a_service_marked_Dont_start_is_Not_started()
+    {
+        using StandInAppHost project = new();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = AgentsWindow(project.Folder, languageServer: false);
+        McpClient? client = null;
+        try
+        {
+            WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            RunConfiguration marked = project.DontStartApi(window.Configurations.First(configuration => configuration.Name == StandInAppHost.Configuration));
+            window.SetConfigurations([marked], marked.Name);
+            Ui.Run(window, AppActions.RunProgram);
+            WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1, "the stand-in AppHost's start");
+            (System.Net.WebSockets.ClientWebSocket notified, HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.False((int)answer is >= 200 and < 300, "The IDE started a service its configuration says not to start");
+            backend.PushResource(project.Refused());
+            WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.Name == "apiservice" && resource.State == "FailedToStart"), "DCP's word of the refused start");
+            client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+            Task<JsonElement> asked = Task.Run(() => Call(client, "workspace"));
+            WaitFor(() => asked.IsCompleted, "the agent's workspace");
+            JsonElement api = Assert.Single(Assert.Single(asked.GetAwaiter().GetResult().GetProperty("aspireApps").EnumerateArray())
+                .GetProperty("resources").EnumerateArray(), resource => resource.GetProperty("name").GetString() == "apiservice");
+            Assert.Equal(Passenger.App.Aspire.AspireAppRun.NotStarted, api.GetProperty("state").GetString());
+        }
+        finally
+        {
+            if (client is not null)
+            {
+                Gone(client);
+            }
+            window.Close();
+            Await(Task.Run(async () =>
+            {
+                await backend.DisposeAsync();
+                return true;
+            }), "the stand-in resource service to stop");
+        }
+    }
+
     [Fact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public async Task An_agent_must_qualify_duplicate_official_starter_resource_names_with_the_owned_AppHost()
     {
