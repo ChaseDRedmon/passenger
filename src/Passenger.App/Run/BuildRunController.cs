@@ -146,7 +146,19 @@ public sealed partial class BuildRunController
             {
                 app.Console.Append($"{note}\n");
             }
+            // What the start says of itself (a service its runtime's diagnostics keep from the debugger, which runs on) is said.
+            if (notes.Count > 0 && !session.IsEnded)
+            {
+                parts.Say(string.Join("; ", notes));
+            }
             return refused;
+        };
+        session.Aspire.RunsUndebugged += (_, said) =>
+        {
+            if (!session.IsEnded)
+            {
+                parts.Say(said);
+            }
         };
         session.Aspire.Chosen = (configuration, service) =>
             chosenDebugged.TryGetValue(configuration, out Dictionary<string, bool>? choices) && choices.TryGetValue(service, out bool debugged) ? debugged : null;

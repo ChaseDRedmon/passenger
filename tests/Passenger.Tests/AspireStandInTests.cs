@@ -784,6 +784,103 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>An Aspire service's Restart from the Aspire window goes through its run, as a container's Restart does: one the
+    /// debugger attached to as it ran is attached to again once its AppHost has started it again (the stand-in's restart
+    /// command ends it and asks for it again, as DCP does). Run without Debugger of one that nothing holds or debugs restarts
+    /// nothing, saying so.</summary>
+    [AvaloniaFact]
+    public void An_Aspire_services_Restart_goes_through_its_run_and_one_attached_as_it_ran_is_attached_again()
+    {
+        project.Reset();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        Task<(System.Net.WebSockets.ClientWebSocket Notified, System.Net.HttpStatusCode Answer)>? again = null;
+        try
+        {
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the run session: {answer}");
+            int first = Api(window);
+            Resource resource = ApiResource();
+            resource.Commands.Add(new ResourceCommand { Name = "resource-restart", DisplayName = "Restart", State = ResourceCommandState.Enabled });
+            backend.PushResource(resource);
+            FindAction(window, "Show Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Rows.Any(row => row.Resource.Name == "apiservice"), "the API's row");
+            Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
+
+            FindAction(window, "Run Aspire Resource Without Debugger");
+            string config = StandInAppHost.Configuration;
+            Ui.WaitFor(() => window.Status == $"apiservice of {config} already runs without the debugger: nothing restarted", $"Run without Debugger to say so ({window.Status})");
+            Assert.True(Processes.IsRunning(first) && Api(window) == first && backend.Commands.Length == 0, "Run without Debugger restarted the API, which nothing held or debugged");
+
+            FindAction(window, "Attach to Aspire Resource");
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.Single().DebugTab?.IsLive == true, $"Attach to the API as it runs ({window.Status})");
+            backend.OnCommand = command =>
+            {
+                if (command.CommandName == "resource-restart")
+                {
+                    Processes.Kill(first);
+                    again = Task.Run(() => project.StartApiAsync("apiservice", subscribe: false));
+                }
+            };
+            // Attach shows the Debug window: the Aspire window's resources are asked for again.
+            FindAction(window, "Show Aspire Resources");
+            Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
+            Ui.Click(window.Aspire.Tools[AppActions.AspireCommand]);
+            ContextMenu commands = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(menu => menu.IsOpen)
+                ?? throw new Xunit.Sdk.XunitException("The commands button opened no menu");
+            Ui.Choose(commands, "Restart");
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.SingleOrDefault() is { ProcessId: int restarted, DebugTab.IsLive: true } && restarted != first,
+                $"the API restarted through its run and attached to again ({window.Status})", TimeSpan.FromMinutes(2));
+            Assert.Equal(["resource-restart"], backend.Commands.Select(command => command.CommandName));
+            Assert.Equal($"{config}: restarted apiservice", window.Status);
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            if (again is not null)
+            {
+                Ui.Await(again, "the restart's start request").Notified.Dispose();
+            }
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>A service held at its start for a debugger that cannot reach it runs on without it, saying so, never left
+    /// FailedToStart or held for good: debugged, the stand-in's API started by DCP with its runtime's diagnostics off.</summary>
+    [AvaloniaFact]
+    public void A_held_Aspire_service_the_debugger_cannot_reach_runs_on_without_it_saying_so()
+    {
+        project.Reset();
+        project.BuildApi();
+        File.Delete(project.KeyFile);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            Ui.Launched(window, window.DebugAsync(), "the stand-in AppHost to come up debugged");
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice", "Debug",
+                new Dictionary<string, string> { ["DOTNET_EnableDiagnostics"] = "0" });
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the held API's start: {answer} ({window.Status})");
+            int api = Api(window);
+            Assert.Equal("apiservice runs without the debugger: Its runtime was started with DOTNET_EnableDiagnostics=0, which turns its debugger off: nothing can attach to it",
+                window.Status);
+            Ui.Hold(TimeSpan.FromSeconds(1), "the API to run on");
+            Assert.True(Processes.IsRunning(api) && window.AspireRuntime.Apps.Single().Services.Single() is { DebugTab: null }, "The API the debugger could not reach did not run on");
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>The stand-in API's program, once the IDE has started it as DCP asked.</summary>
     private static int Api(MainWindow window)
     {
@@ -1518,27 +1615,36 @@ public sealed class StandInAppHost : SharedProject
     /// <summary>Asks the IDE to start the stand-in's service as a resource of that name, as DCP starts a project resource: the
     /// sessions' notifications subscribed to first (held while the socket given back is open), then a run session asked of
     /// the execution endpoint the IDE gave the AppHost; with the IDE's answer.</summary>
-    internal (System.Net.WebSockets.ClientWebSocket Notified, System.Net.HttpStatusCode Answer) AskToStartApi(string resource)
+    internal (System.Net.WebSockets.ClientWebSocket Notified, System.Net.HttpStatusCode Answer) AskToStartApi(string resource, string mode = "NoDebug",
+        IReadOnlyDictionary<string, string>? environment = null) =>
+        Ui.Await(Task.Run(() => StartApiAsync(resource, mode, environment)), "the IDE's answer to the run session");
+
+    /// <summary><see cref="AskToStartApi"/> off the window's thread, as DCP asks again for a resource its AppHost restarts:
+    /// the session's mode as DCP gives it, and variables beside the resource's name; subscribed to the sessions' notifications
+    /// unless <paramref name="subscribe"/> is false (DCP subscribes once, which a second refuses). The IDE's answer is no
+    /// status at all when it closed its endpoint as it stopped the AppHost, the request unanswered.</summary>
+    internal async Task<(System.Net.WebSockets.ClientWebSocket Notified, System.Net.HttpStatusCode Answer)> StartApiAsync(string resource, string mode = "NoDebug",
+        IReadOnlyDictionary<string, string>? environment = null, bool subscribe = true)
     {
-        string[] session = File.ReadAllText(SessionFile).Split('\n', 3);
+        string[] session = (await File.ReadAllTextAsync(SessionFile)).Split('\n', 3);
         using JsonDocument info = JsonDocument.Parse(session[2]);
         string version = info.RootElement.GetProperty("protocols_supported")[0].GetString()!;
         const string Instance = "standin-tests-abcdefghijkl";
         System.Net.WebSockets.ClientWebSocket notified = new();
         notified.Options.SetRequestHeader("Authorization", "Bearer " + session[1]);
         notified.Options.SetRequestHeader("Microsoft-Developer-DCP-Instance-ID", Instance);
-        Ui.Await(Task.Run(async () =>
+        if (subscribe)
         {
             await notified.ConnectAsync(new Uri($"ws://{session[0]}/run_session/notify?api-version={version}"), CancellationToken.None);
-            return true;
-        }), "the subscription to the sessions' notifications");
+        }
         using HttpClient http = new();
         using HttpRequestMessage start = new(HttpMethod.Put, $"http://{session[0]}/run_session?api-version={version}")
         {
             Content = new StringContent(JsonSerializer.Serialize(new
             {
-                launch_configurations = new[] { new { type = "project", project_path = ApiProject, mode = "NoDebug" } },
-                env = new[] { new { name = "OTEL_SERVICE_NAME", value = resource } },
+                launch_configurations = new[] { new { type = "project", project_path = ApiProject, mode } },
+                env = new[] { new { name = "OTEL_SERVICE_NAME", value = resource } }
+                    .Concat((environment ?? new Dictionary<string, string>()).Select(variable => new { name = variable.Key, value = variable.Value })).ToArray(),
                 args = Array.Empty<string>(),
             }), System.Text.Encoding.UTF8, "application/json"),
         };
@@ -1546,12 +1652,11 @@ public sealed class StandInAppHost : SharedProject
         start.Headers.Add("Microsoft-Developer-DCP-Instance-ID", Instance);
         try
         {
-            using HttpResponseMessage answered = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
+            using HttpResponseMessage answered = await http.SendAsync(start);
             return (notified, answered.StatusCode);
         }
         catch (HttpRequestException)
         {
-            // The IDE closed its endpoint as it stopped the AppHost, the request unanswered: no status at all.
             return (notified, 0);
         }
     }
