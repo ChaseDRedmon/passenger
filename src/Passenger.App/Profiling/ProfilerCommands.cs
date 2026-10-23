@@ -230,16 +230,20 @@ public sealed class ProfilerCommands
     private static string? GoesOn(ProjectSession folder) =>
         folder.Profiled is { Run.HasExited: false } program ? $"{program.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again" : null;
 
-    /// <summary>Why Profile cannot start a program now: the Run console it writes to is Run's program's, running or about
-    /// to, whose output it would clear and whose typing it would take.</summary>
-    private string? RunConsoleTaken(ProjectSession folder) =>
+    /// <summary>Why Profile cannot start a program now: the Run console it writes to is another configuration's program's,
+    /// running or about to, whose output it would clear and whose typing it would take. The program Run started for the
+    /// configuration profiled is ended first, as Debug's start ends it (<see cref="BuildRunController.EndOwnRunAsync"/>).</summary>
+    private string? RunConsoleTaken(ProjectSession folder, RunConfiguration? chosen) =>
         parts.Actions.Work.Of(AppActions.RunProgram) is { } running ? ActionWork.Busy(running)
-        : folder.Runner.IsRunning ? "Run's program uses the Run console: stop it first, or Attach Profiler to profile it"
+        : folder.Runner.IsRunning && (chosen is null || !parts.Builds().RunsOwnProgram(chosen.Name)) ? "Run's program uses the Run console: stop it first, or Attach Profiler to profile it"
         : null;
 
     /// <summary>Why Profile cannot start now, or null when it can.</summary>
-    private string? WhyNotProfile(ProjectSession folder, RunConfiguration? configuration = null) => Busy(folder)
-        ?? ((configuration ?? folder.Configurations.Chosen) is { } chosen && folder.Aspire.IsAspire(chosen) ? null : GoesOn(folder) ?? RunConsoleTaken(folder));
+    private string? WhyNotProfile(ProjectSession folder, RunConfiguration? configuration = null)
+    {
+        RunConfiguration? chosen = configuration ?? folder.Configurations.Chosen;
+        return Busy(folder) ?? (chosen is not null && folder.Aspire.IsAspire(chosen) ? null : GoesOn(folder) ?? RunConsoleTaken(folder, chosen));
+    }
 
     private async Task<string?> LaunchAsync(ProjectSession profiled, string? arguments, Working work, RunConfiguration? configuration)
     {
@@ -251,6 +255,10 @@ public sealed class ProfilerCommands
         if (chosen.IsContainer)
         {
             return await LaunchInContainersAsync(profiled, chosen, work);
+        }
+        if (await builds.EndOwnRunAsync(chosen, work, "profile") is { } left)
+        {
+            return left;
         }
         (LaunchPlan? plan, string? problem) = await builds.ResolvePlanAsync(chosen, arguments, work.Stopping);
         if (plan?.Build is { } step && !work.IsStopped && await builds.BuildBeforeLaunchAsync(step) is { Succeeded: false } unbuilt)

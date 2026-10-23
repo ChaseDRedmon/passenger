@@ -43,6 +43,13 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   switch's settle waits out the same 400 ms pause, ten taking 4.05 s on the Mac against an unscaled 5 s. **The test**,
   which held the IDE's own pauses to a time: it holds how long a key waits for the window's thread (0bbb464f), 11 ms on
   the Mac, a window held 1 s failing it.
+- `McpAvaloniaAppTests`' agent's run, drive and profile of AgentApp, CI run 39992190279 at e25b06d0, Linux and Windows (it
+  passed on the Mac and in the Ubuntu VM): "profile failed: … Run's program uses the Run console: stop it first, or Attach
+  Profiler to profile it". The agent's `stop` answered once it had killed Run's program, not once its end had landed in
+  the Run console (`ProcessRunner` holds the console until its output has ended and its exit code is said), and the test's
+  wait for the app's tools to say it ended heard the inspector's socket close first, so `profile` came while the console
+  still had it. **A race in the IDE**: Stop All, an agent's `stop`, now answers once Run's program has let go of the
+  console; and Profile of the configuration Run runs now ends that run and profiles it, as Debug's start does.
 - `LiveRequestsTests`' requests window over the running shop, CI run 39992190279 at e25b06d0, Linux and Windows, and every
   time in the Ubuntu VM (it passed on the Mac): "Waited 180 s for the command's parameters, from EF Core's log of it". No
   log of a command came at all. The window follows a program from its runtime's start, so its session can begin before the

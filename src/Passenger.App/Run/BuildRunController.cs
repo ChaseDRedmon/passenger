@@ -695,6 +695,24 @@ public sealed partial class BuildRunController
     /// <summary>Why a start that needs the Run console cannot have it: what has it, by its configuration's name.</summary>
     private string AlreadyRunning() => $"Already running: {(ran.Length > 0 ? ran : "a program")} has the Run console; stop it first";
 
+    /// <summary>Whether the program Run started for this configuration has the Run console (or the terminal's tab), which a
+    /// start of it under the debugger or the profiler ends first.</summary>
+    public bool RunsOwnProgram(string name) => RunsInConsole && ran == name && session.ContainerRun is not { IsStopped: false };
+
+    /// <summary>Ends the program Run started for a configuration that Debug or Profile (<paramref name="doing"/>) is to start
+    /// in its place, as a start of a configuration that runs ends it and starts again: done once its end has landed. Null to
+    /// go on, else why not (the folder left meanwhile).</summary>
+    public async Task<string?> EndOwnRunAsync(RunConfiguration chosen, Working work, string doing)
+    {
+        if (!RunsOwnProgram(chosen.Name))
+        {
+            return null;
+        }
+        work.Say($"Ending {chosen.Name}'s run to {doing} it…");
+        await EndInConsoleAsync();
+        return session.IsEnded ? Left : null;
+    }
+
     /// <summary>Ends what the Run console (or the terminal's tab) has, done once its end has landed.</summary>
     private async Task EndInConsoleAsync()
     {
@@ -1070,15 +1088,9 @@ public sealed partial class BuildRunController
         }
         debugged[chosen.Name] = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();
-        // Its own program Run started ends first, as a start of a configuration that runs ends it and starts again.
-        if (RunsInConsole && ran == chosen.Name && session.ContainerRun is not { IsStopped: false })
+        if (await EndOwnRunAsync(chosen, work, "debug") is { } left)
         {
-            work.Say($"Ending {chosen.Name}'s run to debug it…");
-            await EndInConsoleAsync();
-            if (session.IsEnded)
-            {
-                return Left;
-            }
+            return left;
         }
         (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, work);
         if (plan is null)
@@ -1246,7 +1258,8 @@ public sealed partial class BuildRunController
     }
 
     /// <summary>Stop All, the window's and an agent's stop: as Stop, every program debugged ended rather than the chosen one;
-    /// done once each has ended and a container run's containers are taken down (not left running as its log's end would
+    /// done once each has ended, Run's program has let go of the Run console (its end landed there, so a start after the
+    /// answer finds it free) and a container run's containers are taken down (not left running as its log's end would
     /// leave them).</summary>
     public Task StopAllAsync()
     {
@@ -1256,16 +1269,18 @@ public sealed partial class BuildRunController
     }
 
     /// <summary>What every Stop ends besides the debugger's: a container run (done once its containers are down), Run's
-    /// program in the Run window or the terminal, Profile's, and the build.</summary>
+    /// program in the Run window or the terminal (done once its end has landed), Profile's, and the build.</summary>
     private Task StopRest()
     {
         Task containers = session.StopContainersAsync();
         Task aspire = session.Aspire.StopAllAsync();
+        Task ran = session.Runner.IsRunning ? session.Runner.Ended : Task.CompletedTask;
+        Task inTerminal = session.InTerminal is { IsRunning: true } terminal ? terminal.Ended : Task.CompletedTask;
         session.Runner.Stop();
         session.InTerminal?.Stop();
         session.Profiled?.Run.Kill();
         session.Builder.Stop();
-        return Task.WhenAll(containers, aspire);
+        return Task.WhenAll(containers, aspire, ran, inTerminal);
     }
 
     /// <summary>Rerun's stop: Run's own start under way and the program it started (in the Run window or the terminal, or its

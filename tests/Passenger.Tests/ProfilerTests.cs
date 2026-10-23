@@ -367,28 +367,37 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
         }
     }
 
-    /// <summary>The Run console is one program's at a time: Profile is refused while Run's program runs there, its output
-    /// and typing left to it, and Run while Profile's does, until that ends, after which typing reaches Run's program.</summary>
+    /// <summary>The Run console is one program's at a time: Profile of another configuration is refused while Run's program
+    /// runs there, its output and typing left to it; Profile of the configuration Run runs ends that run and profiles it, as
+    /// Debug's start does; and Run is refused while Profile's program has it, until that ends, after which typing reaches
+    /// Run's program.</summary>
     [AvaloniaFact]
     public void Profile_and_Run_each_wait_for_the_Run_console_while_the_other_s_program_has_it()
     {
-        MainWindow window = OpenWaits("Echo", TestFolders.Create("pids-"));
+        string pids = TestFolders.Create("pids-");
+        MainWindow window = OpenWaits("Echo", pids);
         Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
         string name = window.Configuration!.Name;
+        window.SetConfigurations([window.Configuration!, window.Configuration! with { Name = "Other" }], name);
         try
         {
             Ui.Launched(window, window.RunAsync(), "the run", TimeSpan.FromMinutes(3));
             Ui.WaitFor(() => Shows(run, "waiting"), "Run's program to wait on its input");
+            int ran = Started(pids, "Run's program to write its id");
+            Assert.True(window.SelectConfiguration("Other"), "No configuration Other");
             string taken = "Run's program uses the Run console: stop it first, or Attach Profiler to profile it";
             Assert.Equal(taken, window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
             Assert.Equal(taken, Ui.Await(window.ProfileAsync(), "Profile's refusal"));
             Assert.True(Shows(run, "waiting"), "Profile cleared the Run console of Run's program");
             Ui.TypeToRun(window, "to the run");
             Ui.WaitFor(() => Shows(run, "read to the run"), "Run's program to read what was typed once Profile was refused");
-            Ui.Run(window, AppActions.Stop);
-            Ui.WaitFor(() => !window.Runner.IsRunning, "Run's program to stop");
 
+            // Profile of the configuration Run runs ends that run first, as a start of a configuration that runs ends it.
+            Assert.True(window.SelectConfiguration(name), $"No configuration {name}");
+            Assert.Null(window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
             Ui.Launched(window, window.ProfileAsync(), "the profiled run", TimeSpan.FromMinutes(3));
+            Assert.True(Processes.Gone(ran), $"Profile of {name} left the program Run started for it running: {Processes.Describe(ran)}");
+            Assert.False(window.Runner.IsRunning, $"Profile of {name} left Run's program holding the Run console");
             Ui.WaitFor(() => Shows(run, "waiting"), "the profiled program to wait on its input");
             Assert.Equal($"{name}, which Profile started, uses the Run console: Kill it first", Ui.Await(window.RunAsync(), "Run's refusal"));
             Assert.False(window.Runner.IsRunning, "Run started a program in the Run console the profiled one writes to");
