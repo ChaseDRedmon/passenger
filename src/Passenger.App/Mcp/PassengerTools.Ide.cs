@@ -28,9 +28,8 @@ public sealed partial class PassengerTools
     // Settings
 
     [McpServerTool(Name = "settings", Title = "The IDE's settings", ReadOnly = true), Description(
-        "Every setting the Settings dialog has, by its name in settings.json (editorFontSize, theme, hotReload, " +
-        "solutionWideAnalysis...), with its value, kind, choices and range. kept says whether they are the person's, kept in " +
-        "settings.json, or a windowless --mcp Passenger's own defaults, kept nowhere. settings_set changes them.")]
+        "Every setting the Settings dialog has, by its settings.json name (editorFontSize, theme...), with its value, kind, " +
+        "choices and range; kept is false for an --mcp Passenger's own defaults, kept nowhere.")]
     public Task<SettingsInfo> GetSettings(CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         JsonObject values = SettingsNode(window.Settings);
@@ -44,13 +43,12 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "settings_set", Title = "Change settings", Destructive = true), Description(
-        "Changes settings as the Settings dialog's OK does, each by its name in settings.json (settings lists them) to a JSON " +
-        "value of its kind: true or false, a number (brought into its range, as the answer says), text (null for none), a " +
-        "choice by name, or for an object (xamlFormat, shortcuts) the members to change. A name, kind or choice Settings lacks " +
-        "is refused, and nothing changes. On a person's window the change is theirs, kept and followed by their other windows; " +
-        "Enable MCP Server and agentFolders are theirs alone. Returns each setting as it was and as it is now.")]
+        "Changes settings as the Settings dialog's OK does: changes maps each name settings lists to a JSON value of its kind " +
+        "({\"editorFontSize\": 15, \"theme\": \"Dark\"}): a number brought into its range, text (null for none), a choice by " +
+        "name, an object's members to change. Anything Settings lacks is refused, changing nothing. On a person's window the " +
+        "change is theirs, kept; Enable MCP Server and agentFolders are theirs alone. Returns each as it was and is now.")]
     public Task<IReadOnlyList<SettingChange>> SetSettings(
-        [Description("Each setting to change by its name, with its new value: {\"editorFontSize\": 15, \"theme\": \"Dark\"}")] Dictionary<string, JsonElement> changes,
+        Dictionary<string, JsonElement> changes,
         CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         if (changes is not { Count: > 0 })
@@ -174,14 +172,16 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "find_in_files", Title = "Find in Files", ReadOnly = true), Description(
         "Every match of text in the folder's files, as Find in Files finds them: an open file as the editor has it, every " +
         "other text file on disk (build output, version control, binary and very large files left out), each with its line's " +
-        "text, at most limit (capped says so). For a symbol's uses by meaning, usages.")]
+        "text, at most limit (1000; capped says so). scope: solution (the default), project (project's name or .csproj), " +
+        "directory (directory, its subdirectories unless recursive is false), openFiles, currentFile or recentlyViewed. mask: " +
+        "names by * and ?, comma-separated, ! leaving one out (\"*.cs, !*.g.cs\").")]
     public Task<FindInFilesResult> FindInFiles(string text, bool matchCase = false, bool wholeWords = false, bool regex = false,
-        [Description("solution (every file, the default), project, directory, openFiles, currentFile or recentlyViewed")] string scope = "solution",
-        [Description("For scope project: its name or .csproj")] string? project = null,
-        [Description("For scope directory: the directory, its subdirectories too unless recursive is false")] string? directory = null,
+        string scope = "solution",
+        string? project = null,
+        string? directory = null,
         bool recursive = true,
-        [Description("Names by * and ?, comma-separated, ! before one to leave it out (\"*.cs, !*.g.cs\")")] string? mask = null,
-        [Description("How many matches, 1000 at most")] int limit = 200, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        string? mask = null,
+        int limit = 200, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (SearchQuery query, SearchScope chosen) = Search(text, matchCase, wholeWords, regex, scope, project, directory, recursive, mask);
         await Until(() => !Session.Index.IsWalking, IndexLimit, cancel);
@@ -191,16 +191,16 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "replace_in_files", Title = "Replace in Files", Destructive = true), Description(
-        "Replaces every match find_in_files finds (the same text, options, scope and mask) with replacement, as Replace All " +
-        "does: an open file's as one undoable step, saved; a closed one's in its own encoding (UTF-8 where that cannot hold " +
-        "the replacement, as the answer says). A regex's replacement takes its groups ($1, ${name}). Returns how many matches " +
-        "in which files, and each file left as it was with why (read-only).")]
+        "Replaces every match find_in_files finds (its text, options, scope and mask) with replacement, as Replace All does: an " +
+        "open file's as one undoable step, saved; a closed one's in its own encoding (UTF-8 where that cannot hold the " +
+        "replacement, as the answer says). A regex's replacement takes its groups ($1, ${name}). Returns how many matches in " +
+        "which files, and each file left as it was with why.")]
     public Task<string> ReplaceInFiles(string text, string replacement, bool matchCase = false, bool wholeWords = false, bool regex = false,
-        [Description("solution (every file, the default), project, directory, openFiles, currentFile or recentlyViewed")] string scope = "solution",
-        [Description("For scope project: its name or .csproj")] string? project = null,
-        [Description("For scope directory: the directory, its subdirectories too unless recursive is false")] string? directory = null,
+        string scope = "solution",
+        string? project = null,
+        string? directory = null,
         bool recursive = true,
-        [Description("Names by * and ?, comma-separated, ! before one to leave it out (\"*.cs, !*.g.cs\")")] string? mask = null,
+        string? mask = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (SearchQuery query, SearchScope chosen) = Search(text, matchCase, wholeWords, regex, scope, project, directory, recursive, mask);
@@ -239,15 +239,15 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "edit", Title = "Edit a file", Destructive = true), Description(
         "Replaces text in one file as the editor does: oldText exactly as the file has it (case, spaces and indentation; lines " +
-        "joined by \\n), found once (every time with all), becomes newText (empty deletes it). The change is one step of the " +
-        "editor's Undo, kept by Local History, and saved. Returns where it changed and those lines as they are now, numbered " +
-        "as editor_text numbers them. Text not there, or there more than once without all, changes nothing and says so. For a " +
-        "new file, write it on disk; for a symbol's every use, rename.")]
+        "joined by \\n), found once (every time with all), becomes newText (empty deletes it), as one Undo step, kept by Local " +
+        "History, and saved. Returns where it changed and those lines as they are now, numbered as editor_text's. Text not " +
+        "there, or there more than once without all, changes nothing and says so. A new file is written on disk; a symbol's " +
+        "every use, renamed.")]
     public Task<string> Edit(
         string path,
-        [Description("Exactly as the file has it")] string oldText,
-        [Description("What takes its place")] string newText,
-        [Description("Replace every occurrence rather than refusing several")] bool all = false,
+        string oldText,
+        string newText,
+        bool all = false,
         CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         if (string.IsNullOrEmpty(oldText))
@@ -343,12 +343,11 @@ public sealed partial class PassengerTools
     // Local History
 
     [McpServerTool(Name = "local_history", Title = "Local History", ReadOnly = true), Description(
-        "The Local History of a file or folder (the open folder by default), as its window lists it: each change set that " +
-        "touched it, newest first, with its number, time, title (Change, Create, Delete, Rename, External change, a " +
-        "refactoring's, a Git operation's or a label's) and files. Saves, changes made elsewhere, deletes and moves of the " +
-        "folder's text files are kept for 5 days of activity. With set, what was there before that change set, which " +
-        "local_history_revert puts back: a file's text then (exists false where it did not exist), or the folder's files that " +
-        "differ now.")]
+        "The Local History of a file or folder (the open folder by default), as its window lists it, 5 days of activity: each " +
+        "change set that touched it, newest first, with its number, time, title (Change, Create, Rename, External change, a " +
+        "refactoring's, a Git operation's, a label's...) and files. With set, what was there before it, which " +
+        "local_history_revert puts back: a file's text (exists false where there was none), or the folder's files that differ " +
+        "now.")]
     public Task<LocalHistoryInfo> LocalHistoryOf(string? path = null, long? set = null, CancellationToken cancel = default) =>
         OnUi(cancel, async () =>
     {
@@ -384,10 +383,10 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "local_history_revert", Title = "Revert to a Local History version", Destructive = true), Description(
-        "Puts a file or folder back as it was before a Local History change set (local_history lists them), as Revert Selected " +
-        "and Later Changes does: an open file's text as one undoable step, saved; a closed one's bytes; a file that did not " +
-        "exist then deleted. The revert is kept in the history too.")]
-    public Task<string> LocalHistoryRevert(string path, [Description("The change set's number")] long set, CancellationToken cancel = default) =>
+        "Puts a file or folder back as it was before Local History's change set set, as Revert Selected and Later Changes " +
+        "does: an open file's text as one Undo step, saved; a closed one's bytes; a file that did not exist then deleted. The " +
+        "revert is kept in the history too.")]
+    public Task<string> LocalHistoryRevert(string path, long set, CancellationToken cancel = default) =>
         OnUi(cancel, async () =>
     {
         (History.LocalHistory history, string full) = HistoryOf(path);
@@ -430,8 +429,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "problems", Title = "The Problems window", ReadOnly = true), Description(
         "What the Problems window lists beyond a file's diagnostics: toolset (each project's load warnings and errors), build " +
-        "(the last build's errors and warnings, whoever started it) and solution (every file's errors and warnings, with " +
-        "solution-wide analysis on: settings_set solutionWideAnalysis true; left out while it is off).")]
+        "(the last build's, whoever started it) and solution (every file's, while settings' solutionWideAnalysis is on).")]
     public Task<ProblemsInfo> Problems(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (Session.CSharp is { SolutionWide: true })
@@ -448,11 +446,6 @@ public sealed partial class PassengerTools
         Finding Found(Problem p) => new(p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message,
             p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1);
     });
-
-    [McpServerTool(Name = "build_output", Title = "What the Build window shows", ReadOnly = true), Description(
-        "The Build window's console, its last lines: the last build's MSBuild output, whoever started it, as it stands, while " +
-        "it runs too.")]
-    public Task<string> BuildOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Tail(Session.Builder.Shown(), Math.Max(1, lines))));
 }
 
 /// <summary>The settings as an agent reads them: whether they are the person's, and each setting.</summary>

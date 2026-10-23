@@ -55,10 +55,14 @@ public static partial class McpHost
     /// <summary>What an agent is told as it connects: how to begin and find its way, and what a person's window asks.</summary>
     internal const string Instructions =
         "Passenger is a C# IDE (with XAML, MSBuild files and the web languages). These tools act on its open workspace as its user would. " +
-        "Lines and columns count from 1; relative paths are the open folder's.\n\n" +
+        "Lines and columns count from 1; relative paths are the open folder's. Parameters several tools share: configuration, a run " +
+        "configuration (the chosen one by default); arguments, a command line in place of its own; waitSeconds, how long a call " +
+        "waits for the program to stop, end or show its UI; session, a debugged program as debug_state's sessions name it (by " +
+        "default the one paused, else the only one); resource, an Aspire resource (name or AppHostPath::name) or a compose " +
+        "service of the run, as workspace lists them.\n\n" +
         "Begin with workspace: the folder and solution open, their projects, run configurations and open files (open opens another folder, " +
         "solution or file). Find your way by meaning rather than by text: find_symbol finds a type or member by name, outline lists a file's " +
-        "types and members with their lines, and symbol_info, definition, usages, implementations and hierarchy follow the symbol at a line " +
+        "types and members with their lines, and symbol_info, definition, usages and hierarchy follow the symbol at a line " +
         "and column; find_in_files searches text. editor_text reads a file with its lines numbered; edit changes one as the editor does " +
         "(an open file the editor has not changed also takes what is written on disk); diagnostics checks it. A file written a moment " +
         "before is waited for (up to 10 s) until the language server has read it, so rename, refactor and code actions work on what was " +
@@ -72,8 +76,8 @@ public static partial class McpHost
         "locals. An Avalonia or WPF app that run or debug_start starts is looked at and used as a person tests it: app_windows, app_tree, " +
         "app_screenshot, app_click, app_type, app_key, app_scroll, app_binding_errors. Also version control (vcs_status, vcs_diff, " +
         "vcs_commit), NuGet (nuget_search, nuget_install), Problems and Local History (problems, local_history), the settings (settings, " +
-        "settings_set), the container engine (containers, container_logs, container_exec, container_action) and the window itself " +
-        "(screenshot, ide_action).\n\n" +
+        "settings_set), the container engine (containers, container_logs, container_exec, container_action) and Passenger's own " +
+        "window (the app_ tools with app ide, ide_action).\n\n" +
         "Attached to a person's Passenger (--mcp-attach), the first call joins the Passenger window open on the agent's folder (the folder " +
         "after --mcp-attach, else the agent's working folder). With none open, it has the running Passenger open that folder, or starts " +
         "Passenger on it, in a window the person sees, and waits for it. Unless the person has turned on Enable MCP Server, or let agents " +
@@ -105,10 +109,15 @@ public static partial class McpHost
     internal static McpServerToolCreateOptions ToolCreateOptions() => new() { SerializerOptions = AnswerJson };
 
     /// <summary>A tool as every connection and <c>--mcp-attach</c> list it: its schema without what says nothing, an
-    /// optional parameter's null default and null type (left out says as much), which every list paid for some 110 times.</summary>
+    /// optional parameter's null default and null type (left out says as much), which every list paid for some 110 times,
+    /// and its title once, the tool's, where the SDK writes it again in its annotations.</summary>
     internal static McpServerTool Lean(McpServerTool tool)
     {
         Tool shown = tool.ProtocolTool;
+        if (shown.Annotations is { } annotations && annotations.Title == shown.Title)
+        {
+            annotations.Title = null;
+        }
         if (JsonNode.Parse(shown.InputSchema.GetRawText()) is JsonObject schema)
         {
             Trim(schema);

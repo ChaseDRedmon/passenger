@@ -189,7 +189,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
             && frames.Any(f => f.Contains(" frames outside the folder's code (", StringComparison.Ordinal) && f.Contains("Avalonia.", StringComparison.Ordinal)),
             $"The stop's frames, for an agent:\n{string.Join('\n', frames)}");
         // Let go, the click finishes.
-        await Call(client, "breakpoint_remove", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
+        await Call(client, "breakpoint_set", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23, ["remove"] = true });
         await Call(client, "debug_continue", new() { ["waitSeconds"] = 1 });
         Assert.Contains("\"Clicked once\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
 
@@ -215,14 +215,14 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
             $"The click did not stop where the code-behind sets the watched text: {clicked}");
 
         // At the stop, the window's XAML open in the editor shows each binding's value after it, and the misspelt one as failed.
-        await Call(client, "open_file", new() { ["path"] = "MainWindow.axaml" });
+        await Call(client, "open", new() { ["path"] = "MainWindow.axaml" });
         JsonElement stop = await Call(client, "debug_state");
         string[] values = stop.TryGetProperty("bindingValues", out JsonElement shown) ? [.. shown.EnumerateArray().Select(v => v.GetString()!)] : [];
         Assert.True(values.Contains("MainWindow.axaml:12: Text: \"Ada\"") && values.Any(v => v.StartsWith("MainWindow.axaml:11: Text: binding failed at Nmae: ", StringComparison.Ordinal)),
             $"The binding values at the stop are not those the editor shows: {stop}");
 
         // Removed by the id the breakpoint names its element by (the paused app answers no query), the click finishes.
-        await Call(client, "breakpoint_remove", new() { ["control"] = watched.GetProperty("control").GetString(), ["property"] = "Text" });
+        await Call(client, "breakpoint_set", new() { ["control"] = watched.GetProperty("control").GetString(), ["property"] = "Text", ["remove"] = true });
         Assert.DoesNotContain((await Call(client, "breakpoints")).EnumerateArray(), b => b.TryGetProperty("property", out _));
         await Call(client, "debug_continue", new() { ["waitSeconds"] = 1 });
         Assert.Contains("\"Clicked 2 times\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
@@ -239,7 +239,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
         int reference = failed.GetProperty("locals").EnumerateArray().First(l => l.GetProperty("name").GetString() == "$bindingError").GetProperty("reference").GetInt32();
         JsonElement xaml = Assert.Single((await Call(client, "debug_variables", new() { ["reference"] = reference })).EnumerateArray(), m => m.GetProperty("name").GetString() == "Xaml");
         Assert.Equal($"\"{AppXamlPlace("TextBlock x:Name=\"Caption\"")}\"", xaml.GetProperty("value").GetString());
-        JsonElement off = Assert.Single((await Call(client, "breakpoint_remove", new() { ["bindingErrors"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
+        JsonElement off = Assert.Single((await Call(client, "breakpoint_set", new() { ["bindingErrors"] = true, ["remove"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
         Assert.False(off.GetProperty("enabled").GetBoolean(), $"XAML Binding Errors is still on: {off}");
         Assert.Equal("running", (await Call(client, "debug_continue", new() { ["waitSeconds"] = 2 })).GetProperty("state").GetString());
         await Call(client, "stop");

@@ -72,10 +72,10 @@ public sealed partial class PassengerTools
     // An AppHost resource's commands are this tool's, as the Aspire window's rows are the Containers window's: a parameter
     // here costs every session's list less than a tool, or a command parameter on the run tools, of its own.
     [McpServerTool(Name = "container_action", Title = "Start, stop, restart or remove a container", Destructive = true), Description(
-        "As the Containers window's buttons: start, stop, restart or remove a container (its name or id), a Compose project " +
-        "(remove takes it down, its volumes kept) or a project/service. Volumes and images are not its to remove. Given an " +
-        "Aspire resource (its target), runs one of its commands as the Aspire window does.")]
-    public Task<string> ContainerAction(string container, [Description("start, stop, restart or remove; a resource's command")] string action,
+        "As the Containers window's buttons, action start, stop, restart or remove on a container (its name or id), a Compose " +
+        "project (remove takes it down, its volumes kept) or a project/service; never a volume or image. Given an Aspire " +
+        "resource (its target), action is one of its commands, run as the Aspire window does.")]
+    public Task<string> ContainerAction(string container, string action,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (await AspireCommandOfAsync(container, action, cancel) is ({ } appHost, { } resource, { } command))

@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Passenger.Core;
@@ -46,20 +45,6 @@ public static class ChildProcesses
     /// starts, so no program's secret reaches the log or a window, whoever started it. The command line itself, which any
     /// process on the machine can read, is the starter's to keep secrets off (an environment variable is the child's alone).</summary>
     public static Func<ProcessStartInfo, string> Shown { get; set; } = Display;
-
-    /// <summary>The values starters gave children on their command lines that are secrets, by start.</summary>
-    private static readonly ConditionalWeakTable<ProcessStartInfo, string[]> Secrets = new();
-
-    /// <summary>Names values a child is given on its command line that are secrets, where no rule would know them for one
-    /// (dev-certs' export password after <c>-p</c>): <see cref="Shown"/> masks them wherever it says the command line.</summary>
-    public static ProcessStartInfo Hiding(ProcessStartInfo start, params string[] secrets)
-    {
-        Secrets.AddOrUpdate(start, [.. SecretsOf(start), .. secrets]);
-        return start;
-    }
-
-    /// <summary>The values <see cref="Hiding"/> named secrets of a start.</summary>
-    public static IReadOnlyList<string> SecretsOf(ProcessStartInfo start) => Secrets.TryGetValue(start, out string[]? secrets) ? secrets : [];
 
     /// <summary>A program and its arguments, to run in a folder (the IDE's own when none is given).</summary>
     public static ProcessStartInfo Command(string program, IEnumerable<string> arguments, string? folder = null)

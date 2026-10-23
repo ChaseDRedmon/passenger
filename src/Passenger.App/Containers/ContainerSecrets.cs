@@ -91,10 +91,9 @@ public static partial class ContainerSecrets
     /// <summary>A command line as Passenger logs or shows it (<see cref="ChildProcesses.Shown"/>: a child's start and end in
     /// the log, what ChildProcesses throws, a console's echo): each word masked on its own as <see cref="InSaid"/> masks what
     /// a program said (so a <c>--password=…</c> masks its value, not the words after it), knowing too the values of the
-    /// child's own environment whose names are a secret's and those its starter named secrets (<see cref="ChildProcesses.Hiding"/>).</summary>
+    /// child's own environment whose names are a secret's.</summary>
     public static string CommandLine(System.Diagnostics.ProcessStartInfo start) =>
-        ChildProcesses.Display(start, Masking(known: [.. start.Environment.Where(v => v.Value is { Length: > 0 } && Secret(v.Key)).Select(v => v.Value!),
-            .. ChildProcesses.SecretsOf(start)]));
+        ChildProcesses.Display(start, Masking(known: [.. start.Environment.Where(v => v.Value is { Length: > 0 } && Secret(v.Key)).Select(v => v.Value!)]));
 
     /// <summary><see cref="InSaid"/> for much that is said a piece at a time (a CLI's output streamed into a console), the
     /// secrets it knows read once.</summary>

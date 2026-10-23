@@ -164,7 +164,7 @@ public sealed class CommandLineTests : IDisposable
         string state = TestFolders.Create("agent-state-");
         const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""";
         const string Initialized = """{"jsonrpc":"2.0","method":"notifications/initialized"}""";
-        const string Type = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"type","arguments":{"text":"agent "}}}""";
+        const string Type = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"app_type","arguments":{"app":"ide","control":"CodeEditor","text":"agent "}}}""";
         const string Read = """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"editor_text","arguments":{"path":"notes.txt","from":2,"to":2}}}""";
         string answers = Path.Combine(agent, "answers.txt");
         string command;
@@ -221,7 +221,7 @@ public sealed class CommandLineTests : IDisposable
             string answered = File.Exists(answers) ? await File.ReadAllTextAsync(answers, TestContext.Current.CancellationToken) : "(no answers)";
             Assert.True(code == 0 && File.Exists(Path.Combine(folder, "out.png")), $"The screenshot after its agent was not taken: exit code {code}\n{error}\nThe agent's answers:\n{answered}");
             Assert.True(answered.Contains("agent two", StringComparison.Ordinal) && !answered.Contains("\"isError\":true", StringComparison.Ordinal),
-                $"The agent's type was to be used unasked in the capture's window, its editor_text then reading line 2 as \"agent two\"; it was answered:\n{answered}");
+                $"The agent's app_type was to be used unasked in the capture's window, its editor_text then reading line 2 as \"agent two\"; it was answered:\n{answered}");
 
             string fails = OperatingSystem.IsWindows() ? "powershell -NoProfile -Command exit 3" : "sh -c \"exit 3\"";
             (code, error) = await Run([".", "--agent", fails, "--screenshot", "failed.png"], state);

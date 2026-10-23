@@ -411,6 +411,9 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         }
     }
 
+    /// <summary>A service that serves HTTPS serves the development certificate exported for it, as PEM with its key and no
+    /// password (a certificate made for the test, which dev-certs' stand-in writes, the machine's store never read), with the
+    /// project's user secrets mounted; no command line the run started names a password.</summary>
     [AvaloniaFact]
     public void A_service_that_serves_HTTPS_has_the_development_certificate_and_the_projects_user_secrets_mounted()
     {
@@ -429,15 +432,30 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         TestFolders.Write(TestRun.UserSecrets, "passenger-test-https/secrets.json", "{ \"Greeting\": \"https\" }\n");
         File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
             .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
-        // dev-certs' check answers trusted (dotnet --version); its export writes the test's certificate under the run's password.
+        // dev-certs' check answers trusted (dotnet --version); its export, as PEM with no password, writes the test's
+        // certificate and its key beside it, as dev-certs names it.
+        List<string> commands = [];
         MainWindow window = Open(folder, (words, at) =>
         {
-            if (words is ["dev-certs", "https", "-ep", string file, "-p", string password])
+            lock (commands)
             {
-                File.WriteAllBytes(file, throwaway.Export(X509ContentType.Pkcs12, password));
+                commands.Add(string.Join(' ', words));
+            }
+            if (words is ["dev-certs", "https", "-ep", string file, "--format", "Pem", "--no-password"])
+            {
+                File.WriteAllText(file, throwaway.ExportCertificatePem());
+                File.WriteAllText(Path.ChangeExtension(file, ".key"), key.ExportPkcs8PrivateKeyPem());
             }
             return ChildProcesses.DotnetCommand(["--version"], at);
         });
+        EventHandler<ChildStart> started = (_, child) =>
+        {
+            lock (commands)
+            {
+                commands.Add(child.Command);
+            }
+        };
+        ChildProcesses.Started += started;
         RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
         window.SetConfigurations([web], web.Name);
         try
@@ -463,9 +481,11 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
             Assert.Contains("/https", mounts, StringComparison.Ordinal);
             // The project's own secrets, from the run's folder of them, never the person's.
             Assert.Contains($"{ContainerPlans.AppData}/Microsoft/UserSecrets/passenger-test-https", mounts, StringComparison.Ordinal);
+            NoPasswords(commands, window);
         }
         finally
         {
+            ChildProcesses.Started -= started;
             Docker.Stopped(window, project, "Stop to take web down");
             window.Close();
         }
@@ -483,14 +503,32 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         }
     }
 
+    /// <summary>Holds what a run started (and asked dev-certs for) to naming no password: the certificate exported as PEM
+    /// with none, no program given one, nor the override's file of the run.</summary>
+    private static void NoPasswords(List<string> commands, MainWindow window)
+    {
+        string[] all;
+        lock (commands)
+        {
+            all = [.. commands];
+        }
+        Assert.Contains(all, c => c.Contains("dev-certs https -ep ", StringComparison.Ordinal) && c.EndsWith("--format Pem --no-password", StringComparison.Ordinal));
+        string[] holding = [.. all.Where(c => (c.Contains("dev-certs", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(c, @"\s(-p|--password)(\s|=|$)"))
+            || c.Contains("Password=", StringComparison.OrdinalIgnoreCase) || c.Contains("__Password", StringComparison.Ordinal))];
+        Assert.True(holding.Length == 0, $"A command line the run started holds a password:\n{string.Join('\n', holding)}");
+        string written = window.Builds.Containers!.Plan.Compose.Single(w => w.EndsWith(".override.yaml", StringComparison.Ordinal));
+        Assert.DoesNotContain("password", File.ReadAllText(written), StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>A run whose service serves HTTPS with no trusted development certificate asks first, in a window that lets no
     /// agent in too (--no-mcp): Run over HTTP serves it over HTTP on its port, with no certificate made or trusted; a
     /// certificate whose export fails is said in the status bar, a click away from what dev-certs said, the service over HTTP;
-    /// and Create and Trust has dev-certs trust it, exports it and gives it to the service, the override that holds its
-    /// password, the copy and the password kept beside it the person's alone to read, in a folder only they enter from
-    /// before dev-certs writes there. The copy is exported again once dev-certs names another certificate (into a folder
-    /// an earlier Passenger left open put right first, its files replaced), and kept while it names the same. Run and Profile stopped as dev-certs checks it say so and leave nothing. dev-certs is a
-    /// stand-in throughout, which trusts nothing on this machine.</summary>
+    /// and Create and Trust has dev-certs trust it, export it as PEM with no password and gives it to the service, the
+    /// override, the certificate and its key the person's alone to read, in a folder only they enter from before dev-certs
+    /// writes there, and no command line naming a password. The copy is exported again once dev-certs names another
+    /// certificate (into a folder an earlier Passenger left open put right first, its files replaced, its .pfx and password
+    /// gone), and kept while it names the same. Run and Profile stopped as dev-certs checks it say so and leave nothing.
+    /// dev-certs is a stand-in throughout, which trusts nothing on this machine.</summary>
     [AvaloniaFact]
     public void A_run_that_serves_HTTPS_with_no_trusted_certificate_asks_to_create_and_trust_it_or_run_over_HTTP_and_says_an_export_that_fails()
     {
@@ -500,7 +538,7 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         (string folder, string project) = Restored("certs");
         // Told to serve HTTPS, it serves HTTP on the same port whatever it is given: the stand-in's certificate is none.
         TestFolders.Write(folder, "Web/Program.cs", """
-            foreach (string told in (string[])["ASPNETCORE_Kestrel__Certificates__Default__Path", "ASPNETCORE_Kestrel__Certificates__Default__Password", "ASPNETCORE_HTTPS_PORTS"])
+            foreach (string told in (string[])["ASPNETCORE_Kestrel__Certificates__Default__Path", "ASPNETCORE_Kestrel__Certificates__Default__KeyPath", "ASPNETCORE_HTTPS_PORTS"])
             {
                 Environment.SetEnvironmentVariable(told, null);
             }
@@ -516,6 +554,15 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         MainWindow window = Open(folder, DevCerts.In(standIn), agentsAllowed: false);
         RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
         window.SetConfigurations([web], web.Name);
+        List<string> commands = [];
+        EventHandler<ChildStart> started = (_, child) =>
+        {
+            lock (commands)
+            {
+                commands.Add(child.Command);
+            }
+        };
+        ChildProcesses.Started += started;
         string Asked() => DevCerts.Asked(standIn);
         bool Exported() => Asked().Split('\n').Any(l => l.StartsWith("dev-certs https -ep ", StringComparison.Ordinal));
         string Env() => Docker.Run("inspect", "-f", "{{json .Config.Env}}", Container(project, "web"));
@@ -579,18 +626,21 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
             Assert.Equal(["dev-certs https --check --trust", "dev-certs https --trust"], Asked().Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(2));
             Assert.StartsWith("dev-certs https -ep ", Asked().Split('\n', StringSplitOptions.RemoveEmptyEntries)[2], StringComparison.Ordinal);
             Assert.Contains("/https", Mounts(), StringComparison.Ordinal);
-            Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx", Env(), StringComparison.Ordinal);
+            // PEM, its key beside it unencrypted: no password, on dev-certs' command line or anywhere else.
+            Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pem", Env(), StringComparison.Ordinal);
+            Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__KeyPath=/https/aspnetapp.key", Env(), StringComparison.Ordinal);
             Assert.DoesNotContain("over HTTP for this run", window.Status, StringComparison.Ordinal);
-            // The override names the certificate's password: no one but its owner reads it.
+            NoPasswords(commands, window);
+            // The override holds the configuration's environment: no one but its owner reads it.
             string written = window.Builds.Containers!.Plan.Compose.Single(w => w.EndsWith(".override.yaml", StringComparison.Ordinal));
-            Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Password", File.ReadAllText(written), StringComparison.Ordinal);
             string https = Path.Combine(window.Builds.Containers!.Plan.State, "https");
             if (!OperatingSystem.IsWindows())
             {
                 Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(written));
-                // The folder was the person's alone as dev-certs wrote the copy there, and its files are theirs alone to read.
+                // The folder was the person's alone as dev-certs wrote the copy there, and its files, the key's above all, are
+                // theirs alone to read.
                 Assert.Equal("drwx------", File.ReadAllText(Path.Combine(standIn, "folder")).Trim());
-                OwnersAlone(https, "aspnetapp.pfx", "password");
+                OwnersAlone(https, "aspnetapp.pem", "aspnetapp.key");
             }
             Stopped(window, project);
 
@@ -604,23 +654,31 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
                 File.Delete(Path.Combine(standIn, "folder"));
                 if (again && !OperatingSystem.IsWindows())
                 {
-                    // As an earlier Passenger left them: the folder open to others, and the password theirs to read.
+                    // As an earlier Passenger left them: the folder open to others, and the key theirs to read.
                     File.SetUnixFileMode(https, File.GetUnixFileMode(https) | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-                    File.SetUnixFileMode(Path.Combine(https, "password"), File.GetUnixFileMode(Path.Combine(https, "password")) | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+                    File.SetUnixFileMode(Path.Combine(https, "aspnetapp.key"), File.GetUnixFileMode(Path.Combine(https, "aspnetapp.key")) | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
                 }
+                // What a Passenger before PEM exported there, its .pfx and the password beside it, which the folder mounted
+                // would give the container: deleted, whether the copy is exported again or kept.
+                File.WriteAllText(Path.Combine(https, "aspnetapp.pfx"), "earlier");
+                File.WriteAllText(Path.Combine(https, "password"), "earlier");
                 Launched(window, window.RunAsync(), "web to come up with the certificate dev-certs names");
                 Assert.True(Exported() == again, $"With dev-certs naming {thumbprint[..4]}…, the certificate was {(again ? "not exported again" : "exported again")}: {Asked()}");
-                Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx", Env(), StringComparison.Ordinal);
+                Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pem", Env(), StringComparison.Ordinal);
+                Assert.False(File.Exists(Path.Combine(https, "aspnetapp.pfx")) || File.Exists(Path.Combine(https, "password")),
+                    "An earlier Passenger's .pfx and password are still in the folder the container mounts");
                 if (again && !OperatingSystem.IsWindows())
                 {
                     Assert.Equal("drwx------", File.ReadAllText(Path.Combine(standIn, "folder")).Trim());
-                    OwnersAlone(https, "aspnetapp.pfx", "password", "thumbprint");
+                    OwnersAlone(https, "aspnetapp.pem", "aspnetapp.key", "thumbprint");
                 }
+                NoPasswords(commands, window);
                 Stopped(window, project);
             }
         }
         finally
         {
+            ChildProcesses.Started -= started;
             Docker.Stopped(window, project, "Stop to take web down");
             window.Close();
         }
