@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
@@ -17,10 +18,31 @@ public sealed class RequestsView : DockPanel
     /// <summary>A command's row, under its request's.</summary>
     public sealed record CommandRow(LiveRequest Request, LiveCommand Command);
 
+    /// <summary>A row listed: a request or a command, its control drawn anew in place as what it shows changes.</summary>
+    private sealed class Row(object data)
+    {
+        public object Data { get; } = data;
+
+        /// <summary>How many times what it shows has changed, so a control shown again after a change draws it.</summary>
+        public int Version { get; private set; }
+
+        public event EventHandler? Redrawn;
+
+        public void Redraw()
+        {
+            Version++;
+            Redrawn?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     private readonly ListBox list;
     private readonly TextBlock placeholder;
     private readonly TextBlock following;
     private readonly RequestLog log;
+    private readonly ObservableCollection<Row> rows = [];
+
+    /// <summary>Each request listed, its row and how many of its commands are listed under it.</summary>
+    private readonly Dictionary<LiveRequest, (Row Row, int Commands)> listed = [];
 
     public RequestsView(RequestLog log)
     {
@@ -28,12 +50,8 @@ public sealed class RequestsView : DockPanel
         list = new ListBox
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<object>((row, _) => row switch
-            {
-                LiveRequest request => RequestRow(request),
-                CommandRow command => CommandLine(command),
-                _ => new TextBlock(),
-            }, supportsRecycling: false),
+            ItemsSource = rows,
+            ItemTemplate = new FuncDataTemplate<Row>((row, _) => row is null ? new Panel() : View(row), supportsRecycling: false),
         };
         list.DoubleTapped += (_, _) => Open();
         list.KeyDown += (_, e) =>
@@ -55,8 +73,8 @@ public sealed class RequestsView : DockPanel
         DockPanel.SetDock(bar, Dock.Top);
         Children.Add(bar);
         Children.Add(new Panel { Children = { list, placeholder } });
-        log.Changed += (_, _) => Refresh();
-        Refresh();
+        log.Changed += (_, told) => Take(told);
+        Take(new RequestChanges([], [], [], All: true));
     }
 
     /// <summary>The window shows, or no longer does: the app is followed only while it does.</summary>
@@ -79,7 +97,7 @@ public sealed class RequestsView : DockPanel
     }
 
     /// <summary>The rows listed: each request, newest first, followed by its commands.</summary>
-    public IReadOnlyList<object> Rows => list.ItemsSource as IReadOnlyList<object> ?? [];
+    public IReadOnlyList<object> Rows => [.. rows.Select(row => row.Data)];
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
@@ -111,25 +129,107 @@ public sealed class RequestsView : DockPanel
 
     private void Open()
     {
-        if (list.SelectedItem is { } chosen)
+        if (list.SelectedItem is Row chosen)
         {
-            Open(chosen);
+            Open(chosen.Data);
         }
     }
 
-    private void Refresh()
+    /// <summary>What a batch changed, and that alone: a request that came put in at the top with its commands, one that changed
+    /// drawn again with its new commands put in under it, one that went taken out; every other row and its control kept.</summary>
+    private void Take(RequestChanges told)
     {
-        List<object> rows = [];
-        foreach (LiveRequest request in Enumerable.Reverse(log.Requests))
+        if (told.All)
         {
-            rows.Add(request);
-            rows.AddRange(request.Commands.Select(c => new CommandRow(request, c)));
+            rows.Clear();
+            listed.Clear();
+            foreach (LiveRequest request in Enumerable.Reverse(log.Requests))
+            {
+                Put(rows.Count, request);
+            }
         }
-        object? selected = list.SelectedItem;
-        list.ItemsSource = rows;
-        list.SelectedItem = selected is not null && rows.Contains(selected) ? selected : null;
+        foreach (LiveRequest gone in told.Went)
+        {
+            if (listed.Remove(gone, out (Row Row, int Commands) was))
+            {
+                // The oldest are last.
+                int at = rows.Count - 1;
+                while (at >= 0 && rows[at] != was.Row)
+                {
+                    at--;
+                }
+                for (int i = 0; at >= 0 && i <= was.Commands; i++)
+                {
+                    rows.RemoveAt(at);
+                }
+            }
+        }
+        foreach (LiveRequest request in told.Came)
+        {
+            Put(0, request);
+        }
+        foreach (LiveRequest request in told.Changed)
+        {
+            if (!listed.TryGetValue(request, out (Row Row, int Commands) shown) || rows.IndexOf(shown.Row) is not (>= 0 and var at))
+            {
+                continue;
+            }
+            // A new command can change those before it (how often its text ran), so each is drawn again where it is shown.
+            for (int i = 0; i <= shown.Commands; i++)
+            {
+                rows[at + i].Redraw();
+            }
+            for (int i = shown.Commands; i < request.Commands.Count; i++)
+            {
+                rows.Insert(at + 1 + i, new Row(new CommandRow(request, request.Commands[i])));
+            }
+            listed[request] = (shown.Row, request.Commands.Count);
+        }
         placeholder.IsVisible = rows.Count == 0;
     }
+
+    /// <summary>A request's row and its commands' put in at a place.</summary>
+    private void Put(int at, LiveRequest request)
+    {
+        Row row = new(request);
+        rows.Insert(at, row);
+        for (int i = 0; i < request.Commands.Count; i++)
+        {
+            rows.Insert(at + 1 + i, new Row(new CommandRow(request, request.Commands[i])));
+        }
+        listed[request] = (row, request.Commands.Count);
+    }
+
+    /// <summary>A row's control, drawn again in place while it is shown as what it shows changes (and as it is shown again
+    /// after a change), never made anew by the list.</summary>
+    private static Control View(Row row)
+    {
+        Decorator view = new() { Child = Draw(row.Data) };
+        int drawn = row.Version;
+        void Show(object? sender, EventArgs e)
+        {
+            drawn = row.Version;
+            view.Child = Draw(row.Data);
+        }
+        view.AttachedToVisualTree += (_, _) =>
+        {
+            row.Redrawn -= Show;
+            row.Redrawn += Show;
+            if (drawn != row.Version)
+            {
+                Show(null, EventArgs.Empty);
+            }
+        };
+        view.DetachedFromVisualTree += (_, _) => row.Redrawn -= Show;
+        return view;
+    }
+
+    private static Control Draw(object data) => data switch
+    {
+        LiveRequest request => RequestRow(request),
+        CommandRow command => CommandLine(command),
+        _ => new TextBlock(),
+    };
 
     private static Control RequestRow(LiveRequest request)
     {

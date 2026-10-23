@@ -53,6 +53,13 @@ public sealed class LiveRequest(string trace, string method, string path, string
     /// <summary>EF Core's logs of commands not yet told of, their values masked.</summary>
     internal List<string> Logged { get; } = [];
 
+    /// <summary>Its commands by their text, so a command's runs are counted by its text alone, never by comparing it with each
+    /// command before it (an N+1 of a thousand commands).</summary>
+    internal Dictionary<string, List<LiveCommand>> ByText { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Its own id, as the app told it, by which it is found and forgotten.</summary>
+    internal string Request { get; init; } = string.Empty;
+
     public WebRoute? Route { get; internal set; }
 
     /// <summary>The program that served it, as the window names it.</summary>
@@ -64,6 +71,10 @@ public sealed class LiveRequest(string trace, string method, string path, string
     /// <summary>Whether a command of it ran again and again (an N+1).</summary>
     public bool HasRepeats => Commands.Any(c => c.Repeated);
 }
+
+/// <summary>What a batch of events changed: the requests that came (oldest first), those already listed that changed (an end,
+/// a command, a route), and those that went past <see cref="RequestLog.Most"/>; or everything, the list cleared.</summary>
+public sealed record RequestChanges(IReadOnlyList<LiveRequest> Came, IReadOnlyCollection<LiveRequest> Changed, IReadOnlyCollection<LiveRequest> Went, bool All = false);
 
 /// <summary>The live requests of the app followed, newest last, as many as <see cref="Most"/>: each event the stream thread
 /// hears queued and taken on the UI thread a batch at a time, a command tied to its request by its activity's root id.</summary>
@@ -99,8 +110,12 @@ public sealed class RequestLog
 
     public IReadOnlyList<LiveRequest> Requests => requests;
 
-    /// <summary>Requests came, ended or issued commands.</summary>
-    public event EventHandler? Changed;
+    /// <summary>Requests came, ended, issued commands or went: what a batch changed, so a list redraws that alone.</summary>
+    public event EventHandler<RequestChanges>? Changed;
+
+    private readonly List<LiveRequest> came = [];
+    private readonly HashSet<LiveRequest> changed = [];
+    private readonly HashSet<LiveRequest> went = [];
 
     /// <summary>An event heard on the stream's thread, taken on the UI thread with those heard meanwhile, with the program that told it
     /// and its project.</summary>
@@ -117,16 +132,15 @@ public sealed class RequestLog
     public void Reroute()
     {
         UiThread.Check();
-        bool found = false;
         foreach (LiveRequest request in requests.Where(r => r.Route is null))
         {
             request.Route = routeOf(request.Method, request.Path, request.Project);
-            found |= request.Route is not null;
+            if (request.Route is not null)
+            {
+                changed.Add(request);
+            }
         }
-        if (found)
-        {
-            Changed?.Invoke(this, EventArgs.Empty);
-        }
+        Tell();
     }
 
     /// <summary>Forgets every request, as a new run begins or the person clears the list.</summary>
@@ -136,30 +150,49 @@ public sealed class RequestLog
         requests.Clear();
         byTrace.Clear();
         byRequest.Clear();
-        Changed?.Invoke(this, EventArgs.Empty);
+        came.Clear();
+        changed.Clear();
+        went.Clear();
+        Changed?.Invoke(this, new RequestChanges([], [], [], All: true));
     }
 
     private void Take()
     {
         Volatile.Write(ref posted, 0);
-        bool changed = false;
         while (heard.TryDequeue(out (WebEvent Told, string From, string? Project) one))
         {
-            changed |= Apply(one.Told, one.From, one.Project);
+            Apply(one.Told, one.From, one.Project);
         }
-        if (changed)
-        {
-            Changed?.Invoke(this, EventArgs.Empty);
-        }
+        Tell();
     }
 
-    private bool Apply(WebEvent told, string from, string? project)
+    /// <summary>Says what the batch changed, if anything: a request that came and went within it is neither.</summary>
+    private void Tell()
+    {
+        if (came.Count + changed.Count + went.Count == 0)
+        {
+            return;
+        }
+        HashSet<LiveRequest> fresh = [.. came];
+        RequestChanges told = new([.. came.Where(r => !went.Contains(r))], [.. changed.Where(r => !went.Contains(r) && !fresh.Contains(r))],
+            [.. went.Where(r => !fresh.Contains(r))]);
+        came.Clear();
+        changed.Clear();
+        went.Clear();
+        Changed?.Invoke(this, told);
+    }
+
+    private void Apply(WebEvent told, string from, string? project)
     {
         switch (told)
         {
             case RequestBegan began:
-                LiveRequest request = new(began.Trace, began.Method, began.Path, began.Query, began.At) { From = from, Project = project, Route = routeOf(began.Method, began.Path, project) };
+                LiveRequest request = new(began.Trace, began.Method, began.Path, began.Query, began.At)
+                {
+                    From = from, Project = project, Route = routeOf(began.Method, began.Path, project), Request = began.Request,
+                };
                 requests.Add(request);
+                came.Add(request);
                 if (began.Trace.Length > 0)
                 {
                     byTrace[began.Trace] = request;
@@ -170,29 +203,39 @@ public sealed class RequestLog
                 }
                 if (requests.Count > Most)
                 {
-                    byTrace.Remove(requests[0].Trace);
-                    foreach (string gone in byRequest.Where(p => p.Value == requests[0]).Select(p => p.Key).ToList())
+                    LiveRequest oldest = requests[0];
+                    if (byTrace.TryGetValue(oldest.Trace, out LiveRequest? traced) && traced == oldest)
                     {
-                        byRequest.Remove(gone);
+                        byTrace.Remove(oldest.Trace);
+                    }
+                    if (byRequest.TryGetValue(oldest.Request, out LiveRequest? named) && named == oldest)
+                    {
+                        byRequest.Remove(oldest.Request);
                     }
                     requests.RemoveAt(0);
+                    went.Add(oldest);
                 }
-                return true;
+                return;
             case RequestEnded ended when Of(ended.Request, ended.Trace) is { } done:
                 done.Status = ended.Status;
                 done.Milliseconds = (ended.At - done.Began).TotalMilliseconds;
-                return true;
+                changed.Add(done);
+                return;
             case RequestFailed failed when Of(failed.Request, failed.Trace) is { } broke:
                 broke.Error = failed.Error;
-                return true;
+                changed.Add(broke);
+                return;
             case CommandRan ran when byTrace.TryGetValue(ran.Trace, out LiveRequest? issuer):
                 LiveCommand command = new(ran.Id, ran.Text, ran.Milliseconds, ran.Rows, ran.Error);
-                int runs = issuer.Commands.Count(c => c.Text == ran.Text) + 1;
-                foreach (LiveCommand same in issuer.Commands.Where(c => c.Text == ran.Text))
+                if (!issuer.ByText.TryGetValue(ran.Text, out List<LiveCommand>? same))
                 {
-                    same.Runs = runs;
+                    issuer.ByText[ran.Text] = same = [];
                 }
-                command.Runs = runs;
+                same.Add(command);
+                foreach (LiveCommand each in same)
+                {
+                    each.Runs = same.Count;
+                }
                 issuer.Commands.Add(command);
                 // EF Core logs a command before it tells of it: its log, heard first, gives it its parameters.
                 if (issuer.Logged.FirstOrDefault(m => m.Contains(ran.Text, StringComparison.Ordinal)) is { } logged)
@@ -200,22 +243,23 @@ public sealed class RequestLog
                     issuer.Logged.Remove(logged);
                     command.Parameters = CommandParameters.Of(logged);
                 }
-                return true;
+                changed.Add(issuer);
+                return;
             case CommandRead read when byTrace.TryGetValue(read.Trace, out LiveRequest? reader)
                 && reader.Commands.LastOrDefault(c => c.Id == read.Id) is { } readCommand:
                 readCommand.Reads = read.Reads;
-                return true;
+                changed.Add(reader);
+                return;
             case CommandLogged log when byTrace.TryGetValue(log.Trace, out LiveRequest? logger):
                 if (logger.Commands.FirstOrDefault(c => c.Parameters is null && log.Message.Contains(c.Text, StringComparison.Ordinal)) is { } unnamed)
                 {
                     unnamed.Parameters = CommandParameters.Of(log.Message);
-                    return true;
+                    changed.Add(logger);
+                    return;
                 }
                 // Kept with its values masked until its command comes: what the app logged in the clear is never held.
                 logger.Logged.Add(CommandParameters.Masked(log.Message));
-                return false;
-            default:
-                return false;
+                return;
         }
     }
 }

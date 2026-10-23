@@ -2,6 +2,7 @@ using System.Net.Http;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Endpoints;
+using Passenger.Profiler;
 
 namespace Passenger.Tests;
 
@@ -149,6 +150,93 @@ public sealed class LiveRequestsTests
             window.Perform(AppActions.Stop);
             Ui.WaitFor(() => !window.Runner.IsRunning, "the shop to stop");
             window.Close();
+        }
+    }
+
+    /// <summary>A request heard with the list full costs the window what one costs with a few listed: its rows go in at the
+    /// top, the oldest's come out, and every other row keeps its control, where the whole list was made again at each batch.
+    /// The app's diagnostic events are stood in for by the events the profiler's reader gives the window; an N+1 of many
+    /// commands is counted by its text.</summary>
+    [AvaloniaFact]
+    public void A_request_heard_costs_the_window_what_it_changed_however_many_are_listed()
+    {
+        string folder = TestFolders.Create("requests-listed-");
+        MainWindow window = Ui.OpenFolder(folder, languageServer: false);
+        int heard = 0;
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Requests);
+            Ui.Settle();
+            long few = Costs(5);
+            long many = Costs(RequestLog.Most);
+            Assert.True(many < few + 64 * 1024,
+                $"A request heard with {RequestLog.Most} listed allocated {many / 1024} KB on the UI thread, with 5 listed {few / 1024} KB: the list is made again at each batch");
+
+            // Still listed newest first, each request followed by its commands, the oldest gone past the most kept.
+            IReadOnlyList<object> rows = window.Requests.Rows;
+            Assert.Equal(RequestLog.Most * 4, rows.Count);
+            Assert.Equal($"/orders/{heard - 1}", Assert.IsType<LiveRequest>(rows[0]).Path);
+            Assert.All(rows.Skip(1).Take(3), row => Assert.Same(rows[0], Assert.IsType<RequestsView.CommandRow>(row).Request));
+            Assert.Equal($"/orders/{heard - RequestLog.Most}", Assert.IsType<LiveRequest>(rows[^4]).Path);
+            Assert.Equal(RequestLog.Most, window.RequestLog.Requests.Count);
+
+            // An N+1 of a thousand commands: each counted as run a thousand times, listed under its request.
+            window.RequestLog.Clear();
+            Hear(commands: 1000, ended: true);
+            Ui.Settle();
+            LiveRequest repeated = Assert.Single(window.RequestLog.Requests);
+            Assert.True(repeated.HasRepeats && repeated.Commands.All(c => c.Runs == 1000), "The request's thousand like commands were not counted as run a thousand times");
+            Assert.Equal(1001, window.Requests.Rows.Count);
+
+            // A request's end heard later draws its row again where it is, its commands kept.
+            window.RequestLog.Clear();
+            string trace = Hear(commands: 2, ended: false);
+            Ui.Settle();
+            window.RequestLog.Hear(new RequestEnded(trace, DateTime.UtcNow, trace, 404), "Shop", null);
+            Ui.Settle();
+            Assert.Equal(404, Assert.IsType<LiveRequest>(Assert.Single(window.Requests.Rows, r => r is LiveRequest)).Status);
+            Assert.Equal(3, window.Requests.Rows.Count);
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        // The least a request heard allocated on the UI thread, with as many listed as given, each with three commands.
+        long Costs(int listed)
+        {
+            window.RequestLog.Clear();
+            for (int i = 0; i < listed; i++)
+            {
+                Hear(commands: 3, ended: true);
+            }
+            Ui.Settle();
+            long least = long.MaxValue;
+            for (int round = 0; round < 5; round++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Hear(commands: 3, ended: true);
+                Ui.Settle();
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            return least;
+        }
+
+        // A request as the app tells of it: its start, its commands (all of one text) and, when given, its end.
+        string Hear(int commands, bool ended)
+        {
+            string id = $"request-{heard}";
+            DateTime at = DateTime.UtcNow;
+            window.RequestLog.Hear(new RequestBegan(id, at, id, "GET", $"/orders/{heard++}", string.Empty), "Shop", null);
+            for (int i = 0; i < commands; i++)
+            {
+                window.RequestLog.Hear(new CommandRan(id, at, $"{id}-{i}", "SELECT \"o\".\"Id\" FROM \"Orders\" AS \"o\" WHERE \"o\".\"Id\" = @id", 1.5, null, null), "Shop", null);
+            }
+            if (ended)
+            {
+                window.RequestLog.Hear(new RequestEnded(id, at, id, 200), "Shop", null);
+            }
+            return id;
         }
     }
 

@@ -659,8 +659,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   runtime's counters once a second, which keep the stream's reader handing on what it holds. Only while someone looks: the
   window shows, or an agent asked (run_output's `requests`, `RequestsForAgentAsync`, until another folder opens); it follows
   from the moment it shows or a program starts, and lets go as it hides or the program ends. `RequestLog` takes the events
-  on the UI thread a batch at a time (500 requests kept, each with the program that served it), marks a command its request
-  ran `LiveCommand.RepeatedAt` times or more as repeated (the request as N+1) and one over `SlowMilliseconds` as slow (a
+  on the UI thread a batch at a time (500 requests kept, each with the program that served it) and tells what the batch
+  changed (`RequestChanges`: the requests that came, changed and went), which alone the list puts in, draws again in place
+  or takes out, every other row keeping its control; it marks a command its request ran `LiveCommand.RepeatedAt` times or
+  more (counted by its text, `LiveRequest.ByText`) as repeated (the request as N+1) and one over `SlowMilliseconds` as slow (a
   non-query with the rows it changed, a query with its reader's reads, EF Core's ReadCount), gives each command the
   parameters its log names (`CommandParameters`: each value as `ContainerSecrets.Shown` shows a value of that name, a
   secret's as dots, '?' where the app does not log values; a log heard before its command kept masked), and each request
@@ -669,7 +671,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   else at its route's handler; a command's text opens read-only, its parameters as a comment over it, from a copy under the
   state's `cache/requests/` (`RequestLog.IsCommandCopy`, `MainWindow.OpenSql`, as an EF Core query's SQL the debugger read
   opens, its bar saying so: `OpenDocument.Origin`). `LiveRequestsTests` run a web app on EF Core and SQLite
-  (tests/EfGraphs' packages, `ShopApp.Version`, its sensitive data logging on) and send it requests from loopback;
+  (tests/EfGraphs' packages, `ShopApp.Version`, its sensitive data logging on) and send it requests from loopback, and hold
+  a request heard with 500 listed to what one costs the UI thread with 5 (the app's events stood in for by the profiler's);
   `LiveRequestsDebuggingTests` (Alone) debug it, `McpRequestsTests` have an agent read it, and `ContainerServicesTests`
   follow a Compose run's services in their containers.
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
