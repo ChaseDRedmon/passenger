@@ -169,6 +169,16 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             && !labels.Skip(humps).Any(l => l.StartsWith("IN", StringComparison.OrdinalIgnoreCase)),
             $"Typing IN offered [{string.Join(", ", labels.Take(8))}], not IsNormalized after every name beginning with In");
         Ui.Press(window, "ESCAPE");
+
+        // An acronym's last capital before lower case starts a word, as IPAddress is IP + Address.
+        window.KeyTextInput(";");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("var address = System.Net.");
+        Ui.Settle();
+        Type("IA");
+        Assert.True(window.Assist.CompletionLabels.Contains("IPAddress"),
+            $"Typing IA offered [{string.Join(", ", window.Assist.CompletionLabels.Take(5))}], not IPAddress");
+        Ui.Press(window, "ESCAPE");
         window.Close();
 
         void Type(string letters)

@@ -145,10 +145,11 @@ public static class FuzzyMatch
         return q == query.Length && query.Length > 1;
     }
 
-    /// <summary>Whether a word of the name starts at a character: the first, a capital after a letter that is not one, or
-    /// one after a separator, a letter or digit in any case.</summary>
+    /// <summary>Whether a letter or digit starts a word: the first character, one after a separator,
+    /// or a capital after a non-capital or before lowercase (the A in IPAddress).</summary>
     private static bool Starts(ReadOnlySpan<char> name, int i) =>
-        (i == 0 || char.IsUpper(name[i]) && !char.IsUpper(name[i - 1]) || name[i - 1] is '_' or '-' or '.' or ' ') && char.IsLetterOrDigit(name[i]);
+        (i == 0 || char.IsUpper(name[i]) && (!char.IsUpper(name[i - 1]) || i + 1 < name.Length && char.IsLower(name[i + 1]))
+            || name[i - 1] is '_' or '-' or '.' or ' ') && char.IsLetterOrDigit(name[i]);
 
     /// <summary>How spread out the query's letters are when found in order, or null if they are not.</summary>
     private static int? InOrder(string query, ReadOnlySpan<char> text)
