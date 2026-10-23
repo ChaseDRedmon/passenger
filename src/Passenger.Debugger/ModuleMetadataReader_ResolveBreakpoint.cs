@@ -5,10 +5,19 @@ using Passenger.Debugger.ExpressionEvaluator.Cil;
 namespace Passenger.Debugger;
 public partial class ModuleMetadataReader
 {
+    /// <summary>Each source file's best document, as worked out: a breakpoint's file is asked of every module with symbols at
+    /// each bind, and of all of them again as each such module loads while it waits, each asking a match of every document.
+    /// Forgotten as an update brings documents.</summary>
+    private readonly Dictionary<string, (string? Document, int Score)> _bestDocuments = new(StringComparer.Ordinal);
+
     /// <summary>The name of the module's document that names a source file best, by the PDB's name of it (the build's, or
     /// one an update brought).</summary>
     private (string? Document, int Score) BestDocument(string sourceFilePath)
     {
+        if (_bestDocuments.TryGetValue(sourceFilePath, out (string? Document, int Score) known))
+        {
+            return known;
+        }
         (string? Document, int Score) best = (null, 0);
         foreach (string name in DocumentNames())
         {
@@ -18,7 +27,7 @@ public partial class ModuleMetadataReader
                 best = (name, score);
             }
         }
-        return best;
+        return _bestDocuments[sourceFilePath] = best;
     }
 
     private sealed record MethodCandidate(
@@ -42,7 +51,7 @@ public partial class ModuleMetadataReader
             return null;
         }
 
-        List<MethodCandidate> candidates = MethodsWithPoints()
+        List<MethodCandidate> candidates = MethodsWithPoints(document)
             .Select(token => CollectCandidate(token, document, line, column))
             .OfType<MethodCandidate>()
             .ToList();
@@ -64,7 +73,7 @@ public partial class ModuleMetadataReader
     private (int Token, Point Point)? UnpointedAttribute(string document, LineCol requested)
     {
         (int Token, Point Point)? prior = null;
-        foreach (int token in MethodsWithPoints())
+        foreach (int token in MethodsWithPoints(document))
         {
             foreach (Point point in Points(token))
             {

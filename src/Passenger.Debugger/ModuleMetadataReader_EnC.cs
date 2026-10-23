@@ -105,6 +105,7 @@ public partial class ModuleMetadataReader
         _generations.Add(generation);
         _points.Clear();
         _documents = null;
+        _bestDocuments.Clear();
     }
 
     /// <summary>The metadata the updates made, kept while the module is: what names the members they added.</summary>
@@ -275,6 +276,74 @@ public partial class ModuleMetadataReader
                 }
             }
         }
+    }
+
+    /// <summary>The methods that may have a sequence point in a document, in <see cref="MethodsWithPoints()"/>'s order: the
+    /// build's with one there, and every method an update brought. What a breakpoint in a file is looked for in, rather than
+    /// every method of the module, each read again for every breakpoint bound.</summary>
+    internal IEnumerable<int> MethodsWithPoints(string document)
+    {
+        int[] built = BuiltMethodsByDocument().GetValueOrDefault(document) ?? [];
+        if (_generations.Count == 0)
+        {
+            return built;
+        }
+        HashSet<int> may = [.. built];
+        foreach (Generation generation in _generations)
+        {
+            may.UnionWith(generation.Relative.Keys);
+        }
+        return MethodsWithPoints().Where(may.Contains);
+    }
+
+    private Dictionary<string, int[]>? _builtMethodsByDocument;
+
+    /// <summary>The build's methods by each document they have a sequence point in, in token order, read once: an update's
+    /// methods are its own, and its moves of lines keep a point in its document.</summary>
+    private Dictionary<string, int[]> BuiltMethodsByDocument()
+    {
+        if (_builtMethodsByDocument is not null)
+        {
+            return _builtMethodsByDocument;
+        }
+        Dictionary<string, List<int>> byDocument = new(StringComparer.Ordinal);
+        if (_pdbMetadataReader is { } reader)
+        {
+            Dictionary<DocumentHandle, string> names = [];
+            foreach (MethodDebugInformationHandle handle in reader.MethodDebugInformation)
+            {
+                MethodDebugInformation info = reader.GetMethodDebugInformation(handle);
+                if (info.SequencePointsBlob.IsNil)
+                {
+                    continue;
+                }
+                int token = MetadataTokens.GetToken(handle.ToDefinitionHandle());
+                DocumentHandle last = default;
+                foreach (SequencePoint point in info.GetSequencePoints())
+                {
+                    // As Read names a point's document.
+                    DocumentHandle document = point.Document.IsNil ? info.Document : point.Document;
+                    if (document.IsNil || document == last)
+                    {
+                        continue;
+                    }
+                    last = document;
+                    if (!names.TryGetValue(document, out string? name))
+                    {
+                        names[document] = name = reader.GetString(reader.GetDocument(document).Name);
+                    }
+                    if (!byDocument.TryGetValue(name, out List<int>? methods))
+                    {
+                        byDocument[name] = methods = [];
+                    }
+                    if (methods.Count == 0 || methods[^1] != token)
+                    {
+                        methods.Add(token);
+                    }
+                }
+            }
+        }
+        return _builtMethodsByDocument = byDocument.ToDictionary(p => p.Key, p => p.Value.ToArray(), StringComparer.Ordinal);
     }
 
     private string[]? _documents;

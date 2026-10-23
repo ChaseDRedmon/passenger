@@ -1920,7 +1920,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   The engine's `SourcePaths.Match` takes a
   PDB document that exists where the adapter runs while the breakpoint's file does not (the IDE's, outside the
   container) by what they share from the end, and compares a Windows path (C:\…, \\server\…) ignoring case on any
-  system; the engine gives a Windows document's path back with forward slashes. Before
+  system; the engine gives a Windows document's path back with forward slashes. A module matches a breakpoint's file once
+  (`BestDocument`, kept until an update brings documents) and binds it among the methods with a point in that document
+  alone (`MethodsWithPoints(document)`), never every method of the module. Before
   letting a program go (Disconnect without terminating), the engine runs it off any patch or single-step stop and stops
   it again (`ManagedDebugger_LetGo.cs`): under CET a thread resumes from a breakpoint only through the debugger's
   out-of-process SetThreadContext, which mscordbi's Detach waits for only once it has answered one such flare, so a
