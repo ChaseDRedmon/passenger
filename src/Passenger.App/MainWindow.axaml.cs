@@ -384,7 +384,7 @@ public partial class MainWindow : Window
         }
         if (EditorWithKeys(window, focused) is not { } editor)
         {
-            if (!shifted && ExplorerTakes(action))
+            if (!shifted && (ExplorerTakes(action) || (focused as Visual)?.FindAncestorOfType<ReleaseNotesView>(includeSelf: true)?.Move(action) == true))
             {
                 e.Handled = true;
             }

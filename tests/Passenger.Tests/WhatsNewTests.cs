@@ -128,6 +128,41 @@ public sealed class WhatsNewTests : IDisposable
         Assert.True(Recorded() == Version, $"updates.json records '{Recorded()}' for the fresh state, not the version it began on, {Version}");
     }
 
+    [AvaloniaFact]
+    public void The_keys_that_move_through_a_page_move_through_the_notes()
+    {
+        MainWindow window = Started();
+        Assert.Null(window.ShowWhatsNew());
+        Ui.Settle();
+        ReleaseNotesView view = Rendered(window);
+        Assert.True(view.IsKeyboardFocusWithin, "The notes shown did not take the keys, so a person's first key goes elsewhere");
+        double page = view.Viewport.Height;
+        double end = view.Extent.Height - page;
+        Assert.True(end > page, $"The notes are {view.Extent.Height:0} high in a page of {page:0}, too short to move through");
+
+        // The arrows by a line, the page keys by a page, and the keymap's own line and text ends to the page's ends.
+        double line = Moved(window, view, "DOWN", "a line down");
+        Assert.True(line > 0 && line < page / 4, $"Down moved the notes {line:0}, not a line of a page {page:0} high");
+        Assert.Equal(0, Moved(window, view, "UP", "a line up"));
+        double paged = Moved(window, view, "PAGE_DOWN", "a page down");
+        Assert.True(Math.Abs(paged - page) < 1, $"Page Down moved the notes {paged:0}, not their page of {page:0}");
+        Assert.Equal(0, Moved(window, view, "PAGE_UP", "a page up"));
+        Assert.Equal(end, Moved(window, view, "END", "to the end"), 1);
+        Assert.Equal(0, Moved(window, view, "HOME", "to the start"));
+        Assert.Equal(end, Moved(window, view, OperatingSystem.IsMacOS() ? "meta DOWN" : "control END", "to the end"), 1);
+        Assert.Equal(0, Moved(window, view, OperatingSystem.IsMacOS() ? "meta UP" : "control HOME", "to the start"));
+        window.Close();
+    }
+
+    /// <summary>Where the page's top stands after a key, which must have moved it.</summary>
+    private static double Moved(MainWindow window, ReleaseNotesView view, string keys, string where)
+    {
+        double before = view.Offset.Y;
+        Ui.Press(window, keys);
+        Assert.True(view.Offset.Y != before, $"{keys} did not move the notes {where}: they stand at {before:0} of {view.Extent.Height - view.Viewport.Height:0}");
+        return view.Offset.Y;
+    }
+
     /// <summary>A person's window over the test's state, keeping its layout and settings there, the version whose notes the
     /// build carries; no C# server, since nothing here asks one.</summary>
     private MainWindow Started()

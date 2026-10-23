@@ -258,6 +258,20 @@ public sealed class EditorGroup : DockPanel
     /// <summary>Whether the editor shows the file, rather than a view of its own in the editor's place.</summary>
     private static bool InEditor(OpenDocument document) => document.Asset is null && !document.IsReleaseNotes;
 
+    /// <summary>Gives the keys to what shows the file: its preview or rendered notes, which its keys move through, else the
+    /// editor.</summary>
+    public void FocusShown()
+    {
+        if (preview is not null)
+        {
+            preview.Focus();
+        }
+        else
+        {
+            Editor.Focus();
+        }
+    }
+
     /// <summary>Shows a file's text, or its asset preview or rendered release notes, keeping the carets and scroll of the
     /// text it replaces. A preview detaches the hidden text editor so editing commands cannot change the previous file.</summary>
     public void Show(OpenDocument document)

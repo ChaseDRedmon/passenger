@@ -179,7 +179,7 @@ public sealed partial class EditorArea : UserControl
         group.Show(document);
         SetActiveGroup(group);
         Refresh();
-        group.Editor.Focus();
+        group.FocusShown();
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 

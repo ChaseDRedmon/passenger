@@ -7,6 +7,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Passenger.App.Updates;
 using Passenger.App.Workspace;
+using Passenger.Editor;
 
 namespace Passenger.App.Editors;
 
@@ -49,6 +50,35 @@ public sealed class ReleaseNotesView : ScrollViewer
     }
 
     private readonly StackPanel page;
+
+    /// <summary>Moves through the page by an editor's move, whichever keys the keymap gives it, as a reader moves through a
+    /// page: a line start or the text's to its top, an end to its bottom, a page or a line up or down. True once taken.</summary>
+    public bool Move(string action)
+    {
+        switch (action)
+        {
+            case EditorActions.LineStart or EditorActions.TextStart:
+                ScrollToHome();
+                return true;
+            case EditorActions.LineEnd or EditorActions.TextEnd:
+                ScrollToEnd();
+                return true;
+            case EditorActions.PageUp:
+                PageUp();
+                return true;
+            case EditorActions.PageDown:
+                PageDown();
+                return true;
+            case EditorActions.Up or EditorActions.ScrollUp:
+                LineUp();
+                return true;
+            case EditorActions.Down or EditorActions.ScrollDown:
+                LineDown();
+                return true;
+            default:
+                return false;
+        }
+    }
 
     /// <summary>The page's heading: what the notes are of.</summary>
     public string Title { get; }
