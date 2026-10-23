@@ -51,6 +51,11 @@ public sealed class ProfilerCommands
     private const string NoneChosen = "Attach Profiler chose no program: Run or Debug a configuration first, or start a .NET program in a container";
 
     private readonly ProfilerParts parts;
+    private readonly ToolWindow window;
+    private ProfilerView? view;
+
+    /// <summary>The folder's snapshots as last listed, which the view lists as it is built.</summary>
+    private (string Folder, IReadOnlyList<SnapshotFile> Files)? listed;
     private string profilingName = string.Empty;
 
     /// <summary>Ends the start under way, which waits for the program to reach the profiler: Kill while it starts.</summary>
@@ -63,12 +68,12 @@ public sealed class ProfilerCommands
     public ProfilerCommands(ProfilerParts parts)
     {
         this.parts = parts;
-        View = new ProfilerView();
-        parts.Dock.Add(new ToolWindow(ToolWindowIds.Profiler, "Performance Profiler", "Icon.Profile", View, ToolAnchor.BottomLeft)
+        window = new ToolWindow(ToolWindowIds.Profiler, "Performance Profiler", "Icon.Profile", Make, ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowProfiler,
             Menus = [new MenuPlace("Tools", 0, 1)],
-        });
+        };
+        parts.Dock.Add(window);
         parts.Actions.Add(new IdeAction(AppActions.Profile, "Profile", "Run", context => _ = ProfileReportingAsync())
         {
             WhyNot = _ => WhyNotProfile(Session) ?? (Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null),
@@ -80,8 +85,17 @@ public sealed class ProfilerCommands
             WhyNot = _ => Busy(Session),
             Menus = [new MenuPlace("Run", 3, 0)],
         });
-        View.StopRequested += (_, _) => _ = SnapshotAsync();
-        View.KillRequested += (_, _) =>
+    }
+
+    /// <summary>The Performance Profiler tool window's view, built as it is first shown or asked for (#441): each profile's
+    /// start, run and snapshot shows the window first, so only the folder's kept snapshots are kept for it until then.</summary>
+    public ProfilerView View => view ?? (ProfilerView)window.Content;
+
+    private ProfilerView Make()
+    {
+        ProfilerView made = view = new ProfilerView();
+        made.StopRequested += (_, _) => _ = SnapshotAsync();
+        made.KillRequested += (_, _) =>
         {
             if (starting is { } start)
             {
@@ -92,20 +106,29 @@ public sealed class ProfilerCommands
                 Session.Profiled?.Run.Kill();
             }
         };
-        View.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
-        View.FramesPage.ControlOpened += (_, control) => OpenControl(control);
-        View.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
-        View.OpenKeptRequested += (_, path) => _ = OpenSnapshotAsync(path);
-        View.RevealSnapshotsRequested += (_, _) =>
+        made.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
+        made.FramesPage.ControlOpened += (_, control) => OpenControl(control);
+        made.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
+        made.OpenKeptRequested += (_, path) => _ = OpenSnapshotAsync(path);
+        made.RevealSnapshotsRequested += (_, _) =>
         {
             Directory.CreateDirectory(SnapshotFolder);
             parts.ShowInFileManager(SnapshotFolder);
         };
-        View.MemoryRequested += (_, _) => _ = MemorySnapshotAsync();
+        made.MemoryRequested += (_, _) => _ = MemorySnapshotAsync();
+        if (listed is ({ } folder, { } files))
+        {
+            made.ShowKept(folder, files);
+        }
+        return made;
     }
 
-    /// <summary>The Performance Profiler tool window.</summary>
-    public ProfilerView View { get; }
+    /// <summary>The open folder's snapshots listed on the Snapshots page, or kept for it until it is built.</summary>
+    private void ShowKept(string folder, IReadOnlyList<SnapshotFile> files)
+    {
+        listed = (folder, files);
+        view?.ShowKept(folder, files);
+    }
 
     private ProjectSession Session => parts.Session();
 
@@ -114,9 +137,9 @@ public sealed class ProfilerCommands
     public void Rebind()
     {
         snapshotting = null;
-        if (View.IsFollowing || View.CanKill)
+        if (view is not null && (view.IsFollowing || view.CanKill))
         {
-            View.Stopped($"Profiling {profilingName} ended with its folder");
+            view.Stopped($"Profiling {profilingName} ended with its folder");
         }
     }
 
@@ -151,7 +174,7 @@ public sealed class ProfilerCommands
             {
                 if (!closing.IsCancellationRequested && !profiled.IsEnded && profiled == Session && kept == SnapshotFolder)
                 {
-                    View.ShowKept(kept, files);
+                    ShowKept(kept, files);
                 }
                 return true;
             }).WaitAsync(closing).ConfigureAwait(false);
@@ -438,7 +461,7 @@ public sealed class ProfilerCommands
 
     /// <summary>Kill is there while the program Profile started runs, unless the window follows another's run.</summary>
     private void ShowKill() =>
-        View.ShowKill(starting is not null || Session.Profiled is { } program
+        view?.ShowKill(starting is not null || Session.Profiled is { } program
             && (Session.Profiling is not { } recording || recording.Place is null && recording.ProcessId == program.Run.ProcessId));
 
     /// <summary>Attach Profiler: profiles the program Debug, Run or Profile started, from now until Get Snapshot or its
@@ -798,7 +821,7 @@ public sealed class ProfilerCommands
                         shownProcess = run.Place is null ? run.ProcessId : null;
                         Show(snapshot, name);
                         parts.Dock.Show(ToolWindowIds.Profiler);
-                        View.ShowKept(kept, files);
+                        ShowKept(kept, files);
                         parts.Say(read);
                     }
                     return true;

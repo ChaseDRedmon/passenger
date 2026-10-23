@@ -565,13 +565,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ProblemsModel` (`ToolViews.Problems`: every build's, server's, binding's and container's problems, the tab shown
   and the row chosen; its view `ProblemsWindow`), the Debug window's a `DebugModel` (`ToolViews.Debug`: each session's
   tab and console, the threads, frames and values shown and what its toolbar can press; its view `DebugWindow`, which
-  the Evaluate field's keys and Variables' rows are), and the Live Visual Tree's controller keeps what it said for a
-  view not yet built (`LiveTreeController`: the status, tree, details and Select Element). The Build and Run consoles
+  the Evaluate field's keys and Variables' rows are), and the Live Visual Tree's and the profiler's controllers keep
+  what they said for a view not yet built (`LiveTreeController`: the status, tree, details and Select Element;
+  `ProfilerCommands`: the folder's kept snapshots, each profile showing its window first). The Build and Run consoles
   are made up front, their costly part made as first shown: an `OutputView`'s editor (`HasEditor`, over the text and
   colours it kept), as each Debug console's, the Unit Tests window's details, a `MergedLog`'s Find. Still made up
   front: Aspire's view, made again at each session bind (`BindAspire`: its resources, selection, consoles and
-  telemetry are `AspireView`'s own, which the Aspire actions' checks read, so a lazy one needs it split first) and the
-  profiler's (each profile's start, run and end).
+  telemetry are `AspireView`'s own, which the Aspire actions' checks read, so a lazy one needs it split first).
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,

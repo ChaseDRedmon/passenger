@@ -386,7 +386,7 @@ public sealed class DockingTests
         window.KeepLayout();
         DockHost dock = window.DockHost;
         string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit,
-            ToolWindowIds.Problems, ToolWindowIds.Debug, ToolWindowIds.LiveTree];
+            ToolWindowIds.Problems, ToolWindowIds.Debug, ToolWindowIds.LiveTree, ToolWindowIds.Profiler];
         foreach (string id in built)
         {
             Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");
@@ -443,6 +443,16 @@ public sealed class DockingTests
         Assert.Contains(window.LiveTree.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "Debug an Avalonia or WPF app to see its windows and controls here.");
         dock.Hide(ToolWindowIds.LiveTree);
         Ui.Settle();
+
+        // A folder's start lists its kept snapshots for the profiler, whose view is built only as it is shown, listing them.
+        MainWindow profiled = Ui.OpenFolder(TestFolders.Create("profiled-"), languageServer: false);
+        Assert.False(profiled.DockHost[ToolWindowIds.Profiler]!.IsBuilt || profiled.DockHost[ToolWindowIds.LiveTree]!.IsBuilt,
+            "A folder's start built the profiler's or the Live Visual Tree's view, though both are hidden");
+        profiled.DockHost.Show(ToolWindowIds.Profiler);
+        Ui.Settle();
+        Assert.Contains(profiled.ProfilerView, profiled.DockHost.GetVisualDescendants());
+        Assert.StartsWith("No snapshots yet.", profiled.ProfilerView.KeptSummary, StringComparison.Ordinal);
+        profiled.Close();
 
         // Shown, a window's view is built; the layout kept with it shown builds it as the next window opens, and no other.
         dock.Show(ToolWindowIds.Structure);
