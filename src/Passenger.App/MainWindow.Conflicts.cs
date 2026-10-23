@@ -16,10 +16,6 @@ public partial class MainWindow
 
     private void AddMergeConflicts()
     {
-        commitView!.ResolveRequested += (_, _) => ShowConflicts();
-        commitView.MergeRequested += (_, path) => _ = MergeAsync(path);
-        commitView.Confirm = (title, text, yes) => Confirm(title, text, yes);
-
         Add(AppActions.ResolveConflicts, "Resolve Conflicts…", _ => ShowConflicts(), 5,
             () => session.Vcs.Conflicts.Count == 0 ? "No conflicts found" : null);
         Add(AppActions.ContinueRebase, "Continue Rebase", context => _ = session.Vcs.ContinueRebaseAsync(), 6, NoRebase);

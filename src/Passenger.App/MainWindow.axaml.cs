@@ -702,7 +702,11 @@ public partial class MainWindow : Window
         }
         // Before the folder's documents are this window's, so what restoring them changes is not written back.
         RestoreUnitTests(opening.UnitTests.Value);
-        GitBranches.Favorites = opening.GitBranches.Value;
+        branchFavorites = opening.GitBranches.Value;
+        if (gitView?.Log.Branches is { } branches)
+        {
+            branches.Favorites = branchFavorites;
+        }
         session.Keep(opening);
         WorkspaceState kept = opening.Workspace.Value;
         if (kept.UnloadedProjects.Count > 0)

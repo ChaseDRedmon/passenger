@@ -11,9 +11,13 @@ public partial class MainWindow
     /// <summary>The Git log's branches panel.</summary>
     public BranchesPanel GitBranches => GitLog.Branches!;
 
-    private void AddBranches()
+    /// <summary>The folder's favourite branches, kept for the branches panel until the Git window is built.</summary>
+    private GitBranchesState branchFavorites = new();
+
+    /// <summary>The branches panel's requests and favourites, as the Git window is built.</summary>
+    private void FollowBranches(BranchesPanel panel)
     {
-        BranchesPanel panel = GitBranches;
+        panel.Favorites = branchFavorites;
         panel.NewBranchRequested += (_, branch) => ShowNewBranchFrom(branch);
         panel.RenameRequested += (_, branch) => ShowRenameBranch(branch);
         panel.DeleteRequested += (_, branch) => _ = DeleteBranchAsync(branch);
