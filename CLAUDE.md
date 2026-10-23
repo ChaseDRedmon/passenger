@@ -166,7 +166,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
   goes with the text before it, or a value (`InlayHintKind.Value`: what a compose file's `${VAR}` comes to), which goes
   with the text before it as a type does and shows whatever Settings say of the other two; the hints at an offset are a
-  caret place of their own, as IntelliJ's inlays are. A file's hints are a `HintList` (runs, as `FoldList`'s regions are:
+  caret place of their own, as IntelliJ's inlays are. A row's hints are kept while
+  the text, the hints and how they are drawn stand (`rowGaps`), and a hinted line's text is drawn a run at a time, each
+  run once in the piece it is in (one a hint stands inside clipped to each piece it spans), so a frame of hinted lines
+  costs about what the same lines without hints do. A file's hints are a `HintList` (runs, as `FoldList`'s regions are:
   an edit moves the runs it reaches, the rest shifted whole), which the open file carries through each edit
   (`OpenDocument.InlayHints`, as its folds) and each editor carries too, ahead of everyone (`OnChangedFirst`, before the
   wraps, so the key's lines wrap with their hints where they now stand); the editor takes a host's list as it is when in

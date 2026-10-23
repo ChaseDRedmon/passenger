@@ -190,6 +190,7 @@ public sealed partial class CodeEditor
     {
         views.Clear();
         labels.Clear();
+        rowGaps.Clear();
         numbers.Clear();
         advances = null;
     }
