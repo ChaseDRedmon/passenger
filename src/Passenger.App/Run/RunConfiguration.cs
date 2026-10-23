@@ -123,6 +123,11 @@ public sealed record RunConfiguration
     /// still go with the folder and the IDE.</summary>
     public bool KeepBackingServices { get; init; }
 
+    /// <summary>Whether a container run collects its .NET services' logs and traces: Aspire's dashboard run beside them,
+    /// which they are told to send OpenTelemetry to, read by the Telemetry view and an agent's <c>telemetry</c>. Off unless
+    /// chosen, since its image is pulled the first time.</summary>
+    public bool Telemetry { get; init; }
+
     /// <summary>The service whose published port fills the browser's <c>{ServicePort}</c>: Visual Studio's
     /// composeLaunchServiceName; the first .NET service when none is named.</summary>
     public string LaunchService { get; init; } = string.Empty;

@@ -1086,6 +1086,7 @@ public sealed class AspireAppRun : ServiceRun
     internal string ResourceServiceKey { get; set; } = string.Empty;
     internal Uri? DashboardEndpoint { get; set; }
     internal string DashboardApiKey { get; set; } = string.Empty;
+    public override Telemetry.TelemetrySource? Telemetry => DashboardEndpoint is { } endpoint && DashboardApiKey.Length > 0 ? new(endpoint, DashboardApiKey) : null;
     internal bool ProfileClaimed { get; set; }
     internal (string AppHost, string Name)? ProfileTarget { get; init; }
 

@@ -146,6 +146,10 @@ public sealed class RunConfigurationsDialog : Window
         ToolTip.SetTip(ModeBox, "Fast runs each .NET service in its image's runtime stage with Passenger's build mounted in, so a code change needs no image rebuild; the other builds every image as Compose says");
         TextBlock keepWords = new() { Text = "Keep backing services running after Stop" };
         KeepBackingBox = new CheckBox { Content = keepWords };
+        TextBlock telemetryWords = new() { Text = "Collect logs and traces with Aspire's dashboard" };
+        TelemetryBox = new CheckBox { Content = telemetryWords, Name = "TelemetryBox" };
+        ToolTip.SetTip(TelemetryBox, $"Runs Aspire's dashboard ({Containers.ContainerTelemetry.Image}, pulled the first time) beside the services and tells each "
+            + ".NET service to send it its OpenTelemetry, unless its own files name where; the Containers window's Telemetry tab and an agent's telemetry read it");
         DockerfileBox = Field("The project's own, beside it");
         ContextBox = Field("The project's DockerfileContext, else the solution's folder");
         BuildArgumentsBox = Field("NAME=value");
@@ -161,6 +165,7 @@ public sealed class RunConfigurationsDialog : Window
         LaunchServiceBox.TextChanged += (_, _) => Edit(c => c with { LaunchService = LaunchServiceBox.Text?.Trim() ?? string.Empty });
         ModeBox.SelectionChanged += (_, _) => Edit(c => c with { Mode = ModeBox.SelectedIndex == 1 ? ContainerMode.Images : ContainerMode.Fast });
         KeepBackingBox.IsCheckedChanged += (_, _) => Edit(c => c with { KeepBackingServices = KeepBackingBox.IsChecked == true });
+        TelemetryBox.IsCheckedChanged += (_, _) => Edit(c => c with { Telemetry = TelemetryBox.IsChecked == true });
         DockerfileBox.TextChanged += (_, _) => Edit(c => c with { Dockerfile = Full(DockerfileBox.Text) });
         ContextBox.TextChanged += (_, _) => Edit(c => c with { Context = Full(ContextBox.Text) });
         BuildArgumentsBox.TextChanged += (_, _) => Edit(c => c with { BuildArguments = BuildArgumentsBox.Text ?? string.Empty });
@@ -213,6 +218,7 @@ public sealed class RunConfigurationsDialog : Window
             (Row("Run arguments", RunArgumentsBox, fields: ["runArguments"]), [RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row("Mode", ModeBox, fields: ["mode"]), [RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row(string.Empty, KeepBackingBox, marked: keepWords, fields: ["keepBackingServices"]), [RunKind.Compose]),
+            (Row(string.Empty, TelemetryBox, marked: telemetryWords, fields: ["telemetry"]), [RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row("Environment variables", new StackPanel { Spacing = 6, Children = { VariablesHeader(), variables, AddVariableButton } }, top: true, fields: ["environment"]),
                 [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row(string.Empty, ConsoleBox, marked: consoleWords, fields: ["console"]), [RunKind.Project]),
@@ -470,6 +476,9 @@ public sealed class RunConfigurationsDialog : Window
     public ComboBox ModeBox { get; }
 
     public CheckBox KeepBackingBox { get; }
+
+    /// <summary>Collect logs and traces: Aspire's dashboard beside a container run's services.</summary>
+    public CheckBox TelemetryBox { get; }
 
     public TextBox DockerfileBox { get; }
 
@@ -875,6 +884,7 @@ public sealed class RunConfigurationsDialog : Window
             LaunchServiceBox.Text = shown.LaunchService;
             ModeBox.SelectedIndex = shown.Mode == ContainerMode.Images ? 1 : 0;
             KeepBackingBox.IsChecked = shown.KeepBackingServices;
+            TelemetryBox.IsChecked = shown.Telemetry;
             DockerfileBox.Text = Shown(shown.Dockerfile);
             ContextBox.Text = Shown(shown.Context);
             BuildArgumentsBox.Text = shown.BuildArguments;

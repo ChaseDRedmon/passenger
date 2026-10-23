@@ -10,46 +10,6 @@ namespace Passenger.App.Mcp;
 
 public sealed partial class PassengerTools
 {
-    [McpServerTool(Name = "aspire_telemetry", Title = "Aspire logs and traces", ReadOnly = true), Description(
-        "An Aspire AppHost's structured logs or traces (kind) from its dashboard, or a resource's or trace's (traceId) alone.")]
-    public Task<AspireTelemetryInfo> GetAspireTelemetry(string kind = "logs", string? appHost = null,
-        string? resource = null, string? traceId = null, int limit = 200,
-        CancellationToken cancel = default) => OnUi(cancel, async () =>
-    {
-        if (kind is not ("logs" or "traces"))
-        {
-            throw new ArgumentException("kind must be logs or traces");
-        }
-        ProjectSession current = Session;
-        string? qualified = resource is null ? null : appHost is not null && !resource.Contains("::", StringComparison.Ordinal)
-            ? $"{Resolve(appHost)}::{resource}" : resource;
-        AspireSelection? selected = qualified is null ? null : await window.ResolveOwnedAspireResourceAsync(qualified, null, cancel);
-        string? path = appHost is null ? selected?.AppHostPath : Resolve(appHost);
-        if (selected is not null && path is not null && !Passenger.Core.PathNames.Same(path, selected.AppHostPath))
-        {
-            throw new ArgumentException("appHost and resource name different AppHosts");
-        }
-        AspireAppRun[] apps = current.Aspire.Apps.Where(app => !app.IsTest && !app.Stopping
-            && (path is null || Passenger.Core.PathNames.Same(path, app.Configuration.Project))).ToArray();
-        AspireAppRun app = apps.Length == 1 ? apps[0]
-            : throw new InvalidOperationException("Name one owned AppHost by appHost or a unique resource; workspace lists targets");
-        if (Session != current || current.IsEnded || app.DashboardEndpoint is not { } endpoint)
-        {
-            throw new InvalidOperationException("The owned AppHost's Dashboard is unavailable");
-        }
-        string? filter = selected?.Resource.Name;
-        IReadOnlyList<AspireStructuredLog> logs = kind == "logs"
-            ? await AspireTelemetry.ReadLogsAsync(endpoint, app.DashboardApiKey, filter, traceId, limit, cancel) : [];
-        IReadOnlyList<AspireTrace> traces = kind == "traces"
-            ? await AspireTelemetry.ReadTracesAsync(endpoint, app.DashboardApiKey, filter, traceId, limit, cancel) : [];
-        if (Session != current || current.IsEnded || app.Stopping || current.Aspire.FindApp(app.Configuration.Project) != app)
-        {
-            throw new InvalidOperationException("The workspace or owned AppHost changed");
-        }
-        return new AspireTelemetryInfo([.. logs.Select(log => log.Data)],
-            [.. traces.Select(trace => new AspireTraceInfo(trace.TraceId, trace.Data, [.. trace.Spans.Select(span => span.Data)]))]);
-    });
-
     private async Task<(AspireSelection Selection, bool Started)> PrepareAspireResource(string resource, string? configuration,
         RunStart? mode, string? arguments, CancellationToken cancel)
     {
@@ -233,6 +193,4 @@ public sealed record AspireResourceInfo(string Name, string Generation, string D
 {
     public string? Target { get; init; }
 }
-public sealed record AspireTraceInfo(string TraceId, JsonElement Summary, IReadOnlyList<JsonElement> Spans);
 public sealed record AspireOwnedAppInfo(string AppHostPath, int ProcessId, string State, string Group, IReadOnlyList<AspireResourceInfo> Resources);
-public sealed record AspireTelemetryInfo(IReadOnlyList<JsonElement> Logs, IReadOnlyList<AspireTraceInfo> Traces);

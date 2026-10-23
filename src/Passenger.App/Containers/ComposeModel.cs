@@ -14,6 +14,10 @@ public sealed record ComposePort(int Target, string? Published, string Protocol,
 public sealed record ComposeService(string Name, string? Context, string? Dockerfile, string? Target, IReadOnlyDictionary<string, string> BuildArguments, string? Image,
     IReadOnlyList<ComposePort> Ports, IReadOnlyDictionary<string, string> Environment, bool Watches, IReadOnlyList<string> DependsOn)
 {
+    /// <summary>The networks it joins by name (Compose's model names <c>default</c> for one that names none); none when its
+    /// <c>network_mode</c> puts it elsewhere.</summary>
+    public IReadOnlyList<string> Networks { get; init; } = [];
+
     /// <summary>The Dockerfile's full path, for a service built from a folder here (not a repository, not an inline one).</summary>
     public string? DockerfilePath => Context is { } context && Directory.Exists(context) ? Path.GetFullPath(Path.Combine(context, Dockerfile ?? "Dockerfile")) : null;
 }
@@ -70,7 +74,12 @@ public sealed record ComposeModel(string Name, IReadOnlyList<ComposeService> Ser
                     && develop.TryGetProperty("watch", out JsonElement watch) && watch.ValueKind == JsonValueKind.Array && watch.GetArrayLength() > 0;
                 List<string> depends = value.TryGetProperty("depends_on", out JsonElement on) && on.ValueKind == JsonValueKind.Object
                     ? [.. on.EnumerateObject().Select(d => d.Name)] : [];
-                services.Add(new ComposeService(service.Name, context, dockerfile, target, args, ContainerEngine.Text(value, "image"), ports, Map(value, "environment"), watches, depends));
+                List<string> joined = value.TryGetProperty("networks", out JsonElement nets) && nets.ValueKind == JsonValueKind.Object
+                    ? [.. nets.EnumerateObject().Select(n => n.Name)] : [];
+                services.Add(new ComposeService(service.Name, context, dockerfile, target, args, ContainerEngine.Text(value, "image"), ports, Map(value, "environment"), watches, depends)
+                {
+                    Networks = joined,
+                });
             }
         }
         Dictionary<string, bool> networks = [];
