@@ -56,7 +56,7 @@ jobs:
             shards: 4
             time_scale: 2
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 52
     defaults:
       run:
         shell: bash
@@ -214,7 +214,7 @@ jobs:
       # failed tests are listed last, as annotations and in the job's summary.
       - name: Test
         shell: pwsh
-        timeout-minutes: 30
+        timeout-minutes: 34
         env:
           SHARD: ${{ matrix.shard }}
           LABEL: ${{ matrix.name }}, shard ${{ matrix.shard }} of ${{ matrix.shards }}

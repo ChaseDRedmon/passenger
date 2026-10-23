@@ -2467,10 +2467,12 @@ by their seconds on that system in `tests/Passenger.Tests/TestTimes.json` (one i
 every shard, checked by the first shard before any test runs to put every test in exactly one (a listing of each
 hand, a VSTest discovery each, which the others need not repeat); inside a shard the collections keep their
 order. A shard writes its classes' times into its summary (`tools/test-times.py` over the .trx, budgets in
-`tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 22 minutes fails (the
+`tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 28 minutes fails (the
 whole run was an hour in one job a system; 20 until the MVP's last week grew macOS's classes to 72 minutes, which four
 shards deal at about 19.6 each, and a fifth macOS shard would queue behind the disk images for GitHub's five macOS
-runners; on e258c203 macOS's classes came to 87 minutes, about 21.8 a shard, so the budget has little to spare). Each
+runners; 22 until 0.2.0's containers, Aspire and web work grew the classes to 101 minutes on macOS, 105 on Windows and 92
+on Linux in CI run 39992190279, about 25, 26 and 23 a shard: a fifth shard on Windows or Linux would cost another build
+and end no sooner than macOS's four, so the budget rose instead, the Test step's limit, 34, and the job's, 52, above it). Each
 system's summary job fails unless every shard succeeded and every test
 has exactly one result, and warns when its run's own times would deal a slowest shard two minutes shorter: `just
 test-times RUN` writes them to TestTimes.json, for committing. Raise a budget, or add a shard, knowing why. The run
