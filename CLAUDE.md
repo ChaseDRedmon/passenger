@@ -1822,8 +1822,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   person's window (#278), where `ide_action` is, and its answer names the files a save left unsaved (a read-only one).
   `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
-  editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
-  there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
+  editor has not changed takes the disk's text first (`PassengerTools.DocumentAsync`), since an agent's own file tools
+  write there and ask at once: its length and time looked at off the UI thread and the file read and compared there only
+  once they changed since the editor last read it (`OpenDocument.TakeDiskTextAsync`, `DiskStamp`, with the text's version
+  then; a time within 2 s of its read trusted to show no second write), so a question of an open file costs the window
+  what it asks, not the file's size (#438, McpWindowTests holds it with 20,000 lines against ten). A call's wait for what
+  the IDE does wakes on the event or task of what it waits on (`When`, `On`, `Ends`: the C# server's state, a debugged
+  program's or an inspected app's, a file's checks, a profiled program's end, a run's end), `Until`'s 50 ms looks left only
+  where what it waits on raises nothing, each saying why; `refactor`'s project and solution scopes take their files from
+  the folder's index off the UI thread (`CodeFilesAsync`), and the tools are made once a process, off the UI thread
+  (`McpHost.Tools`, each call reaching its connection's `PassengerTools` through `McpHost.Serving`). `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
   (`AfterLaunch`, which watches 2 s more for a stop in its first layout); each run of a stop's frames outside the
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
   names that build's errors (`WithBuildErrors`, by the `BuildOutcome` of the build it ran, `LaunchBuild`; a refusal for anything

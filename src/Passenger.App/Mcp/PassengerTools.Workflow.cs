@@ -285,7 +285,7 @@ public sealed partial class PassengerTools
         IReadOnlyList<HeapTypeInfo>? heap = null;
         if (seconds is { } limit)
         {
-            await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)), cancel);
+            await When(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)), cancel, Ends(running.ExitedAsync()), Ends(running.PutAway));
             CheckProfileTarget();
             if (memory && !running.HasExited && await window.MemorySnapshotAsync(cancel) is { } taken)
             {
@@ -294,7 +294,7 @@ public sealed partial class PassengerTools
         }
         else
         {
-            await Until(() => running.HasExited, TimeSpan.FromMinutes(10), cancel);
+            await When(() => running.HasExited, TimeSpan.FromMinutes(10), cancel, Ends(running.ExitedAsync()), Ends(running.PutAway));
         }
         AgentCall.Say("Reading the profile");
         CheckProfileTarget();

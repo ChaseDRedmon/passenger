@@ -80,10 +80,10 @@ public sealed class McpProxy
         IdeLog.TakeConsole();
         McpProxy proxy = new(processId, PathNames.Canonical(folder ?? Environment.CurrentDirectory));
         McpServerPrimitiveCollection<McpServerTool> tools = [];
-        foreach (MethodInfo method in McpHost.ToolMethods())
+        foreach (McpServerTool tool in McpHost.Tools)
         {
             // Never called: each call goes on to the window's own tool of the name.
-            tools.Add(new ForwardedTool(McpHost.Lean(McpServerTool.Create(method, _ => throw new InvalidOperationException("The proxy runs no tool itself"), McpHost.ToolCreateOptions())), proxy));
+            tools.Add(new ForwardedTool(tool, proxy));
         }
         McpServerOptions options = new()
         {
