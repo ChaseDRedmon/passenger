@@ -548,6 +548,11 @@ public partial class MainWindow
     private void ShowAspireEngine(Containers.EngineState engine)
     {
         UiThread.Check();
+        // An AppHost's orchestrator needs no Compose: an engine without it serves the run.
+        if (engine.Status == Containers.EngineStatus.NoCompose)
+        {
+            engine = engine with { Status = Containers.EngineStatus.Ready, Problem = null };
+        }
         ShowEngine(engine);
         Bottom.AspirePane.SetContainerStatus(engine.Problem is { } problem ? $"Container resources cannot run: {problem}"
             : $"{engine.EngineName} is running; Aspire reports each container's state and health.");

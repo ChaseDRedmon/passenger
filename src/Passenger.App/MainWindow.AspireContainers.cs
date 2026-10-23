@@ -14,10 +14,6 @@ public partial class MainWindow
     /// its own: held, so what it removes has gone once the window is quiet.</summary>
     private void LookForLeftovers(ProjectSession current)
     {
-        if (PathNames.Same(StateFolder, State.StateStore.DefaultRoot))
-        {
-            return;
-        }
         if (current.Folder is not null)
         {
             Look();
@@ -28,9 +24,10 @@ public partial class MainWindow
             Opened += (_, _) => Look();
         }
 
+        // The state folder as the window was given it, which its constructor, making its first session, has yet to take.
         void Look()
         {
-            if (!leftoversLooked)
+            if (!leftoversLooked && !PathNames.Same(StateFolder, State.StateStore.DefaultRoot))
             {
                 leftoversLooked = true;
                 BackgroundWork.Track(ContainerLabels.LookForLeftovers(Engine, StateFolder));

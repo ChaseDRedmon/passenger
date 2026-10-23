@@ -931,8 +931,22 @@ window or takes the focus; it shows everything but the system's own window chrom
   (Windows locks them). A single-file AppHost is built in the Build window as a project's is (`BuildStep.Output`, into the
   state's `aspire/<hash>/output`), Stop and Problems reaching its build. What the controller reads of the disk (a
   single-file AppHost's head, folder and launch profile, a service's project and launch profiles, its build's stamp) and
-  the container ownership manifest (`AspireContainerOwnership`, read by `Peek`, written at once) are read and written off
-  the UI thread. Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
+  the container ownership manifest (`AspireContainerOwnership`, read by `Peek`, written at once, its leftovers' removal
+  through `StateDocument.ChangeNow`) are read and written off the UI thread. An AppHost's containers (#397): a run follows
+  its resource stream from its connection until it stops, whatever the Aspire window shows (`AspireController.Follow`,
+  `AspireAppRun.Following`), so each container DCP makes is known as it is made (`AspireAppRun.KnownContainerIds`) and a
+  session one recorded at once in the state's `aspire-containers/ownership.json` (`AspireContainerOwnership`, the
+  controller's) with `ContainerLabels`' state, machine and process, since DCP's containers carry none of Passenger's
+  labels; the run's Stop takes them down once its AppHost has gone and waits for it (a killed AppHost leaves DCP running
+  with them), the folder's end once its AppHost and services have (`TakeDownAsync`), and the watchdog and the next start
+  as the Rules say. A Persistent container (`container.lifetime`, DCP's `com.microsoft.developer.usvc-dev.persistent`
+  label) is the person's to keep: never recorded, never removed. A container DCP made that the engine Passenger's docker
+  reaches does not hold (DCP picks its runtime itself: ASPIRE_CONTAINER_RUNTIME, else its own look) is said in the
+  AppHost's console and the status bar (`AspireController.ContainersElsewhere`), never recorded. The Containers window
+  lists an AppHost's containers under it in an Aspire heading (`ContainerRowKind.AppHost`, `ContainersView.AppHostOf`, by
+  the run's resources; any other DCP made, by its labels, under the heading), and the engine's state during an Aspire run
+  is said where a container run's is (`MainWindow.ShowAspireEngine` through `ShowEngine`, an engine with no Compose taken
+  as serving it), followed by its events while an AppHost runs (`FollowEngineForAspire`). Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
   `AspireOrchestration`, `AspireOrchestrationDialog`) adds an AppHost and ServiceDefaults from Aspire's templates and
   references them, each service a local of the AppHost, with the backing services Add > Docker Compose's detection finds
   for it (`BackingService.Needs`: a server once by its service's name, a database of Postgres, SQL Server or Mongo by
@@ -1825,9 +1839,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   Compose project only the containers and networks this process's labels are on, never `down`, which would take the
   person's own of it, as a run's Stop takes its own: `FolderContainers.TakeDownAsync`), the watchdog's last command (`ChildProcesses.AtIdeEnd`) removes the process's own on macOS and
   Linux however it ends, reaching the engine the IDE's commands reach (the CLI's DOCKER_* variables as the IDE has them,
-  the context by name, told again when it changes), and the next start (`ContainerLabels.RemoveLeftoversAsync`) removes
-  those of its state and machine whose process is gone, once the state has labelled anything
-  (`ContainerLabels.EverLabelled`): another machine's on a shared engine are never judged by this one's processes. Tests
+  the context by name, told again when it changes), and the next start (`ContainerLabels.LookForLeftovers`, once a state
+  a process: the process's start its own, a window keeping its state elsewhere, a test's, as it first shows;
+  `RemoveLeftoversAsync`) removes those of its state and machine whose process is gone (`ContainerLabels.IsLeftover`, the
+  one rule), once the state has labelled anything (`ContainerLabels.EverLabelled`): another machine's on a shared engine
+  are never judged by this one's processes. What an engine makes for Passenger that carries none of its labels (an Aspire
+  AppHost's session containers, DCP's) is recorded with the same three (`AspireContainerOwnership`) and ended by the same
+  rules and commands, with no rules of its own: the watchdog's command names them by id beside the labelled ones
+  (`ContainerLabels.MadeUnlabelled`, `EndedUnlabelled`), and the next start removes a gone process's on the engine it
+  recorded them on, each still the container recorded and not Persistent, forgetting one the engine no longer holds. Tests
   label what they make with the run's `Docker.RunLabel` (its machine and process), removed at its end, and the first test
   that uses the engine removes what a run of this machine whose process is gone left: its label's objects and what its
   IDE made under its state (`Docker.RemoveDeadRuns`).

@@ -34,6 +34,9 @@ internal sealed class AspireContainerOwnership
     /// <summary>What this process recorded of each AppHost (by its hash), until its run's take-down.</summary>
     private readonly Dictionary<string, HashSet<string>> made = new(StringComparer.Ordinal);
 
+    /// <summary>Each AppHost's containers as last recorded (their ids, lifetimes and names), by its hash.</summary>
+    private readonly Dictionary<string, string> recordedAs = new(StringComparer.Ordinal);
+
     /// <summary>The containers said to be on another engine than Passenger's (<see cref="Elsewhere"/>), each said once.</summary>
     private readonly HashSet<string> elsewhere = new(StringComparer.Ordinal);
     private Task<Identity?>? observingIdentity;
@@ -65,6 +68,14 @@ internal sealed class AspireContainerOwnership
             return;
         }
         string appHost = Hash(Path.GetFullPath(ownedAppHostPath));
+        // Most batches are a health or state's change: containers already recorded read no manifest again.
+        string signature = string.Join('\n', resources.Select(resource => resource.Data)
+            .Where(data => string.Equals(String(data, "resourceType"), "Container", StringComparison.OrdinalIgnoreCase))
+            .Select(data => $"{String(data, "properties", "container.id")} {String(data, "properties", "container.lifetime")} {String(data, "name")}").Order(StringComparer.Ordinal));
+        if (recordedAs.GetValueOrDefault(appHost) == signature)
+        {
+            return;
+        }
         long observation = observations.GetValueOrDefault(appHost) + 1;
         observations[appHost] = observation;
         using IDisposable held = BackgroundWork.Scope();
@@ -108,6 +119,7 @@ internal sealed class AspireContainerOwnership
             && entry.Id == item.Id && entry.Name == item.Name && entry.Uid == item.Uid));
         if (observed.Count == 0)
         {
+            recordedAs[appHost] = signature;
             return;
         }
         Task<Identity?> readingIdentity = observingIdentity is { IsCompleted: false } pending
@@ -156,6 +168,7 @@ internal sealed class AspireContainerOwnership
             }
         }
         await SaveAsync(entries);
+        recordedAs[appHost] = signature;
         if (added.Count > 0)
         {
             if (!made.TryGetValue(appHost, out recorded))
@@ -177,6 +190,7 @@ internal sealed class AspireContainerOwnership
         string appHost = Hash(Path.GetFullPath(appHostPath));
         // A snapshot still on its way to the UI thread records nothing of a run taken down.
         observations[appHost] = observations.GetValueOrDefault(appHost) + 1;
+        recordedAs.Remove(appHost);
         if (!made.Remove(appHost, out HashSet<string>? recorded) || recorded.Count == 0)
         {
             return Task.CompletedTask;
@@ -265,12 +279,14 @@ internal sealed class AspireContainerOwnership
             // Several filters of one key are any of them to the engine: one list of those still there, labels and all.
             ContainerInfo[] listed = [.. (await engine.JsonLinesAsync([.. identity.Arguments, "ps", "-a", "--no-trunc",
                 .. here.SelectMany(entry => (string[])["--filter", $"id={entry.Id}"]), "--format", "json"], cancel).ConfigureAwait(false)).Select(ContainerInfo.Read)];
+            // An answer naming a container no entry names does not hold together: what it leaves out is not taken as gone.
+            bool together = listed.All(container => here.Any(entry => entry.Id == container.Id));
             foreach (Entry entry in here)
             {
                 ContainerInfo? found = listed.FirstOrDefault(container => container.Id == entry.Id);
                 if (found is null)
                 {
-                    if (listed.Length == 0)
+                    if (together)
                     {
                         gone.Add(entry);
                     }

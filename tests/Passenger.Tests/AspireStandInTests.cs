@@ -1026,6 +1026,55 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
 
     /// <summary>A window on the stand-in AppHost, run from its Aspire configuration as a person runs it, once the window has
     /// connected to the stand-in resource service its launch profile names; no C# language server, which nothing here asks.</summary>
+    /// <summary>The container engine stopping while an AppHost runs (Docker Desktop quit) is said where a container run says
+    /// it, in the same words: the status bar, whose click starts Docker Desktop where it is installed (never clicked here), and
+    /// Problems' Containers tab, which empties as the engine comes back; an engine with no Compose serves the run, which
+    /// needs none. A stand-in engine stops and starts, never Docker Desktop.</summary>
+    [AvaloniaFact]
+    public void A_container_engine_that_stops_while_an_AppHost_runs_is_said_in_the_status_bar_and_Problems_as_for_a_container_run()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        project.Reset();
+        (string cli, string state) = ContainersTests.StandInEngine(TestFolders.Create("aspire-engine-"), up: true);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = new()
+        {
+            Width = 1200, Height = 800, Autosaves = false, WarmServer = project.Server, StartsLanguageServer = false,
+            Engine = new Passenger.App.Containers.ContainerEngine(cli: cli),
+        };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        Ui.Settle();
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration),
+                "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1,
+                $"the window to connect to the stand-in AppHost's resource service ({window.Status})");
+            Assert.Empty(window.BottomPanel.Problems.ContainerProblems);
+
+            File.WriteAllText(state, "down");
+            const string Down = "Docker isn't running (context stand-in)";
+            Ui.WaitFor(() => window.BottomPanel.Problems.ContainerProblems.Any(problem => problem.Message.StartsWith(Down, StringComparison.Ordinal)),
+                "the stopped engine listed in Problems' Containers tab", TimeSpan.FromMinutes(1));
+            Assert.StartsWith(Down, window.Status, StringComparison.Ordinal);
+            Assert.Equal(Passenger.App.Containers.EngineState.DesktopApp is null ? "see it in Problems, Containers" : "start Docker Desktop", window.StatusPlace?.Name);
+            Assert.Single(window.BottomPanel.Problems.ContainerProblems);
+
+            File.WriteAllText(state, "up");
+            Ui.WaitFor(() => window.BottomPanel.Problems.ContainerProblems.Count == 0, "Problems' Containers tab emptied as the engine came back",
+                TimeSpan.FromMinutes(1));
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     private MainWindow OpenRunning(AspireInteractionHost backend)
     {
         project.Serve(backend);
