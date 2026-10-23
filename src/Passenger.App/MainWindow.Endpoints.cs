@@ -10,28 +10,35 @@ public partial class MainWindow
 {
     private EndpointsView? endpoints;
 
-    /// <summary>The Endpoints tool window.</summary>
-    public EndpointsView Endpoints => endpoints!;
+    /// <summary>The Endpoints tool window, built as it is first shown or asked for.</summary>
+    public EndpointsView Endpoints => endpoints ?? (EndpointsView)Dock[ToolWindowIds.Endpoints]!.Content;
 
     /// <summary>The Interactive Test dialog open last, for the tests.</summary>
     public InteractiveTestDialog? InteractiveTest { get; private set; }
 
     private void AddEndpoints()
     {
-        EndpointsView view = new(new EndpointsParts(work, () => session.EndpointGrants, text => status.Text = text));
-        endpoints = view;
-        view.GoToRequested += (_, request) => NavigateTo(request.File, new TextPosition(request.Line, 0));
-        view.InteractiveRequested += (_, request) => OpenInteractiveTest(request);
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Endpoints, "Endpoints", "Icon.Endpoints", view, Docking.ToolAnchor.RightTop)
+        // Built as it is first shown or asked for (a route's request sent), over the session's files and routes then.
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Endpoints, "Endpoints", "Icon.Endpoints", () =>
+        {
+            EndpointsView view = new(new EndpointsParts(work, () => session.EndpointGrants, text => status.Text = text));
+            endpoints = view;
+            view.GoToRequested += (_, request) => NavigateTo(request.File, new TextPosition(request.Line, 0));
+            view.InteractiveRequested += (_, request) => OpenInteractiveTest(request);
+            FollowRoutes(view);
+            view.Reload(session.Folder);
+            view.ShowRoutes(session.Routes.All);
+            return view;
+        }, Docking.ToolAnchor.RightTop)
         {
             Action = AppActions.ShowEndpoints,
             Menus = [new MenuPlace("Tools", 0, 3)],
-            Chosen = () => view.Chosen,
+            Chosen = () => endpoints?.Chosen,
         });
         // The row's Test button, Enter and its menu test it as this does; an agent or Find Action tests the row chosen.
-        actions!.Add(new IdeAction(AppActions.TestEndpoint, "Test Request", "Endpoints", context => _ = view.TestAsync(view.Chosen!))
+        actions!.Add(new IdeAction(AppActions.TestEndpoint, "Test Request", "Endpoints", context => _ = Endpoints.TestAsync(Endpoints.Chosen!))
         {
-            WhyNot = _ => view.Chosen is null ? "No request is chosen in the Endpoints window" : null,
+            WhyNot = _ => endpoints?.Chosen is null ? "No request is chosen in the Endpoints window" : null,
             Words = ["HTTP Client", "Send Request"],
         });
     }

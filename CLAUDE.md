@@ -542,11 +542,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   profiler in `ProfilerCommands`). A window's start builds no view it hides (#233): a `ToolWindow` given how to build
   its view (`Func<Control>`, its header's `Tools` too) builds and wires it as it is first shown, by its layout kept too
   (`IsBuilt`, `Built`), and what reads or acts on it asks through a property that builds it (`StructureView`, `Find`,
-  `Hierarchy`, `LocalHistoryWindow`), while what only follows the IDE (a caret moved, a session bound) passes over one
-  not built (`structure?.`); what only looks among the views made (which window holds the keys) asks `IsBuilt` first. A
-  view written to while hidden (the Build, Run, Debug and Problems consoles and lists) is made up front, its costly part
-  made as it is first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests
-  window's details, a `MergedLog`'s Find.
+  `Hierarchy`, `LocalHistoryWindow`, `Endpoints`, `NuGet`, `ContainersWindow`: a route's request sent, a package
+  installed or a project file's completion asking the feeds, a container action), while what only follows the IDE (a
+  caret moved, a session bound, the routes read) passes over one not built (`structure?.`, `endpoints?.`); what only
+  looks among the views made (which window holds the keys) asks `IsBuilt` first. A view written to while hidden (the
+  Build, Run, Debug and Problems consoles and lists) is made up front, its costly part made as it is first shown: an
+  `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests window's details, a
+  `MergedLog`'s Find. Still made up front, their views read or written as the IDE runs: the Problems and Debug windows
+  (every build's and server's problems, each session's tab), Aspire's (each AppHost's run), the profiler's (each
+  profile's start, run and end), the Live Visual Tree's (its controller reads its view), the Terminal's (run
+  configurations and the debugger's programs run in its tabs) and Git's and Commit's (bound to the session's Git, their
+  rows read by its actions).
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,

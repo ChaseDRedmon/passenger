@@ -26,8 +26,12 @@ public partial class MainWindow
         {
             AsksNoOne = () => AgentsOwn,
         });
-        // The NuGet window's update of one of EF Core's packages is weighed against the project's provider first.
-        NuGet.BeforeInstall = controller.WeighUpdateAsync;
+        // The NuGet window's update of one of EF Core's packages is weighed against the project's provider first (as it is
+        // built, else now).
+        if (nuget is { } built)
+        {
+            built.BeforeInstall = controller.WeighUpdateAsync;
+        }
         MigrationsView view = migrationsView = new MigrationsView(controller);
         view.ActionRequested += (_, action) => Request(action);
         controller.AddAsked += (_, _) => Request(A.AddMigration);

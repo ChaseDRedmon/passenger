@@ -243,6 +243,6 @@ public partial class MainWindow
                 await buildRun.EndServiceSessionsAsync(service);
             }
         }
-        return await containersView!.ActAsync(id, action, row);
+        return await ContainersWindow.ActAsync(id, action, row);
     }
 }

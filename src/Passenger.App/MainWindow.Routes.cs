@@ -61,9 +61,15 @@ public partial class MainWindow
             WantRoutes(opening: true);
         };
         Editors.Closed += (_, document) => routeHashes.Remove(document);
-        Endpoints.RouteSendRequested += (_, route) => _ = SendRouteAsync(route);
-        Endpoints.RouteGoToRequested += (_, route) => GoToRoute(route);
-        Endpoints.AttachedToVisualTree += (_, _) => WantRoutes();
+    }
+
+    /// <summary>The Endpoints window's routes, as it is built: a row's request sent, its declaration gone to, and the routes
+    /// read once it is shown.</summary>
+    private void FollowRoutes(EndpointsView view)
+    {
+        view.RouteSendRequested += (_, route) => _ = SendRouteAsync(route);
+        view.RouteGoToRequested += (_, route) => GoToRoute(route);
+        view.AttachedToVisualTree += (_, _) => WantRoutes();
     }
 
     /// <summary>Files whose text can declare a route.</summary>
@@ -175,7 +181,7 @@ public partial class MainWindow
         }
         current.Routes.Took(found, asked);
         requestLog?.Reroute();
-        Endpoints.ShowRoutes(current.Routes.All);
+        endpoints?.ShowRoutes(current.Routes.All);
         foreach (OpenDocument document in Editors.Documents.Where(d => IsRouteSource(d.Path)))
         {
             ShowRouteMarks(document);
@@ -357,7 +363,7 @@ public partial class MainWindow
                 made.Watch(path);
                 FileText.Save(path, text, had?.Encoding ?? new UTF8Encoding(false), had?.HasBom ?? false);
             }
-            Endpoints.Reload(session.Folder);
+            endpoints?.Reload(session.Folder);
             return Written(path, text, existing);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ReadOnlyFileException)
