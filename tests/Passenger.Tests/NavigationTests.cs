@@ -79,9 +79,10 @@ public sealed class NavigationTests : IDisposable
 
     /// <summary>Go to File over a large folder costs a key little more than over a small one: a file whose name cannot
     /// match is passed over with nothing done for it, where every file's name and stem were copied out of its path and its
-    /// word starts listed, a key in sixty thousand files taking the UI thread a median 86 to 123 ms. What the window
-    /// allocates is the count, not a time a busy machine stretches: the same key over 20,000 files allocates on the UI
-    /// thread less than 8 bytes for each file more than over 2,000.</summary>
+    /// word starts listed, a key in sixty thousand files taking the UI thread a median 86 to 123 ms; and the first letter,
+    /// which a great many match, keeps only the best of them as it goes, where all of them were sorted (#233's ~150 ms over
+    /// 60,000). What the window allocates is the count, not a time a busy machine stretches: each key over 20,000 files
+    /// allocates on the UI thread less than 8 bytes for each file more than over 2,000.</summary>
     [AvaloniaFact]
     public void Go_to_file_in_twenty_thousand_files_does_no_work_for_a_file_whose_name_cannot_match()
     {
@@ -90,12 +91,14 @@ public sealed class NavigationTests : IDisposable
         Files(folder, 100);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
-        long few = KeyInGoToFile(window, small, 2000);
+        (long fewFirst, long few) = KeyInGoToFile(window, small, 2000);
         Ui.Press(window, "ESCAPE");
-        long many = KeyInGoToFile(window, folder, 20_000);
-        TestContext.Current.TestOutputHelper?.WriteLine($"The key allocated {few / 1024} KB over 2,000 files, {many / 1024} KB over 20,000");
+        (long manyFirst, long many) = KeyInGoToFile(window, folder, 20_000);
+        TestContext.Current.TestOutputHelper?.WriteLine($"The key allocated {few / 1024} KB over 2,000 files, {many / 1024} KB over 20,000; the first letter {fewFirst / 1024} KB and {manyFirst / 1024} KB");
         Assert.True(many - few < 8 * 18_000,
             $"A key in Go to File over 20,000 files allocated {many / 1024} KB on the UI thread, against {few / 1024} KB over 2,000: 8 bytes or more for each file more");
+        Assert.True(manyFirst - fewFirst < 8 * 18_000,
+            $"The first letter in Go to File over 20,000 files allocated {manyFirst / 1024} KB on the UI thread, against {fewFirst / 1024} KB over 2,000: every match was sorted");
         // What it found is what it finds: the validators of area 7, a name of the query's letters in order.
         Ui.Press(window, "ENTER");
         Assert.Matches(@"^Validator7x\d+\.cs$", window.EditorArea.Active?.Name ?? string.Empty);
@@ -117,22 +120,28 @@ public sealed class NavigationTests : IDisposable
         }
     }
 
-    /// <summary>What the key that narrows Go to File's list to a few of a folder's validators allocates on the UI thread,
-    /// the folder opened and its files indexed; the popup is left open on it.</summary>
-    private static long KeyInGoToFile(MainWindow window, string root, int files)
+    /// <summary>What the first letter of a query in Go to File (which three kinds of file in eight match) and the key that
+    /// narrows its list to a few of a folder's validators allocate on the UI thread, the folder opened and its files
+    /// indexed; the popup is left open on it.</summary>
+    private static (long First, long Narrowing) KeyInGoToFile(MainWindow window, string root, int files)
     {
         window.OpenFolder(root);
         Ui.WaitFor(() => window.FileIndex.Count >= files, $"the folder's {files} files indexed");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
         Assert.True(window.IsPopupOpen);
-        window.KeyTextInput("ValAr");
         Ui.Settle();
         long before = GC.GetAllocatedBytesForCurrentThread();
+        window.KeyTextInput("V");
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        long first = GC.GetAllocatedBytesForCurrentThread() - before;
+        window.KeyTextInput("alAr");
+        Ui.Settle();
+        before = GC.GetAllocatedBytesForCurrentThread();
         window.KeyTextInput("7");
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         long key = GC.GetAllocatedBytesForCurrentThread() - before;
         Ui.Settle();
-        return key;
+        return (first, key);
     }
 
     [AvaloniaFact]
