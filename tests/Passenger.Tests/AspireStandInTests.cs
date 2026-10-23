@@ -165,6 +165,50 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>Rerun with nothing changed builds and restarts nothing; with the AppHost's own code changed it stops the AppHost
+    /// first, then builds it and runs it again, never building over its running files, which Windows locks while it runs.</summary>
+    [AvaloniaFact]
+    public void Rerun_runs_an_AppHost_whose_own_code_changed_again_once_stopped_and_leaves_one_unchanged_running()
+    {
+        project.Reset();
+        // Each AppHost writes its own key, which its resource connection is read by: none an earlier test's.
+        File.Delete(project.KeyFile);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        Ui.Settle();
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            Ui.Launched(window, window.RunAsync(), "the stand-in AppHost to come up");
+            int first = Assert.Single(window.AspireRuntime.Apps).ProcessId!.Value;
+            Ui.Run(window, AppActions.Rerun);
+            Assert.Contains("nothing restarted", window.Status, StringComparison.Ordinal);
+            Assert.Equal(first, Assert.Single(window.AspireRuntime.Apps).ProcessId);
+
+            File.Delete(project.KeyFile);
+            File.WriteAllText(project.Program, File.ReadAllText(project.Program).Replace("The stand-in AppHost is up\"", "The stand-in AppHost is up again\"", StringComparison.Ordinal));
+            Ui.Run(window, AppActions.Rerun);
+            Ui.WaitFor(() => window.AspireRuntime.Apps is [{ ProcessId: int again } app] && again != first && Said(app).Contains("The stand-in AppHost is up again", StringComparison.Ordinal),
+                "Rerun to run the changed AppHost again", TimeSpan.FromMinutes(3));
+            Assert.False(Processes.IsRunning(first), "The AppHost that ran before Rerun still runs");
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        static string Said(Passenger.App.Aspire.AspireAppRun app)
+        {
+            app.Console.Flush();
+            return app.Console.Document.Snapshot.ToString();
+        }
+    }
+
     /// <summary>The question a start asked of its certificate, held to the dialogs' rules.</summary>
     internal static CertificateQuestionDialog Question(MainWindow window, Task<string?> running)
     {

@@ -241,9 +241,11 @@ public sealed class ProfilingSession : IAsyncDisposable
 
     /// <summary>Profiles a .NET program already running, from now until <see cref="StopAsync"/> or its end, at the diagnostic
     /// port its runtime opens for itself: one being debugged, say, whose Avalonia frames its inspector records while the
-    /// session lasts. Nothing is started and the program is left as it was. A program gone, with no port to reach, or whose
-    /// snapshot cannot be written, is a <see cref="ProfilingException"/> saying why, the program left recording nothing.</summary>
-    public static async Task<ProfilingSession> AttachAsync(int processId, string name, string folder, CancellationToken cancellation = default)
+    /// session lasts. Nothing is started and the program is left as it was. With <paramref name="resume"/> a program held at
+    /// its start (DOTNET_DefaultDiagnosticPortSuspend=1, its port waited for as its runtime opens it) is let go once
+    /// recording, so the run begins at its first instruction, as a container's is. A program gone, with no port to reach, or
+    /// whose snapshot cannot be written, is a <see cref="ProfilingException"/> saying why, the program left recording nothing.</summary>
+    public static async Task<ProfilingSession> AttachAsync(int processId, string name, string folder, CancellationToken cancellation = default, bool resume = false)
     {
         Process process;
         try
@@ -268,7 +270,41 @@ public sealed class ProfilingSession : IAsyncDisposable
         EventPipeSession? session = null;
         try
         {
-            session = await new DiagnosticsClient(processId).StartEventPipeSessionAsync(Providers, requestRundown: true, circularBufferMB: 512, cancellation);
+            DiagnosticsClient client = new(processId);
+            // A program just started held opens its port as its runtime starts: waited for while it lives, 30 s at most.
+            DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            while (true)
+            {
+                try
+                {
+                    session = await client.StartEventPipeSessionAsync(Providers, requestRundown: true, circularBufferMB: 512, cancellation);
+                    break;
+                }
+                catch (ServerNotAvailableException) when (resume && !process.HasExited && DateTime.UtcNow < until)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), cancellation);
+                }
+            }
+            if (resume)
+            {
+                try
+                {
+                    // What it starts runs freely, as a program the profiler starts on this machine leaves its children.
+                    client.SetEnvironmentVariable(RuntimeVariables.DefaultDiagnosticPortSuspend, "0");
+                }
+                catch (Exception error) when (error is DiagnosticsClientException or IOException)
+                {
+                    // A runtime before .NET 6 sets no variable; what it starts is held as it was.
+                }
+                try
+                {
+                    client.ResumeRuntime();
+                }
+                catch (Exception error) when (error is DiagnosticsClientException or IOException)
+                {
+                    // A runtime not held at its start may refuse what it never waits for; it runs, recorded.
+                }
+            }
             return new ProfilingSession(process, null, session, Copy(session, trace), Task.CompletedTask, trace, null);
         }
         catch (Exception error) when (error is DiagnosticsClientException or IOException or UnauthorizedAccessException or SocketException or TimeoutException)

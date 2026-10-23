@@ -38,6 +38,7 @@ internal static class Program
             _ = MainWindow.WatchSaysLater;
             _ = Mcp.AgentCall.Every;
             _ = Dap.AdapterEnvironment.EvaluationTimeout;
+            _ = Waits.Scale;
         }
         catch (FormatException error)
         {

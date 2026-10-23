@@ -94,6 +94,7 @@ public sealed partial class BuildRunController
     private BuildKind buildKind;
     private IReadOnlyList<string>? lastProjects;
     private string? buildFramework;
+    private string? buildOutput;
     private Action<BuildOutcome>? afterBuild;
     private TaskCompletionSource? building;
 
@@ -157,10 +158,24 @@ public sealed partial class BuildRunController
         };
         session.Runner.Exited += (_, code) =>
         {
-            parts.Views.Run.SetRunning(false);
-            RunningChanged?.Invoke(this, EventArgs.Empty);
-            parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
+            // A container run's log that ended by itself, its run not stopped, is followed again while its containers run.
+            if (session.ContainerRun is { IsStopped: false } containers && !session.Runner.WasStopped && !session.IsEnded && session.Runner.Unstarted is null)
+            {
+                followingAgain = containers;
+                BackgroundWork.Track(FollowContainersAgainAsync(containers, code));
+                return;
+            }
+            RunLogEnded(code);
         };
+    }
+
+    /// <summary>The Run window's program ended (a container run's log, which Stop or its services' end ended): said, and Stop
+    /// greyed.</summary>
+    private void RunLogEnded(int code)
+    {
+        parts.Views.Run.SetRunning(false);
+        RunningChanged?.Invoke(this, EventArgs.Empty);
+        parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
     }
 
     /// <summary>A program started or ended, or a launch was refused: the toolbar's Stop follows.</summary>
@@ -176,7 +191,7 @@ public sealed partial class BuildRunController
     public bool IsBuilding => building is not null;
 
     /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
-    public bool IsRunning => session.Aspire.IsRunning || session.Runner.IsRunning || session.InTerminal is { IsRunning: true };
+    public bool IsRunning => session.Aspire.IsRunning || session.Runner.IsRunning || followingAgain is not null || session.InTerminal is { IsRunning: true };
 
     /// <summary>Whether the program Run started runs under dotnet watch (Settings' Hot Reload when running), which applies
     /// the edits of each file saved.</summary>
@@ -226,20 +241,21 @@ public sealed partial class BuildRunController
             _ = PublishAsync(again with { Folder = null });
             return;
         }
-        Build(buildKind, lastProjects, framework: buildFramework);
+        Build(buildKind, lastProjects, framework: buildFramework, output: buildOutput);
     }
 
     /// <summary>Builds, rebuilds or cleans the solution, or the projects given one after another (stopping at the first
     /// that fails), as Rider's Build menu and the Solution view's do: the output in the Build window, which opens as it
     /// starts as Settings says for its <paramref name="cause"/>, the problems of all of them in Problems.
     /// <paramref name="then"/> always hears how it ended, a build refused or never started included. A framework given
-    /// builds the projects for it alone, as a run configuration's build before launch does.</summary>
+    /// builds the projects for it alone, as a run configuration's build before launch does, and an output folder given
+    /// builds them there (a single-file AppHost's).</summary>
     public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null, string? framework = null,
-        BuildCause cause = BuildCause.Explicit) => Start(kind, projects, then, framework, cause, null, null);
+        BuildCause cause = BuildCause.Explicit, string? output = null) => Start(kind, projects, then, framework, cause, null, null, output);
 
     /// <summary>Starts a build, or the publish given (its work begun already, which the build holds until it ends).</summary>
     private void Start(BuildKind kind, IReadOnlyList<string>? projects, Action<BuildOutcome>? then, string? framework, BuildCause cause, PublishRequest? publish,
-        Working? work)
+        Working? work, string? output = null)
     {
         UiThread.Check();
         if (session.Folder is null || IsBuilding || session.IsEnded)
@@ -258,6 +274,7 @@ public sealed partial class BuildRunController
         buildKind = kind;
         lastProjects = projects;
         buildFramework = projects is { Count: > 0 } ? framework : null;
+        buildOutput = projects is { Count: > 0 } ? output : null;
         IReadOnlyList<string> whole = session.Workspace!.BuildTargets(session.Projects);
         buildQueue.Clear();
         foreach (string target in projects is { Count: > 0 } ? projects : whole)
@@ -326,7 +343,7 @@ public sealed partial class BuildRunController
         parts.Say($"{verb} {what}…");
         buildWork?.Say($"{verb} {what}…");
         bool windows = BuildOutput.WindowsTargeting(target, session.Projects);
-        IReadOnlyList<string> arguments = publishing is { } publish ? publish.Arguments(windows) : BuildOutput.Arguments(target, buildKind, buildFramework, windows);
+        IReadOnlyList<string> arguments = publishing is { } publish ? publish.Arguments(windows) : BuildOutput.Arguments(target, buildKind, buildFramework, windows, buildOutput);
         if (session.Builder.StartDotnet(arguments, session.Folder!, after: first ? HoldDesignTimeBuildsAsync : null) is { } problem)
         {
             FinishBuild(new BuildOutcome(BuildStatus.NotStarted, problem));
@@ -498,7 +515,7 @@ public sealed partial class BuildRunController
     public Task<BuildOutcome> BuildBeforeLaunchAsync(BuildStep step)
     {
         TaskCompletionSource<BuildOutcome> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        Build(BuildKind.Build, [step.Project], outcome => built.TrySetResult(outcome), step.Framework, BuildCause.BeforeLaunch);
+        Build(BuildKind.Build, [step.Project], outcome => built.TrySetResult(outcome), step.Framework, BuildCause.BeforeLaunch, step.Output);
         return built.Task;
     }
 
@@ -790,7 +807,7 @@ public sealed partial class BuildRunController
         {
             return "The chosen Aspire configuration is not running";
         }
-        if (parts.Work.Begin(AppActions.RunProgram, $"Building {chosen.Name} again…") is not { } work)
+        if (parts.Work.Begin(AppActions.RunProgram, $"Looking at what changed in {chosen.Name}…") is not { } work)
         {
             return Said(ActionWork.Busy(parts.Work.Of(AppActions.RunProgram)!));
         }
@@ -802,38 +819,49 @@ public sealed partial class BuildRunController
             {
                 parts.Editors.SaveAll();
                 AspireAppRun[] apps = session.Aspire.Apps.Where(app => app.Group == main.Group && !app.Stopping).ToArray();
-                BuildOutcome built = await BuildProjectsAsync(apps.Select(app => app.Configuration.Project).Distinct(StringComparer.Ordinal).ToArray());
-                if (!built.Succeeded)
-                {
-                    return Said(built.Message);
-                }
+                // Each service with when the build it runs began: its own restart's, else its AppHost's.
+                (AspireAppRun App, (AspireResourceRun Service, DateTime Since)[] Running)[] runs = [.. apps.Select(app => (app,
+                    app.Services.Where(s => !s.Stopping.IsCancellationRequested).Select(s => (s, app.Rebuilt.GetValueOrDefault(s.Project, app.BuildBegan))).ToArray()))];
+                (string Project, DateTime Since)[] hosts = [.. apps.Select(app => (app.Configuration.Project, app.BuildBegan))];
+                IReadOnlyList<ProjectModel> projects = session.Projects;
+                // Read before anything is built, off the UI thread: an AppHost's own code (its folder's, not its services'), and
+                // each service's, so only what changed stops and builds, never over a program's running files.
+                (bool hostChanged, (AspireAppRun App, List<AspireResourceRun> Changed)[] services) = await BackgroundWork.Run(() =>
+                    (hosts.Any(host => BuiltInputs.ChangedSince(host.Project, host.Since, projects, references: false)),
+                    runs.Select(run => (run.App, run.Running.Where(s => s.Service.ChangedSinceStart(projects, s.Since)).Select(s => s.Service).ToList())).ToArray()));
                 if (session.IsEnded || work.IsStopped)
                 {
                     return Said(StoppedStarting(chosen.Name));
                 }
-                int changed = 0;
-                foreach (AspireAppRun app in apps)
+                if (!hostChanged)
                 {
-                    // Through the run of services, as a container run's Rerun restarts what changed: sessions first, held again.
-                    List<AspireResourceRun> changes = [.. app.Services.Where(resource => resource.BuildChanged)];
-                    if (changes.Count == 0)
+                    List<string> restarted = [];
+                    foreach ((AspireAppRun app, List<AspireResourceRun> changes) in services.Where(s => s.Changed.Count > 0))
                     {
-                        continue;
+                        // Through the run of services, as a container run's Rerun restarts what changed: sessions first, held again,
+                        // each stopped before its build.
+                        if (await RestartServicesAsync(app, changes, work, "its code changed", build: true) is { } failed)
+                        {
+                            return Said($"Could not restart {string.Join(", ", changes.Select(s => ((IRunService)s).Name))} after their code changed: {failed}");
+                        }
+                        restarted.AddRange(changes.Select(s => ((IRunService)s).Name));
                     }
-                    if (await RestartServicesAsync(app, changes, work, "its build changed") is { } failed)
-                    {
-                        return Said($"Could not restart {string.Join(", ", changes.Select(resource => resource.Plan.Name))} after their build changed: {failed}");
-                    }
-                    changed += changes.Count;
+                    parts.Say(restarted.Count == 0 ? $"Nothing changed in {chosen.Name}: nothing restarted"
+                        : $"{chosen.Name}: built and restarted {string.Join(", ", restarted)}, whose code changed");
+                    return null;
                 }
-                parts.Say(changed == 0 ? "No service's build changed" : $"Restart requested for {changed} changed services");
-                return null;
             }
             catch (Exception error) when (error is IOException or InvalidOperationException or OperationCanceledException or TimeoutException)
             {
                 return Said(error is OperationCanceledException ? StoppedStarting(chosen.Name) : error.Message);
             }
         }
+        // An AppHost's own code changed: it and its services stop, then it is built and run again as it was run.
+        RunConfiguration again = main.Configuration;
+        RunStart mode = main.Mode;
+        parts.Say($"{chosen.Name}'s AppHost changed: stopping it to build and run it again…");
+        await session.Aspire.StopGroupAsync(main.Group);
+        return session.IsEnded ? Left : await RunAspireAsync(again, null, mode, cancellation);
     }
 
     /// <summary>Resolves and builds the chosen configuration, then launches its plan under the debugger, as Rider's Debug
