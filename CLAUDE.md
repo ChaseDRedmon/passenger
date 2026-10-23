@@ -316,7 +316,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   build's problems and console links to its messages and to stack frames are read through it as well, and so are the
   debugger's lines, which are the PDB's: `Debugging/BuiltLines` sends breakpoints, Run to Cursor and Set Next Statement
   at the compiler's line in the built text and shows a stop's frame (the arrow, its row, MCP's place) at the editor's
-  line now, and Hot Reload's rude edits are listed at the editor's line. XAML's compilers count lines as an XML reader
+  line now (its map of the built lines to the lines now and back kept as runs, `LineRuns`, which an edit splits only
+  where it reaches them and moves whole past them, so a key in a debugged file costs what it changed), and Hot Reload's
+  rude edits are listed at the editor's line. XAML's compilers count lines as an XML reader
   does (`ServerLines.OfXml`: a lone '\r' ends a line, U+0085, U+2028 and U+2029 do not), and `ServerPlaces.Compiled`
   gives any file's lines as its compiler counts them, which BuiltLines and a profile's hot spots read the PDB through,
   and a build's problems too (`BuildRunController.Placed`, through `ServerPlaces.PositionOfCompiled`: Avalonia's AVLN and
