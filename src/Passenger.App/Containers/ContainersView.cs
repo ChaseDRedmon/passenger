@@ -172,6 +172,22 @@ public sealed class ContainersView : DockPanel
     /// <summary>What the engine held at the last read.</summary>
     public ContainerSnapshot Snapshot { get; private set; } = ContainerSnapshot.Empty;
 
+    /// <summary>The label Aspire's orchestrator (DCP) puts on every container it makes.</summary>
+    private const string OrchestratorLabel = "com.microsoft.developer.usvc-dev.uid";
+
+    /// <summary>The AppHost a container is of (its key and name), when the folder runs one whose resources name it.</summary>
+    public Func<ContainerInfo, (string Key, string Name)?>? AppHostOf { get; set; }
+
+    /// <summary>The rows grouped again as what an AppHost's resources name changed, the engine not read again.</summary>
+    public void Regroup()
+    {
+        UiThread.Check();
+        if (shown && HasRead)
+        {
+            Fill();
+        }
+    }
+
     /// <summary>The engine's state at the last read; null before one.</summary>
     public EngineState? State { get; private set; }
 
@@ -346,6 +362,52 @@ public sealed class ContainersView : DockPanel
             });
         }
         List<ContainerInfo> others = [.. snapshot.Containers.Where(c => !c.IsTestcontainers)];
+        // An AppHost's containers under it, as a Compose project's are under the project; any other its orchestrator made
+        // (an AppHost's not running here, a Persistent one kept) under the heading.
+        List<(string Key, string Name, List<ContainerInfo> Containers)> hosts = [];
+        List<ContainerInfo> orchestrated = [];
+        foreach (ContainerInfo container in others)
+        {
+            if (AppHostOf?.Invoke(container) is { } host)
+            {
+                if (hosts.FindIndex(h => h.Key == host.Key) is var at and >= 0)
+                {
+                    hosts[at].Containers.Add(container);
+                }
+                else
+                {
+                    hosts.Add((host.Key, host.Name, [container]));
+                }
+            }
+            else if (container.Labels.ContainsKey(OrchestratorLabel))
+            {
+                orchestrated.Add(container);
+            }
+        }
+        others.RemoveAll(c => orchestrated.Contains(c) || hosts.Any(h => h.Containers.Contains(c)));
+        if (hosts.Count + orchestrated.Count > 0)
+        {
+            Group("Aspire", hosts.Count > 0 ? Core.Plural.Of(hosts.Count, "AppHost") : $"{orchestrated.Count}", () =>
+            {
+                foreach ((string hostKey, string name, List<ContainerInfo> containers) in hosts.OrderBy(h => h.Name, StringComparer.Ordinal))
+                {
+                    string key = $"apphost:{hostKey}";
+                    bool open = !collapsed.Contains(key);
+                    rows.Add(new ContainerRow(ContainerRowKind.AppHost, 1, key, name)
+                    {
+                        Detail = string.Join(", ", containers.GroupBy(c => c.State).Select(g => $"{g.Key}({g.Count()})")),
+                        Grouped = containers,
+                        Expands = true,
+                        Expanded = open,
+                    });
+                    if (open)
+                    {
+                        rows.AddRange(containers.Select(c => ContainerRowOf(c, 2)));
+                    }
+                }
+                rows.AddRange(orchestrated.Select(c => ContainerRowOf(c, 1)));
+            });
+        }
         if (others.Count > 0)
         {
             Group("Containers", $"{others.Count}", () => rows.AddRange(others.Select(c => ContainerRowOf(c, 1))));
@@ -508,9 +570,9 @@ public sealed class ContainersView : DockPanel
     private RunRow Row(ContainerRow row)
     {
         IReadOnlyList<ContainerInfo> containers = row.Containers;
-        bool runs = row.Kind is ContainerRowKind.Project or ContainerRowKind.Service or ContainerRowKind.Container;
+        bool runs = row.Kind is ContainerRowKind.Project or ContainerRowKind.AppHost or ContainerRowKind.Service or ContainerRowKind.Container;
         bool serves = row.Kind is ContainerRowKind.Service or ContainerRowKind.Container;
-        bool trailing = row.Kind is ContainerRowKind.Project or ContainerRowKind.Group;
+        bool trailing = row.Kind is ContainerRowKind.Project or ContainerRowKind.AppHost or ContainerRowKind.Group;
         return new RunRow(row.Depth, row.Label)
         {
             Heading = row.Kind == ContainerRowKind.Group,

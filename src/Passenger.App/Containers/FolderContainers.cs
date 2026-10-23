@@ -130,7 +130,12 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
         }
     }
 
-    private static async Task Quietly(ContainerEngine engine, IReadOnlyList<string> words, string when)
+    /// <summary>Removes containers by id, as the folder's end removes its own: what fails is the IDE's error, said with
+    /// <paramref name="when"/>. Whether the engine removed them. Any thread.</summary>
+    public static Task<bool> RemoveAsync(ContainerEngine engine, IReadOnlyList<string> ids, string when) =>
+        ids.Count == 0 ? Task.FromResult(true) : Quietly(engine, ["rm", "-f", .. ids], when);
+
+    private static async Task<bool> Quietly(ContainerEngine engine, IReadOnlyList<string> words, string when)
     {
         try
         {
@@ -139,10 +144,12 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
             {
                 IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed {when}: {ContainerEngine.Said(result)}");
             }
+            return result.Succeeded;
         }
         catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
         {
             IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed {when}: {failed.Message}");
+            return false;
         }
     }
 }

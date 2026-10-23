@@ -404,4 +404,74 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
 
         static int ReadPid(string path) => File.Exists(path) && int.TryParse(File.ReadAllText(path), CultureInfo.InvariantCulture, out int id) ? id : 0;
     }
+
+    /// <summary>An AppHost's session container, which its orchestrator makes with none of Passenger's labels, is known as it
+    /// is made though no Aspire window shows it (an agent's windowless Passenger has none), so when that Passenger ends as a
+    /// crash ends it (it, its watchdog, its children and the orchestrator killed at once, as Windows' job ends them, where no
+    /// watchdog runs), the next Passenger of its state removes the container as it starts, and leaves the Persistent one,
+    /// which is the person's to keep.</summary>
+    [Fact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    public async Task An_AppHosts_session_container_a_crashed_Passenger_left_is_removed_as_the_next_one_starts_and_a_persistent_one_stays()
+    {
+        Assert.SkipWhen(AspireContainersTests.WhyNot is not null, AspireContainersTests.WhyNot ?? string.Empty);
+        string starter = TestFolders.Create("mcp-aspire-crash-");
+        DeleteAtEnd(starter);
+        TestFolders.Prepare(() =>
+        {
+            AspireApp.Create(starter, AspireApp.Name);
+            AspireContainersTests.WithContainers(Path.Combine(starter, AspireApp.Name + ".AppHost"), (path, text) =>
+            {
+                File.WriteAllText(path, text);
+                return path;
+            });
+            Restore.Run(PathNames.Canonical(starter));
+        }, starter);
+        try
+        {
+            McpClient client = await Start(["--mcp", starter], languageServer: false);
+            string configuration = $"Aspire: {AspireApp.Name}.AppHost: http";
+            Assert.True(await Waiting.UntilAsync(async () =>
+                (await Call(client, "workspace")).GetProperty("runConfigurations").EnumerateArray().Any(item => item.GetString() == configuration),
+                TimeSpan.FromMinutes(2), Cancel), $"The starter's HTTP configuration was not discovered.{Said()}");
+            await Call(client, "run", new() { ["configuration"] = configuration });
+            string session = await AspireContainersTests.RunningAsync(AspireContainersTests.Session);
+            string kept = await AspireContainersTests.RunningAsync(AspireContainersTests.Kept);
+            // Known as the orchestrator made it: what the next start reads of what this one made.
+            string record = Path.Combine(OwnState, "aspire-containers", "ownership.json");
+            await Until(() => File.Exists(record) && Ui.Shared(record).Contains(session, StringComparison.Ordinal), "the session container recorded as it was made");
+            Assert.DoesNotContain(kept, Ui.Shared(record), StringComparison.Ordinal);
+
+            // Its end as a crash's: Passenger and all it started, and the orchestrator its AppHost started apart, killed at once.
+            Process passenger = LastPassenger();
+            int host = Assert.Single((await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray()).GetProperty("processId").GetInt32();
+            int[] orchestrator = [.. Processes.Listed().Where(process => process.Value.Contains("dcp start-apiserver", StringComparison.Ordinal)
+                && process.Value.Contains($"--monitor {host.ToString(CultureInfo.InvariantCulture)} ", StringComparison.Ordinal)).Select(process => process.Key)];
+            Assert.NotEmpty(orchestrator);
+            // The orchestrator first, which would take its containers down once its AppHost goes, and Passenger last, whose end its
+            // watchdog (among its children) would answer with its own.
+            int[] killed = [.. orchestrator, .. orchestrator.SelectMany(Processes.Descendants), .. Processes.Descendants(passenger.Id), passenger.Id];
+            foreach (int id in killed.Distinct())
+            {
+                try
+                {
+                    using Process process = Process.GetProcessById(id);
+                    process.Kill();
+                }
+                catch (Exception gone) when (gone is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                }
+            }
+            await Until(() => killed.All(id => !Processes.IsRunning(id)), "Passenger, its children and the orchestrator killed");
+            Assert.Equal("running", Docker.State(session));
+
+            // The next Passenger of the state removes it as it starts, and leaves the Persistent one.
+            await using McpClient next = await Start(["--mcp", starter], languageServer: false);
+            await Until(() => Docker.State(session) is null, "the next Passenger to remove the session container the crashed one's AppHost left");
+            Assert.Equal("running", Docker.State(kept));
+        }
+        finally
+        {
+            AspireContainersTests.RemoveMade();
+        }
+    }
 }

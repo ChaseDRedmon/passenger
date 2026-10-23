@@ -14,7 +14,10 @@ namespace Passenger.App.Containers;
 /// lifeline cannot end one: Passenger ends them by these labels instead, with the folder that started them
 /// (<see cref="FolderContainers"/>), on macOS and Linux as the process ends however it ends (the watchdog's last command,
 /// <see cref="ChildProcesses.AtIdeEnd"/>), and at the next start, which removes those of this state and machine whose
-/// process is gone (<see cref="RemoveLeftoversAsync"/>): an engine others share has their machines' too.</summary>
+/// process is gone (<see cref="RemoveLeftoversAsync"/>): an engine others share has their machines' too. What an engine
+/// makes for Passenger that carries none of its labels (an Aspire AppHost's session containers, which its orchestrator
+/// makes) is recorded with the same three (<see cref="Aspire.AspireContainerOwnership"/>) and ended by the same rules and
+/// the same commands (<see cref="IsLeftover"/>, <see cref="MadeUnlabelled"/>).</summary>
 public static partial class ContainerLabels
 {
     public const string State = "net.passenger-ide.state";
@@ -25,8 +28,17 @@ public static partial class ContainerLabels
     /// <summary>The variables the CLI reads its engine from, which the watchdog's command is given as the IDE's had them.</summary>
     private static readonly string[] EngineVariables = ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_TLS"];
 
-    /// <summary>The last command the watchdog was given, told again when the engine it reaches changes.</summary>
+    /// <summary>The last command the watchdog was given, told again when the engine it reaches or what it removes changes.</summary>
     private static string? toldWatchdog;
+
+    /// <summary>The CLI and context the watchdog's command reaches the engine through: the engine the IDE's commands reach.</summary>
+    private static (string Cli, string? Context)? reached;
+
+    /// <summary>The containers made for this process that carry none of its labels, by id, which the watchdog's command
+    /// removes with the labelled ones.</summary>
+    private static readonly SortedSet<string> Unlabelled = new(StringComparer.Ordinal);
+
+    private static readonly object Watchdog = new();
 
     /// <summary>The state folder's <c>containers.json</c>, the process's: whether anything was ever labelled for it, which
     /// a headless IDE's labelling sets as a person's window's does.</summary>
@@ -76,12 +88,7 @@ public static partial class ContainerLabels
     public static IReadOnlyList<string> Arguments(ContainerEngine engine, string? folder)
     {
         UiThread.Check();
-        // The CLI as the engine's last state found it, so finding it never waits on the window's thread.
-        if (engine.Known is { Cli: { } cli } known && EndCommand(cli, known.Context) is { } end && end != toldWatchdog)
-        {
-            toldWatchdog = end;
-            ChildProcesses.AtIdeEnd(end);
-        }
+        TellWatchdog(engine);
         if (!Kept.Value.Value.Labelled)
         {
             Kept.Value.Set(new ContainersState { Labelled = true });
@@ -94,10 +101,52 @@ public static partial class ContainerLabels
         return words;
     }
 
+    /// <summary>Containers made for this process that carry none of its labels (an Aspire AppHost's, made by its
+    /// orchestrator), by id: removed with the labelled ones by the watchdog's last command, told again now, as the process
+    /// ends however it ends. Any thread.</summary>
+    public static void MadeUnlabelled(ContainerEngine engine, IEnumerable<string> ids)
+    {
+        lock (Watchdog)
+        {
+            Unlabelled.UnionWith(ids);
+        }
+        TellWatchdog(engine);
+    }
+
+    /// <summary>Containers of <see cref="MadeUnlabelled"/> that have gone (removed, or no longer this process's), which the
+    /// watchdog's command no longer names. Any thread.</summary>
+    public static void EndedUnlabelled(IEnumerable<string> ids)
+    {
+        lock (Watchdog)
+        {
+            Unlabelled.ExceptWith(ids);
+        }
+        TellWatchdog(null);
+    }
+
+    /// <summary>Tells the watchdog the command that removes what this process made, when it changed: through the CLI as the
+    /// engine's last state found it (else as it was told before), so finding it never waits on the caller's thread.</summary>
+    private static void TellWatchdog(ContainerEngine? engine)
+    {
+        lock (Watchdog)
+        {
+            if (engine?.Known is { Cli: { } cli } known)
+            {
+                reached = (cli, known.Context);
+            }
+            if (reached is { } through && EndCommand(through.Cli, through.Context, Unlabelled) is { } end && end != toldWatchdog)
+            {
+                toldWatchdog = end;
+                ChildProcesses.AtIdeEnd(end);
+            }
+        }
+    }
+
     /// <summary>The shell command that removes this process's containers and networks, for the watchdog, which runs it with
     /// its own environment: the engine the IDE's commands reach is put in it, the CLI's variables as the IDE has them and
-    /// its context by name. Null for a value no line can hold.</summary>
-    private static string? EndCommand(string cli, string? context)
+    /// its context by name; the containers made for it without its labels are named by id. Null for a value no line can
+    /// hold.</summary>
+    private static string? EndCommand(string cli, string? context, IEnumerable<string> unlabelled)
     {
         StringBuilder command = new();
         foreach (string variable in EngineVariables)
@@ -113,7 +162,8 @@ public static partial class ContainerLabels
             docker += $" --context {Quoted(context)}";
         }
         string labels = $"--filter {Quoted($"label={Process}={ProcessValue}")} --filter {Quoted($"label={Machine}={MachineValue}")}";
-        command.Append(CultureInfo.InvariantCulture, $"{docker} rm -f $({docker} ps -aq {labels}); {docker} network rm $({docker} network ls -q {labels})");
+        string named = string.Concat(unlabelled.Select(id => $" {Quoted(id)}"));
+        command.Append(CultureInfo.InvariantCulture, $"{docker} rm -f $({docker} ps -aq {labels}){named}; {docker} network rm $({docker} network ls -q {labels})");
         string said = command.ToString();
         return said.Contains('\n', StringComparison.Ordinal) || said.Contains('\r', StringComparison.Ordinal) || said.Contains('\0', StringComparison.Ordinal) ? null : said;
     }
@@ -199,30 +249,64 @@ public static partial class ContainerLabels
         }
     }
 
-    /// <summary>Removes the containers and networks labelled with this state and this machine whose process is gone: what a
+    /// <summary>The one rule for what a crash left: made for this state folder (by its value) on this machine by a process
+    /// that is gone, never this one. A labelled container's labels and a recorded one's record are both judged by it.</summary>
+    public static bool IsLeftover(string? state, string? machine, string? process, string stateValue) =>
+        state == stateValue && machine == MachineValue && process is { } made && made != ProcessValue && IsGone(made);
+
+    /// <summary>Whether Passenger ever labelled something for a state folder (its <c>containers.json</c>). Any thread.</summary>
+    public static bool EverLabelledIn(string stateFolder) =>
+        PathNames.Same(stateFolder, global::Passenger.App.State.StateStore.DefaultRoot) ? EverLabelled
+            : new global::Passenger.App.State.StateDocument<ContainersState>(Path.Combine(stateFolder, "containers.json")).Peek().Labelled;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task> Looked = new(StringComparer.Ordinal);
+
+    /// <summary>What a crash left for a state folder removed once a process (<see cref="RemoveLeftoversAsync"/>): the
+    /// process's start does its own state's, a window keeping its state elsewhere (a test's) its own as it first shows.
+    /// Not held, and off the caller's way: an engine that answers slowly or not at all delays nothing. Any thread.</summary>
+    public static Task LookForLeftovers(ContainerEngine engine, string stateFolder) =>
+        Looked.GetOrAdd(StateValueOf(stateFolder), _ => Task.Run(async () =>
+        {
+            try
+            {
+                await RemoveLeftoversAsync(engine, stateFolder);
+            }
+            catch (Exception failed)
+            {
+                IdeErrors.Write($"Containers: what an earlier Passenger left could not be looked for: {failed}");
+            }
+        }));
+
+    /// <summary>Removes the containers and networks labelled with this state and this machine whose process is gone, and
+    /// the containers its record says such a process had made without its labels (an AppHost's session containers): what a
     /// crash left, or a process the watchdog could not clean up after (Windows); another machine's on an engine they share
-    /// are never judged by this machine's processes. Off the UI thread; quiet when there is no engine.</summary>
-    public static async Task<IReadOnlyList<string>> RemoveLeftoversAsync(ContainerEngine engine, CancellationToken cancel = default)
+    /// are never judged by this machine's processes. No docker command runs for a state that never labelled or recorded
+    /// anything. Off the UI thread; quiet when there is no engine.</summary>
+    public static async Task<IReadOnlyList<string>> RemoveLeftoversAsync(ContainerEngine engine, string? stateFolder = null, CancellationToken cancel = default)
     {
-        List<string> removed = [];
+        string folder = stateFolder ?? global::Passenger.App.State.StateStore.DefaultRoot;
+        List<string> removed = [.. await Aspire.AspireContainerOwnership.RemoveLeftoversAsync(folder, engine, cancel)];
         // Not held: nothing it does is drawn; finding the CLI may wait on the login shell, never on the caller's thread.
-        if (await Task.Run(() => engine.Cli, cancel) is null)
+        if (!EverLabelledIn(folder) || await Task.Run(() => engine.Cli, cancel) is null)
         {
             return removed;
         }
-        string filter = $"label={State}={StateValue}";
+        string stateValue = StateValueOf(folder);
+        string filter = $"label={State}={stateValue}";
         string machine = $"label={Machine}={MachineValue}";
         try
         {
             IReadOnlyList<JsonElement> containers = await engine.JsonLinesAsync(["ps", "-a", "--filter", filter, "--filter", machine, "--format", "json"], cancel);
-            string[] gone = [.. containers.Select(ContainerInfo.Read).Where(c => c.Labels.GetValueOrDefault(Process) is { } made && IsGone(made)).Select(c => c.Id)];
+            string[] gone = [.. containers.Select(ContainerInfo.Read).Where(c => IsLeftover(c.Labels.GetValueOrDefault(State), c.Labels.GetValueOrDefault(Machine),
+                c.Labels.GetValueOrDefault(Process), stateValue)).Select(c => c.Id)];
             if (gone.Length > 0)
             {
                 await engine.RunAsync(["rm", "-f", .. gone], ContainerEngine.AskLimit * 3, cancel);
                 removed.AddRange(gone);
             }
             IReadOnlyList<JsonElement> networks = await engine.JsonLinesAsync(["network", "ls", "--filter", filter, "--filter", machine, "--format", "json"], cancel);
-            string[] left = [.. networks.Where(n => ContainerInfo.ReadLabels(n).GetValueOrDefault(Process) is { } made && IsGone(made))
+            string[] left = [.. networks.Where(n => ContainerInfo.ReadLabels(n) is var labels && IsLeftover(labels.GetValueOrDefault(State),
+                    labels.GetValueOrDefault(Machine), labels.GetValueOrDefault(Process), stateValue))
                 .Select(ContainerInfo.IdOf).OfType<string>()];
             if (left.Length > 0)
             {

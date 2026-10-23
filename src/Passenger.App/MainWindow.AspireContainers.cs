@@ -1,71 +1,37 @@
-using Passenger.App.Aspire;
+using Passenger.App.Containers;
+using Passenger.Core;
+using Passenger.Editor;
 
 namespace Passenger.App;
 
 public partial class MainWindow
 {
-    private AspireContainerOwnership? aspireContainerOwnership;
-    private bool aspireContainerCleanupScheduled;
-    private bool aspireContainerCleanupStarted;
+    private bool leftoversScheduled;
+    private bool leftoversLooked;
 
-    private void PrepareAspireContainerCleanup(ProjectSession current)
+    /// <summary>A window keeping its state apart from the process's (a test's) removes what a crash left for that state as it
+    /// first shows, labelled or recorded (<see cref="ContainerLabels.LookForLeftovers"/>), as the process's start does for
+    /// its own: held, so what it removes has gone once the window is quiet.</summary>
+    private void LookForLeftovers(ProjectSession current)
     {
         if (current.Folder is not null)
         {
-            Start();
+            Look();
         }
-        else if (!aspireContainerCleanupScheduled)
+        else if (!leftoversScheduled)
         {
-            aspireContainerCleanupScheduled = true;
-            Opened += (_, _) => Start();
+            leftoversScheduled = true;
+            Opened += (_, _) => Look();
         }
 
-        void Start()
+        // The state folder as the window was given it, which its constructor, making its first session, has yet to take.
+        void Look()
         {
-            if (!aspireContainerCleanupStarted)
+            if (!leftoversLooked && !PathNames.Same(StateFolder, State.StateStore.DefaultRoot))
             {
-                aspireContainerCleanupStarted = true;
-                _ = ReportAspireContainerWorkAsync(AspireContainers.CleanupAsync());
+                leftoversLooked = true;
+                BackgroundWork.Track(ContainerLabels.LookForLeftovers(Engine, StateFolder));
             }
-        }
-    }
-
-    private AspireContainerOwnership AspireContainers
-    {
-        get
-        {
-            if (aspireContainerOwnership is null)
-            {
-                CancellationTokenSource lifetime = new();
-                bool closed = false;
-                // A window closed already, closed again (a test's finally), asks nothing of the source it let go of.
-                Closing += (_, _) =>
-                {
-                    if (!closed)
-                    {
-                        lifetime.Cancel();
-                    }
-                };
-                Closed += (_, _) =>
-                {
-                    closed = true;
-                    lifetime.Dispose();
-                };
-                aspireContainerOwnership = new(StateFolder, Engine, lifetime.Token);
-            }
-            return aspireContainerOwnership;
-        }
-    }
-
-    private static async Task ReportAspireContainerWorkAsync(Task work)
-    {
-        try
-        {
-            await work.ConfigureAwait(false);
-        }
-        catch (Exception error)
-        {
-            IdeErrors.Write($"Aspire container ownership: {error}");
         }
     }
 
@@ -77,7 +43,7 @@ public partial class MainWindow
         {
             return;
         }
-        if (ContainersWindow.Choose(row => row.Container?.Id == id))
+        if (ContainersWindow.Choose(row => row.Container is { } container && ContainerRow.SameId(id, container.Id)))
         {
             ContainersWindow.ShowTab("Log");
         }

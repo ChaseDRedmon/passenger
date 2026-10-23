@@ -3,9 +3,12 @@ namespace Passenger.App.Containers;
 /// <summary>What a row of the Containers window stands for.</summary>
 public enum ContainerRowKind
 {
-    /// <summary>A heading: Compose, Containers, Testcontainers, Images, Volumes, Networks.</summary>
+    /// <summary>A heading: Compose, Aspire, Containers, Testcontainers, Images, Volumes, Networks.</summary>
     Group,
     Project,
+
+    /// <summary>An Aspire AppHost the folder runs, its containers (its orchestrator's) under it.</summary>
+    AppHost,
     Service,
     Container,
     Image,
@@ -42,10 +45,17 @@ public sealed class ContainerRow(ContainerRowKind kind, int depth, string key, s
 
     public EngineObject? Object { get; init; }
 
-    /// <summary>The containers it stands for: its own, its service's or its project's.</summary>
+    /// <summary>An AppHost row's containers.</summary>
+    public IReadOnlyList<ContainerInfo>? Grouped { get; init; }
+
+    /// <summary>The containers it stands for: its own, its service's, its project's or its AppHost's.</summary>
     public IReadOnlyList<ContainerInfo> Containers => Container is { } one ? [one]
         : Project is { } project ? Service is { } service ? [.. project.Services.Where(s => s.Service == service).SelectMany(s => s.Containers)] : [.. project.Containers]
-        : [];
+        : Grouped ?? [];
+
+    /// <summary>Whether two ids name one container: the engine's list gives the first 12 hex digits, an orchestrator the whole.</summary>
+    public static bool SameId(string one, string other) => one.Length >= 12 && other.Length >= 12
+        && (one.StartsWith(other, StringComparison.OrdinalIgnoreCase) || other.StartsWith(one, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The row an agent names: a container by its name or id (or the start of one container's id alone), a Compose
     /// project by its name, or one of its services as project/service; null when nothing has that name. The start of

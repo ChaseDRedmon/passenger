@@ -10,10 +10,19 @@ using Passenger.Editor;
 
 namespace Passenger.App.Aspire;
 
-/// <summary>Exact Session containers reported by an owned AppHost's authenticated resource connection. UI-thread owned.
-/// Unobserved containers are left untouched: a crash before observation supplies no ownership evidence.</summary>
+/// <summary>The session containers an AppHost's orchestrator (DCP) made for a run of this process's, as the AppHost's
+/// authenticated resource stream reports them, followed while the run is up whatever the window shows
+/// (<see cref="AspireController"/>). DCP's containers carry none of Passenger's labels, so they are recorded in the state
+/// folder with <see cref="ContainerLabels"/>' state, machine and process, and the same removal ends them: the run's Stop
+/// and the folder's end (<see cref="TakeDownAsync"/>), the watchdog's last command (<see cref="ContainerLabels.MadeUnlabelled"/>)
+/// and the next start's (<see cref="RemoveLeftoversAsync"/>), by <see cref="ContainerLabels.IsLeftover"/>. A Persistent
+/// container (the resource's container.lifetime, DCP's <see cref="PersistentLabel"/>) is meant to outlive the AppHost: it is
+/// the person's to keep, never recorded nor removed. UI-thread owned but for the leftovers' removal.</summary>
 internal sealed class AspireContainerOwnership
 {
+    /// <summary>DCP's label on what it makes: true on a Persistent container (and its network), which outlives its AppHost.</summary>
+    public const string PersistentLabel = "com.microsoft.developer.usvc-dev.persistent";
+
     private const int MaximumRecords = 1024;
     private const long MaximumBytes = 1024 * 1024;
     private readonly ContainerEngine engine;
@@ -21,16 +30,30 @@ internal sealed class AspireContainerOwnership
     private readonly string state;
     private readonly CancellationToken closing;
     private readonly Dictionary<string, long> observations = new(StringComparer.Ordinal);
+
+    /// <summary>What this process recorded of each AppHost (by its hash), until its run's take-down.</summary>
+    private readonly Dictionary<string, HashSet<string>> made = new(StringComparer.Ordinal);
+
+    /// <summary>Each AppHost's containers as last recorded (their ids, lifetimes and names), by its hash.</summary>
+    private readonly Dictionary<string, string> recordedAs = new(StringComparer.Ordinal);
+
+    /// <summary>The containers said to be on another engine than Passenger's (<see cref="Elsewhere"/>), each said once.</summary>
+    private readonly HashSet<string> elsewhere = new(StringComparer.Ordinal);
     private Task<Identity?>? observingIdentity;
-    private Task? cleanup;
 
     public AspireContainerOwnership(string stateFolder, ContainerEngine engine, CancellationToken closing = default)
     {
         this.engine = engine;
         this.closing = closing;
         state = ContainerLabels.StateValueOf(stateFolder);
-        document = new(Path.Combine(stateFolder, "aspire-containers", "ownership.json"));
+        document = new(ManifestOf(stateFolder));
     }
+
+    private static string ManifestOf(string stateFolder) => Path.Combine(stateFolder, "aspire-containers", "ownership.json");
+
+    /// <summary>An AppHost's orchestrator made containers (how many) on another engine than the one Passenger reaches: its
+    /// own runtime (ASPIRE_CONTAINER_RUNTIME, else its own look) is not Passenger's docker's. On the UI thread.</summary>
+    public event EventHandler<(string AppHost, int Containers)>? Elsewhere;
 
     /// <summary>Call only for a snapshot from the still-owned AppHost's authenticated connection; await on the UI thread.</summary>
     public async Task Observe(string ownedAppHostPath, IReadOnlyList<AspireResource> resources)
@@ -45,6 +68,14 @@ internal sealed class AspireContainerOwnership
             return;
         }
         string appHost = Hash(Path.GetFullPath(ownedAppHostPath));
+        // Most batches are a health or state's change: containers already recorded read no manifest again.
+        string signature = string.Join('\n', resources.Select(resource => resource.Data)
+            .Where(data => string.Equals(String(data, "resourceType"), "Container", StringComparison.OrdinalIgnoreCase))
+            .Select(data => $"{String(data, "properties", "container.id")} {String(data, "properties", "container.lifetime")} {String(data, "name")}").Order(StringComparer.Ordinal));
+        if (recordedAs.GetValueOrDefault(appHost) == signature)
+        {
+            return;
+        }
         long observation = observations.GetValueOrDefault(appHost) + 1;
         observations[appHost] = observation;
         using IDisposable held = BackgroundWork.Scope();
@@ -79,14 +110,20 @@ internal sealed class AspireContainerOwnership
         {
             await SaveAsync(entries);
         }
+        if (made.TryGetValue(appHost, out HashSet<string>? recorded) && recorded.Overlaps(withdrawn))
+        {
+            recorded.ExceptWith(withdrawn);
+            ContainerLabels.EndedUnlabelled(withdrawn);
+        }
         observed.RemoveAll(item => withdrawn.Contains(item.Id) || entries.Any(entry => IsCurrent(entry, appHost)
             && entry.Id == item.Id && entry.Name == item.Name && entry.Uid == item.Uid));
         if (observed.Count == 0)
         {
+            recordedAs[appHost] = signature;
             return;
         }
         Task<Identity?> readingIdentity = observingIdentity is { IsCompleted: false } pending
-            ? pending : observingIdentity = Task.Run(() => ReadIdentityAsync(again: false));
+            ? pending : observingIdentity = Task.Run(() => ReadIdentityAsync(engine, again: false));
         Identity? identity = await readingIdentity;
         if (closing.IsCancellationRequested || observations[appHost] != observation)
         {
@@ -97,11 +134,23 @@ internal sealed class AspireContainerOwnership
             IdeErrors.Write("Aspire containers: ownership was not recorded because the engine identity could not be pinned");
             return;
         }
+        // The orchestrator picks its runtime itself (ASPIRE_CONTAINER_RUNTIME, else its own look): one the engine Passenger
+        // reaches does not hold is said, never recorded, since nothing of Passenger's could show, follow or remove it.
+        observed.RemoveAll(item => elsewhere.Contains(item.Id));
+        string[] asked = [.. observed.Select(item => item.Id)];
+        if (asked.Length > 0 && await BackgroundWork.Run(() => ThereAsync(engine, asked, "as the AppHost made them")) is { } there && there.Length < asked.Length)
+        {
+            string[] away = [.. asked.Except(there)];
+            elsewhere.UnionWith(away);
+            observed.RemoveAll(item => away.Contains(item.Id));
+            Elsewhere?.Invoke(this, (ownedAppHostPath, away.Length));
+        }
         entries = [.. (await ReadAsync()).Entries];
-        if (closing.IsCancellationRequested || observations[appHost] != observation)
+        if (closing.IsCancellationRequested || observations[appHost] != observation || observed.Count == 0)
         {
             return;
         }
+        List<string> added = [];
         foreach ((string id, string name, string uid) in observed)
         {
             Entry entry = new(id, name, uid, appHost, identity.Fingerprint,
@@ -115,95 +164,187 @@ internal sealed class AspireContainerOwnership
                     break;
                 }
                 entries.Add(entry);
+                added.Add(id);
             }
         }
         await SaveAsync(entries);
+        recordedAs[appHost] = signature;
+        if (added.Count > 0)
+        {
+            if (!made.TryGetValue(appHost, out recorded))
+            {
+                made[appHost] = recorded = new(StringComparer.Ordinal);
+            }
+            recorded.UnionWith(added);
+            ContainerLabels.MadeUnlabelled(engine, added);
+        }
     }
 
-    /// <summary>Checks earlier owners once per tracker. No engine command runs when no eligible record exists.</summary>
-    public Task CleanupAsync()
+    /// <summary>Removes the session containers this process recorded of an AppHost's run once <paramref name="after"/> (its
+    /// AppHost's end) has come (the run's Stop, the folder's end), as a container run's Stop takes its own down: done once
+    /// the engine has answered, or given up after its limit, what fails the IDE's error said with <paramref name="when"/>.
+    /// Begun on the UI thread; the rest needs none, so the folder's end can wait for it after the window's loop has stopped.</summary>
+    public Task TakeDownAsync(string appHostPath, string when, Task? after = null)
     {
         UiThread.Check();
-        if (closing.IsCancellationRequested)
+        string appHost = Hash(Path.GetFullPath(appHostPath));
+        // A snapshot still on its way to the UI thread records nothing of a run taken down.
+        observations[appHost] = observations.GetValueOrDefault(appHost) + 1;
+        recordedAs.Remove(appHost);
+        if (!made.Remove(appHost, out HashSet<string>? recorded) || recorded.Count == 0)
         {
             return Task.CompletedTask;
         }
-        return cleanup ??= CleanupCoreAsync();
+        string[] ids = [.. recorded];
+        StateDocument<Manifest> kept = document;
+        // Not held: nothing it does is drawn, and the folder's end waits for it once the window's loop may have stopped.
+        return Task.Run(async () =>
+        {
+            if (after is not null)
+            {
+                // An orchestrator that outlived its AppHost could make one again of a container taken from under a live one.
+                await after.ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
+            }
+            // Those the orchestrator has not removed itself, which an engine's rm of one gone would call a failure.
+            if (await ThereAsync(engine, ids, when) is { } there && await FolderContainers.RemoveAsync(engine, there, when))
+            {
+                Forget(kept, ids);
+                ContainerLabels.EndedUnlabelled(ids);
+            }
+        });
     }
 
-    private async Task CleanupCoreAsync()
+    /// <summary>The containers of those given the engine still holds, by their whole ids; null when it does not answer.</summary>
+    private static async Task<string[]?> ThereAsync(ContainerEngine engine, IReadOnlyList<string> ids, string when)
     {
-        using IDisposable held = BackgroundWork.Scope();
-        Entry[] candidates = [.. (await ReadAsync()).Entries.Where(entry => entry.State == state && entry.Machine == ContainerLabels.MachineValue
-            && entry.Owner != ContainerLabels.ProcessValue && ContainerLabels.IsGone(entry.Owner))];
-        if (candidates.Length == 0 || closing.IsCancellationRequested)
+        try
         {
-            return;
+            ChildResult listed = await engine.RunAsync(["ps", "-aq", "--no-trunc", .. ids.SelectMany(id => (string[])["--filter", $"id={id}"])],
+                ContainerEngine.AskLimit);
+            if (listed.Succeeded)
+            {
+                return [.. listed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(ids.Contains)];
+            }
+            IdeErrors.Write($"Aspire containers: the engine did not list the run's containers {when}: {ContainerEngine.Said(listed)}");
         }
-        List<Entry> removed = await Task.Run(async () =>
+        catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
         {
-            List<Entry> removed = [];
-            Identity? identity = await ReadIdentityAsync().ConfigureAwait(false);
-            if (identity is null)
-            {
-                IdeErrors.Write("Aspire containers: leftover cleanup deferred because the engine identity could not be pinned");
-                return removed;
-            }
-            foreach (Entry entry in candidates)
-            {
-                if (closing.IsCancellationRequested)
-                {
-                    break;
-                }
-                if (entry.Engine != identity.Fingerprint)
-                {
-                    IdeErrors.Write($"Aspire containers: retained {entry.Id}; the current engine identity differs");
-                    continue;
-                }
-                try
-                {
-                    JsonElement inspected = await engine.JsonAsync([.. identity.Arguments, "container", "inspect", entry.Id]).ConfigureAwait(false);
-                    if (inspected.ValueKind != JsonValueKind.Array || inspected.GetArrayLength() != 1
-                        || ContainerEngine.Text(inspected[0], "Id") != entry.Id
-                        // Docker's inspect names a container "/name", Podman's own "name".
-                        || ContainerEngine.Text(inspected[0], "Name")?.TrimStart('/') != entry.Name)
-                    {
-                        IdeErrors.Write($"Aspire containers: retained {entry.Id}; its inspected identity or name changed");
-                        continue;
-                    }
-                    if (closing.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                    ChildResult result = await engine.RunAsync([.. identity.Arguments, "rm", "-f", entry.Id]).ConfigureAwait(false);
-                    if (!result.Succeeded)
-                    {
-                        throw new ContainerCommandException(ContainerEngine.Said(result));
-                    }
-                    removed.Add(entry);
-                }
-                catch (Exception error) when (error is IOException or ContainerCommandException or JsonException or TimeoutException
-                    or System.ComponentModel.Win32Exception)
-                {
-                    IdeErrors.Write($"Aspire containers: cleanup of {entry.Id} deferred: {error.Message}");
-                }
-            }
-            return removed;
-        });
-        if (removed.Count > 0 && !closing.IsCancellationRequested)
+            IdeErrors.Write($"Aspire containers: the engine did not list the run's containers {when}: {failed.Message}");
+        }
+        return null;
+    }
+
+    /// <summary>Removes the containers the state's record says a process of this state and machine that is gone had an
+    /// orchestrator make (<see cref="ContainerLabels.IsLeftover"/>), on the engine it recorded them on, each only while it is
+    /// still the container recorded (its id and name) and not Persistent; a recorded container the engine no longer holds is
+    /// forgotten. No engine command runs when no record is a leftover. Off the UI thread; the ids removed.</summary>
+    public static async Task<IReadOnlyList<string>> RemoveLeftoversAsync(string stateFolder, ContainerEngine engine, CancellationToken cancel = default)
+    {
+        string path = ManifestOf(stateFolder);
+        if (!File.Exists(path))
         {
-            List<Entry> left = [.. (await ReadAsync()).Entries.Except(removed)];
-            if (!closing.IsCancellationRequested)
+            return [];
+        }
+        if (new FileInfo(path).Length > MaximumBytes)
+        {
+            IdeErrors.Write("Aspire containers: the ownership manifest exceeds its size limit; its leftovers are not removed");
+            return [];
+        }
+        StateDocument<Manifest> record = new(path);
+        string stateValue = ContainerLabels.StateValueOf(stateFolder);
+        Entry[] candidates = [.. record.Peek().Entries.Where(entry => ContainerLabels.IsLeftover(entry.State, entry.Machine, entry.Owner, stateValue))];
+        if (candidates.Length == 0)
+        {
+            return [];
+        }
+        Identity? identity = await ReadIdentityAsync(engine).ConfigureAwait(false);
+        if (identity is null)
+        {
+            IdeErrors.Write("Aspire containers: leftover cleanup deferred because the engine identity could not be pinned");
+            return [];
+        }
+        foreach (Entry other in candidates.Where(entry => entry.Engine != identity.Fingerprint))
+        {
+            IdeErrors.Write($"Aspire containers: retained {other.Id}; the current engine identity differs");
+        }
+        Entry[] here = [.. candidates.Where(entry => entry.Engine == identity.Fingerprint)];
+        if (here.Length == 0)
+        {
+            return [];
+        }
+        List<Entry> removing = [];
+        List<Entry> gone = [];
+        try
+        {
+            // Several filters of one key are any of them to the engine: one list of those still there, labels and all.
+            ContainerInfo[] listed = [.. (await engine.JsonLinesAsync([.. identity.Arguments, "ps", "-a", "--no-trunc",
+                .. here.SelectMany(entry => (string[])["--filter", $"id={entry.Id}"]), "--format", "json"], cancel).ConfigureAwait(false)).Select(ContainerInfo.Read)];
+            // An answer naming a container no entry names does not hold together: what it leaves out is not taken as gone.
+            bool together = listed.All(container => here.Any(entry => entry.Id == container.Id));
+            foreach (Entry entry in here)
             {
-                await SaveAsync(left);
+                ContainerInfo? found = listed.FirstOrDefault(container => container.Id == entry.Id);
+                if (found is null)
+                {
+                    if (together)
+                    {
+                        gone.Add(entry);
+                    }
+                    else
+                    {
+                        IdeErrors.Write($"Aspire containers: retained {entry.Id}; the engine listed another container for it");
+                    }
+                }
+                else if (found.Name.TrimStart('/') != entry.Name || found.Labels.GetValueOrDefault(PersistentLabel) == "true")
+                {
+                    IdeErrors.Write($"Aspire containers: retained {entry.Id}; its name changed or it is Persistent");
+                }
+                else
+                {
+                    removing.Add(entry);
+                }
             }
+            if (removing.Count > 0)
+            {
+                ChildResult result = await engine.RunAsync([.. identity.Arguments, "rm", "-f", .. removing.Select(entry => entry.Id)], ContainerEngine.AskLimit * 3, cancel)
+                    .ConfigureAwait(false);
+                if (!result.Succeeded)
+                {
+                    throw new ContainerCommandException(ContainerEngine.Said(result));
+                }
+                IdeErrors.Write($"Aspire containers: removed {Plural.Of(removing.Count, "container")} an earlier Passenger's AppHost left");
+            }
+        }
+        catch (Exception error) when (error is IOException or ContainerCommandException or JsonException or TimeoutException
+            or System.ComponentModel.Win32Exception)
+        {
+            IdeErrors.Write($"Aspire containers: cleanup of {Plural.Of(here.Length, "container")} deferred: {error.Message}");
+            removing.Clear();
+        }
+        if (removing.Count + gone.Count > 0)
+        {
+            Forget(record, [.. removing.Concat(gone).Select(entry => entry.Id)]);
+        }
+        return [.. removing.Select(entry => entry.Id)];
+    }
+
+    /// <summary>Takes containers out of the record as the file holds it now, on any thread.</summary>
+    private static void Forget(StateDocument<Manifest> record, IReadOnlyCollection<string> ids)
+    {
+        try
+        {
+            record.ChangeNow(kept => new Manifest { Entries = [.. kept.Entries.Where(entry => !ids.Contains(entry.Id))] });
+        }
+        catch (Exception unwritten) when (unwritten is IOException or UnauthorizedAccessException)
+        {
+            IdeErrors.Write($"Aspire containers: the ownership manifest could not be written: {unwritten.Message}");
         }
     }
 
     private bool IsCurrent(Entry entry, string appHost) => entry.Owner == ContainerLabels.ProcessValue && entry.State == state
         && entry.Machine == ContainerLabels.MachineValue && entry.AppHost == appHost;
 
-    private async Task<Identity?> ReadIdentityAsync(bool again = true)
+    private static async Task<Identity?> ReadIdentityAsync(ContainerEngine engine, bool again = true)
     {
         EngineState current = await engine.StateAsync(again: again).ConfigureAwait(false);
         if (current is not { Cli: { Length: > 0 } cli, Endpoint: { Length: > 0 } endpoint }

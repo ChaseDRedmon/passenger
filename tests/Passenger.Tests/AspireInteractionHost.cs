@@ -28,6 +28,7 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Resource> resources = new(StringComparer.Ordinal);
     private readonly Channel<WatchResourcesUpdate> resourceUpdates = Channel.CreateUnbounded<WatchResourcesUpdate>();
     private readonly ConcurrentQueue<ConsoleSubscription> consoles = new();
+    private readonly ConcurrentQueue<ResourceCommandRequest> commands = new();
     private readonly ConcurrentDictionary<HttpContext, byte> open = new();
     private WireBarrier? nextAnswer;
 
@@ -57,19 +58,15 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
         server.MapPost(Service + "UploadFile", Guard(UploadAsync));
         server.MapPost(Service + "ExecuteResourceCommand", Guard(async context =>
         {
-            byte[] frame = await ReadFrameAsync(context.Request.Body, context.RequestAborted) ?? throw new InvalidDataException("Missing resource command request");
+            byte[] frame = await ReadFrameAsync(context.Request.Body, context.RequestAborted)
+                ?? throw new InvalidDataException("Missing resource command request");
             ResourceCommandRequest request = ResourceCommandRequest.Parser.ParseFrom(frame);
             commands.Enqueue(request);
             OnCommand?.Invoke(request);
-            await WriteFrameAsync(context, new ResourceCommandResponse { Kind = ResourceCommandResponseKind.Succeeded, Message = "done" });
+            await WriteFrameAsync(context, new ResourceCommandResponse { Kind = ResourceCommandResponseKind.Succeeded });
             context.Response.AppendTrailer("grpc-status", "0");
         }));
     }
-
-    private readonly ConcurrentQueue<ResourceCommandRequest> commands = new();
-
-    /// <summary>The resource commands the window ran, in order, each answered as succeeded.</summary>
-    public ResourceCommandRequest[] Commands => commands.ToArray();
 
     /// <summary>What a test has a command do before it is answered (on the stand-in's own thread), as an AppHost's command acts.</summary>
     public Action<ResourceCommandRequest>? OnCommand { get; set; }
@@ -84,6 +81,8 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
     public WatchInteractionsRequestUpdate[] Answers => answers.ToArray();
     public UploadFileChunk[][] Uploads => uploads.ToArray();
     public ConsoleSubscription[] Consoles => consoles.ToArray();
+    /// <summary>The resource commands the window ran, each answered as done.</summary>
+    public ResourceCommandRequest[] Commands => commands.ToArray();
 
     public void PushResource(Resource resource)
     {
