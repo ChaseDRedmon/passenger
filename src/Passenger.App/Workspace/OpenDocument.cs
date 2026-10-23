@@ -895,7 +895,7 @@ public sealed class OpenDocument : Observable
     /// app carries, a workbook, an asset preview, a binary file shown as its bytes, or an MSBuild file of the .NET SDK or
     /// a package that Go to Declaration went into, or a copy of a container's file or of what the engine says of one.</summary>
     public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path)
-        || Containers.ContainerFilesPane.IsCopy(Path);
+        || Containers.ContainerFilesPane.IsCopy(Path) || Endpoints.RequestLog.IsCommandCopy(Path);
 
     /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
     /// written over it.</summary>

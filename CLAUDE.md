@@ -600,6 +600,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`CodeAssist.Routes.cs`), and an agent's `workspace` with `routes` lists them (`RouteInfo`). `WebRoutesTests`' gRPC
   service restores Grpc.AspNetCore and Google.Protobuf at the versions tests/AspireGraphs' AppHost puts in the package
   cache (Aspire's dashboard client brings them).
+  The Requests window (#418, `RequestsView`, `MainWindow.Requests.cs`, `ToolWindowIds.Requests` at the bottom right, beside
+  Run) lists the live requests of the web app Run runs, else the chosen Debug tab's program, and the database commands each
+  issued, with no change to the app: `Passenger.Profiler/LiveRequests` starts an EventPipe session at the program's own
+  diagnostic port asking the DiagnosticSource bridge (`Microsoft-Diagnostics-DiagnosticSource`, its `FilterAndPayloadSpecs`)
+  for ASP.NET Core's `HttpRequestIn` Start and Stop and unhandled exceptions (each with `HttpContext.TraceIdentifier`) and
+  EF Core's `CommandExecuted`, `CommandError` and `DataReaderDisposing`, each with `*Activity.RootId`, which ties a command
+  to its request; the runtime's counters once a second keep the stream's reader handing on what it holds. Only while the
+  window shows: it follows from the moment it shows or the program starts, and lets go as it hides or the program ends.
+  `RequestLog` takes the events on the UI thread a batch at a time (500 requests kept), marks a command its request ran
+  `LiveCommand.RepeatedAt` times or more as repeated (the request as N+1) and one over `SlowMilliseconds` as slow, and gives
+  each request the folder's route it reached (`RouteRequests.Fits`, a literal template before one with parameters). A
+  request opens where its exception was thrown in the folder's code, else at its route's handler; a command's text opens
+  read-only from a copy under the state's `cache/requests/` (`RequestLog.IsCommandCopy`). `LiveRequestsTests` run a web
+  app and send it requests from loopback.
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot

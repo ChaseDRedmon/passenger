@@ -42,6 +42,7 @@ public partial class MainWindow
         endpoints?.Stop();
         endpoints?.Reload(next.Folder);
         ForgetRoutes(next);
+        BindRequests(next);
     }
 
     private void EndpointFilesChanged(FolderChanges changes)

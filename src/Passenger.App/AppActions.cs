@@ -82,6 +82,9 @@ public static class AppActions
     public const string ShowEndpoints = "app.showEndpoints";
     public const string TestEndpoint = "app.endpoints.test";
 
+    // The Requests window over the running web app's live requests and their database commands: no key of Rider's.
+    public const string ShowRequests = "app.showRequests";
+
     // The Containers window over the person's container engine and its actions on the row chosen there: no keys of Rider's,
     // whose Services window has none in its Visual Studio keymaps.
     public const string ShowContainers = "app.showContainers";
