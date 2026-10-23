@@ -255,7 +255,10 @@ Projects in `src/`:
 Releases and the site: `ci.yml` and `release.yml` (from a `vX.Y.Z` tag; its body is `docs/release-notes/X.Y.Z.md`, which
 fails a publish while it is the stand-in) call `test.yml`, every system's suite in four shards. `site/` is
 passenger-ide.net, plain HTML and CSS, deployed by hand (`gh workflow run Site --ref main`, the owner's); its share card
-is named by its content, so a changed one takes a new name.
+is named by its content, so a changed one takes a new name. Each page (home, `/containers`, `/agents`, `/linux`) has its
+own title, description, canonical and Open Graph tags and a `sitemap.xml` entry, and loads only the site's files (CSP
+'self'); `just site-shots themes` stacks every `--look`'s capture through `tools/site-shots/themes.py` and sips, and the
+aspire and requests scenes run `tools/site-shots/services`, an AppHost that needs no container engine.
 
 ## Traps
 
