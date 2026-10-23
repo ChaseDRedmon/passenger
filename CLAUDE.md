@@ -609,11 +609,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   to its request; the runtime's counters once a second keep the stream's reader handing on what it holds. Only while the
   window shows: it follows from the moment it shows or the program starts, and lets go as it hides or the program ends.
   `RequestLog` takes the events on the UI thread a batch at a time (500 requests kept), marks a command its request ran
-  `LiveCommand.RepeatedAt` times or more as repeated (the request as N+1) and one over `SlowMilliseconds` as slow, and gives
+  `LiveCommand.RepeatedAt` times or more as repeated (the request as N+1) and one over `SlowMilliseconds` as slow (a
+  non-query with the rows it changed, a query with its reader's reads, EF Core's ReadCount), and gives
   each request the folder's route it reached (`RouteRequests.Fits`, a literal template before one with parameters). A
   request opens where its exception was thrown in the folder's code, else at its route's handler; a command's text opens
   read-only from a copy under the state's `cache/requests/` (`RequestLog.IsCommandCopy`). `LiveRequestsTests` run a web
-  app and send it requests from loopback.
+  app on EF Core and SQLite (tests/EfGraphs' packages, `ShopApp.Version`) and send it requests from loopback.
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot

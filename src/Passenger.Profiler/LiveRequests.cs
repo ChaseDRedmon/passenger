@@ -22,8 +22,8 @@ public sealed record RequestFailed(string Trace, DateTime At, string Request, st
 /// <summary>EF Core ran a command for a request: its id, text, time and the rows a non-query changed; or why it failed.</summary>
 public sealed record CommandRan(string Trace, DateTime At, string Id, string Text, double Milliseconds, int? Rows, string? Error) : WebEvent(Trace, At);
 
-/// <summary>A command's reader closed, having read so many rows.</summary>
-public sealed record CommandRead(string Trace, DateTime At, string Id, int Rows) : WebEvent(Trace, At);
+/// <summary>A command's reader closed after so many reads (EF Core's ReadCount: each Read asked, the last that found no row too).</summary>
+public sealed record CommandRead(string Trace, DateTime At, string Id, int Reads) : WebEvent(Trace, At);
 
 /// <summary>A running web app's requests and the database commands each issued, heard live with no change to the app: ASP.NET
 /// Core's hosting events and EF Core's command events through the runtime's DiagnosticSource bridge
@@ -45,7 +45,7 @@ public sealed class LiveRequests : IAsyncDisposable
         "Microsoft.AspNetCore/Microsoft.AspNetCore.Diagnostics.UnhandledException:-Error=exception;Request=httpContext.TraceIdentifier;Trace=*Activity.RootId",
         "Microsoft.EntityFrameworkCore/Microsoft.EntityFrameworkCore.Database.Command.CommandExecuted:-Id=CommandId;Text=Command.CommandText;Ms=Duration.TotalMilliseconds;Result=Result;Trace=*Activity.RootId",
         "Microsoft.EntityFrameworkCore/Microsoft.EntityFrameworkCore.Database.Command.CommandError:-Id=CommandId;Text=Command.CommandText;Ms=Duration.TotalMilliseconds;Error=Exception.Message;Trace=*Activity.RootId",
-        "Microsoft.EntityFrameworkCore/Microsoft.EntityFrameworkCore.Database.Command.DataReaderDisposing:-Id=CommandId;Rows=ReadCount;Trace=*Activity.RootId",
+        "Microsoft.EntityFrameworkCore/Microsoft.EntityFrameworkCore.Database.Command.DataReaderDisposing:-Id=CommandId;Reads=ReadCount;Trace=*Activity.RootId",
     ]);
 
     private readonly EventPipeSession session;
@@ -135,7 +135,7 @@ public sealed class LiveRequests : IAsyncDisposable
                     double.TryParse(values.GetValueOrDefault("Ms"), NumberStyles.Float, CultureInfo.InvariantCulture, out double ms) ? ms : 0,
                     Number(values.GetValueOrDefault("Result")), values.GetValueOrDefault("Error")),
             "Microsoft.EntityFrameworkCore.Database.Command.DataReaderDisposing" =>
-                new CommandRead(trace, at, values.GetValueOrDefault("Id") ?? string.Empty, Number(values.GetValueOrDefault("Rows")) ?? 0),
+                new CommandRead(trace, at, values.GetValueOrDefault("Id") ?? string.Empty, Number(values.GetValueOrDefault("Reads")) ?? 0),
             _ => null,
         };
 

@@ -161,7 +161,8 @@ public sealed class RequestsView : DockPanel
     {
         LiveCommand command = row.Command;
         DockPanel line = new() { Height = ListRow.Height, Margin = new Thickness(30, 0, 4, 0) };
-        string rows = command.Rows is { } count ? $"{count} {(count == 1 ? "row" : "rows")}  " : string.Empty;
+        string rows = command.Rows is { } count and >= 0 ? $"{count} {(count == 1 ? "row" : "rows")} changed  "
+            : command.Reads is { } reads ? $"{reads} {(reads == 1 ? "read" : "reads")}  " : string.Empty;
         TextBlock outcome = Muted(command.Error ?? string.Create(CultureInfo.InvariantCulture, $"{rows}{command.Milliseconds:0.#} ms"));
         DockPanel.SetDock(outcome, Dock.Right);
         line.Children.Add(outcome);

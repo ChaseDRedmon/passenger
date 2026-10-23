@@ -17,7 +17,12 @@ public sealed class LiveCommand(string id, string text, double milliseconds, int
     public string Id { get; } = id;
     public string Text { get; } = text;
     public double Milliseconds { get; } = milliseconds;
-    public int? Rows { get; internal set; } = rows;
+    /// <summary>The rows a non-query changed.</summary>
+    public int? Rows { get; } = rows;
+
+    /// <summary>How many reads its reader made (EF Core's ReadCount: each Read asked, the last that found no row too).</summary>
+    public int? Reads { get; internal set; }
+
     public string? Error { get; } = error;
     public int Runs { get; internal set; } = 1;
     public bool Repeated => Runs >= RepeatedAt;
@@ -157,7 +162,7 @@ public sealed class RequestLog
                 return true;
             case CommandRead read when byTrace.TryGetValue(read.Trace, out LiveRequest? reader)
                 && reader.Commands.LastOrDefault(c => c.Id == read.Id) is { } readCommand:
-                readCommand.Rows = read.Rows;
+                readCommand.Reads = read.Reads;
                 return true;
             default:
                 return false;
