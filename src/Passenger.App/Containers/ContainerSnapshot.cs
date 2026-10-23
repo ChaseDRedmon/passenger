@@ -205,14 +205,15 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
 
     /// <summary>Reads it all, each list asked of the CLI at once; a <see cref="ContainerCommandException"/> when one fails,
     /// but for Compose's list of projects, which only words their statuses (an engine with no Compose v2 has none: the
-    /// projects are its containers' labels, their statuses their states).</summary>
-    public static async Task<ContainerSnapshot> ReadAsync(ContainerEngine engine, CancellationToken cancel = default)
+    /// projects are its containers' labels, their statuses their states). <paramref name="containersOnly"/> reads the
+    /// containers and projects alone (a container named by an agent), its images, volumes and networks none.</summary>
+    public static async Task<ContainerSnapshot> ReadAsync(ContainerEngine engine, CancellationToken cancel = default, bool containersOnly = false)
     {
         Task<IReadOnlyList<JsonElement>> containers = engine.JsonLinesAsync(["ps", "-a", "--format", "json"], cancel);
         Task<IReadOnlyList<JsonElement>> projects = ProjectsAsync();
-        Task<IReadOnlyList<JsonElement>> images = engine.JsonLinesAsync(["images", "--format", "json"], cancel);
-        Task<IReadOnlyList<JsonElement>> volumes = engine.JsonLinesAsync(["volume", "ls", "--format", "json"], cancel);
-        Task<IReadOnlyList<JsonElement>> networks = engine.JsonLinesAsync(["network", "ls", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> images = containersOnly ? Task.FromResult<IReadOnlyList<JsonElement>>([]) : engine.JsonLinesAsync(["images", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> volumes = containersOnly ? Task.FromResult<IReadOnlyList<JsonElement>>([]) : engine.JsonLinesAsync(["volume", "ls", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> networks = containersOnly ? Task.FromResult<IReadOnlyList<JsonElement>>([]) : engine.JsonLinesAsync(["network", "ls", "--format", "json"], cancel);
         await Task.WhenAll(containers, projects, images, volumes, networks);
         List<ContainerInfo> all = [.. (await containers).Select(ContainerInfo.Read).OrderBy(c => c.Name, StringComparer.Ordinal)];
         if (engine.Known is { IsPodman: true, PodmanCli: false })

@@ -105,7 +105,8 @@ public sealed partial class PassengerTools
     /// engine cannot serve or nothing has that name.</summary>
     private async Task<ContainerRow> NamedContainer(string name, CancellationToken cancel)
     {
-        (EngineState state, ContainerSnapshot snapshot) = await EngineHoldsAsync(again: false, cancel);
+        // Its containers and projects alone: a name is never an image's, volume's or network's (docker images is slow on a big engine).
+        (EngineState state, ContainerSnapshot snapshot) = await EngineHoldsAsync(again: false, cancel, containersOnly: true);
         if (state.Problem is { } problem && state.Status is not EngineStatus.NoCompose)
         {
             throw new InvalidOperationException(problem);
@@ -115,7 +116,7 @@ public sealed partial class PassengerTools
 
     /// <summary>The engine's state and, when it can serve, what it holds, read off the window's thread; an answer of the
     /// CLI's that does not read is the agent's to hear, as the engine's refusal is.</summary>
-    private async Task<(EngineState State, ContainerSnapshot Snapshot)> EngineHoldsAsync(bool again, CancellationToken cancel)
+    private async Task<(EngineState State, ContainerSnapshot Snapshot)> EngineHoldsAsync(bool again, CancellationToken cancel, bool containersOnly = false)
     {
         ContainerEngine engine = window.Engine;
         try
@@ -123,7 +124,7 @@ public sealed partial class PassengerTools
             return await Task.Run(async () =>
             {
                 EngineState state = await engine.StateAsync(again, cancel);
-                return (state, state.Status is EngineStatus.Ready or EngineStatus.NoCompose ? await ContainerSnapshot.ReadAsync(engine, cancel) : ContainerSnapshot.Empty);
+                return (state, state.Status is EngineStatus.Ready or EngineStatus.NoCompose ? await ContainerSnapshot.ReadAsync(engine, cancel, containersOnly) : ContainerSnapshot.Empty);
             }, cancel);
         }
         catch (System.Text.Json.JsonException unread)
