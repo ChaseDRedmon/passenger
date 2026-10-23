@@ -36,6 +36,7 @@ public sealed class AspireApp : SharedProject
         AvaloniaApp.UseFeed(Folder);
         Create(PathOf("First"), Name);
         Create(PathOf("Second"), CompanionName);
+        AskedOfTheStarter();
         File.WriteAllText(PathOf("AspireTests.slnx"), "<Solution>\n" + string.Concat(
             new[] { ("First", Name), ("Second", CompanionName) }.SelectMany(app =>
                 new[] { "AppHost", "ApiService", "Web", "ServiceDefaults" }.Select(project =>
@@ -112,9 +113,22 @@ public sealed class AspireApp : SharedProject
     public string ApiProject => PathNames.Canonical(PathOf($"First/{Name}.ApiService/{Name}.ApiService.csproj"));
     public string WebProgram => PathNames.Canonical(PathOf($"First/{Name}.Web/Program.cs"));
 
-    public MainWindow OpenHost() => Open(PathOf($"First/{Name}.AppHost/AppHost.cs"));
+    /// <summary>Where the API's command's form writes its answer (<see cref="AskedOfTheStarter"/>), under obj as what a run writes is.</summary>
+    public string InteractionAnswer => Path.Combine(Path.GetDirectoryName(Host)!, "obj", "passenger-interaction-answer.txt");
 
-    public static string ConnectionInfoPath(string appHost) => appHost + ".dcp.json";
+    /// <summary>What the file-based service writes if the IDE ever runs it, which it must refuse to.</summary>
+    public string FileServiceRan => PathOf("file-service-started.txt");
+
+    /// <summary>The file-based service a DCP request names, which the IDE refuses.</summary>
+    public string FileService => PathOf("FileService/worker.cs");
+
+    /// <summary>The window on the first starter's AppHost.cs: with no C# language server for a test that reads no C# (an
+    /// AppHost run through the toolbar, its window and the IDE's execution endpoint), as <see cref="SharedProject.Open"/>.</summary>
+    public MainWindow OpenHost(bool languageServer = true) => Open(PathOf($"First/{Name}.AppHost/AppHost.cs"), languageServer: languageServer);
+
+    /// <summary>Where the AppHost records the IDE's execution endpoint and token it was given, under its obj: a run that wrote
+    /// in the project's own folders would have the next test's window start a cold language server (<see cref="SharedProject.Reset"/>).</summary>
+    public static string ConnectionInfoPath(string appHost) => Path.Combine(Path.GetDirectoryName(appHost)!, "obj", "passenger.dcp.json");
 
     /// <summary>Reads the connection inherited by the real fixture AppHost, never the IDE's internal server.</summary>
     public static (int Port, string Token) ReadConnectionInfo(string appHost)
@@ -184,7 +198,8 @@ public sealed class AspireApp : SharedProject
         http["environmentVariables"]!["ASPIRE_VERSION_CHECK_DISABLED"] = "true";
         // Where the AppHost keeps its record of running AppHosts (aspire ps's), the run's own, never the person's ~/.aspire.
         http["environmentVariables"]!["HOME"] = AspireCli.Home;
-        string dashboardData = Path.Combine(hostFolder, ".passenger-dashboard");
+        // Under obj, as DCP's record is (ConnectionInfoPath), so a run leaves the project's own files as written.
+        string dashboardData = Path.Combine(hostFolder, "obj", "passenger-dashboard");
         if (OperatingSystem.IsWindows())
         {
             Directory.CreateDirectory(dashboardData);
@@ -223,6 +238,77 @@ public sealed class AspireApp : SharedProject
             });
             app.Run();
             """, StringComparison.Ordinal));
+    }
+
+    /// <summary>What the class's tests ask of the first starter, written before it is restored, so no test writes a file of its
+    /// own to the project (which would have the next window start a cold language server): an edited method each service
+    /// answers at /passenger-edit (Hot Reload, Rerun), the API's command that asks a confirmation and a form the AppHost
+    /// validates, a launch profile whose folder is missing, a program that writes where a DCP request says it ran, and a
+    /// file-based service, which the IDE refuses.</summary>
+    private void AskedOfTheStarter()
+    {
+        string host = PathOf($"First/{Name}.AppHost/AppHost.cs");
+        string answer = JsonSerializer.Serialize(InteractionAnswer);
+        string command = $$"""
+            .WithCommand("passenger-interaction", "Passenger interaction", async context =>
+            {
+                var interactions = (Aspire.Hosting.IInteractionService)context.Services.GetService(typeof(Aspire.Hosting.IInteractionService))!;
+                var confirmation = await interactions.PromptConfirmationAsync("Restart API?", "Confirm restart", cancellationToken: context.CancellationToken);
+                if (!confirmation.Canceled && confirmation.Data)
+                {
+                    throw new InvalidOperationException("Cancel accepted the confirmation");
+                }
+                var input = new Aspire.Hosting.InteractionInput { Name = "value", Label = "Value", InputType = Aspire.Hosting.InputType.Text, Value = "before" };
+                var result = await interactions.PromptInputAsync("API settings", "Change the value", input,
+                    new Aspire.Hosting.InputsDialogInteractionOptions
+                    {
+                        ValidationCallback = validation =>
+                        {
+                            if (validation.Inputs["value"].Value != "latest value")
+                            {
+                                validation.AddValidationError("value", "Choose another value");
+                            }
+                            return Task.CompletedTask;
+                        }
+                    }, context.CancellationToken);
+                File.WriteAllText({{answer}}, result.Data!.Value);
+                return new Aspire.Hosting.ApplicationModel.ExecuteCommandResult { Success = true };
+            })
+            """;
+        string hostText = File.ReadAllText(host);
+        const string Health = "builder.AddProject<Projects.PassengerAspire_ApiService>(\"apiservice\", launchProfileName: \"http\")\n    .WithHttpHealthCheck(\"/health\")";
+        Assert.Contains(Health, hostText.ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        File.WriteAllText(host, hostText.ReplaceLineEndings("\n").Replace(Health, Health + command, StringComparison.Ordinal));
+
+        const string Edited = "\nstatic class PassengerEdit\n{\n    static int count;\n    public static long Value() => 1 + count;\n}\n";
+        string api = PathOf($"First/{Name}.ApiService/Program.cs");
+        string apiText = File.ReadAllText(api);
+        Assert.Contains("app.Run();", apiText, StringComparison.Ordinal);
+        File.WriteAllText(api, apiText.Replace("app.Run();", """
+            app.MapGet("/passenger-edit", () => PassengerEdit.Value().ToString());
+            if (Environment.GetEnvironmentVariable("PASSENGER_CANCELED_DCP_PID") is { Length: > 0 } marker)
+            {
+                File.WriteAllText(marker, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            app.Run();
+            """, StringComparison.Ordinal) + Edited);
+        string web = PathOf($"First/{Name}.Web/Program.cs");
+        string webText = File.ReadAllText(web);
+        Assert.Contains("app.Run();", webText, StringComparison.Ordinal);
+        File.WriteAllText(web, webText.Replace("app.Run();", "app.MapGet(\"/passenger-edit\", () => PassengerEdit.Value().ToString());\napp.Run();",
+            StringComparison.Ordinal) + Edited);
+
+        string settings = PathOf($"First/{Name}.ApiService/Properties/launchSettings.json");
+        JsonNode launch = JsonNode.Parse(File.ReadAllText(settings))!;
+        launch["profiles"]!["missing-folder"] = new JsonObject
+        {
+            ["commandName"] = "Project",
+            ["workingDirectory"] = PathOf("missing-working-folder"),
+        };
+        File.WriteAllText(settings, launch.ToJsonString());
+
+        Directory.CreateDirectory(PathOf("FileService"));
+        File.WriteAllText(FileService, $"File.WriteAllText({JsonSerializer.Serialize(FileServiceRan)}, \"executed\");\n");
     }
 
     private static string Install()
