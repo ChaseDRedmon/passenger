@@ -384,10 +384,69 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>A click on a resource's address lands while the AppHost streams updates, as a real AppHost's health and logs
+    /// stream: an update that comes between the press and the release (its health turned degraded) changes the row in place,
+    /// its control and its link kept, where rows made anew on every update took the link from under the pointer and the
+    /// click never opened the browser.</summary>
+    [AvaloniaFact]
+    public void A_click_on_a_resources_address_lands_while_the_AppHost_streams_updates()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        Resource api = new()
+        {
+            Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running",
+            HealthReports = { new HealthReport { Key = "ready", Status = HealthStatus.Healthy } },
+            Urls = { new Url { EndpointName = "http", FullUrl = "http://localhost:5310/" } },
+        };
+        backend.PushResource(api);
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            FindAction(window, "Show Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Rows.Count == 1, "the API's row");
+            Control row = Row(window, "apiservice");
+            Button address = row.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireUrl");
+            Ui.Settle();
+            Point at = Ui.Centre(address, window);
+            Assert.Same(address, Avalonia.Input.InputExtensions.InputHitTest(window, at) is Visual found ? found.GetVisualAncestors().Prepend(found).OfType<Button>().FirstOrDefault() : null);
+            window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+            api.HealthReports[0].Status = HealthStatus.Degraded;
+            backend.PushResource(api);
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Single().HealthStatus == "Degraded", "the AppHost's update as the address is pressed");
+            Assert.Contains(row.GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "degraded");
+            window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+            Ui.Settle();
+            Assert.Equal("http://localhost:5310/", Assert.Single(window.Browsed).AbsoluteUri);
+            Assert.Same(row, Row(window, "apiservice"));
+
+            // Its Details' address the same: an update that changes nothing they show leaves their tables as they are.
+            Ui.Click(Words(row, "apiservice"));
+            Ui.Click(Tab(window, "Details"));
+            Button detailed = window.Aspire.Details.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireDetailsUrl");
+            detailed.BringIntoView();
+            Ui.Settle();
+            at = Ui.Centre(detailed, window);
+            Assert.Same(detailed, Avalonia.Input.InputExtensions.InputHitTest(window, at) is Visual under ? under.GetVisualAncestors().Prepend(under).OfType<Button>().FirstOrDefault() : null);
+            window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+            api.Commands.Add(new ResourceCommand { Name = "resource-restart", DisplayName = "Restart", State = ResourceCommandState.Enabled });
+            backend.PushResource(api);
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Single().Commands.Count == 1, "the AppHost's update as the Details' address is pressed");
+            window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+            Ui.Settle();
+            Assert.Equal(2, window.Browsed.Count);
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>A resource's row as the Aspire window shows it, scrolled into view.</summary>
-    internal static Control Row(MainWindow window, string name) => Ui.Row(window.Aspire.ResourceList,
-        window.Aspire.Rows.FirstOrDefault(row => row.Resource.Name == name || row.Resource.DisplayName == name)
-            ?? throw new Xunit.Sdk.XunitException($"The Aspire window lists no {name}, only {string.Join(", ", window.Aspire.Rows.Select(row => row.Resource.Name))}"));
+    internal static Control Row(MainWindow window, string name) => Ui.Row(window.Aspire.ResourceList, window.Aspire.ItemOf(name)
+        ?? throw new Xunit.Sdk.XunitException($"The Aspire window lists no {name}, only {string.Join(", ", window.Aspire.Rows.Select(row => row.Resource.Name))}"));
 
     /// <summary>Words shown in a row.</summary>
     internal static TextBlock Words(Control row, string words) => row.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == words);

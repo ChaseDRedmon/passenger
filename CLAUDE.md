@@ -592,7 +592,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
   (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, its rows drawn as every
   list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, the health's
-  tag, `ContainerDetailsPane.HealthTag`, addresses as links), a port's link on the
+  tag, `ContainerDetailsPane.HealthTag`, addresses as links; kept by their keys as a list is read again, `RunRows.Put`, each
+  row's control shown anew in place, `RunRowView`, never the list made anew, whose controls a click's press and release
+  would straddle while the engine's events or an AppHost's updates stream, the click then lost), a port's link on the
   engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
   container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
@@ -602,7 +604,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
   Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
   as it is chosen and as the window reads the engine again, in the framed tables every Details tab has, one column of
-  names (`ToolWindows/DetailsTables`, the Aspire window's too): state, restarts and
+  names (`ToolWindows/DetailsTables`, the Aspire window's too; tables shown again that show what they showed stay,
+  `DetailsTables.Show`, so a press on a link in them lands): state, restarts and
   last exit, the health check's last outputs, ports as links, Compose's `com.docker.compose.depends_on`, environment,
   mounts, networks) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
   -L …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
@@ -2151,7 +2154,8 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   `DialogFooter.Page(page, DialogFooter.Bar(buttons[, left]))`; a rounded Border takes `Border.kindBadge` or
   `Border.tag` (the badge radius) or `Border.box` (the controls' radius), never a literal radius (UiRulesTests); a
   toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A list of what runs (the
-  Containers and Aspire windows') draws its rows through `RunRows`, a Details tab is `DetailsTables`, and a console of
+  Containers and Aspire windows') draws its rows through `RunRows`, kept by key and changed in place, never made anew on
+  an update, a Details tab is `DetailsTables`, and a console of
   several sources merged is `MergedLog`. A toolbar's icon button is
   `ToolButtons.Of` (`Toggle` for one that stays pressed): never focusable, its icon the one size, as UiRulesTests holds
   every tool window's; words of less weight beside a row's are `MutedText`; a search field's keys over its list (Up,
