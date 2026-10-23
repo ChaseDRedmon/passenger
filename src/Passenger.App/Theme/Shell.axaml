@@ -239,10 +239,16 @@
         <Setter Property="SelectionBrush" Value="{DynamicResource Passenger.TextSelection}" />
         <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Passenger.Text}" />
     </Style>
+    <!-- A field's placeholder, narrower than it, ends in an ellipsis rather than being cut at its edge. -->
+    <Style Selector="TextBox /template/ TextBlock">
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
     <!-- A drop-down framed as a field and as tall, its text inset as a field's (Fluent's is taller and its frame
          brighter). -->
     <Style Selector="ComboBox">
         <Setter Property="MinHeight" Value="{DynamicResource Passenger.ControlHeight}" />
+        <!-- The chosen item's words, narrower than they are, end in an ellipsis rather than being cut at the arrow. -->
+        <Setter Property="TextBlock.TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="Padding" Value="10,0,0,0" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
@@ -319,6 +325,16 @@
         <Setter Property="TextAlignment" Value="Center" />
         <Setter Property="TextWrapping" Value="Wrap" />
         <Setter Property="Margin" Value="16" />
+    </Style>
+    <!-- A sideways scrollbar takes a row of its own under what it scrolls while it shows, so the last row is never under it;
+         a text box's upright one a column of its own, so its lines wrap before it rather than running under it. Elsewhere
+         an upright bar lies over what it scrolls, as Rider's do (ControlThemes.axaml). Each matches AllowAutoHide as Fluent's
+         own spans do, since a style with no such trigger ranks below theirs. -->
+    <Style Selector="ScrollViewer[AllowAutoHide=True] /template/ ScrollContentPresenter#PART_ContentPresenter">
+        <Setter Property="Grid.RowSpan" Value="1" />
+    </Style>
+    <Style Selector="TextBox /template/ ScrollViewer#PART_ScrollViewer[AllowAutoHide=True] /template/ ScrollContentPresenter#PART_ContentPresenter">
+        <Setter Property="Grid.ColumnSpan" Value="1" />
     </Style>
     <!-- Words in a row that gives way when narrow (a list's row, the toolbar) end in an ellipsis, never cut mid-letter. -->
     <Style Selector="app|ShrinkingRow > TextBlock">
@@ -957,6 +973,7 @@
          is kept on every tab, so opening one moves no words. -->
     <Style Selector="ToggleButton.panelTab">
         <Setter Property="Height" Value="{DynamicResource Passenger.ControlHeight}" />
+        <Setter Property="TextBlock.TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="MinWidth" Value="0" />
         <Setter Property="Padding" Value="12,3,12,0" />
         <Setter Property="CornerRadius" Value="0" />
@@ -994,6 +1011,7 @@
          band. Not a tool window's tab, which is underlined. -->
     <Style Selector="ToggleButton.segment">
         <Setter Property="Height" Value="24" />
+        <Setter Property="TextBlock.TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="MinWidth" Value="0" />
         <Setter Property="Padding" Value="10,0" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
@@ -1053,6 +1071,7 @@
 
     <!-- A link in running text (About's), as Rider draws one: its words in the link colour, nothing behind them. -->
     <Style Selector="Button.link">
+        <Setter Property="TextBlock.TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="0" />

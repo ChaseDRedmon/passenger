@@ -4,7 +4,7 @@ using Avalonia.Controls;
 namespace Passenger.App;
 
 /// <summary>A row whose children take their own widths while they fit and, when the row is narrower, give way from the
-/// last one back, each down to its MinWidth (its Width when it has one): a list's row (a frame's place before its
+/// last one back, each down to its MinWidth (its Width when it has one, its item's when it holds a list's): a list's row (a frame's place before its
 /// method's name, a branch's upstream before its name) or Rider's main toolbar narrowing (the branch's name before the
 /// project's). Its words end in an ellipsis (Shell.axaml), so none is cut mid-letter.</summary>
 public sealed class ShrinkingRow : Panel
@@ -47,10 +47,13 @@ public sealed class ShrinkingRow : Panel
             widths[i] -= give;
             excess -= give;
         }
+        // A child is told the room the row has left over as well as its own, so one that grows by itself (a tab strip given
+        // another tab) is measured again within it and the row hears, where measured at its own width it kept to that.
+        double slack = double.IsInfinity(availableSize.Width) ? 0 : Math.Max(0, availableSize.Width - widths.Sum());
         double height = 0;
         for (int i = 0; i < Children.Count; i++)
         {
-            Children[i].Measure(new Size(widths[i], availableSize.Height));
+            Children[i].Measure(new Size(widths[i] + (Children[i] is IGivesWayFirst ? 0 : slack), availableSize.Height));
             height = Math.Max(height, Children[i].DesiredSize.Height);
             if (Children[i] is IGivesWayFirst)
             {
@@ -61,7 +64,16 @@ public sealed class ShrinkingRow : Panel
         return new Size(widths.Sum(), height);
     }
 
-    private double Least(Control child, int i) => double.IsNaN(child.Width) ? child.MinWidth + child.Margin.Left + child.Margin.Right : widths[i];
+    /// <summary>The least a child gives way to in a row, past its MinWidth, which leaves it as it is anywhere else: a closable
+    /// tab's few letters, its ellipsis and its ×.</summary>
+    public static readonly AttachedProperty<double> LeastProperty = AvaloniaProperty.RegisterAttached<ShrinkingRow, Control, double>("Least");
+
+    private double Least(Control child, int i) => !double.IsNaN(child.Width) ? widths[i]
+        : Math.Max(Math.Max(child.MinWidth, child.GetValue(LeastProperty)), ItemOf(child) is { } item ? Math.Max(item.MinWidth, item.GetValue(LeastProperty)) + item.Margin.Left + item.Margin.Right : 0)
+            + child.Margin.Left + child.Margin.Right;
+
+    /// <summary>An item a list's container holds (a row's panel of an ItemsControl's tabs), whose least width is its container's.</summary>
+    private static Control? ItemOf(Control child) => child is Avalonia.Controls.Presenters.ContentPresenter { Child: { } item } ? item : null;
 
     protected override Size ArrangeOverride(Size finalSize)
     {

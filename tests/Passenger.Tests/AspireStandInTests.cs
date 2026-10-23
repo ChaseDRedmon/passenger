@@ -579,6 +579,18 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Assert.DoesNotContain("[cache]", Console(window), StringComparison.Ordinal);
             Ui.Click(window.AspireWindow.Log.GetVisualDescendants().OfType<Button>().Single(button => button.Name == "aspireLogFind"));
             Assert.True(window.AspireWindow.Find.IsEffectivelyVisible, "The console's Find did not open");
+
+            // At the window's least width (#449): the toggles give way before Find, never under it, and the chooser's words
+            // and the Details' end in an ellipsis, its names keeping to their share so a value is never broken mid-word.
+            window.Width = MainWindow.SmallestWidth;
+            Ui.Settle();
+            UiRulesTests.FitsItsRoom(window, window.AspireWindow, "The Aspire window's Log");
+            Ui.Click(Tab(window, "Details"));
+            Ui.WaitFor(() => details.Resource?.Name == "apiservice" && details.IsEffectivelyVisible, "the API's details again");
+            UiRulesTests.FitsItsRoom(window, window.AspireWindow, "The Aspire window's Details");
+            TextBlock type = details.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "Type" && text.IsEffectivelyVisible);
+            Assert.True(type.Bounds.Width + type.Margin.Right <= details.Bounds.Width * 0.45,
+                $"The Details' names take {type.Bounds.Width + type.Margin.Right:0} of its {details.Bounds.Width:0} px, leaving their values too little");
             Assert.Empty(backend.Errors);
         }
         finally

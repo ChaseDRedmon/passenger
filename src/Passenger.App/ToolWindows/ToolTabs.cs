@@ -19,7 +19,7 @@ public static class ToolTabs
         }
         PathIcon glyph = new() { Classes = { "small" } };
         glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable("Icon.Close"));
-        Button button = new() { Classes = { "tabClose" }, Content = glyph, Margin = new Thickness(6, 0, 0, 0) };
+        Button button = new() { Classes = { "tabClose" }, Content = glyph, Margin = new Thickness(6, 0, 0, 0), [DockPanel.DockProperty] = Dock.Right };
         ToolTip.SetTip(button, closeTip);
         button.Click += (_, e) =>
         {
@@ -30,7 +30,10 @@ public static class ToolTabs
         {
             Classes = { "panelTab" },
             IsChecked = open,
-            Content = new StackPanel { Orientation = Orientation.Horizontal, Children = { name, button } },
+            // Its name gives way before its ×, ending in an ellipsis (Shell.axaml's panelTab), when its strip narrows, down to
+            // a few letters, so every tab of a narrow strip is still there to choose.
+            [ShrinkingRow.LeastProperty] = 88,
+            Content = new DockPanel { Children = { button, name } },
         };
     }
 }

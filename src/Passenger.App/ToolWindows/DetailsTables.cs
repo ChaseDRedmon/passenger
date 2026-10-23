@@ -22,6 +22,12 @@ public class DetailsTables : DockPanel
     /// <summary>What the tables shown show, in words; null while none are.</summary>
     private string? shownWords;
 
+    /// <summary>The widest a name may be: the column of names takes at most its share of a narrow page, so the values keep
+    /// room to be read rather than wrapping a letter or two to a line.</summary>
+    private double namesMost = NamesMost;
+
+    private const double NamesMost = 260;
+
     public DetailsTables()
     {
         Grid.SetIsSharedSizeScope(sections, true);
@@ -84,7 +90,7 @@ public class DetailsTables : DockPanel
             table.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
             TextBlock name = new()
             {
-                Text = rows[i].Name, Classes = { "muted" }, MaxWidth = 260, MinHeight = ListRow.Height, Margin = new Thickness(0, 0, 16, 0),
+                Text = rows[i].Name, Classes = { "muted", "detailsName" }, MaxWidth = namesMost, MinHeight = ListRow.Height, Margin = new Thickness(0, 0, 16, 0),
                 TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Top, Padding = new Thickness(0, 4),
                 [Grid.RowProperty] = i,
             };
@@ -107,6 +113,21 @@ public class DetailsTables : DockPanel
             sections.Children.Add(heading);
             sections.Children.Add(framed);
         }
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        // A table's page's margins and frame (34) and a name's own margin (16) aside, the names take at most two fifths.
+        double most = double.IsInfinity(availableSize.Width) ? NamesMost : Math.Clamp((availableSize.Width - 34) * 0.4 - 16, 48, NamesMost);
+        if (most != namesMost)
+        {
+            namesMost = most;
+            foreach (TextBlock name in sections.GetLogicalDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("detailsName")))
+            {
+                name.MaxWidth = most;
+            }
+        }
+        return base.MeasureOverride(availableSize);
     }
 
     /// <summary>What a value shows in words: its texts, a link's words and its tip.</summary>

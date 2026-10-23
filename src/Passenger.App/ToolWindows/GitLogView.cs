@@ -497,7 +497,8 @@ public sealed class GitLogView : DockPanel
         string where = vcs.Repository is { } repository ? Path.GetDirectoryName(repository.Relative(change.Path))?.Replace('\\', '/') ?? string.Empty : string.Empty;
         TextBlock folder = new() { Text = where, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12 };
         folder.Bind(TextBlock.ForegroundProperty, folder.GetResourceObservable("Passenger.TextMuted"));
-        return new StackPanel { Orientation = Orientation.Horizontal, Height = RowHeight, Children = { icon, name, folder } };
+        // The folder gives way first, then the name, each ending in an ellipsis, in a narrow pane.
+        return new ShrinkingRow { Height = RowHeight, Children = { icon, name, folder } };
     }
 
     /// <summary>A row's part of the graph: the lines through it, lane by lane, and the commit's dot.</summary>

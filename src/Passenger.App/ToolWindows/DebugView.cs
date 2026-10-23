@@ -42,7 +42,8 @@ public sealed class DebugView : DockPanel
         {
             ItemsSource = model.Sessions,
             VerticalAlignment = VerticalAlignment.Center,
-            ItemsPanel = new FuncTemplate<Panel?>(() => new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 }),
+            // In a narrow window the last tabs give way first, each name ending in an ellipsis.
+            ItemsPanel = new FuncTemplate<Panel?>(() => new ShrinkingRow()),
             ItemTemplate = new FuncDataTemplate<DebugTab>((tab, _) => tab is null ? new TextBlock() : SessionTab(tab), supportsRecycling: false),
         };
 

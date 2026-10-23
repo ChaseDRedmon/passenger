@@ -291,9 +291,19 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             if (bar.Orientation == Orientation.Horizontal && bar.TemplatedParent is ScrollViewer viewer)
             {
                 Assert.True(viewer.Extent.Width > viewer.Viewport.Width, $"{where} sideways scrollbar shows for what is no wider than its view");
+                Rect shown = Placed(window, Presenter(viewer));
+                Assert.True(shown.Bottom <= Placed(window, bar).Top + 0.5, $"{where} sideways scrollbar lies over the last of what it scrolls, where it takes a row of its own");
+            }
+            if (bar.Orientation == Orientation.Vertical && bar.TemplatedParent is ScrollViewer lines && lines.TemplatedParent is TextBox)
+            {
+                Rect shown = Placed(window, Presenter(lines));
+                Assert.True(shown.Right <= Placed(window, bar).Left + 0.5, "A text box's upright scrollbar lies over its lines' ends, where it takes a column of its own");
             }
         }
     }
+
+    private static ScrollContentPresenter Presenter(ScrollViewer viewer) =>
+        viewer.GetVisualDescendants().OfType<ScrollContentPresenter>().First(p => p.TemplatedParent == viewer);
 
     [AvaloniaFact]
     public void At_half_a_1366_wide_screen_the_window_cuts_nothing_and_a_stripe_too_short_puts_the_rest_behind_More()
@@ -643,6 +653,109 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         {
             window.Close();
         }
+    }
+
+    /// <summary>Narrow panes cut no word mid-letter and draw nothing over anything (#449), each held where it comes from: a
+    /// tool window's header gives its tabs' room up before its title's and never lays them under its buttons (two programs
+    /// debugged in a narrow Debug window drew their second tab under the ⋮ and —), a tab's name ends in an ellipsis, the Git
+    /// log's files end theirs, a sideways scrollbar lies under the last row rather than over it and a text box's upright one
+    /// beside its lines; the Aspire window's are held where it runs (AspireStandInTests).</summary>
+    [AvaloniaFact]
+    public void In_narrow_panes_words_with_no_room_end_in_an_ellipsis_and_nothing_draws_over_anything()
+    {
+        MainWindow window = Open(MainWindow.SmallestWidth, 768);
+        try
+        {
+            window.OpenFile(project.PathOf(Project.Deep));
+            Ui.Settle();
+            UnderEachLook(window, () => NarrowPanes(window));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static void NarrowPanes(MainWindow window)
+    {
+        // Two programs debugged, each a tab in the Debug window's header after its title, wider than the window has room for.
+        System.Collections.ObjectModel.ObservableCollection<Passenger.App.ToolWindows.DebugTab> sessions = window.BottomPanel.Debug.Sessions;
+        // The second comes once the first is shown, as a second program's start brings it.
+        sessions.Add(new Passenger.App.ToolWindows.DebugTab("Greenhouse.AppHost: apiservice", new Passenger.App.ToolWindows.OutputView(toolbar: false)));
+        try
+        {
+            Assert.True(window.Perform(AppActions.ShowDebug), "Debug did not show");
+            Ui.Settle();
+            sessions.Add(new Passenger.App.ToolWindows.DebugTab("Greenhouse.AppHost: sensors", new Passenger.App.ToolWindows.OutputView(toolbar: false)));
+            Ui.Settle();
+            Visual debug = PaneOf(window.DebugWindow);
+            FitsItsRoom(window, debug, "The Debug window");
+            ToggleButton[] tabs = [.. debug.GetVisualDescendants().OfType<ToggleButton>().Where(t => t.Classes.Contains("panelTab") && Words(t).Contains("Greenhouse", StringComparison.Ordinal))];
+            Assert.True(tabs.Length == 2 && tabs.All(t => Visible(window, t).Width >= 40),
+                $"The Debug window shows {tabs.Count(t => Visible(window, t).Width >= 40)} of its two programs' tabs in its header's room");
+            // Too wide together for the header, they take all its room before their names are cut.
+            Rect room = Placed(window, (Visual)tabs[0].GetVisualAncestors().OfType<ContentControl>().First(c => c.ClipToBounds));
+            Assert.True(Placed(window, tabs[1]).Right >= room.Right - 1,
+                $"The Debug window's tabs end at {Placed(window, tabs[1]).Right:0.#}, their names cut, though the header has room to {room.Right:0.#}");
+        }
+        finally
+        {
+            sessions.Clear();
+        }
+
+        // The Git log's one commit chosen beside a short, narrow log: its files, one deep in folders, and its details, which scroll.
+        window.DockHost.Apply(window.DockHost.Capture() with { BottomHeight = 300 });
+        Assert.True(window.Perform(AppActions.ShowGit), "Git did not show");
+        Passenger.App.ToolWindows.GitLogView log = window.GitLog;
+        Ui.Landed(() => log.Rows.Count == 1, "the log's commit");
+        Ui.Click(log.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == "First" && t.IsEffectivelyVisible).FindAncestorOfType<ListBoxItem>()!);
+        Ui.Landed(() => log.Files.Count >= 4 && log.Details.Contains("tests@passenger.invalid", StringComparison.Ordinal), "the commit's files and details");
+        FitsItsRoom(window, PaneOf(log), "The Git window");
+        TextBlock? deep = log.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.IsEffectivelyVisible && t.Text?.EndsWith("Processing", StringComparison.Ordinal) == true);
+        Assert.True(deep is not null && deep.TextTrimming == TextTrimming.CharacterEllipsis,
+            $"The Git log's file row {(deep is null ? "of RefundCalculator.cs is not shown" : "cuts its folder rather than ending it in an ellipsis")}");
+        Scrollbars(window);
+        window.DockHost.RestoreDefault();
+        Ui.Settle();
+    }
+
+    /// <summary>The tool window a view is shown in, its header and all.</summary>
+    private static Visual PaneOf(Visual view) =>
+        view.GetVisualAncestors().OfType<DockPanel>().FirstOrDefault(p => p.Classes.Contains("toolPane"))
+            ?? throw new Xunit.Sdk.XunitException($"The {view.GetType().Name} is in no tool window");
+
+    /// <summary>A part of a window kept as every part is however narrow (#449): words wider than their room end in an
+    /// ellipsis rather than being cut, and nothing a person reads or presses lies over another, each as far as what clips it
+    /// shows it.</summary>
+    internal static void FitsItsRoom(Visual window, Visual part, string what)
+    {
+        Control[] drawn = [.. part.GetVisualDescendants().OfType<Control>().Where(c => (c is TextBlock { Text.Length: > 0 } or Button or ComboBox or TextBox)
+            && c.IsEffectivelyVisible && c.FindAncestorOfType<Passenger.Editor.CodeEditor>() is null && c.FindAncestorOfType<ScrollBar>() is null)];
+        foreach (TextBlock text in drawn.OfType<TextBlock>().Where(t => t.Bounds.Width >= 1))
+        {
+            double room = text.Bounds.Width - text.Padding.Left - text.Padding.Right;
+            Assert.True(text.TextLayout.Width <= room + 0.5,
+                $"{what} cuts '{text.Text}' to {room:0.#} px of its {text.TextLayout.Width:0.#}, where words with no room end in an ellipsis");
+        }
+        Rect[] seen = [.. drawn.Select(c => Visible(window, c))];
+        for (int i = 0; i < drawn.Length; i++)
+        {
+            for (int j = i + 1; j < drawn.Length; j++)
+            {
+                Rect both = seen[i].Intersect(seen[j]);
+                // A field's own options stand inside it, as Find's do, its text kept clear of them by its padding.
+                bool inField = (drawn[i] is TextBox && seen[i].Contains(seen[j])) || (drawn[j] is TextBox && seen[j].Contains(seen[i]));
+                Assert.True(both.Width <= 1 || both.Height <= 1 || inField || drawn[i].IsVisualAncestorOf(drawn[j]) || drawn[j].IsVisualAncestorOf(drawn[i]),
+                    $"{what} draws {Named(drawn[i])} and {Named(drawn[j])} one over the other, across {both.Width:0.#} by {both.Height:0.#} px");
+            }
+        }
+
+        static string Named(Control control) => control switch
+        {
+            TextBlock text => $"'{text.Text}'",
+            ContentControl { Content: string words } => $"'{words}'",
+            _ => $"the {control.GetType().Name} {ToolTip.GetTip(control) ?? control.Name}".TrimEnd(),
+        };
     }
 
     /// <summary>The status bar's words are a link while they have a place to go (an internal error's, IDE Internal Errors):

@@ -6,13 +6,16 @@ using Avalonia.VisualTree;
 namespace Passenger.App.Docking;
 
 /// <summary>One place's window: its header (title, Move to and Hide in a menu, a hide button) over its content.
-/// The header drags the window elsewhere.</summary>
+/// The header drags the window elsewhere; in a narrow one, what follows the title gives way, then the title, each ending in
+/// an ellipsis, never under the buttons.</summary>
 internal sealed class ToolPane : DockPanel
 {
     private readonly DockHost host;
     private readonly TextBlock title = new() { Classes = { "toolTitle" }, VerticalAlignment = VerticalAlignment.Center };
     private readonly ContentControl body = new();
-    private readonly ContentControl tools = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+    // What the window puts after its title (its tabs) narrows before the title does and never draws past its room, over
+    // the header's buttons.
+    private readonly ContentControl tools = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), ClipToBounds = true };
     private readonly Border header;
 
     public ToolPane(DockHost host)
@@ -45,7 +48,7 @@ internal sealed class ToolPane : DockPanel
                 Children =
                 {
                     new StackPanel { [DockProperty] = Dock.Right, Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(0, 0, 6, 0), Children = { options, hide } },
-                    new StackPanel { Orientation = Orientation.Horizontal, Children = { title, tools } },
+                    new ShrinkingRow { Children = { title, tools } },
                 },
             },
         };

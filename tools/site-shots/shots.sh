@@ -158,11 +158,14 @@ EOF
 shot() {
     local name=$1 theme=$2
     shift 2
-    # Under TMPDIR rather than the repository, since the status bar names a profile's snapshot by its path there.
     local state="$tmp/passenger-site-shots/state/$name-$theme" png="$work/png/$name-$theme.png"
     if [[ $name == agent ]]; then
         # The window's agent socket is in its state's mcp/, and macOS keeps a socket's path to 103 bytes.
         state="$tmp/pss-$name-$theme"
+    elif [[ $name == profiler ]]; then
+        # The status bar names a profile's snapshot by its folder, so it is kept in a folder named for the sample at a fixed
+        # place, never the machine's TMPDIR or the repository; one theme's at a time.
+        state=/private/tmp/Greenhouse
     fi
     rm -rf "$state"
     mkdir -p "$state"

@@ -390,7 +390,8 @@ size. Each checks a tool's answer, leaving the window's steps to the window's te
 - XAML: four spaces; one style per selector in `Theme/Shell.axaml`, restyling Fluent's states on its
   `PART_ContentPresenter`. Shell.axaml's base styles give every Button, TextBox, ComboBox, NumericUpDown, CheckBox and
   MenuItem its look (`Passenger.ControlHeight` 28; radii `ControlRadius` 4, `ToolRadius` 6, `PopupRadius` 8); a class style
-  says only how it differs.
+  says only how it differs. A style on a template part Fluent sets under a property trigger (`^[AllowAutoHide=True]`)
+  needs a trigger of its own, or it ranks below Fluent's.
 - A visual inconsistency is fixed once, in a shared place (a token, a base style, a helper), never per control: Passenger's
   own consistency settles a design question. The shared pieces: dialogs `DialogFooter` (`Of`, `Listed`, `Answers`, `Bar`,
   `Page`) in a `Border.footerBar`; lists in a page `Border.framed`; rules `Passenger.Separator` (`Passenger.Divider`

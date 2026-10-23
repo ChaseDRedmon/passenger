@@ -11,7 +11,8 @@ namespace Passenger.App.ToolWindows;
 /// bar's right (a container's Timestamps). Its owner streams what the toggles choose, again as one changes.</summary>
 public sealed class MergedLog : DockPanel
 {
-    private readonly StackPanel sources = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+    // In a narrow log the last toggles give way first, their words ending in an ellipsis, never under Find and the log's own.
+    private readonly ShrinkingRow sources = new() { VerticalAlignment = VerticalAlignment.Center, ClipToBounds = true };
     private readonly HashSet<string> hidden = new(StringComparer.Ordinal);
 
     /// <param name="findName">The Find button's name, as a test finds it.</param>
@@ -85,7 +86,11 @@ public sealed class MergedLog : DockPanel
         sources.Children.Clear();
         foreach ((string key, string words) in offered)
         {
-            ToggleButton toggle = new() { Classes = { "segment" }, Content = words, IsChecked = !hidden.Contains(key), VerticalAlignment = VerticalAlignment.Center };
+            ToggleButton toggle = new()
+            {
+                Classes = { "segment" }, Content = words, IsChecked = !hidden.Contains(key), VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 2, 0),
+            };
             toggle.IsCheckedChanged += (_, _) =>
             {
                 if (toggle.IsChecked == true)
