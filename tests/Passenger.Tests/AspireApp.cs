@@ -44,7 +44,7 @@ public sealed class AspireApp : SharedProject
         Prepare(byRealPath: true);
         using JsonDocument assets = JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(Host)!, "obj", "project.assets.json")));
         Assert.True(assets.RootElement.GetProperty("libraries").TryGetProperty("MessagePack/2.5.307", out _),
-            "The 13.6.2 AppHost must restore the fixed MessagePack dependency.");
+            $"The {TemplatesVersion} AppHost must restore the fixed MessagePack dependency.");
     }
 
     public string? WhyNot { get; }

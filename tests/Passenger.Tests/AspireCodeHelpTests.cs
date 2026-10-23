@@ -569,9 +569,9 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             {
                 Put(folder, $"{name}/{name}.csproj", $"""
                     <Project Sdk="Microsoft.NET.Sdk">
-                      <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
+                      <Sdk Name="Aspire.AppHost.Sdk" Version="{AspireApp.TemplatesVersion}" />
                       <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle>{(name == "Host" ? $"<UserSecretsId>{secretsId}</UserSecretsId>" : "")}</PropertyGroup>
-                      <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
+                      <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="{AspireApp.TemplatesVersion}" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
                     </Project>
                     """);
             }

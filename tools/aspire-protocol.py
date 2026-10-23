@@ -3,9 +3,10 @@
 DashboardServiceGrpc.cs, from dashboard_service.proto beside them, with protoc and gRPC's C# plugin from Grpc.Tools.
 
 The generated code is checked in (#400), so no build runs protoc: Grpc.Tools ran it in every fresh build (CI's, each
-publish), its macOS protoc an x64 binary that Apple Silicon runs only under Rosetta. The proto changes only with the
-Aspire version Passenger speaks to; then `just aspire-protocol` and the two files' changes seen in review. Grpc.Tools is
-fetched once from nuget.org into artifacts/aspire-protocol/, checked against the SHA-512 below, and never restored.
+publish), its macOS protoc then (before 2.84's universal one) an x64 binary that Apple Silicon ran only under Rosetta.
+The proto changes only with the Aspire version Passenger speaks to; then `just aspire-protocol` and the two files'
+changes seen in review. Grpc.Tools is fetched once from nuget.org into artifacts/aspire-protocol/, checked against the
+SHA-512 below, and never restored.
 """
 import base64
 import hashlib
@@ -17,9 +18,9 @@ import sys
 import urllib.request
 import zipfile
 
-VERSION = "2.80.0"
+VERSION = "2.84.0"
 # The SHA-512 of nuget.org's Grpc.Tools.VERSION.nupkg, as NuGet's package cache records it (grpc.tools.VERSION.nupkg.sha512).
-SHA512 = "0EPZ/V7QbQleo5dIIlCDYbiSbtzWA2XtSW/qPrcwxOgR5ApLIe0BdY/yznK8MZ5xw/X2Bju7teJSeTssMEigDQ=="
+SHA512 = "g+LBB/Psn2bUDqBhK1/gNDKWLfMkLJDkDTFtQE+skgBKzHg2ixbZGRzcOzwvzb8TyxJ8xPs3maSkFah8ZMv4yw=="
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "src", "Passenger.App")
@@ -31,7 +32,7 @@ def tools_folder():
     system = platform.system()
     machine = platform.machine().lower()
     if system == "Darwin":
-        return "macosx_x64"
+        return "macosx_universal"
     if system == "Linux":
         return "linux_arm64" if machine in ("aarch64", "arm64") else "linux_x64"
     if system == "Windows":

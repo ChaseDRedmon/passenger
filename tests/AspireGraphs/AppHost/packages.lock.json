@@ -4,12 +4,12 @@
     "net10.0": {
       "Aspire.Hosting.AppHost": {
         "type": "Direct",
-        "requested": "[13.6.2, )",
-        "resolved": "13.6.2",
-        "contentHash": "iCpFLP7pLlE7+JN12Rk27qmKHmiidni8/SxumGNs1lS2CPAqvX+gBwpSOfiJFzZBcecNoIXzQ3y5C87rN7FMLA==",
+        "requested": "[13.6.3, )",
+        "resolved": "13.6.3",
+        "contentHash": "93mUttjq+jQab2xKtgVFfdtZ18xx0sZGctWD/WzwJsdDntCfYQypzQgYy9aLAzB3T7/PLYzw4PxjH0th+StcXQ==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
-          "Aspire.Hosting": "13.6.2",
+          "Aspire.Hosting": "13.6.3",
           "Google.Protobuf": "3.36.1",
           "Grpc.AspNetCore": "2.83.0",
           "Grpc.Net.ClientFactory": "2.83.0",
@@ -43,8 +43,8 @@
       },
       "Aspire.Hosting": {
         "type": "Transitive",
-        "resolved": "13.6.2",
-        "contentHash": "eMnytcYrRtfksutqu5vgnCCcWVnYXFq4O0i5/ABskIV3rzAKR88dr8z0aDuZJPKSyf8hhDL1gBVZPN+rr6qJxw==",
+        "resolved": "13.6.3",
+        "contentHash": "CKPYA+DScm85BbnADc9yVmdiBmfrYdbeXkWm5ooLZLPVYv3txAyuypNi9ExJVIskxdKBtkNX4hDGIkr7j4olkQ==",
         "dependencies": {
           "AspNetCore.HealthChecks.Uris": "9.0.0",
           "Google.Protobuf": "3.36.1",
@@ -162,6 +162,15 @@
         "dependencies": {
           "Fractions": "7.3.0",
           "YamlDotNet": "16.3.0"
+        }
+      },
+      "MessagePack": {
+        "type": "Transitive",
+        "resolved": "2.5.307",
+        "contentHash": "P9LNJ2bz/wx8J5W0EQW4Bh7G5BiEikXiiDqGvw/WOMRyRI0QcxVvRM4XkqhidGJG6uzMT7iF89o0uYGLwmGifQ==",
+        "dependencies": {
+          "MessagePack.Annotations": "2.5.307",
+          "Microsoft.NET.StringTools": "17.6.3"
         }
       },
       "MessagePack.Annotations": {
@@ -623,13 +632,13 @@
       },
       "Google.Protobuf": {
         "type": "CentralTransitive",
-        "requested": "[3.36.1, )",
+        "requested": "[3.36.2, )",
         "resolved": "3.36.1",
         "contentHash": "77AqPEoaY1ODE+syYBHti0jXiwQq0J/fUr/fRyYhNlc9oKtH5dZZEr/OLKtdKNVG83PRnCYB2r8B80ZrObzOGQ=="
       },
       "Grpc.Net.Client": {
         "type": "CentralTransitive",
-        "requested": "[2.83.0, )",
+        "requested": "[2.84.0, )",
         "resolved": "2.83.0",
         "contentHash": "dHYtx7hW4muttsCrWNG4/Ysb1iAIhNPEq28eo7vF166CdXn/RXOr3SGvSreIGIjvmdrADrBNJ2cUeJBto/T0XA==",
         "dependencies": {
@@ -637,19 +646,9 @@
           "Microsoft.Extensions.Logging.Abstractions": "8.0.0"
         }
       },
-      "MessagePack": {
-        "type": "CentralTransitive",
-        "requested": "[2.5.307, )",
-        "resolved": "2.5.307",
-        "contentHash": "P9LNJ2bz/wx8J5W0EQW4Bh7G5BiEikXiiDqGvw/WOMRyRI0QcxVvRM4XkqhidGJG6uzMT7iF89o0uYGLwmGifQ==",
-        "dependencies": {
-          "MessagePack.Annotations": "2.5.307",
-          "Microsoft.NET.StringTools": "17.6.3"
-        }
-      },
       "ModelContextProtocol.Core": {
         "type": "CentralTransitive",
-        "requested": "[2.2.0, )",
+        "requested": "[2.3.0, )",
         "resolved": "1.4.1",
         "contentHash": "G/hOBZkJsvF3MSy0sOvXdxca5uRe2Sb4xk7xRuTWNZI45khVBjOLo6nSzGilctIICavNVxbxUF908fLYI9RxkQ==",
         "dependencies": {
@@ -678,7 +677,7 @@
       },
       "StreamJsonRpc": {
         "type": "CentralTransitive",
-        "requested": "[2.25.29, )",
+        "requested": "[2.26.150, )",
         "resolved": "2.25.29",
         "contentHash": "ebP0ScWRtbd1EWayLRJ6bjM7aPwYZoJIIU1DApmn/cYl2dydR9f4p6Mj3eY77qzAywy6IbZWB9sJPSWeO5hmrg==",
         "dependencies": {

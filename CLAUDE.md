@@ -2641,7 +2641,8 @@ and `EfCoreOlderVersion`, Directory.Packages.props) come from the package cache 
 `tests/EfGraphs` (the SQLite provider's and the Design package's graph at net10.0, at both versions, restore-only projects
 of the solution) puts the packages there and the test project's `PackageDownload` the tool at both versions, which
 `ShopApp` copies into `AvaloniaApp.Feed` with EF Core's own packages, whose metadata the window reads; a stand-in provider
-(`ShopApp.Provider`, a nuspec alone) in a feed of the test's own supports only the EF Core its version names; the run's
+(`ShopApp.Provider`, a nuspec alone, its id naming the EF Core versions it is made for, since the package cache keeps one
+made before a move by its id and version) in a feed of the test's own supports only the EF Core its version names; the run's
 own DOTNET_CLI_HOME keeps the person's global tool out of sight; `MigrationsPostgresTests` list, add and update the
 migrations of a web app on Npgsql's provider (tests/EfGraphs/Npgsql, `NpgsqlEfVersion`) against the Postgres its fast-mode
 compose run brings up beside it, at the port Compose published it on, its password in no command line Passenger ran

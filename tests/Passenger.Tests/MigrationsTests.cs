@@ -355,8 +355,10 @@ internal static class ShopApp
 
     public static string Older { get; } = AvaloniaApp.Metadata("EfCoreOlderVersion");
 
-    /// <summary>The stand-in provider's id: a provider of EF Core of another maker, as the feed's metadata describes it.</summary>
-    public const string Provider = "Passenger.EntityFrameworkCore.StandIn";
+    /// <summary>The stand-in provider's id: a provider of EF Core of another maker, as the feed's metadata describes it.
+    /// Named for the EF Core versions its ranges name, since the package cache keeps it by id and version: one made for
+    /// the versions pinned before a move would be taken for it, its ranges naming those.</summary>
+    public static string Provider { get; } = $"Passenger.EntityFrameworkCore.StandIn.Ef{Older.Replace('.', '_')}.Ef{Version.Replace('.', '_')}";
 
     /// <summary>The app in a folder of its own: the Design package or not, the local tool at a version or none, the stand-in
     /// provider at a version (its versions in a feed of the test's own, each with the range of EF Core it supports), and a
