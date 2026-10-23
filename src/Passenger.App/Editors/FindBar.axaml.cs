@@ -16,6 +16,13 @@ public partial class FindBar : UserControl
     private CodeEditor? editor;
     private TextDocument? document;
     private SearchResult result = SearchResult.None;
+
+    /// <summary>The text <see cref="result"/> was found in, which an edit leaves behind until it is searched again.</summary>
+    private TextSnapshot? searched;
+
+    /// <summary>Whether a search off the UI thread is out, and whether the text changed again since it began.</summary>
+    private bool finding;
+    private bool findAgain;
     private int current = -1;
     private CellGrid? grid;
     private TableSearch cells = TableSearch.None;
@@ -75,6 +82,7 @@ public partial class FindBar : UserControl
         editor = null;
         Follow(null);
         result = SearchResult.None;
+        searched = null;
         current = -1;
     }
 
@@ -177,9 +185,17 @@ public partial class FindBar : UserControl
             _ = SearchCells(grid, jump);
             return;
         }
-        result = TextSearch.FindAll(editor.Document.Snapshot, CurrentQuery);
+        TextSnapshot text = editor.Document.Snapshot;
+        Found(TextSearch.FindAll(text, CurrentQuery), text, jump);
+    }
+
+    /// <summary>Shows what a search of a text found, the match at or after the caret the current one.</summary>
+    private void Found(SearchResult found, TextSnapshot text, bool jump)
+    {
+        result = found;
+        searched = text;
         current = -1;
-        if (result.Matches.Count > 0)
+        if (editor is not null && result.Matches.Count > 0)
         {
             Selection primary = editor.Selections.Primary;
             current = result.NextFrom(primary.Start);
@@ -246,6 +262,7 @@ public partial class FindBar : UserControl
             StepCells(grid, forward);
             return;
         }
+        FindNow();
         if (editor is null || result.Matches.Count == 0)
         {
             return;
@@ -263,7 +280,12 @@ public partial class FindBar : UserControl
 
     private void ReplaceCurrent()
     {
-        if (editor is null || grid is not null || current < 0 || current >= result.Matches.Count)
+        if (editor is null || grid is not null)
+        {
+            return;
+        }
+        FindNow();
+        if (current < 0 || current >= result.Matches.Count)
         {
             return;
         }
@@ -274,7 +296,7 @@ public partial class FindBar : UserControl
             editor.Select(match);
             return;
         }
-        // The result is found again at every change of the document, so its matches are this text's.
+        // Found again for the text as it stands (FindNow), so its matches and groups are this text's.
         string replacement = result.Replacement(current, ReplaceWith.Text ?? string.Empty);
         int after = match.Start + replacement.Length;
         editor.ApplyEdits([new TextEdit(match.Start, match.Length, replacement)], SelectionSet.Single(after));
@@ -303,9 +325,68 @@ public partial class FindBar : UserControl
             : count == 0 ? "0 results"
             : $"{current + 1}/{count}{(truncated ? "+" : string.Empty)}");
 
+    /// <summary>The text changed under an open bar: its matches move with the edit, and the text as it stands is searched
+    /// off the UI thread, since a search reads the whole file and a key should cost what it changed. A table's are searched
+    /// as its own change says.</summary>
     private void OnDocumentChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (IsVisible)
+        if (!IsVisible || editor is null)
+        {
+            return;
+        }
+        if (grid is not null)
+        {
+            Search(jump: false);
+            return;
+        }
+        if (editor.Highlights.Count > 0)
+        {
+            editor.SetHighlights([.. editor.Highlights.Select(match => TextEditing.MapRange(match, e.Edits))], editor.CurrentHighlight);
+        }
+        if (finding)
+        {
+            findAgain = true;
+            return;
+        }
+        finding = true;
+        _ = FindAgainAsync();
+    }
+
+    /// <summary>Searches the text as it stands off the UI thread, again while it changed meanwhile, one search at a time;
+    /// a search lands only for the text and query still shown, and not when one on the UI thread found them first.</summary>
+    private async Task FindAgainAsync()
+    {
+        try
+        {
+            do
+            {
+                findAgain = false;
+                if (editor is not { } shown || !IsVisible || grid is not null)
+                {
+                    return;
+                }
+                TextSnapshot text = shown.Document.Snapshot;
+                SearchQuery query = CurrentQuery;
+                SearchResult found = await BackgroundWork.Run(() => TextSearch.FindAll(text, query));
+                if (!findAgain && editor == shown && IsVisible && grid is null && ReferenceEquals(shown.Document.Snapshot, text)
+                    && !ReferenceEquals(searched, text) && query == CurrentQuery)
+                {
+                    Found(found, text, jump: false);
+                }
+            }
+            while (findAgain);
+        }
+        finally
+        {
+            finding = false;
+        }
+    }
+
+    /// <summary>Searches the text again on the UI thread unless the matches are its own: what acts on a match (the next one,
+    /// a replace) acts on the text as it stands, even while a search off it is still out.</summary>
+    private void FindNow()
+    {
+        if (editor is not null && !ReferenceEquals(searched, editor.Document.Snapshot))
         {
             Search(jump: false);
         }
