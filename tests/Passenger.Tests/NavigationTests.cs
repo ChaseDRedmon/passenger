@@ -82,7 +82,7 @@ public sealed class NavigationTests : IDisposable
     /// word starts listed, a key in sixty thousand files taking the UI thread a median 86 to 123 ms; and the first letter,
     /// which a great many match, keeps only the best of them as it goes, where all of them were sorted (#233's ~150 ms over
     /// 60,000). What the window allocates is the count, not a time a busy machine stretches: each key over 20,000 files
-    /// allocates on the UI thread less than 8 bytes for each file more than over 2,000.</summary>
+    /// allocates on the UI thread less than 8 bytes for each file more than over 2,000, the least of three tries of it.</summary>
     [AvaloniaFact]
     public void Go_to_file_in_twenty_thousand_files_does_no_work_for_a_file_whose_name_cannot_match()
     {
@@ -129,19 +129,33 @@ public sealed class NavigationTests : IDisposable
         Ui.WaitFor(() => window.FileIndex.Count >= files, $"the folder's {files} files indexed");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
         Assert.True(window.IsPopupOpen);
-        Ui.Settle();
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        window.KeyTextInput("V");
-        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-        long first = GC.GetAllocatedBytesForCurrentThread() - before;
+        long first = Least(window, "V");
         window.KeyTextInput("alAr");
-        Ui.Settle();
-        before = GC.GetAllocatedBytesForCurrentThread();
-        window.KeyTextInput("7");
-        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-        long key = GC.GetAllocatedBytesForCurrentThread() - before;
+        long key = Least(window, "7");
         Ui.Settle();
         return (first, key);
+    }
+
+    /// <summary>The least a key typed in Go to File's field allocates on the UI thread of three times, each taken back
+    /// after: what else lands on that thread meanwhile (a frame the key's own wait draws) goes into one look, as CI's
+    /// Linux once put 613 KB into one, while what the key costs for each file goes into every one.</summary>
+    private static long Least(MainWindow window, string key)
+    {
+        long least = long.MaxValue;
+        for (int time = 0; time < 3; time++)
+        {
+            Ui.Settle();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput(key);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            Ui.Settle();
+            if (time < 2)
+            {
+                Ui.Press(window, "BACK_SPACE");
+            }
+        }
+        return least;
     }
 
     [AvaloniaFact]
