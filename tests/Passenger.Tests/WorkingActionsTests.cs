@@ -42,9 +42,11 @@ public sealed class WorkingActionsTests : WorkingActionsFolders, IClassFixture<R
         int builds = 0;
         window.Builder.Exited += (_, _) => builds++;
 
+        IReadOnlyList<string> said = Said(window);
         Ui.Click(run, settle: false);
         Assert.True(ActionButtons.IsWorking(run), "Run should show it is working the moment it is clicked");
-        Assert.StartsWith("Working out how to run Hello", window.Status, StringComparison.Ordinal);
+        Assert.True(said.Count > 0 && said[0].StartsWith("Working out how to run Hello", StringComparison.Ordinal),
+            $"The status bar should say Run's first stage the moment it is clicked, but said: {string.Join(" | ", said)}");
         Assert.True(Toolbar(window, "StopButton").IsEnabled, "Stop should be there to click from the click on, to end the start");
         Dispatcher.UIThread.RunJobs();
         AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
@@ -53,8 +55,10 @@ public sealed class WorkingActionsTests : WorkingActionsFolders, IClassFixture<R
         int drawn = Ring(window, run).Count(c => Math.Abs(c.R - accent.R) + Math.Abs(c.G - accent.G) + Math.Abs(c.B - accent.B) < 90);
         Assert.True(drawn >= 9, $"Run's ring should be drawn round its icon in the accent in the frame after the click, but {drawn} of 16 points round it were");
 
+        int before = said.Count;
         Ui.Click(run, settle: false);
-        Assert.StartsWith("Already under way: ", window.Status, StringComparison.Ordinal);
+        Assert.True(said.Skip(before).Any(s => s.StartsWith("Already under way: ", StringComparison.Ordinal)),
+            $"A second click on Run should be told it is under way, but the status bar said: {string.Join(" | ", said.Skip(before))}");
         Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to run to its end", TimeSpan.FromMinutes(2));
         Assert.True(builds == 1, $"Two clicks on Run built {builds} times, where the second should have started nothing");
         Assert.Single(Lines(Output(window)), l => l == "Hello from the run");
@@ -133,9 +137,22 @@ public sealed class WorkingActionsDebuggingTests : WorkingActionsFolders, IClass
             }
         };
 
+        List<string> stages = [];
+        window.Actions.Work.Changed += (_, change) =>
+        {
+            if (!change.Ended)
+            {
+                stages.Add(change.Work.Stage);
+            }
+        };
+        IReadOnlyList<string> said = Said(window);
+
         Ui.Click(debug, settle: false);
         Ui.Click(debug, settle: false);
-        Assert.StartsWith("Already under way: Working out how to debug Hello", window.Status, StringComparison.Ordinal);
+        // Told the stage the first click's work had reached, which may have gone on to its build before the second came.
+        Assert.True(stages.Count > 0 && stages[0].StartsWith("Working out how to debug Hello", StringComparison.Ordinal)
+            && said.Any(s => stages.Any(stage => s == $"Already under way: {stage}")),
+            $"A second click on Debug should be told the first's stage is under way; Debug said {string.Join(" | ", stages)}, the status bar {string.Join(" | ", said)}");
         Ui.WaitFor(() => !ActionButtons.IsWorking(debug) && !window.Debugger.IsDebugging, "the debugged program to start and end", TimeSpan.FromMinutes(3));
         Assert.True(builds == 1 && sessions.Count == 1, $"A double click on Debug built {builds} times and opened {sessions.Count} sessions, where it should have done each once");
         window.Close();
@@ -186,6 +203,22 @@ public abstract class WorkingActionsFolders : IDisposable
     }
 
     protected static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
+
+    /// <summary>Everything the status bar shows from now on, in order: what a click was told stays listed once a later stage
+    /// of the work under way has taken its place, which the frames a click draws may let it.</summary>
+    protected static IReadOnlyList<string> Said(MainWindow window)
+    {
+        TextBlock words = window.FindControl<TextBlock>("StatusText") ?? throw new InvalidOperationException("The status bar has no StatusText");
+        List<string> said = [];
+        words.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBlock.TextProperty && words.Text is { Length: > 0 } text)
+            {
+                said.Add(text);
+            }
+        };
+        return said;
+    }
 
     protected static string[] Lines(string text) => text.Split('\n', StringSplitOptions.TrimEntries);
 
