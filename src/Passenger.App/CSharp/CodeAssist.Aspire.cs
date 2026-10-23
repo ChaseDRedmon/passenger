@@ -167,21 +167,6 @@ public sealed partial class CodeAssist
         csharp.For(file)?.RefreshDiagnostics();
         string where = secret ? "the AppHost's user secrets" : $"the AppHost's {Path.GetFileName(path)}";
         return new RefactorOutcome($"Set {name} in {where}", null, [new RefactoredFile(path, made ? "created" : "changed", [])], []);
-
-        static TextEdit Difference(string was, string now)
-        {
-            int start = 0;
-            while (start < was.Length && start < now.Length && was[start] == now[start])
-            {
-                start++;
-            }
-            int end = 0;
-            while (end < was.Length - start && end < now.Length - start && was[^(end + 1)] == now[^(end + 1)])
-            {
-                end++;
-            }
-            return new TextEdit(start, was.Length - start - end, now[start..^end]);
-        }
     }
 
     /// <summary>Rename's box for the resource whose name the caret is on in an AppHost's or a service's string, placed at the

@@ -245,11 +245,12 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         int version = document.Text.Version;
         IReadOnlyList<Diagnostic> aspire = await AspireFindingsAsync(lsp, cancel);
         IReadOnlyList<Diagnostic> compose = await ComposeFindingsAsync(cancel);
+        IReadOnlyList<Diagnostic> configuration = await ConfigurationFindingsAsync([.. aspire, .. compose], cancel);
         if (cancel.IsCancellationRequested || version != document.Text.Version || Lsp != lsp)
         {
             return false;
         }
-        document.Markers = diagnostics.Take([.. found, .. aspire, .. compose], DiagnosticMarks.Marker);
+        document.Markers = diagnostics.Take([.. found, .. aspire, .. compose, .. configuration], DiagnosticMarks.Marker);
         service.FileProblemsChanged(document);
         return true;
     }
@@ -262,6 +263,14 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         Aspire.AspireRole.AppHost => await AspireUnsetParametersAsync(lsp, cancel),
         _ => [],
     };
+
+    /// <summary>Passenger's own diagnostics of the file for the text as it stands, as its pull marks them: Aspire's, and its reads
+    /// of configuration keys nothing gives (<see cref="ConfigurationFindingsAsync"/>); an agent's <c>diagnostics</c> lists them.</summary>
+    internal async Task<IReadOnlyList<Diagnostic>> PassengerFindingsAsync(LspDocument lsp, CancellationToken cancel)
+    {
+        IReadOnlyList<Diagnostic> aspire = await AspireFindingsAsync(lsp, cancel);
+        return [.. aspire, .. await ConfigurationFindingsAsync(aspire, cancel)];
+    }
 
     /// <summary>The file's diagnostics pulled and shown now, Aspire's with them, as a typing pause's pull shows them: for an
     /// agent's call that reads Passenger's own fixes, which stand on them.</summary>

@@ -1024,6 +1024,18 @@ public sealed class CSharpService : IAsyncDisposable
         }
     });
 
+    /// <summary>The configuration of the project a C# file is of (the session's <see cref="ProjectSession.ConfigurationOf(string)"/>),
+    /// against which its reads of keys nothing gives are warned of; none without a session, which warns of none.</summary>
+    public Func<string, Workspace.ConfigurationProject?>? ConfigurationOf { get; init; }
+
+    /// <summary>A reader of files' texts for work off the UI thread, the open files' as the editor has them now
+    /// (<see cref="Workspace.ConfigurationFiles.Reader"/>); the disk's without a session.</summary>
+    public Func<Func<string, string?>>? Texts { get; init; }
+
+    /// <summary>A settings file, user secrets or launch profile changed: each open file that warned of a key nothing gave, or
+    /// that reads configuration, pulls its diagnostics again; no other file.</summary>
+    internal void ConfigurationChanged() => Each(document => document.ConfigurationChanged());
+
     /// <summary>The connection strings the open compose files' .NET services read that their environments do not set (the
     /// session's <see cref="Containers.EngineChecks.Gaps"/>), whose reads in the code are marked too; none without a session.</summary>
     public Func<IReadOnlyList<Containers.ComposeGap>>? ComposeGaps { get; init; }

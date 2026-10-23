@@ -189,7 +189,7 @@ public sealed partial class PassengerTools
     private async Task AspireMarked(Served served, CancellationToken cancel)
     {
         if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { } csharp
-            && (csharp.AspireRole != Aspire.AspireRole.None || csharp.ReadsForCompose))
+            && (csharp.AspireRole != Aspire.AspireRole.None || csharp.ReadsForCompose || csharp.MayReadConfiguration))
         {
             await csharp.PullNowAsync(cancel);
         }

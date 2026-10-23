@@ -218,7 +218,7 @@ public partial class MainWindow
         if (node.Kind == NodeKind.Project)
         {
             bool unloaded = node.Path is { } project && Explorer.Tree.Unloaded.Contains(project);
-            entries.AddRange([Item(A.ManageNuGet), Item(A.EditProjectFile), Item(unloaded ? A.ReloadProject : A.UnloadProject), separator]);
+            entries.AddRange([Item(A.ManageNuGet), Item(A.ManageUserSecrets), Item(A.EditProjectFile), Item(unloaded ? A.ReloadProject : A.UnloadProject), separator]);
         }
         if (holds || solutionFolder)
         {

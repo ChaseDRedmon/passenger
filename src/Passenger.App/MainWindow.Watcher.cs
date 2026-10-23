@@ -69,6 +69,12 @@ public partial class MainWindow
                 document.ReadConventions();
             }
         }
+        // A settings file, a launch profile or a compose file written: the reads of keys nothing gave are looked at again.
+        if (changes.Lost || changes.Paths.Any(p => ConfigurationFiles.IsSettings(p) || Path.GetFileName(p).Equals("launchSettings.json", StringComparison.OrdinalIgnoreCase)
+            || Web.ComposeDeclarations.IsCompose(p)))
+        {
+            session.CSharp?.ConfigurationChanged();
+        }
         PackageSourcesChanged(changes);
         session.Tests.Finder.FolderChanged(changes);
         session.Xaml.FilesChanged(changes.Paths.Concat(changes.Restored));
