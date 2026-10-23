@@ -362,11 +362,12 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             window.Width = 900;
             window.Height = 650;
             Ui.Settle();
-            Avalonia.Controls.Primitives.ToggleButton tracesTab = window.Aspire.GetVisualDescendants()
-                .OfType<Avalonia.Controls.Primitives.ToggleButton>().Single(button => button.Content is TextBlock { Text: "Traces" });
-            Point? tabBottom = tracesTab.TranslatePoint(new Point(0, tracesTab.Bounds.Height), window.Aspire);
-            Assert.True(tracesTab.Bounds.Height > 0 && tabBottom is { } bottom && bottom.Y <= window.Aspire.Bounds.Height,
-                "The native telemetry tabs must remain reachable in a narrow, short tool window");
+            // The window's last tab, AppHost Log, after Telemetry's.
+            Avalonia.Controls.Primitives.ToggleButton lastTab = window.Aspire.GetVisualDescendants()
+                .OfType<Avalonia.Controls.Primitives.ToggleButton>().Single(button => button.Content is TextBlock { Text: "AppHost Log" });
+            Point? tabBottom = lastTab.TranslatePoint(new Point(0, lastTab.Bounds.Height), window.Aspire);
+            Assert.True(lastTab.Bounds.Height > 0 && tabBottom is { } bottom && bottom.Y <= window.Aspire.Bounds.Height,
+                "The window's tabs must remain reachable in a narrow, short tool window");
             window.Width = 1200;
             window.Height = 800;
             Ui.Settle();
