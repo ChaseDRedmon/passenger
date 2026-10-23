@@ -567,13 +567,7 @@ public sealed partial class MigrationsController(MigrationsParts parts)
         {
             return (null, "No project here uses EF Core");
         }
-        // A run of services that runs the startup project (a compose run's .NET service, an AppHost's resource) gives the
-        // database; a run configuration of the project its working folder and environment.
-        bool servedBy = session.ContainerRun is { IsStopped: false } up && up.Plan.Dotnet.Any(d => PathNames.Same(d.Project, startup.Path))
-            || session.Aspire.Apps.Any(a => a.Services.Any(r => PathNames.Same(r.Project, startup.Path)));
-        (string? framework, string folder, IReadOnlyDictionary<string, string> environment) = servedBy
-            ? (startup.TargetFrameworks.Count > 1 ? startup.TargetFrameworks[0] : null, startup.Folder, new Dictionary<string, string>())
-            : await RunOfAsync(startup, work);
+        (string? framework, string folder, IReadOnlyDictionary<string, string> environment) = await RunOfAsync(startup, work);
         if (EfRestore.Of(startup.Path, framework) is not { Runtime: not null })
         {
             if (await BuildAsync(project, startup, framework, work) is { } unbuilt)
@@ -989,10 +983,7 @@ public sealed partial class MigrationsController(MigrationsParts parts)
             return (framework, startup.Folder, new Dictionary<string, string>());
         }
         work.Say($"Reading how {runs.Name} runs…");
-        // MSBuild's word on the run's folder, waited for a while: without it the command runs in the project's folder.
-        using CancellationTokenSource reading = CancellationTokenSource.CreateLinkedTokenSource(work.Stopping);
-        reading.CancelAfter(Waits.Of(TimeSpan.FromSeconds(30)));
-        (LaunchPlan? plan, _) = await parts.Builds().ResolvePlanAsync(runs, null, reading.Token);
+        (LaunchPlan? plan, _) = await parts.Builds().ResolvePlanAsync(runs, null, work.Stopping);
         return plan is null ? (framework, startup.Folder, runs.Environment)
             : (plan.Framework ?? framework, Directory.Exists(plan.WorkingDirectory) ? plan.WorkingDirectory : startup.Folder, plan.Environment);
     }

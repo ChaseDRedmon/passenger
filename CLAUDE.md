@@ -976,7 +976,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   Aspire page is the same table, `RunConfigurationsDialog.AspireTable`), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
   Dockerfile's final FROM, their menu running or debugging that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
-  run them against the engine on aspnet:10.0 and busybox; their HTTPS test exports the machine's development certificate
+  run them against the engine on aspnet:10.0 and busybox (with a fast-mode run up, a build twice and a configuration's
+  plan each end as without one, #433); their HTTPS test exports the machine's development certificate
   first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
   which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`; its check answered trusted by a
   stand-in, so it asks nothing), their certificate question's test answers with a shell stand-in for dev-certs that trusts
@@ -1233,8 +1234,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   update with the provider that supports it, or the update as asked. Then Passenger's own build of the project and the startup project (the Build window and Problems as
   any build's), then `dotnet ef … --no-build --prefix-output` through `ChildProcesses` (`EfRun`, the tool the manifest names
   run by `dotnet tool run`, else the person's global one by its program), its lines in the Build window, run in the folder
-  and environment of the run configuration that runs the startup project (`LaunchPlan`, waited for 30 s at most: the
-  database the run uses), a multi-targeted startup project given its framework. While a compose run or an AppHost runs the
+  and environment of the run configuration that runs the startup project (`LaunchPlan`, read with a run of services up as
+  without: the database the run uses), a multi-targeted startup project given its framework. While a compose run or an AppHost runs the
   startup project, its database is the run's (`EfDatabases`, said in the window and the Build window as Against …, and in
   an agent's answer): a compose run's .NET service's resolved connection strings (Compose's model) given again at the port
   Compose published their database's service on (`compose port`, on the engine's machine, `ContainerPort.LinkOn`), the
@@ -1246,6 +1247,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   for model changes no migration covers (`dotnet ef migrations has-pending-model-changes`, EF Core 8 on; `Pending`): each is
   a warning in Problems' Build tab (code `Migrations`) at the context's class, whose Show Context Actions offers Add
   Migration… (`MainWindow.MigrationFixes`, one of `CodeAssist.EditorFixes`), and a gap of the window with the same fix.
+  A command fails by its exit code alone (`EfOutcome.Succeeded`): an error EF only logs is one it went past, as Npgsql's
+  read of the history table a new database lacks, which `migrations list` takes as none applied.
   What it says when it fails is read into one plain line with its fix where one is
   known (`EfGaps.After`: the Design package, a context the tools cannot make, several contexts, no tool, tools not
   restored, an applied migration removed), shown in the window under the gaps with its fix as a button; EF's warning that
@@ -2201,7 +2204,9 @@ running and its output, the state store's half-second write delay (a test that r
 templates' read ahead, and the system's own delay before the watcher hears a change (a test that needs it heard waits
 for the watcher's `Changed`). A wait that gives up lists each hold by the file and line that took it (`InFlight.Watched`,
 set by `TestRun`, names `BackgroundWork`'s holds, `UiThread`'s crossings and each `Debounce` by caller, at no cost
-outside tests) and each piece in flight, with since when (`Ui.Busy`). No fixed sleeps: `Thread.Sleep`, `Task.Delay`
+outside tests) and each piece in flight, with since when (`Ui.Busy`). A wait's words are made as it is called, so what
+they say of the window (its status, a model's state) is how the wait began; words of what stood as it gave up are a
+`Func<string>` (`Ui.WaitFor`'s other overload): #433's hang was a status read as the wait began. No fixed sleeps: `Thread.Sleep`, `Task.Delay`
 and `Screenshot.Pump` are banned in the tests (RS0030) outside `Waiting` and `Ui`. A wait for something is `Ui.WaitFor`,
 `Ui.PumpUntil`/`Ui.Pumped` (the window's loop run, not settled) or `Waiting.Until`/`UntilAsync`/`Within` (off it);
 time a test needs to pass (a debounce it measures, a moment in which nothing may happen) is `Ui.Hold(time, why)`,
@@ -2471,7 +2476,10 @@ and `EfCoreOlderVersion`, Directory.Packages.props) come from the package cache 
 of the solution) puts the packages there and the test project's `PackageDownload` the tool at both versions, which
 `ShopApp` copies into `AvaloniaApp.Feed` with EF Core's own packages, whose metadata the window reads; a stand-in provider
 (`ShopApp.Provider`, a nuspec alone) in a feed of the test's own supports only the EF Core its version names; the run's
-own DOTNET_CLI_HOME keeps the person's global tool out of sight;
+own DOTNET_CLI_HOME keeps the person's global tool out of sight; `MigrationsPostgresTests` list, add and update the
+migrations of a web app on Npgsql's provider (tests/EfGraphs/Npgsql, `NpgsqlEfVersion`) against the Postgres its fast-mode
+compose run brings up beside it, at the port Compose published it on, and skip, saying so, unless the engine holds
+`postgres:17-alpine`, which they never pull;
 `AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
 stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key, recording the commands the

@@ -7,7 +7,9 @@ namespace Passenger.App.Migrations;
 /// (its <c>data:</c> lines, JSON with <c>--json</c>), its errors and warnings each a line, and every line as written.</summary>
 public sealed record EfOutcome(int ExitCode, string Data, IReadOnlyList<string> Errors, IReadOnlyList<string> Warnings, IReadOnlyList<string> Lines)
 {
-    public bool Succeeded => ExitCode == 0 && Errors.Count == 0;
+    /// <summary>By its exit code alone: dotnet ef ends with 1 on whatever fails it, while an error EF only logged is one it
+    /// went past (Npgsql's read of the history table a new database lacks, which <c>migrations list</c> takes as none applied).</summary>
+    public bool Succeeded => ExitCode == 0;
 
     /// <summary>A command that never ran (no .NET, a folder gone), its reason its one error.</summary>
     public static EfOutcome Unstarted(string why) => new(-1, string.Empty, [why], [], [why]);

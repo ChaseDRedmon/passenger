@@ -461,7 +461,7 @@ internal static class ShopApp
 
     /// <summary>The tool at both versions, the Design package and EF Core at both versions, copied from the package cache into
     /// the run's local feed, whose metadata the window reads for the versions that fit.</summary>
-    private static void Feed()
+    internal static void Feed()
     {
         string cache = AvaloniaApp.Metadata("NuGetPackageRoot");
         foreach ((string id, string version) in new[]

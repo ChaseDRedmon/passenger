@@ -844,7 +844,12 @@ public static class Ui
     /// <summary>Waits for something to become true, running the dispatcher's loop (and so its timers)
     /// meanwhile, and ends with the window laid out and drawn as it then stands; fails naming what never happened. What it waits for may hold background work all along (a build, a test
     /// run), which it then waits out for as long as it waits, not for <see cref="Settle"/>'s own limit alone.</summary>
-    public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null)
+    public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null) => WaitFor(condition, () => what, limit);
+
+    /// <summary><see cref="WaitFor(Func{bool}, string, TimeSpan?)"/> whose words are made as it gives up, so what it says
+    /// of the window (its status, a model's state) is what stood then: words made as a wait begins tell how it began, which
+    /// read as what it hung on (#433's "hang" was the status as the wait began).</summary>
+    public static void WaitFor(Func<bool> condition, Func<string> what, TimeSpan? limit = null)
     {
         TimeSpan within = (limit ?? SettleLimit).Scaled();
         DateTime until = DateTime.UtcNow + within;
@@ -852,13 +857,13 @@ public static class Ui
         {
             if (DateTime.UtcNow > until)
             {
-                throw new TimeoutException($"Waited {within.TotalSeconds} s for {what}");
+                throw new TimeoutException($"Waited {within.TotalSeconds} s for {what()}");
             }
             Frame();
             DateTime settling = DateTime.UtcNow + SettleLimit.Scaled();
             if (!Settled(settling > until ? settling : until))
             {
-                throw new TimeoutException($"The IDE was not quiet while waiting {within.TotalSeconds} s for {what}. Still busy:\n{Busy()}{IdeLogTail()}{ServerLogTail()}");
+                throw new TimeoutException($"The IDE was not quiet while waiting {within.TotalSeconds} s for {what()}. Still busy:\n{Busy()}{IdeLogTail()}{ServerLogTail()}");
             }
         }
         // What it waited for may have landed with none of the window's jobs run since (a read that ended at once).

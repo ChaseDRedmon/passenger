@@ -104,6 +104,36 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
     }
 
     [AvaloniaFact]
+    public void With_a_fast_mode_run_up_builds_and_a_configurations_plan_each_finish()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Restored("builds");
+        MainWindow window = Open(folder);
+        RunConfiguration compose = window.Configurations.First(c => c.Kind == RunKind.Compose);
+        Assert.True(window.SelectConfiguration(compose.Name));
+        try
+        {
+            Launched(window, "the Compose application to come up");
+            // Its services run Passenger's build, mounted read-only: the builds and the project host's answers after it never wait on them.
+            for (int turn = 1; turn <= 2; turn++)
+            {
+                BuildOutcome built = Ui.Await(window.BuildAsync(), $"build {turn} with the run up", TimeSpan.FromMinutes(2));
+                Assert.True(built.Succeeded, built.Message);
+            }
+            string webProject = Path.Combine(folder, "Web", "Web.csproj");
+            RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Project && PathNames.Same(c.Project, webProject));
+            (LaunchPlan? plan, string? problem) = Ui.Await(window.Builds.ResolvePlanAsync(web, null), $"{web.Name}'s plan with the run up", TimeSpan.FromMinutes(1));
+            Assert.True(plan is not null, problem);
+            Assert.All(States(project).Values, state => Assert.Equal("running", state));
+        }
+        finally
+        {
+            Docker.Stopped(window, project, "Stop to take every container down");
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void In_images_mode_a_container_path_in_the_runs_output_links_to_the_workspace_file()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
