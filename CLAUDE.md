@@ -479,7 +479,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ToolWindowIds` (what a kept layout records it by, so a value there never changes, and what every show, hide and
   `ToolWindow.Id ==` names): the shell's own (Explorer, Structure, Run, Debug, Unit Tests, Build, Problems) in
   `MainWindow.AddToolWindows`, a feature's in its `Add…` beside the view's wiring (Git and Commit in `AddVcs`, the
-  profiler in `ProfilerCommands`).
+  profiler in `ProfilerCommands`). A window's start builds no view it hides (#233): a `ToolWindow` given how to build
+  its view (`Func<Control>`, its header's `Tools` too) builds and wires it as it is first shown, by its layout kept too
+  (`IsBuilt`, `Built`), and what reads or acts on it asks through a property that builds it (`StructureView`, `Find`,
+  `Hierarchy`, `LocalHistoryWindow`), while what only follows the IDE (a caret moved, a session bound) passes over one
+  not built (`structure?.`); what only looks among the views made (which window holds the keys) asks `IsBuilt` first. A
+  view written to while hidden (the Build, Run, Debug and Problems consoles and lists) is made up front, its costly part
+  made as it is first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests
+  window's details, a `MergedLog`'s Find.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,

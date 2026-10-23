@@ -48,7 +48,7 @@ public partial class MainWindow : Window
     private readonly Testing.TestGutter testGutter;
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
     private readonly ToolWindows.ToolViews Bottom = new();
-    private readonly ToolWindows.StructureView Structure = new();
+    private ToolWindows.StructureView? structure;
 
     /// <summary>The folder open and what it has and runs, or the window's nothing before one opens.</summary>
     private ProjectSession session;
@@ -106,17 +106,14 @@ public partial class MainWindow : Window
         AddPreview();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
-        Structure.Follow(() => Editors.Active is { } shown
-            ? (shown.Path, session.CSharp?.For(shown)?.Lsp ?? session.Web?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
-            : null);
-        Structure.GoToRequested += (_, row) => NavigateTo(row.Path, row.Position);
-        Editors.ActiveChanged += (_, _) => Structure.Invalidate();
-        Editors.CaretMoved += (_, _) => Structure.FollowCaret();
+        // A Structure window not built yet asks for the file shown as it is.
+        Editors.ActiveChanged += (_, _) => structure?.Invalidate();
+        Editors.CaretMoved += (_, _) => structure?.FollowCaret();
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) =>
         {
             if (Editors.Active == document)
             {
-                Structure.Invalidate();
+                structure?.Invalidate();
             }
         };
         Editors.ActiveChanged += (_, _) => UpdateStatus();
@@ -230,11 +227,6 @@ public partial class MainWindow : Window
         {
             NavigateTo(problem.Path!, problem.Position);
             Request(AppActions.QuickFix);
-        };
-        Structure.UsagesRequested += (_, row) =>
-        {
-            NavigateTo(row.Path, row.Position);
-            Request(AppActions.FindUsages);
         };
         assist.DebuggerValue = async (offset, cancel) => Editors.Active is { } shown && Debugging.XamlBreakpoints.Compiled(shown.Path)
             ? bindingValues!.HoverAt(shown, offset)
@@ -550,7 +542,7 @@ public partial class MainWindow : Window
             OpenAtFirst = true,
         });
         // Shown however it is (its action, its stripe button, a layout), it asks for the file shown then itself.
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Structure, "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Structure, "Structure", "Icon.Structure", MakeStructure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Run, "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun, ActionTitle = "Run Tool Window" });
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Debug, "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft)
         {
@@ -705,8 +697,24 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>The Structure tool window.</summary>
-    public ToolWindows.StructureView StructureView => Structure;
+    /// <summary>The Structure tool window, built as it is first shown or asked for.</summary>
+    public ToolWindows.StructureView StructureView => (ToolWindows.StructureView)Dock[ToolWindowIds.Structure]!.Content;
+
+    /// <summary>The Structure window's view, built as it is first shown (<see cref="StructureView"/>) and wired then.</summary>
+    private ToolWindows.StructureView MakeStructure()
+    {
+        structure = new ToolWindows.StructureView();
+        structure.Follow(() => Editors.Active is { } shown
+            ? (shown.Path, session.CSharp?.For(shown)?.Lsp ?? session.Web?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
+            : null);
+        structure.GoToRequested += (_, row) => NavigateTo(row.Path, row.Position);
+        structure.UsagesRequested += (_, row) =>
+        {
+            NavigateTo(row.Path, row.Position);
+            Request(AppActions.FindUsages);
+        };
+        return structure;
+    }
 
     /// <summary>The tool windows' host, for the layout and the tests.</summary>
     public Docking.DockHost DockHost => Dock;

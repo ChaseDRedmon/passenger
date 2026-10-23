@@ -19,8 +19,7 @@ public sealed class MergedLog : DockPanel
     public MergedLog(string findName, params Control[] own)
     {
         Console = new OutputView(toolbar: false);
-        Find = new Editors.FindBar { [DockProperty] = Dock.Top };
-        Find.Attach(Console.Editor);
+        find = new Editors.FindBar { [DockProperty] = Dock.Top };
         Button finding = ToolButtons.Of("Icon.Search", "Find in the log", OpenFind);
         finding.Name = findName;
         finding.VerticalAlignment = VerticalAlignment.Center;
@@ -33,15 +32,35 @@ public sealed class MergedLog : DockPanel
         bar.Children.Add(right);
         bar.Children.Add(sources);
         Children.Add(bar);
-        Children.Add(Find);
+        Children.Add(find);
         Children.Add(Console);
     }
 
     /// <summary>The console the sources' lines stream into.</summary>
     public OutputView Console { get; }
 
-    /// <summary>Find over the log, as the editor's.</summary>
-    public Editors.FindBar Find { get; }
+    private readonly Editors.FindBar find;
+    private bool findAttached;
+
+    /// <summary>Find over the log, as the editor's, over the console's editor once the log is shown or Find asked for.</summary>
+    public Editors.FindBar Find
+    {
+        get
+        {
+            if (!findAttached)
+            {
+                findAttached = true;
+                find.Attach(Console.Editor);
+            }
+            return find;
+        }
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _ = Find;
+    }
 
     /// <summary>Opens Find over the log.</summary>
     public void OpenFind() => Find.Open(replace: false);

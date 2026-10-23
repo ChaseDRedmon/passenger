@@ -279,7 +279,7 @@ public partial class MainWindow
                 if (session == next)
                 {
                     status.ShowLanguage(LanguageLabel());
-                    Structure.FollowServer();
+                    structure?.FollowServer();
                 }
             };
             web.Stopped += (_, message) =>
@@ -415,7 +415,7 @@ public partial class MainWindow
             service.StateChanged += (_, _) => status.ShowLanguage(LanguageLabel());
             service.StateChanged += (_, _) => usages.Refresh();
             service.StateChanged += (_, _) => OutlineWhenUnseen();
-            service.StateChanged += (_, _) => Structure.FollowServer();
+            service.StateChanged += (_, _) => structure?.FollowServer();
             service.StateChanged += (_, _) =>
             {
                 // Ready, as it loaded the folder's projects: the open AppHosts' resources are read from it once.
