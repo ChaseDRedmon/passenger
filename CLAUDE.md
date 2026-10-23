@@ -2569,7 +2569,9 @@ address and a command each pressed as an update streams in), and nothing swaps t
 with which a test asks the IDE to start its built service (`StandIn.Api`) as DCP does, by the execution protocol, so its
 Profile asks which service in `AspireServiceDialog`;
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
-its execution listener; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
+its execution listener, and ends a Passenger whose AppHost made a session container two ways: killed with its watchdog,
+children and orchestrator, as a crash ends it, so the next start removes the container, and on macOS and Linux killed
+alone, its orchestrator held stopped (`Processes.Suspend`), so the watchdog's last command removes it; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
 have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
 applicationUrl), its resource service's calls ended (`AspireInteractionHost.Drop`) and its resource's commands run through
 `container_action` (`AspireInteractionHost.Commands`); AspireStandInTests' windows run a

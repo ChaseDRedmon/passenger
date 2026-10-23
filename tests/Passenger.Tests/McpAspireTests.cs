@@ -474,4 +474,69 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
             AspireContainersTests.RemoveMade();
         }
     }
+
+    /// <summary>On macOS and Linux a Passenger killed alone leaves its watchdog, which ends what it started and then runs
+    /// its last command: that removes the AppHost's session container Passenger recorded as its orchestrator made it,
+    /// though it carries none of Passenger's labels, and leaves the Persistent one, the person's to keep. The orchestrator
+    /// is held stopped meanwhile, so the removal is the watchdog's, not the orchestrator's as its AppHost goes.</summary>
+    [Fact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    public async Task An_AppHosts_session_container_goes_with_a_Passenger_killed_alone_by_its_watchdogs_last_command_and_a_persistent_one_stays()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has no watchdog: the job object ends Passenger's children, and the next start removes its containers");
+        Assert.SkipWhen(AspireContainersTests.WhyNot is not null, AspireContainersTests.WhyNot ?? string.Empty);
+        string starter = TestFolders.Create("mcp-aspire-watchdog-");
+        DeleteAtEnd(starter);
+        TestFolders.Prepare(() =>
+        {
+            AspireApp.Create(starter, AspireApp.Name);
+            AspireContainersTests.WithContainers(Path.Combine(starter, AspireApp.Name + ".AppHost"), (path, text) =>
+            {
+                File.WriteAllText(path, text);
+                return path;
+            });
+            Restore.Run(PathNames.Canonical(starter));
+        }, starter);
+        int[] held = [];
+        try
+        {
+            McpClient client = await Start(["--mcp", starter], languageServer: false);
+            string configuration = $"Aspire: {AspireApp.Name}.AppHost: http";
+            Assert.True(await Waiting.UntilAsync(async () =>
+                (await Call(client, "workspace")).GetProperty("runConfigurations").EnumerateArray().Any(item => item.GetString() == configuration),
+                TimeSpan.FromMinutes(2), Cancel), $"The starter's HTTP configuration was not discovered.{Said()}");
+            await Call(client, "run", new() { ["configuration"] = configuration });
+            string session = await AspireContainersTests.RunningAsync(AspireContainersTests.Session);
+            string kept = await AspireContainersTests.RunningAsync(AspireContainersTests.Kept);
+            string record = Path.Combine(OwnState, "aspire-containers", "ownership.json");
+            await Until(() => File.Exists(record) && Ui.Shared(record).Contains(session, StringComparison.Ordinal), "the session container recorded as it was made");
+
+            // The orchestrator held where it stands, which would take its containers down once its AppHost goes; then
+            // Passenger alone killed, its watchdog left to end the AppHost it started and run its last command.
+            Process passenger = LastPassenger();
+            int host = Assert.Single((await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray()).GetProperty("processId").GetInt32();
+            int[] orchestrator = [.. Processes.Listed().Where(process => process.Value.Contains("dcp start-apiserver", StringComparison.Ordinal)
+                && process.Value.Contains($"--monitor {host.ToString(CultureInfo.InvariantCulture)} ", StringComparison.Ordinal)).Select(process => process.Key)];
+            Assert.NotEmpty(orchestrator);
+            held = [.. orchestrator.Concat(orchestrator.SelectMany(Processes.Descendants)).Distinct()];
+            foreach (int id in held)
+            {
+                Processes.Suspend(id, "The orchestrator");
+            }
+            int[] children = [.. Processes.Descendants(passenger.Id)];
+            Assert.Contains(host, children);
+            passenger.Kill();
+            await Until(() => !Processes.IsRunning(passenger.Id), "Passenger killed alone");
+            await Until(() => !Processes.IsRunning(host), "the watchdog to end the AppHost its Passenger started");
+            await Until(() => Docker.State(session) is null, "the watchdog's last command to remove the session container the AppHost's orchestrator made");
+            Assert.Equal("running", Docker.State(kept));
+        }
+        finally
+        {
+            foreach (int id in held)
+            {
+                Processes.Kill(id);
+            }
+            AspireContainersTests.RemoveMade();
+        }
+    }
 }
