@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Endpoints;
@@ -38,6 +39,11 @@ public sealed class WebRoutesTests
     public void The_endpoints_window_lists_each_kind_of_route_the_apps_code_declares_with_its_parameters()
     {
         string folder = Shop(port: 5555);
+        // A file of routes 20,000 lines long, whose icons a key must not cost as many lines, and one as long that declares none:
+        // the lines one comment, which the editor colours as one.
+        string notes = $"/*\n{string.Concat(Enumerable.Range(0, 20_000).Select(i => $"The orders' notes, line {i}\n"))}*/\n";
+        File.AppendAllText(Path.Combine(folder, "Orders.cs"), notes);
+        TestFolders.Write(folder, "Notes.cs", "namespace Shop;\n\npublic static class Notes\n{\n}\n" + notes);
         MainWindow window = Ui.OpenFolder(folder);
         try
         {
@@ -61,6 +67,15 @@ public sealed class WebRoutesTests
             Assert.Equal("Product", Route(window, "POST /api/Products").BodyType);
             Assert.Equal(["Send"], Route(window, "HUB /chat").Operations);
 
+            // A key typed in a file of routes costs the UI thread what it costs in a file as long that declares none: its icons
+            // go until the routes are read again, the file's text hashed then, not at each key; and come back once read.
+            long plain = KeyCosts(Path.Combine(folder, "Notes.cs"), routes: false);
+            long routed = KeyCosts(Path.Combine(folder, "Orders.cs"), routes: true);
+            Assert.True(routed < plain + 512 * 1024,
+                $"A key in Orders.cs, 20,000 lines declaring a route, allocated {routed / 1024} KB on the UI thread, one in Notes.cs, as long with none, {plain / 1024} KB: the file's text is hashed at each key");
+            Passenger.App.Workspace.OpenDocument orders = window.EditorArea.Active!;
+            Ui.WaitFor(() => orders.RouteMarks.Count > 0, "Orders.cs's icon back once its routes are read again", TimeSpan.FromMinutes(1));
+
             // A route added to the code is listed once typing pauses, read from the editor's text, saved or not.
             window.OpenFile(Path.Combine(folder, "Program.cs"));
             Ui.Settle();
@@ -70,6 +85,28 @@ public sealed class WebRoutesTests
         finally
         {
             window.Close();
+        }
+
+        // The least a key typed at a long file's end allocated on the UI thread, the icons of its routes shown first.
+        long KeyCosts(string file, bool routes)
+        {
+            window.OpenFile(file);
+            Ui.Settle();
+            Passenger.App.Workspace.OpenDocument shown = window.EditorArea.Active!;
+            if (routes)
+            {
+                Ui.WaitFor(() => shown.RouteMarks.Count > 0, $"{Path.GetFileName(file)}'s icons", TimeSpan.FromMinutes(1));
+            }
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, "line 19999");
+            long least = long.MaxValue;
+            for (int i = 0; i < 5; i++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                window.KeyTextInput("x");
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            Ui.Settle();
+            return least;
         }
     }
 

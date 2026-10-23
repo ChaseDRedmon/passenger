@@ -631,7 +631,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   through `BackgroundWork` once the server is ready, every project's again as it loads more (`CSharpService.ProjectsLoaded`)
   and a project's whose .cs, .razor, .cshtml or .proto changes (typed, or the watcher's), only while the window shows or
   such a file is open. Each route's line in an open file whose
-  text is the one it was read from has an icon (`OpenDocument.RouteMarks`, drawn as the run icons, `RunMark`) whose menu
+  text is the one it was read from has an icon (`OpenDocument.RouteMarks`, drawn as the run icons, `RunMark`; a key takes
+  the file's icons away until the routes are read again, the text hashed then, never at each key) whose menu
   sends it: the first request of the project's .http files that calls it (`RouteRequests.Calls`: a method it takes and a
   path that fits its template, after a leading `{{variable}}` or host), else an entry `RouteRequests.Entry` writes at the
   end of `<Project>.http` beside the project (its `@<Project>_HostAddress` from the first launch profile, a variable per

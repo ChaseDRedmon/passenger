@@ -48,7 +48,12 @@ public partial class MainWindow
                 if (session.ProjectOf(document.Path) is { } project && session.Routes.IsWeb(project.Path))
                 {
                     session.Routes.Stale(project.Path);
-                    ShowRouteMarks(document);
+                    // No longer the text its routes were read from: their icons go until the routes are read again, the text
+                    // hashed then (RoutesIn), never at each key.
+                    if (document.RouteMarks.Count > 0)
+                    {
+                        document.RouteMarks = [];
+                    }
                     routesLater.Restart();
                 }
             };
