@@ -55,10 +55,11 @@ public sealed class RequestLog
     /// <summary>The most requests kept, the oldest going first.</summary>
     public const int Most = 500;
 
-    /// <summary>The folder of the state's cache a command's text is opened from, read-only.</summary>
+    /// <summary>The folder of the state's cache SQL is opened from, read-only: a command's text, or an EF Core query's SQL the
+    /// debugger read.</summary>
     public const string CommandCopies = "requests";
 
-    /// <summary>Whether a file is a command's text copied to open it, which the editor never writes.</summary>
+    /// <summary>Whether a file is SQL copied to open it (<see cref="CommandCopies"/>), which the editor never writes.</summary>
     public static bool IsCommandCopy(string path) =>
         System.IO.Path.GetDirectoryName(path) is { } folder && System.IO.Path.GetFileName(folder) == CommandCopies
         && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(folder)) == "cache" && path.EndsWith(".sql", StringComparison.Ordinal);

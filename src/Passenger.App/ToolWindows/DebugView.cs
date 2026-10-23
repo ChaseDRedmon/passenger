@@ -164,6 +164,7 @@ public sealed class DebugView : DockPanel
         variables.WatchRemoved += (_, watch) => WatchRemoved?.Invoke(this, watch);
         variables.SetValueRequested += (_, request) => SetValueRequested?.Invoke(this, request);
         variables.DataBreakpointRequested += (_, node) => DataBreakpointRequested?.Invoke(this, node);
+        variables.TextOpened += (_, node) => TextOpened?.Invoke(this, node);
         ListMenus.Attach(frames, FramesMenu);
         ListMenus.Attach(threads, ThreadsMenu);
         DockPanel variablesPane = new() { Children = { evaluate, variables } };
@@ -260,6 +261,9 @@ public sealed class DebugView : DockPanel
 
     /// <summary>Set Data Breakpoint, or Remove Data Breakpoint, chosen on a row.</summary>
     public event EventHandler<VariableNode>? DataBreakpointRequested;
+
+    /// <summary>A query's SQL, read, to open whole in a read-only editor tab.</summary>
+    public event EventHandler<VariableNode>? TextOpened;
 
     /// <summary>What Set Data Breakpoint offers on a row, the debugger asked: the menu's item says so once it answers.</summary>
     public Func<VariableNode, Task<DataWatchOffer>>? DataWatch

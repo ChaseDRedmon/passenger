@@ -317,7 +317,12 @@ public partial class ManagedDebugger
         });
     }
 
-    private bool IsEnumerable(ICorDebugType type)
+    private bool IsEnumerable(ICorDebugType type) => Implements(type, static name =>
+        name is "System.Collections.IEnumerable" || name.StartsWith("System.Collections.Generic.IEnumerable`1<", StringComparison.Ordinal));
+
+    /// <summary>Whether a type, or a type it derives from, implements an interface its full name says (a generic one's with
+    /// its arguments in angle brackets).</summary>
+    private bool Implements(ICorDebugType type, Func<string, bool> named)
     {
         for (ICorDebugType? currentType = type; currentType is not null; currentType = currentType.Base)
         {
@@ -334,7 +339,7 @@ public partial class ManagedDebugger
                     HandleKind.TypeSpecification => peMetadataReader.GetTypeSpecification((TypeSpecificationHandle)interfaceHandle).DecodeSignature(new FunctionBreakpointSignatureTypeProvider(), null),
                     _ => null
                 };
-                if (interfaceName is "System.Collections.IEnumerable" || interfaceName?.StartsWith("System.Collections.Generic.IEnumerable`1<", StringComparison.Ordinal) is true)
+                if (interfaceName is not null && named(interfaceName))
                 {
                     return true;
                 }

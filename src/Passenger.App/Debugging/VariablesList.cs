@@ -12,9 +12,9 @@ namespace Passenger.App.Debugging;
 
 /// <summary>A stop's values as rows of a <see cref="VariablesTree"/>: the one list the Debug window's Variables view and the
 /// debugger's hover card both are. A row's chevron, Right or Enter opens it (its members asked of the debugger the first
-/// time) and Left closes it; a double-click opens what has members and sets what has none; F2 types a new value in its row;
-/// Delete takes a watch away; and its menu is Rider's Variables and Watches menu. What a row asks for it raises, for the
-/// debugger to do.</summary>
+/// time) and Left closes it; a double-click opens what has members and sets what has none (an EF Core query's SQL, read,
+/// opens in a tab); F2 types a new value in its row; Delete takes a watch away; and its menu is Rider's Variables and Watches
+/// menu. What a row asks for it raises, for the debugger to do.</summary>
 public sealed class VariablesList : ListBox
 {
     // Styled as the ListBox it is, so the theme's ListBox.tree reaches it.
@@ -28,10 +28,14 @@ public sealed class VariablesList : ListBox
         ItemTemplate = new FuncDataTemplate<VariableNode>((node, _) => Row(node), supportsRecycling: false);
         DoubleTapped += (_, _) =>
         {
-            // A double-click opens what has members, and sets what has none, as in Rider.
+            // A double-click opens what has members, and sets what has none, as in Rider; a query's SQL opens its text.
             if (SelectedItem is VariableNode node && node.HasChildren)
             {
-                _ = Tree.Toggle(node);
+                _ = Toggle(node);
+            }
+            else if (SelectedItem is VariableNode { IsQueryText: true } text)
+            {
+                TextOpened?.Invoke(this, text);
             }
             else
             {
@@ -53,6 +57,28 @@ public sealed class VariablesList : ListBox
 
     /// <summary>A row's menu closed, chosen from or not.</summary>
     public event EventHandler? MenuClosed;
+
+    /// <summary>A query's SQL to open whole in a read-only editor tab (a double-click, Enter or its menu's Open in Editor).</summary>
+    public event EventHandler<VariableNode>? TextOpened;
+
+    /// <summary>The menu's item that opens a query's SQL in a tab.</summary>
+    public const string OpenInEditor = "Open in Editor";
+
+    /// <summary>Opens or closes a row as a person does: a lazy row read keeps the choice, and the keys, on the row it read as.</summary>
+    private async Task Toggle(VariableNode node)
+    {
+        bool chosen = SelectedItem == node;
+        bool focused = IsKeyboardFocusWithin;
+        await Tree.Toggle(node);
+        if (node.ReadAs is { } read && chosen && Tree.Rows.Contains(read))
+        {
+            SelectedItem = read;
+            if (focused)
+            {
+                Dispatcher.UIThread.Post(FocusRow, DispatcherPriority.Loaded);
+            }
+        }
+    }
 
     public VariablesTree Tree { get; }
 
@@ -128,7 +154,11 @@ public sealed class VariablesList : ListBox
         {
             case Key.Right when node.HasChildren && !node.IsExpanded:
             case Key.Enter when node.HasChildren:
-                _ = Tree.Toggle(node);
+                _ = Toggle(node);
+                e.Handled = true;
+                break;
+            case Key.Enter when node.IsQueryText:
+                TextOpened?.Invoke(this, node);
                 e.Handled = true;
                 break;
             case Key.Left when node.IsExpanded:
@@ -155,14 +185,15 @@ public sealed class VariablesList : ListBox
 
     /// <summary>Rider's Variables and Watches menu: Set Value, Copy Value and Copy Name, Add to Watches, Inspect (the
     /// value evaluated on its own, to open), Remove Watch for a watch, and last, as Rider adds it, Set Data Breakpoint
-    /// (Remove Data Breakpoint on a member watched), greyed with why where it cannot be set.</summary>
+    /// (Remove Data Breakpoint on a member watched), greyed with why where it cannot be set. A query's SQL opens first.</summary>
     private IReadOnlyList<Control> Menu()
     {
         if (SelectedItem is not VariableNode node)
         {
             return [];
         }
-        List<Control> items =
+        List<Control> items = node.IsQueryText ? [ListMenus.Item(OpenInEditor, "Enter", () => TextOpened?.Invoke(this, node)), new Separator()] : [];
+        items.AddRange(
         [
             ListMenus.Item("Set Value…", "F2", () => EditSelectedValue(), node.Expression is not null),
             ListMenus.Item("Copy Value", null, () => _ = ListMenus.CopyAsync(this, node.Value)),
@@ -170,7 +201,7 @@ public sealed class VariablesList : ListBox
             new Separator(),
             ListMenus.Item("Add to Watches", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, true)), node.Expression is not null && node.Role != VariableRole.Watch),
             ListMenus.Item("Inspect", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, false)), node.Expression is not null),
-        ];
+        ]);
         if (node.Role == VariableRole.Watch)
         {
             items.Add(new Separator());
@@ -221,17 +252,19 @@ public sealed class VariablesList : ListBox
         {
             if (node.HasChildren)
             {
-                _ = Tree.Toggle(node);
+                _ = Toggle(node);
                 e.Handled = true;
             }
         };
         PathIcon icon = new() { Margin = new Thickness(0, 0, 6, 0) };
-        // Rider's own marks for what the debugger adds to a frame's values: a call's value, and the exception stopped at.
+        // Rider's own marks for what the debugger adds to a frame's values: a call's value, and the exception stopped at; and
+        // a database's for the SQL an EF Core query would run.
         string iconKey = node switch
         {
             { Role: VariableRole.Watch } => "Icon.Evaluate",
             { IsReturnValue: true } => "Icon.StepOut",
             { IsException: true } => "Icon.Error",
+            { IsQuerySql: true } => "Icon.Database",
             _ => "Icon.Variable",
         };
         icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(iconKey));
@@ -242,7 +275,7 @@ public sealed class VariablesList : ListBox
         {
             value.Bind(TextBlock.ForegroundProperty, value.GetResourceObservable("Passenger.Error"));
         }
-        ToolTip.SetTip(value, node.Shown);
+        ToolTip.SetTip(value, node.Lines);
         TextBox editor = new() { Classes = { "search" }, MinHeight = 22, Height = 22, MinWidth = 240, Padding = new Thickness(6, 0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
         editor.AddHandler(KeyDownEvent, (_, e) =>
         {

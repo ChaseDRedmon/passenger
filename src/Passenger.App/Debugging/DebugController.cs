@@ -111,6 +111,7 @@ public sealed class DebugController : IDisposable
         EventHandler<(string Expression, bool Watch)> evaluated = (_, request) => _ = Evaluate(request.Expression, request.Watch);
         EventHandler<(VariableNode Node, string Value)> set = (_, request) => _ = SetValue(request.Node, request.Value);
         EventHandler<VariableNode> watchData = (_, node) => _ = ToggleDataBreakpointAsync(node);
+        EventHandler<VariableNode> textOpened = (_, node) => TextOpened?.Invoke(this, node.Value);
         EventHandler<DebugTab> tabChosen = (_, tab) => _ = ChooseAsync(tab);
         EventHandler<DebugTab> tabClosed = (_, tab) => _ = CloseTabAsync(tab);
         EventHandler<string> unwatched = (_, expression) =>
@@ -126,6 +127,7 @@ public sealed class DebugController : IDisposable
         view.DataWatch = DataWatchAsync;
         view.PlaceOf = PlaceOf;
         view.DataBreakpointRequested += watchData;
+        view.TextOpened += textOpened;
         Breakpoints.DataChanged += (_, _) => TellRefusedData();
         view.WatchRemoved += unwatched;
         view.SessionChosen += tabChosen;
@@ -140,6 +142,7 @@ public sealed class DebugController : IDisposable
             view.EvaluateRequested -= evaluated;
             view.SetValueRequested -= set;
             view.DataBreakpointRequested -= watchData;
+            view.TextOpened -= textOpened;
             view.WatchRemoved -= unwatched;
         };
         view.ShowMuted(Breakpoints.Muted);
@@ -220,6 +223,9 @@ public sealed class DebugController : IDisposable
 
     /// <summary>A place to show: a stop, or a frame chosen.</summary>
     public event EventHandler<(string Path, TextPosition Position)>? Navigate;
+
+    /// <summary>An EF Core query's SQL read in Variables or the hover card, to open whole in a read-only editor tab.</summary>
+    public event EventHandler<string>? TextOpened;
 
     /// <summary>The session started, stopped, ran on or ended.</summary>
     public event EventHandler? StateChanged;
@@ -1510,6 +1516,7 @@ public sealed class DebugController : IDisposable
         list.EvaluateRequested += (_, request) => _ = Evaluate(request.Expression, request.Watch);
         list.DataBreakpointRequested += (_, node) => _ = ToggleDataBreakpointAsync(node);
         list.SetValueRequested += (_, request) => _ = SetHoveredAsync(request.Node, request.Value);
+        list.TextOpened += (_, node) => TextOpened?.Invoke(this, node.Value);
         return list;
 
         VariableNode Hovered(EvaluateResponse read) => new(expression, read.Result, read.Type, read.VariablesReference, 0, VariableRole.Value);

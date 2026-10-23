@@ -290,7 +290,9 @@ public sealed record DapVariable
     public DapPresentationHint? PresentationHint { get; init; }
 }
 
-public sealed record DapPresentationHint(string? Kind = null, IReadOnlyList<string>? Attributes = null, string? Visibility = null);
+/// <summary>How a variable shows: its kind ("virtual" for a row the adapter adds), its attributes, and whether it is lazy, its
+/// value read only as it is opened (its reference then names one variable, the value in its place).</summary>
+public sealed record DapPresentationHint(string? Kind = null, IReadOnlyList<string>? Attributes = null, string? Visibility = null, bool? Lazy = null);
 
 public sealed record EvaluateArguments(string Expression, int? FrameId = null, string? Context = null);
 

@@ -80,3 +80,14 @@ public static class StopReasons
     /// <summary>A reason the protocol has no name for.</summary>
     public const string Unknown = "unknown";
 }
+
+/// <summary>The rows Passenger's debug adapter adds among a value's members, by their names, which the IDE tells apart: each
+/// written once for both ends.</summary>
+public static class DapRows
+{
+    /// <summary>An EF Core query's SQL (#420): a lazy row, read only as it is opened, whose text the IDE opens in a tab.</summary>
+    public const string QuerySql = "SQL";
+
+    /// <summary>What <see cref="QuerySql"/> says before it is opened.</summary>
+    public const string QuerySqlUnread = "Opening it runs ToQueryString() in the program";
+}

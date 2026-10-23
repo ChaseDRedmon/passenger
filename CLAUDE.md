@@ -643,7 +643,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   non-query with the rows it changed, a query with its reader's reads, EF Core's ReadCount), and gives
   each request the folder's route it reached (`RouteRequests.Fits`, a literal template before one with parameters). A
   request opens where its exception was thrown in the folder's code, else at its route's handler; a command's text opens
-  read-only from a copy under the state's `cache/requests/` (`RequestLog.IsCommandCopy`). `LiveRequestsTests` run a web
+  read-only from a copy under the state's `cache/requests/` (`RequestLog.IsCommandCopy`, `MainWindow.OpenSql`, as an EF Core
+  query's SQL the debugger read opens, its bar saying so: `OpenDocument.Origin`). `LiveRequestsTests` run a web
   app on EF Core and SQLite (tests/EfGraphs' packages, `ShopApp.Version`) and send it requests from loopback.
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
@@ -1791,7 +1792,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   shown, scrolls past 16 rows, stays while the pointer, its keys (a click, or Quick Documentation pressed again) or its
   menu are on it, and goes 300 ms after they leave, on Escape, and with its stop (`DebuggerHover.Gone`, which
   `NextShown` cancels); a value set in it shows the value read again with what was open still open
-  (`VariablesTree.ShowAgain`). The engine decides exception breakpoints (`ExceptionRule`)
+  (`VariablesTree.ShowAgain`). An EF Core query (an IQueryable whose type, or a type it derives from, is EF Core's own)
+  lists first a SQL row (#420), the engine's (`ManagedDebugger_QuerySql.cs`), so Variables, the hover card and an agent's
+  `debug_variables` read the one row alike: the protocol's lazy row (`DapPresentationHint.Lazy`, kind virtual, its name
+  and words `DapRows`'), whose value is read only as it is opened (`VariablesTree.Read`, the row read put in its place,
+  read again as rows are by `ShowAgain`), the program then running `ToQueryString()` through the debugger's own evaluation,
+  as one asked for by name, under its time limit and aborts; what keeps it from SQL (a query its provider cannot translate,
+  an evaluation refused or past its time) is its value, and a row shows a value's lines as one (`VariableNode.Shown`). Its
+  SQL opens whole in a read-only tab from a copy under the state's `cache/requests/`, as a command's text from the
+  Requests window does (`MainWindow.OpenSql`; a double-click, Enter or its menu's Open in Editor). The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
@@ -2364,7 +2373,11 @@ in the package cache. `DecompiledSymbolsTests` and `DecompiledSymbolsTimingTests
 decompile) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in a callback from
 List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
 values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
-(`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
+(`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show); its helpers (`Hover`, `Toggle`, `Member`) are
+`QuerySqlTests`' (Alone) too, which debug a console app on EF Core and SQLite they write (`Shop`, a `SharedProject`, its
+packages from the package cache through the run's local feed, as `LiveRequestsTests`' shop's), stopped holding a query EF
+Core translates and one it cannot: each one's SQL row read in Variables and the hover card, its tab opened, and an agent's
+`debug_variables` reading it as it opens the row. `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
 ("rename" typed into its console renames the customer on the UI thread, which it names UI). `DebuggedAppsTests` (Alone)
 debug BindingErrorsApp and LiveTreeApp at once (a solution over both), choosing each one's Debug tab in turn, and
 `McpAvaloniaAppTests` has an agent's app tools name one by its tab's name. `AvaloniaFramesTests` (Alone) profile,

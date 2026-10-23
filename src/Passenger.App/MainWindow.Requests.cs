@@ -191,18 +191,27 @@ public partial class MainWindow
     private static partial Regex StackFrame();
 
     /// <summary>A command's text in a read-only tab, from a copy under the state's cache.</summary>
-    private void OpenCommand(LiveCommand command)
+    private void OpenCommand(LiveCommand command) =>
+        OpenSql($"command-{(command.Id.Length > 0 ? command.Id : Guid.NewGuid().ToString("N"))}", command.Text, "The command");
+
+    /// <summary>An EF Core query's SQL the debugger read (#420) in a read-only tab, as a command's opens: one copy for each
+    /// text, so the same SQL opened again shows the tab it has.</summary>
+    private void OpenQuerySql(string sql) =>
+        OpenSql($"query-{Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql)))[..16]}", sql, "The query's SQL");
+
+    /// <summary>SQL opened whole in a read-only tab, from a copy under the state's cache (<see cref="RequestLog.IsCommandCopy"/>).</summary>
+    private void OpenSql(string name, string text, string what)
     {
         string folder = Path.Combine(StateFolder, "cache", RequestLog.CommandCopies);
-        string path = Path.Combine(folder, $"command-{(command.Id.Length > 0 ? command.Id : Guid.NewGuid().ToString("N"))}.sql");
+        string path = Path.Combine(folder, $"{name}.sql");
         try
         {
             Directory.CreateDirectory(folder);
-            AtomicFile.Write(path, System.Text.Encoding.UTF8.GetBytes(command.Text));
+            AtomicFile.Write(path, System.Text.Encoding.UTF8.GetBytes(text));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            status.Text = $"The command could not be opened: {error.Message}";
+            status.Text = $"{what} could not be opened: {error.Message}";
             return;
         }
         OpenFile(path);

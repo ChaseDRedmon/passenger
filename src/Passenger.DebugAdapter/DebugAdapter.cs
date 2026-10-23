@@ -736,6 +736,7 @@ public sealed partial class DebugAdapter
             PresentationHintKind.Event => "event",
             PresentationHintKind.Class => "class",
             PresentationHintKind.Data => "data",
+            PresentationHintKind.Virtual => "virtual",
             _ => throw new ArgumentOutOfRangeException(nameof(hint), h.Kind, null),
         };
         IReadOnlyList<string>? attributes = h.Attributes switch
@@ -744,7 +745,7 @@ public sealed partial class DebugAdapter
             AttributesValue.FailedEvaluation => ["failedEvaluation"],
             _ => throw new ArgumentOutOfRangeException(nameof(hint), h.Attributes, null),
         };
-        return new DapPresentationHint(kind, attributes);
+        return new DapPresentationHint(kind, attributes, Lazy: h.Lazy);
     }
 
     private static DapExceptionDetails ToProtocol(ExceptionInfo.ExceptionDetails details) => new()

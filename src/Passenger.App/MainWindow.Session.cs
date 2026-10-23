@@ -407,6 +407,13 @@ public partial class MainWindow
                 ShowStop(target.Path, target.Position);
             }
         };
+        debugger.TextOpened += (_, sql) =>
+        {
+            if (session == next && next.Debug == debugger)
+            {
+                OpenQuerySql(sql);
+            }
+        };
         debugger.StateChanged += (_, _) =>
         {
             if (session == next)
