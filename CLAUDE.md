@@ -569,8 +569,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   methods, template, parameters with their constraints and source (route, query, body, header, form, services, as
   ASP.NET Core binds them), handler and its place, the body's type and a JSON body shaped from it (`JsonSample`), and its
   file's `TextHash`. `ProjectSession.Routes` (`RouteCatalog`) keeps them by project; `MainWindow.Routes.cs` reads them
-  through `BackgroundWork` once the server is ready, again for a project whose .cs, .razor, .cshtml or .proto changes
-  (typed, or the watcher's), only while the window shows or such a file is open. Each route's line in an open file whose
+  through `BackgroundWork` once the server is ready, every project's again as it loads more (`CSharpService.ProjectsLoaded`)
+  and a project's whose .cs, .razor, .cshtml or .proto changes (typed, or the watcher's), only while the window shows or
+  such a file is open. Each route's line in an open file whose
   text is the one it was read from has an icon (`OpenDocument.RouteMarks`, drawn as the run icons, `RunMark`) whose menu
   sends it: the first request of the project's .http files that calls it (`RouteRequests.Calls`: a method it takes and a
   path that fits its template, after a leading `{{variable}}` or host), else an entry `RouteRequests.Entry` writes at the

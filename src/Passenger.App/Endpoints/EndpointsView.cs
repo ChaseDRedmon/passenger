@@ -462,11 +462,13 @@ public sealed class EndpointsView : DockPanel
         Border method = MethodTag(route.Kind == RouteKinds.SignalR ? "HUB" : route.Methods.Count == 0 ? "ANY" : route.Methods[0]);
         DockPanel.SetDock(method, Dock.Left);
         row.Children.Add(method);
-        TextBlock kind = new() { Text = route.Kind, VerticalAlignment = VerticalAlignment.Center, FontSize = 12, Margin = new Thickness(8, 0, 4, 0) };
+        // The template first: what declares it takes the room it leaves, and goes before the template ends in an ellipsis.
+        TextBlock template = new() { Text = route.Template + (route.Query is { } query ? "?" + query : string.Empty), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        DockPanel.SetDock(template, Dock.Left);
+        row.Children.Add(template);
+        TextBlock kind = new() { Text = route.Kind, VerticalAlignment = VerticalAlignment.Center, FontSize = 12, Margin = new Thickness(8, 0, 4, 0), TextAlignment = TextAlignment.Right, TextTrimming = TextTrimming.CharacterEllipsis };
         kind.Bind(TextBlock.ForegroundProperty, kind.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel.SetDock(kind, Dock.Right);
         row.Children.Add(kind);
-        row.Children.Add(new TextBlock { Text = route.Template + (route.Query is { } query ? "?" + query : string.Empty), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
         ToolTip.SetTip(row, $"{RouteRequests.Title(route)}: {route.Handler}");
         return row;
     }

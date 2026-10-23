@@ -97,6 +97,17 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The server loaded projects (more of them, or one again): every project's routes are read again, a read before
+    /// having found none of a project it had yet to load.</summary>
+    private void RoutesProjectsLoaded(CSharpService service)
+    {
+        if (service == session.CSharp && !session.IsEnded && session.Routes.HasRead)
+        {
+            session.Routes.Forget();
+            WantRoutes();
+        }
+    }
+
     /// <summary>Files changed on disk: the routes of the web projects that own them are read again; a project file's change
     /// reads every project's.</summary>
     private void RouteFilesChanged(FolderChanges changes)

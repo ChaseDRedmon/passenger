@@ -49,10 +49,11 @@ public sealed class RouteCatalog
         All = [.. byProject.OrderBy(p => Path.GetFileNameWithoutExtension(p.Key), StringComparer.OrdinalIgnoreCase).SelectMany(p => p.Value)];
     }
 
-    /// <summary>A web project's file changed: its routes are read again at the next read.</summary>
+    /// <summary>A project's file changed: its routes are read again at the next read (none for a project that is no web
+    /// project, which the read finds out cheaply).</summary>
     public void Stale(string project)
     {
-        if (!unread && byProject.ContainsKey(project))
+        if (!unread)
         {
             stale.Add(project);
         }
