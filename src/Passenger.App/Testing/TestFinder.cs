@@ -30,8 +30,10 @@ public sealed class TestFinder
     private readonly Dictionary<string, IReadOnlyList<string>> listed = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> asked = new(StringComparer.Ordinal);
 
-    /// <summary>What was last told of each project: its tests, and each file's read they came from.</summary>
-    private readonly Dictionary<string, (CodeTests Tests, Dictionary<string, FileTests> Files)> told = new(StringComparer.Ordinal);
+    /// <summary>What was last told of each project: its tests, each file's read they came from, the list of its tests
+    /// (<see cref="CodeTests.Tests"/>, whose items a move of lines replaces in place) and where each file's begin in it.</summary>
+    private readonly Dictionary<string, (CodeTests Tests, Dictionary<string, FileTests> Files, List<TestItem> Items, Dictionary<string, int> Starts)> told =
+        new(StringComparer.Ordinal);
 
     private IReadOnlyList<ProjectModel> every = [];
     private int asks;
@@ -48,6 +50,10 @@ public sealed class TestFinder
 
     /// <summary>Each test project's tests from its code changed, or a listing ended: every test project's, by its path.</summary>
     public event EventHandler<IReadOnlyDictionary<string, CodeTests>>? Changed;
+
+    /// <summary>An open file's tests moved to other lines, nothing else of them changed: its tests as told before, each by
+    /// the same test on its line now, which the project's told tests now hold in their place. No <see cref="Changed"/>.</summary>
+    public event EventHandler<(string Path, IReadOnlyDictionary<TestItem, TestItem> Moved)>? Moved;
 
     /// <summary>Whether a project holds tests: it says it is a test project or references a test adapter, or references
     /// xUnit, NUnit or MSTest itself.</summary>
@@ -85,10 +91,37 @@ public sealed class TestFinder
             return;
         }
         open[path] = tests;
-        if (Owner(path) is { } project)
+        if (Owner(path) is not { } project)
         {
-            Tell([project]);
+            return;
         }
+        // Lines put in or taken out above or among its tests: they move where they are told, the project told again nowhere.
+        if (told.TryGetValue(project.Path, out var record) && record.Files.TryGetValue(path, out FileTests? toldRead)
+            && toldRead.OnlyMoved(tests) && record.Starts.TryGetValue(path, out int start))
+        {
+            record.Files[path] = tests;
+            Dictionary<TestItem, TestItem> moved = new(ReferenceEqualityComparer.Instance);
+            int at = start;
+            foreach (DeclaredTest test in tests.Tests)
+            {
+                if (test.Abstract)
+                {
+                    continue;
+                }
+                TestItem item = record.Items[at];
+                if (item.Line != test.Line + 1)
+                {
+                    record.Items[at] = moved[item] = item with { Line = test.Line + 1 };
+                }
+                at++;
+            }
+            if (moved.Count > 0)
+            {
+                Moved?.Invoke(this, (path, moved));
+            }
+            return;
+        }
+        Tell([project]);
     }
 
     /// <summary>A file closed: what is on disk stands for it again, edits not saved gone with it.</summary>
@@ -226,8 +259,10 @@ public sealed class TestFinder
                 continue;
             }
             List<TestItem> tests = [];
+            Dictionary<string, int> starts = new(StringComparer.Ordinal);
             foreach ((string path, FileTests read) in files)
             {
+                starts[path] = tests.Count;
                 tests.AddRange(read.Tests.Where(t => !t.Abstract).Select(t => new TestItem(project.Path, $"{t.Type}.{t.Method}", t.Method)
                 {
                     Path = path,
@@ -235,7 +270,7 @@ public sealed class TestFinder
                     Traits = t.Traits,
                 }));
             }
-            told[project.Path] = (new CodeTests(tests, files.ToDictionary(f => f.Key, f => f.Value.Methods, StringComparer.Ordinal)), files);
+            told[project.Path] = (new CodeTests(tests, files.ToDictionary(f => f.Key, f => f.Value.Methods, StringComparer.Ordinal)), files, tests, starts);
             changed = true;
         }
         if (changed || always)

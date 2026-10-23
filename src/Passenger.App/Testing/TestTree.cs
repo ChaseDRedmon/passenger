@@ -324,6 +324,9 @@ public sealed class TestTree
     /// group it is in.</summary>
     private Dictionary<string, List<TestNode>> byKey = new(StringComparer.Ordinal);
 
+    /// <summary>The methods shown from the code's tests, by the file the code declares them in: those a move of lines moves.</summary>
+    private Dictionary<string, List<TestNode>> byFile = new(StringComparer.Ordinal);
+
     /// <summary>The methods and rows the run under way began, by identity, which its end ends wherever they are by then.</summary>
     private HashSet<string> running = new(StringComparer.Ordinal);
 
@@ -470,6 +473,24 @@ public sealed class TestTree
             node.IsExpanded = false;
         }
         ShowRows();
+    }
+
+    /// <summary>The code's tests of a file moved to other lines, nothing else of them changed: each row showing one takes it
+    /// on its new line (what Go to Source and the details read), the tree made again nowhere. The tests loaded hold them so
+    /// already (<see cref="TestFinder.Moved"/>).</summary>
+    public void Move(string path, IReadOnlyDictionary<TestItem, TestItem> moved)
+    {
+        if (!byFile.TryGetValue(path, out List<TestNode>? methods))
+        {
+            return;
+        }
+        foreach (TestNode method in methods)
+        {
+            if (method.FromCode is { } was && moved.TryGetValue(was, out TestItem? now))
+            {
+                method.FromCode = now;
+            }
+        }
     }
 
     /// <summary>The row a test is shown by: its data row's, else its method's (the first, when it is under two groups).</summary>
@@ -713,6 +734,7 @@ public sealed class TestTree
         Dictionary<string, TestNode> first = new(StringComparer.Ordinal);
         List<(TestNode Copy, TestNode Of)> copies = [];
         Dictionary<string, List<TestNode>> keyed = new(StringComparer.Ordinal);
+        Dictionary<string, List<TestNode>> files = new(StringComparer.Ordinal);
         List<TestNode> roots = [];
         List<TestNode> methods = [];
         foreach ((Entry entry, List<Segment> path, (string Label, string Full) type) in placed)
@@ -736,6 +758,14 @@ public sealed class TestTree
             TestNode method = Node(@class, TestNodeKind.Method, entry.Name, key, entry.Identity, _ => reused = true);
             method.Framework = entry.Several ? entry.Framework : null;
             method.FromCode = entry.FromCode;
+            if (entry.FromCode?.Path is { } file)
+            {
+                if (!files.TryGetValue(file, out List<TestNode>? declared))
+                {
+                    files[file] = declared = [];
+                }
+                declared.Add(method);
+            }
             if (first.TryAdd(entry.Identity, method))
             {
                 methods.Add(method);
@@ -805,6 +835,7 @@ public sealed class TestTree
         Roots = roots;
         Methods = methods;
         byKey = keyed;
+        byFile = files;
 
         // The node the key names: the one made already in this build, else the one before it there, else the one before
         // it for the same test elsewhere, emptied, else a new one.

@@ -1483,7 +1483,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   a data row's name) and `TestOutcome`, behind `ITestRunner`; `VsTestRunner` is the only file that knows VSTest's
   object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
   parsed off the UI thread, an open file's from its own parse (`TestsAtCaret.Read` is the one reading of a file's
-  tests), changed ones through the folder watcher; discovery and runs merge into those rows by id.
+  tests), changed ones through the folder watcher; discovery and runs merge into those rows by id. A read of an open
+  file that only moves its tests' lines (`FileTests.OnlyMoved`) moves the tests told and the rows showing them in place
+  (`TestFinder.Moved`, `TestTree.Move`): no project told again, no tree made again, the gutter's index kept.
   `MainWindow.Tests.cs` wires it. `TestRunners` sends each built assembly to its runner: a Testing Platform application
   (its `Microsoft.Testing.Platform.Application` assembly metadata: xUnit v3, MSTest's runner, TUnit) to
   `TestingPlatformRunner`, which runs it with `--server` through ChildProcesses and speaks the platform's JSON-RPC, one
