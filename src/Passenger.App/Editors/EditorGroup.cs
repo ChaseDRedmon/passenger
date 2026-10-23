@@ -288,7 +288,7 @@ public sealed class EditorGroup : DockPanel
         Editor.SetLineMarks(document.LineMarks);
         Editor.SetLineAnnotations(document.ShownAnnotations);
         Editor.SetTestMarks(document.TestMarks);
-        Editor.SetRunMarks(document.RunMarks);
+        Editor.SetRunMarks(document.GutterRunMarks);
         Editor.SetColourMarks(document.ColourMarks);
         Editor.SetChangeMarks(document.ChangeMarks);
         Editor.SetGutterAnnotations(document.GutterAnnotations);
@@ -499,8 +499,8 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.TestMarks):
                 Editor.SetTestMarks(document.TestMarks);
                 break;
-            case nameof(OpenDocument.RunMarks):
-                Editor.SetRunMarks(document.RunMarks);
+            case nameof(OpenDocument.RunMarks) or nameof(OpenDocument.RouteMarks):
+                Editor.SetRunMarks(document.GutterRunMarks);
                 break;
             case nameof(OpenDocument.ColourMarks):
                 Editor.SetColourMarks(document.ColourMarks);

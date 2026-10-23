@@ -369,6 +369,18 @@ public sealed class OpenDocument : Observable
 
     private IReadOnlyList<RunMark> runMarks = [];
 
+    /// <summary>The icons beside the web routes it declares, each sending its route's request; drawn as the run icons are.</summary>
+    public IReadOnlyList<RunMark> RouteMarks
+    {
+        get => routeMarks;
+        set => Set(ref routeMarks, value);
+    }
+
+    private IReadOnlyList<RunMark> routeMarks = [];
+
+    /// <summary>Every run icon its gutter draws: a run configuration's and a route's.</summary>
+    public IReadOnlyList<RunMark> GutterRunMarks => routeMarks.Count == 0 ? runMarks : [.. runMarks, .. routeMarks];
+
     /// <summary>The colours its lines write or name (XAML's, C#'s), each a swatch in the gutter.</summary>
     public IReadOnlyList<ColourMark> ColourMarks
     {

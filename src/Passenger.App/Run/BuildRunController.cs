@@ -231,6 +231,9 @@ public sealed partial class BuildRunController
 
     public string? DebugProject { get; private set; }
 
+    /// <summary>The plan Debug last launched: where its program serves, which a route's request is sent to while it is debugged.</summary>
+    public LaunchPlan? DebugPlan { get; private set; }
+
     /// <summary>The plan Run last started: what its program is named, which Attach Profiler looks for among what dotnet
     /// watch started.</summary>
     public LaunchPlan? RunPlan { get; private set; }
@@ -1070,6 +1073,7 @@ public sealed partial class BuildRunController
         parts.Views.Debug.ShowTab(console: true);
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
         DebugProject = Path.GetDirectoryName(plan.Project);
+        DebugPlan = plan;
         DebugController debug = session.Debug;
         // An Avalonia or WPF app is launched with the Live Visual Tree's inspector in it, which its tab holds and which ends
         // with this debugging.

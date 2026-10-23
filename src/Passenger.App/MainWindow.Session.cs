@@ -416,6 +416,7 @@ public partial class MainWindow
             service.StateChanged += (_, _) => usages.Refresh();
             service.StateChanged += (_, _) => OutlineWhenUnseen();
             service.StateChanged += (_, _) => Structure.FollowServer();
+            service.StateChanged += (_, _) => RoutesServerChanged(service);
             service.StateChanged += (_, _) =>
             {
                 // Ready, as it loaded the folder's projects: the open AppHosts' resources are read from it once.

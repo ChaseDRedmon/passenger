@@ -394,6 +394,9 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>What the folder's .http requests may take from the person's computer to a host, as they answered.</summary>
     public Endpoints.EndpointGrants EndpointGrants { get; } = new();
 
+    /// <summary>The routes the folder's web projects declare in their code, as the language server's extension last read them.</summary>
+    public Endpoints.RouteCatalog Routes { get; } = new();
+
     /// <summary>The profile each project last published with, which Publish Again publishes it with.</summary>
     public PublishMemory Publishing { get; } = new();
 

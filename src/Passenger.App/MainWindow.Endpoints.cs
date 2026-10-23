@@ -41,6 +41,7 @@ public partial class MainWindow
     {
         endpoints?.Stop();
         endpoints?.Reload(next.Folder);
+        ForgetRoutes(next);
     }
 
     private void EndpointFilesChanged(FolderChanges changes)
@@ -49,6 +50,7 @@ public partial class MainWindow
         {
             endpoints?.Reload(session.Folder);
         }
+        RouteFilesChanged(changes);
     }
 
     /// <summary>Opens a request in the Interactive Test dialog, its variables those of the environment chosen as it sends.</summary>

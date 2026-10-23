@@ -393,7 +393,7 @@ public sealed partial class CodeAssist
             Menus = [new("Refactor", 4, 1)],
         });
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
-        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true, msbuild: true);
+        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true, msbuild: true, http: true);
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
             new("Navigate", 2, 1));
         Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 2));
@@ -407,8 +407,14 @@ public sealed partial class CodeAssist
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
         Code(AppActions.QuickDocumentation, "Quick Documentation", context => QuickDocumentation(), new("View", 1, 1), server: false);
 
-        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
-            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml, markup, msbuild), Menus = [menu] });
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false,
+            bool http = false) =>
+            actions.Add(new IdeAction(id, title, "Code", run)
+            {
+                // An .http file's requests go to their routes, with no language server of its own.
+                WhyNot = context => http && IsHttpFile(context.File) ? null : WhyNot(context, server, syntax, xaml, markup, msbuild),
+                Menus = [menu],
+            });
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
@@ -1740,6 +1746,10 @@ public sealed partial class CodeAssist
 
     private async Task GoToDefinitionCore(int offset)
     {
+        if (HttpGoTo(offset))
+        {
+            return;
+        }
         if (MSBuildCurrent is { } msbuild)
         {
             await MSBuildGoTo(msbuild, offset);
@@ -1969,6 +1979,10 @@ public sealed partial class CodeAssist
 
     private async Task FindUsagesCore(int offset)
     {
+        if (RouteUsages(offset))
+        {
+            return;
+        }
         if (XamlCurrent is { } xaml)
         {
             await XamlUsages(xaml, offset);
