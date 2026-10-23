@@ -6,11 +6,12 @@ using Passenger.App.ToolWindows;
 
 namespace Passenger.App.Containers;
 
-/// <summary>A container's log, or a Compose project's or service's with every service's lines merged: <c>docker logs -f</c>
-/// (<c>docker compose logs -f</c>) streamed into a console through a <see cref="ProcessRunner"/>, whose sink takes colour
-/// codes out and whose links (stack frames, compiler messages, addresses) are the consoles' own, in the merged log every such
-/// console is (<see cref="MergedLog"/>). Timestamps are shown on demand, and a project's services each have a toggle;
-/// changing either streams the log again.</summary>
+/// <summary>A container's log, or a Compose project's or service's with every service's lines merged, or an AppHost's with
+/// its containers' merged: <c>docker logs -f</c> (<c>docker compose logs -f</c>; one per container of an AppHost) streamed
+/// into a console through a <see cref="ProcessRunner"/>, whose sink takes colour codes out and whose links (stack frames,
+/// compiler messages, addresses) are the consoles' own, in the merged log every such console is (<see cref="MergedLog"/>).
+/// Timestamps are shown on demand, and a project's services and an AppHost's containers each have a toggle; changing
+/// either streams the log again.</summary>
 public sealed class ContainerLogPane : DockPanel
 {
     /// <summary>How many lines of what came before a stream begins with.</summary>
@@ -20,6 +21,9 @@ public sealed class ContainerLogPane : DockPanel
     private readonly ToggleButton timestamps;
     private readonly MergedLog log;
     private ProcessRunner? runner;
+
+    /// <summary>An AppHost's containers' logs as they are merged (<see cref="Merge"/>), a runner each.</summary>
+    private readonly List<ProcessRunner> merged = [];
     private ContainerRow? row;
     private string? streaming;
 
@@ -67,15 +71,22 @@ public sealed class ContainerLogPane : DockPanel
     public void Show(ContainerRow? shown)
     {
         UiThread.Check();
-        if (shown?.Key == row?.Key && (shown is null || runner is { IsRunning: true } || (Signature(shown) == streamed && !shown.Containers.Any(c => c.IsRunning))))
+        // An AppHost's log is its containers' as they were when it began: one that comes or goes reads it again.
+        bool streams = runner is { IsRunning: true } || merged.Any(each => each.IsRunning);
+        if (shown?.Key == row?.Key && (shown is null || streams && (shown.Kind != ContainerRowKind.AppHost || Signature(shown) == streamed)
+            || (Signature(shown) == streamed && !shown.Containers.Any(c => c.IsRunning))))
         {
             row = shown;
             return;
         }
-        bool otherProject = shown?.Project?.Name != row?.Project?.Name;
+        bool otherGroup = shown?.Project?.Name != row?.Project?.Name || shown?.Kind == ContainerRowKind.AppHost && shown.Key != row?.Key;
         row = shown;
-        log.Offer(shown is { Project: { } project, Service: null, Kind: ContainerRowKind.Project }
-            ? [.. project.Services.Select(s => (s.Service, s.Service))] : [], forget: otherProject);
+        log.Offer(shown switch
+        {
+            { Project: { } project, Service: null, Kind: ContainerRowKind.Project } => [.. project.Services.Select(s => (s.Service, s.Service))],
+            { Kind: ContainerRowKind.AppHost } => [.. shown.Containers.Select(c => (c.Name, c.Name))],
+            _ => [],
+        }, forget: otherGroup);
         Restart();
     }
 
@@ -95,6 +106,61 @@ public sealed class ContainerLogPane : DockPanel
             runner.Dispose();
             runner = null;
         }
+        foreach (ProcessRunner each in merged)
+        {
+            each.Stop();
+            each.Dispose();
+        }
+        merged.Clear();
+    }
+
+    /// <summary>An AppHost's containers' logs merged, as Compose merges a project's: <c>docker logs -f</c> of each container
+    /// whose toggle is on, each line under its container's name, read through a runner of its own (the engine has no
+    /// command that follows several containers' logs that Compose did not make).</summary>
+    private void Merge(ContainerRow shown, IReadOnlyList<string> options)
+    {
+        List<string> said = [];
+        foreach (ContainerInfo container in shown.Containers.Where(c => log.Shows(c.Name)))
+        {
+            string[] words = ["logs", .. options, container.Id];
+            System.Diagnostics.ProcessStartInfo start;
+            try
+            {
+                start = engine().Command(words);
+            }
+            catch (FileNotFoundException missing)
+            {
+                Console.Append($"{missing.Message}\n", error: true);
+                return;
+            }
+            ProcessRunner each = new(new OutputView(toolbar: false));
+            System.Text.StringBuilder[] partial = [new(), new()];
+            each.OutputReceived += (_, output) =>
+            {
+                System.Text.StringBuilder line = partial[output.IsError ? 1 : 0];
+                line.Append(output.Text);
+                string text = line.ToString();
+                int end = text.LastIndexOf('\n');
+                if (end < 0 || !merged.Contains(each))
+                {
+                    return;
+                }
+                foreach (string whole in text[..end].Split('\n'))
+                {
+                    Console.Sink.Write($"[{container.Name}] {whole.TrimEnd('\r')}\n", output.IsError ? ConsoleStream.Error : ConsoleStream.Output);
+                }
+                line.Clear().Append(text, end + 1, text.Length - end - 1);
+            };
+            merged.Add(each);
+            Dictionary<string, string> environment = start.Environment.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!);
+            if (each.Start(start.FileName, words, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), environment) is { } problem)
+            {
+                Console.Append($"{container.Name}: {problem}\n", error: true);
+                continue;
+            }
+            said.Add(ContainerEngine.Words(words));
+        }
+        streaming = said.Count == 0 ? null : string.Join("; ", said);
     }
 
     /// <summary>The containers a row's log was read from, and which of them ran.</summary>
@@ -105,6 +171,11 @@ public sealed class ContainerLogPane : DockPanel
         End();
         Console.Clear();
         streamed = row is { } read ? Signature(read) : null;
+        if (row is { Kind: ContainerRowKind.AppHost } host)
+        {
+            Merge(host, Options());
+            return;
+        }
         if (row is not { } shown || Words(shown) is not { } words)
         {
             return;
@@ -129,13 +200,20 @@ public sealed class ContainerLogPane : DockPanel
         streaming = ContainerEngine.Words(words);
     }
 
-    private IReadOnlyList<string>? Words(ContainerRow shown)
+    /// <summary>What every log's command is given: follow, its tail, and the engine's timestamps when shown.</summary>
+    private List<string> Options()
     {
         List<string> options = ["-f", "--tail", Tail.ToString(System.Globalization.CultureInfo.InvariantCulture)];
         if (Timestamps)
         {
             options.Add("-t");
         }
+        return options;
+    }
+
+    private IReadOnlyList<string>? Words(ContainerRow shown)
+    {
+        List<string> options = Options();
         if (shown.Kind == ContainerRowKind.Container || (shown.Kind == ContainerRowKind.Service && shown.Container is not null))
         {
             return ["logs", .. options, shown.Container!.Id];

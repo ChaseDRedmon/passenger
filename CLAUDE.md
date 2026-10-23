@@ -634,7 +634,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
   container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
-  again), a project's merged one (a toggle a service), each the merged log every such console is (`ToolWindows/MergedLog`,
+  again), a project's merged one (a toggle a service), an AppHost row's its containers' (a toggle a container, a `docker logs -f` each under its name, `ContainerLogPane.Merge`, with their Stats), each the merged log every such console is (`ToolWindows/MergedLog`,
   the Aspire window's too) with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
   streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),

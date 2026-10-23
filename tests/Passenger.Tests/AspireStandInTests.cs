@@ -1525,6 +1525,89 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>The Containers window's AppHost row has a merged Log and Stats over its containers, as a Compose project's row
+    /// has (#397), where its tabs stayed greyed: its containers' lines each under its name, a toggle each, one turned off
+    /// leaving its lines out, and each container's numbers. A stand-in engine lists the two containers the stand-in
+    /// AppHost's resources name (kept ones, which the run never takes down), their logs and stats what it echoes.</summary>
+    [AvaloniaFact]
+    public void The_Containers_windows_AppHost_row_merges_its_containers_logs_and_stats()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        project.Reset();
+        const string Cache = "5a5d0c0ffee6";
+        const string Queue = "5a5d0c0ffee7";
+        static string Listed(string id, string name) =>
+            $$"""{"ID":"{{id}}","Names":"{{name}}","Image":"redis:7","State":"running","Status":"Up 1 minute","Ports":"","Labels":"com.microsoft.developer.usvc-dev.uid=x"}""";
+        static string Numbers(string id, string name) =>
+            $$"""{"Container":"{{id}}","Name":"{{name}}","CPUPerc":"1.50%","MemPerc":"2.00%","MemUsage":"10MiB / 1GiB","NetIO":"1kB / 2kB","BlockIO":"0B / 0B","PIDs":"3"}""";
+        (string cli, _) = ContainersTests.StandInEngine(TestFolders.Create("aspire-host-log-"), up: true,
+            logs: "for word in \"$@\"; do last=$word; done; echo \"hello from $last\"; sleep 600",
+            stats: $"echo '{Numbers(Cache, "cache-abc")}'; echo '{Numbers(Queue, "queue-def")}'; sleep 600",
+            more: [Listed(Cache, "cache-abc"), Listed(Queue, "queue-def")]);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        foreach ((string name, string id) in (ReadOnlySpan<(string, string)>)[("cache-abc", Cache), ("queue-def", Queue)])
+        {
+            backend.PushResource(new Resource
+            {
+                Name = name, DisplayName = name[..name.IndexOf('-')], Uid = name, ResourceType = "Container", State = "Running",
+                Properties =
+                {
+                    new ResourceProperty { Name = "container.id", Value = Google.Protobuf.WellKnownTypes.Value.ForString(id + new string('0', 52)) },
+                    new ResourceProperty { Name = "container.lifetime", Value = Google.Protobuf.WellKnownTypes.Value.ForString("Persistent") },
+                },
+            });
+        }
+        project.Serve(backend);
+        MainWindow window = new()
+        {
+            Width = 1200, Height = 800, Autosaves = false, WarmServer = project.Server, StartsLanguageServer = false,
+            Engine = new Passenger.App.Containers.ContainerEngine(cli: cli),
+        };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        Ui.Settle();
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1, $"the stand-in AppHost's start ({window.Status})");
+            window.ShowToolWindow(ToolWindowIds.Containers);
+            Ui.Settle();
+            Passenger.App.Containers.ContainersView view = window.ContainersWindow;
+            Ui.WaitFor(() => view.Rows.Any(row => row.Kind == Passenger.App.Containers.ContainerRowKind.AppHost && row.Containers.Count == 2),
+                $"the AppHost's row over its two containers, not [{string.Join(", ", view.Rows.Select(row => $"{row.Kind} {row.Label}"))}]");
+            Ui.Click(view.GetVisualDescendants().OfType<Passenger.App.ToolWindows.RunRowView>().Single(row => row.Shown?.Label == StandInAppHost.Configuration)
+                .GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == StandInAppHost.Configuration));
+            Assert.Equal(Passenger.App.Containers.ContainerRowKind.AppHost, view.Chosen?.Kind);
+
+            // Its Log, shown at first: each container's lines under its name, a toggle each.
+            Assert.Equal("Log", view.ShownTab);
+            string Shown()
+            {
+                view.Log.Console.Flush();
+                return view.Log.Console.Document.Snapshot.ToString();
+            }
+            Ui.WaitFor(() => Shown().Contains($"[cache-abc] hello from {Cache}", StringComparison.Ordinal)
+                && Shown().Contains($"[queue-def] hello from {Queue}", StringComparison.Ordinal), $"both containers' lines merged, not [{Shown()}]");
+            Assert.Equal(["cache-abc", "queue-def"], view.Log.ServiceToggles.Select(toggle => (string?)toggle.Content));
+            Ui.Click(view.Log.ServiceToggles.Single(toggle => Equals(toggle.Content, "queue-def")));
+            Ui.WaitFor(() => Shown().Contains($"[cache-abc] hello from {Cache}", StringComparison.Ordinal) && !Shown().Contains("[queue-def]", StringComparison.Ordinal),
+                $"the queue's lines left out once its toggle is off, not [{Shown()}]");
+
+            // Its Stats: each container's numbers.
+            Ui.Click(view.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.ToggleButton>().Single(tab => tab.Name == "containersStatsTab"));
+            Ui.WaitFor(() => view.Stats.Latest.Count == 2, $"both containers' numbers, not [{string.Join(", ", view.Stats.Latest.Select(sample => sample.Name))}] ({view.Stats.Said})");
+            Assert.Equal(["cache-abc", "queue-def"], view.Stats.Latest.Select(sample => sample.Name).Order(StringComparer.Ordinal));
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     private MainWindow OpenRunning(AspireInteractionHost backend)
     {
         project.Serve(backend);

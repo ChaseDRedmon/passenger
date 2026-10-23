@@ -22,7 +22,7 @@ public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Wo
 /// <summary>The Containers window: the engine's Compose projects with their services and containers (stopped ones still
 /// listed), then every other container (Testcontainers' apart), images, volumes and networks, each row with its state,
 /// health, ports (links) and image; and the chosen container's Log, Stats, Files and Details (a service's its container's),
-/// or a project's merged Log and Stats; and for a container run that collects them, its Telemetry (the Telemetry view, its
+/// or a project's or an AppHost's merged Log and Stats; and for a container run that collects them, its Telemetry (the Telemetry view, its
 /// logs and traces, a service's or container's own).
 /// It asks the engine only while shown: its lists once, then again as the engine's events say something changed; a
 /// container's log and stats stream only while their tab is shown. Its toolbar's buttons run the window's actions.</summary>
@@ -477,13 +477,13 @@ public sealed class ContainersView : DockPanel
     }
 
     /// <summary>The chosen row's details: a container's Log, Stats, Files and Details, a service's Log, Stats and its
-    /// container's Details, a project's Log and Stats, nothing for the rest; streamed only while shown.</summary>
+    /// container's Details, a project's or an AppHost's Log and Stats, nothing for the rest; streamed only while shown.</summary>
     private void ShowChosen()
     {
         ContainerRow? row = Chosen;
         bool container = row?.Container is not null;
         bool detailed = row is { Kind: ContainerRowKind.Service or ContainerRowKind.Container } && row.Containers.Count > 0;
-        bool streams = shown && row is { Kind: ContainerRowKind.Project or ContainerRowKind.Service or ContainerRowKind.Container };
+        bool streams = shown && row is { Kind: ContainerRowKind.Project or ContainerRowKind.AppHost or ContainerRowKind.Service or ContainerRowKind.Container };
         TelemetrySource? telemetry = (row?.Project?.Name ?? row?.Container?.Project) is { } project ? TelemetryOf?.Invoke(project) : null;
         tabs[FilesTab].IsVisible = container;
         tabs[DetailsTab].IsVisible = detailed;
