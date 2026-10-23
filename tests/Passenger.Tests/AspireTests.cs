@@ -182,7 +182,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             ComboBox api = ServiceChoice(dialog, "apiservice")!;
             Assert.True(api.IsEnabled);
             Ui.Click(api);
-            Ui.Press(dialog, "END");
+            Ui.Press(dialog, "DOWN");
             Ui.Press(dialog, "ENTER");
             ComboBox web = ServiceChoice(dialog, "webfrontend")!;
             Ui.Click(web);
@@ -215,9 +215,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         }
     }
 
-    private static ComboBox? ServiceChoice(RunConfigurationsDialog dialog, string resource) => dialog.GetVisualDescendants()
-        .OfType<Grid>().Where(row => row.Children.OfType<TextBlock>().Any(label => label.Text == resource))
-        .SelectMany(row => row.Children.OfType<ComboBox>()).SingleOrDefault();
+    private static ComboBox? ServiceChoice(RunConfigurationsDialog dialog, string resource) =>
+        dialog.AspireTable.Rows.SingleOrDefault(row => row.Service == resource)?.Action;
 
     private void PrepareEditableServices()
     {
@@ -262,17 +261,17 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
     private static void ChooseResource(MainWindow window, string name)
     {
         FindAction(window, "Show Aspire Resources");
-        Ui.WaitFor(() => ResourceName(window, name) is { IsEffectivelyVisible: true }, $"{name}'s row in the Aspire window");
-        Ui.Click(ResourceName(window, name)!);
+        Ui.WaitFor(() => window.Aspire.Rows.Any(row => row.Resource.DisplayName == name), $"{name}'s row in the Aspire window");
+        Ui.Click(AspireStandInTests.Words(AspireStandInTests.Row(window, name), name));
         Assert.Equal(name, window.Aspire.SelectedResource?.DisplayName);
     }
 
-    private static TextBlock? ResourceName(MainWindow window, string name) => window.Aspire.ResourceList.GetVisualDescendants().OfType<TreeViewItem>()
-        .FirstOrDefault(item => item.Tag is AspireResource resource && resource.DisplayName == name)
-        ?.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(text => text.Text == name);
-
-    private static Button? CommandButton(MainWindow window, string title) => window.Aspire.GetVisualDescendants().OfType<Button>()
-        .FirstOrDefault(button => button.Content is TextBlock text && text.Text == title);
+    /// <summary>Runs the chosen resource's command as a person does: the toolbar's commands button, then its item.</summary>
+    private static void RunCommand(MainWindow window, string title)
+    {
+        Ui.Click(window.Aspire.Tools[AppActions.AspireCommand]);
+        Ui.Choose(window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(menu => menu.IsOpen), title);
+    }
 
     private static void FindAction(MainWindow window, string title)
     {
@@ -421,9 +420,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         {
             FindAction(window, "Show Aspire Resources");
             Ui.WaitFor(() => Resource(window, "apiservice").HealthStatus == "Healthy", "the API's native health update");
-            TreeViewItem apiNode = window.Aspire.ResourceList.GetVisualDescendants().OfType<TreeViewItem>().Single(item =>
-                item.Tag is AspireResource resource && resource.DisplayName == "apiservice");
-            Assert.Contains(apiNode.GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "Healthy");
+            Control apiNode = AspireStandInTests.Row(window, "apiservice");
+            Assert.Contains(apiNode.GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "healthy");
             Uri endpoint = HttpUrl(Resource(window, "apiservice"));
             Button portLink = apiNode.GetVisualDescendants().OfType<Button>().First(button => Equals(ToolTip.GetTip(button), endpoint.AbsoluteUri)
                 || Equals(ToolTip.GetTip(button), endpoint.AbsoluteUri.TrimEnd('/')));
@@ -584,13 +582,10 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         MainWindow window = OpenRunning();
         try
         {
-            TreeViewItem node = window.Aspire.ResourceList.GetVisualDescendants().OfType<TreeViewItem>().Single(item =>
-                item.Tag is AspireResource resource && resource.DisplayName == "apiservice");
-            Ui.Click(node.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "apiservice"));
-            FindAction(window, "Show Aspire Resources");
-            Ui.WaitFor(() => window.Aspire.GetVisualDescendants().OfType<Button>().Any(button => button.Content is TextBlock { Text: "Passenger interaction" }),
+            ChooseResource(window, "apiservice");
+            Ui.WaitFor(() => window.Aspire.SelectedResource?.Commands.Any(command => command.DisplayName == "Passenger interaction") == true,
                 "the real AppHost's advertised command");
-            Ui.Click(window.Aspire.GetVisualDescendants().OfType<Button>().Single(button => button.Content is TextBlock { Text: "Passenger interaction" }));
+            RunCommand(window, "Passenger interaction");
             AspireInteractionDialog confirmation = AspireStandInTests.Interaction(window, "Restart API?");
             Ui.Click(confirmation.Secondary);
             AspireInteractionDialog form = AspireStandInTests.Interaction(window, "API settings");
@@ -667,8 +662,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         api = Resource(window, "apiservice");
         AspireResourceCommand restart = Assert.Single(api.Commands, command => command.Name is "restart" or "resource-restart");
         ChooseResource(window, "apiservice");
-        Ui.WaitFor(() => CommandButton(window, restart.DisplayName) is { IsEffectivelyVisible: true, IsEnabled: true }, $"the API's {restart.DisplayName} command");
-        Ui.Click(CommandButton(window, restart.DisplayName)!);
+        Ui.WaitFor(() => window.Aspire.SelectedResource?.Commands.Any(command => command.Name == restart.Name && command.Enabled) == true,
+            $"the API's {restart.DisplayName} command");
+        RunCommand(window, restart.DisplayName);
         RefreshUntil(window, () => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "apiservice"
             && window.AspireRuntime.FindService(new(project.Host, resource))?.ProcessId is int pid && pid != oldPid), "the restarted API's new PID");
         Ui.WaitFor(() => !Processes.IsRunning(oldPid), "the old API process to exit");

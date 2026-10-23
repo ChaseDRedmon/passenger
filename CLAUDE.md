@@ -590,15 +590,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   ls` where the CLI has Compose v2, else from their containers' states, then containers, images, volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
   `container_action` share (a service's name, a label's, always after `--`, never read as a flag; an agent's start of an
   id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
-  (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, a port's link on the
+  (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, its rows drawn as every
+  list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, the health's
+  tag, `ContainerDetailsPane.HealthTag`, addresses as links), a port's link on the
   engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
   container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
-  again), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
+  again), a project's merged one (a toggle a service), each the merged log every such console is (`ToolWindows/MergedLog`,
+  the Aspire window's too) with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
   streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
   Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
-  as it is chosen and as the window reads the engine again, in framed tables with one column of names: state, restarts and
+  as it is chosen and as the window reads the engine again, in the framed tables every Details tab has, one column of
+  names (`ToolWindows/DetailsTables`, the Aspire window's too): state, restarts and
   last exit, the health check's last outputs, ports as links, Compose's `com.docker.compose.depends_on`, environment,
   mounts, networks) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
   -L …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
@@ -773,7 +777,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ProjectActionAsync`): Restart ends its sessions, restarts its other services as they are and its .NET ones as the run's
   restart does, Stop and Remove are the run's Stop.
   Edit Configurations' Compose page lists the services from Compose's model
-  (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
+  (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each; its
+  Aspire page is the same table, `RunConfigurationsDialog.AspireTable`), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
   Dockerfile's final FROM, their menu running or debugging that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
   run them against the engine on aspnet:10.0 and busybox; their HTTPS test exports the machine's development certificate
@@ -863,9 +868,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
-  window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`) shows the resources as a tree, their consoles merged with
-  Find, their logs and traces (its Structured logs and Traces pages, the Telemetry view's, below); its buttons are registered actions (`MainWindow.AspireActions.cs`), its links open through
-  `Browse`, and a resource's Details leave out every environment value (`ContainerSecrets` masks the rest). An AppHost the
+  window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
+  parts over an AppHost's resources, the same controls: its toolbar the AppHost chosen and icon buttons of registered
+  actions (`MainWindow.AspireActions.cs`, each bound by `ActionButtons.Bind`, its ring while its work runs: Discover,
+  Refresh, a resource's Debug, Attach, Run without Debugger and Profile through the run of services, its commands as a
+  menu, its address, source and container), the resources as `RunRows` (a parent's children under its chevron, the
+  state's dot, the health's tag only for a resource with health reports, its http and https addresses as links through
+  `Browse`; a row's menu its actions and commands), and the chosen one's Details (`AspireDetailsPane`, `DetailsTables`:
+  the resource, its health reports, URLs, relationships, environment, properties and volumes), the resources' consoles
+  merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their start), the
+  dashboard's structured logs and traces (its Structured logs and Traces pages, the Telemetry view's, below), and the
+  AppHost's own console. What a resource says is masked as a container's
+  is, by `ContainerSecrets`' rule (a property the AppHost marks sensitive whatever its name; a health report's exception by
+  `InValue`; an external AppHost's properties, whose sensitivity the CLI does not say, only those known to name no
+  secret), the rest shown. An AppHost the
   window starts is a run of services (`AspireAppRun`, the model above), its services the IDE runs on this machine as DCP
   asks (`AspireController.StartResourceAsync`, each start an `AspireResourceRun` under a `ProcessRunner`, its console its
   own): a service held for the debugger (debugged, or quietly under Run with Hot Reload) starts with its runtime suspended
@@ -901,7 +917,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   UserSecretsId's own, `PASSENGER_USER_SECRETS`' in a test run) for a secret, else in its appsettings.json, the file's
   other characters kept (`JsonText`, launchSettings.json's editor too), one command of global undo, worked out again as
   it is chosen, and Edit Configurations and the gutter's
-  `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
+  `AddProject` icons read the same resources (`AspireRunResources`; Edit Configurations' Aspire page the services table a
+  Compose configuration's is, `ComposeServicesTable.SetNamed`: each .NET resource's project as its AppHost names it, not
+  chosen there, and Run, Debug or Don't start, every resource's choice kept, since one kept as Run is not debugged when
+  the AppHost is; a resource marked Don't start is refused its first start in a run, `AspireAppRun.LeftUnstarted`, a start
+  asked later from the Aspire window running it unheld), an AppHost's icons asked for that AppHost alone as an
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
   references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
@@ -922,7 +942,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either. `TelemetryView` is the
   one view of them (logs, traces put together by id, a span tree, a log's trace and a span's logs a click apart, chosen as
   the other page streams them), streaming only the page its host shows: the Aspire window's Structured logs and Traces
-  pages, and the Containers window's Telemetry tab (`TelemetryView.Both`, its Logs and Traces a segment apart), shown for
+  pages, and the Containers window's Telemetry tab (`TelemetryView.Both`, the two pages under tabs of their own), shown for
   a Compose project of the window's container run that collects telemetry, a service's or container's row its own
   records alone (`TelemetrySource.Of`), there because the Containers window is where a run's services are chosen and
   their logs read already, where the Run window shows one console and chooses no service. An agent's `telemetry` (not
@@ -2160,7 +2180,9 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   and New Window fit the screen's working area before they're shown (`MainWindow.FitToScreen`). A dialog's content is
   `DialogFooter.Page(page, DialogFooter.Bar(buttons[, left]))`; a rounded Border takes `Border.kindBadge` or
   `Border.tag` (the badge radius) or `Border.box` (the controls' radius), never a literal radius (UiRulesTests); a
-  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A toolbar's icon button is
+  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A list of what runs (the
+  Containers and Aspire windows') draws its rows through `RunRows`, a Details tab is `DetailsTables`, and a console of
+  several sources merged is `MergedLog`. A toolbar's icon button is
   `ToolButtons.Of` (`Toggle` for one that stays pressed): never focusable, its icon the one size, as UiRulesTests holds
   every tool window's; words of less weight beside a row's are `MutedText`; a search field's keys over its list (Up,
   Down, Page Up, Page Down) are `ListKeys.Move`; a path shown to a person is `PathNames.Shown` (from the open folder

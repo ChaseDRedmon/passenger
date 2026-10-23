@@ -27,7 +27,6 @@ public sealed class RunConfigurationsDialog : Window
     private readonly StackPanel variables = new() { Spacing = 4 };
     private readonly StackPanel linkedAppHosts = new() { Spacing = 4 };
     private readonly Control linkedRow;
-    private readonly StackPanel aspireServices = new() { Spacing = 4 };
     private readonly Control aspireRow;
     private readonly CancellationTokenSource aspireLifetime = new();
     private int aspireReading;
@@ -193,7 +192,12 @@ public sealed class RunConfigurationsDialog : Window
         // fields it shows, which a change from a generated configuration's source marks.
         Control projectRow = Row("Project", ProjectBox);
         linkedRow = Row("Linked Aspire apps", linkedAppHosts, top: true, fields: ["linkedAppHosts"]);
-        aspireRow = Row("Aspire resources", aspireServices, top: true, fields: ["serviceActions", "serviceProjects"]);
+        AspireTable.Changed += (_, _) => Edit(c => c with
+        {
+            ServiceProjects = new Dictionary<string, string>(c.ServiceProjects.Concat(AspireTable.NamedProjects()).GroupBy(p => p.Key).Select(g => g.Last()), StringComparer.Ordinal),
+            ServiceActions = AspireTable.Actions(every: true),
+        });
+        aspireRow = Row("Aspire resources", AspireTable, top: true, fields: ["serviceActions", "serviceProjects"]);
         pages =
         [
             (projectRow, [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
@@ -309,15 +313,20 @@ public sealed class RunConfigurationsDialog : Window
         }
     }
 
+
+    /// <summary>An Aspire configuration's .NET resources as its AppHost's code declares them, in the services table a Compose
+    /// configuration's are: each one's project, as the AppHost names it, and what Run does with it (Run, Debug, Don't start).</summary>
+    public ComposeServicesTable AspireTable { get; } = new("Resource");
+
     private void ShowAspireServices()
     {
         int generation = ++aspireReading;
-        aspireServices.Children.Clear();
         if (Chosen is not { Aspire: true, IsContainer: false } configuration || aspireClosed)
         {
+            AspireTable.Say(string.Empty);
             return;
         }
-        aspireServices.Children.Add(new TextBlock { Text = "Reading AppHost resources…", Classes = { "muted" } });
+        AspireTable.Say("Reading the AppHost's resources…");
         _ = Read();
 
         async Task Read()
@@ -333,41 +342,15 @@ public sealed class RunConfigurationsDialog : Window
                 {
                     return;
                 }
-                aspireServices.Children.Clear();
-                foreach (AspireRunResource resource in resources)
+                bool was = showing;
+                showing = true;
+                try
                 {
-                    ComboBox action = new()
-                    {
-                        Classes = { "cell" },
-                        ItemsSource = (string[])["Run", "Debug"],
-                        SelectedIndex = configuration.ServiceActions.GetValueOrDefault(resource.Name) == ServiceStart.Debug ? 1 : 0,
-                        HorizontalAlignment = HorizontalAlignment.Stretch,
-                    };
-                    ToolTip.SetTip(action, $"How {resource.Name} starts; Debug keeps its debugger through service restarts");
-                    action.SelectionChanged += (_, _) => Edit(current => current with
-                    {
-                        ServiceActions = new Dictionary<string, ServiceStart>(current.ServiceActions)
-                        {
-                            [resource.Name] = action.SelectedIndex == 1 ? ServiceStart.Debug : ServiceStart.Run,
-                        },
-                        ServiceProjects = new Dictionary<string, string>(current.ServiceProjects) { [resource.Name] = resource.Project },
-                    });
-                    Grid row = new() { ColumnDefinitions = new ColumnDefinitions("*,*,130"), MinHeight = ListRow.Height };
-                    row.Children.Add(new TextBlock { Text = resource.Name, VerticalAlignment = VerticalAlignment.Center });
-                    row.Children.Add(new TextBlock
-                    {
-                        Text = projects.FirstOrDefault(project => Core.PathNames.Same(project.Path, resource.Project))?.Name ?? Path.GetFileNameWithoutExtension(resource.Project),
-                        Classes = { "muted" },
-                        VerticalAlignment = VerticalAlignment.Center,
-                        [Grid.ColumnProperty] = 1,
-                    });
-                    action[Grid.ColumnProperty] = 2;
-                    row.Children.Add(action);
-                    aspireServices.Children.Add(row);
+                    AspireTable.SetNamed([.. resources.Select(resource => (resource.Name, resource.Project))], projects, Chosen ?? configuration, editable: true);
                 }
-                if (resources.Count == 0)
+                finally
                 {
-                    aspireServices.Children.Add(new TextBlock { Text = "No project resources are statically declared in this AppHost", Classes = { "muted" } });
+                    showing = was;
                 }
             }
             catch (OperationCanceledException) when (aspireClosed)
@@ -377,8 +360,7 @@ public sealed class RunConfigurationsDialog : Window
             {
                 if (!aspireClosed && generation == aspireReading)
                 {
-                    aspireServices.Children.Clear();
-                    aspireServices.Children.Add(new TextBlock { Text = error.Message, Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+                    AspireTable.Say(error.Message);
                 }
             }
         }

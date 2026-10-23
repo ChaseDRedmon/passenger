@@ -38,9 +38,15 @@ public partial class MainWindow
             _ => Aspire.StructuredLogs.SelectedItem is AspireStructuredLog { TraceId.Length: > 0 } ? null : "No log with a trace is selected");
         Add(A.AspireShowRelatedLogs, "Show Related Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowRelatedLogs(); },
             _ => Aspire.TraceList.SelectedItem is AspireTrace && Aspire.SpanList.SelectedItem is Telemetry.TelemetryView.SpanRow ? null : "No trace span is selected");
-        foreach (string page in new[] { "Resources", "Console", "Structured logs", "Traces", "AppHost console" })
+        foreach (string page in AspireView.Pages)
         {
-            Add(AspireView.PageAction(page), $"Show Aspire {page}", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage(page); });
+            // Details is the chosen resource's, beside every resource listed: shown as the window's resources are asked for.
+            string id = AspireView.PageAction(page);
+            Add(id, id == A.AspireResources ? "Show Aspire Resources" : $"Show Aspire {page}", "Aspire", _ =>
+            {
+                ShowToolWindow(ToolWindowIds.Aspire);
+                Aspire.ShowPage(page);
+            }, words: id == A.AspireResources ? ["Show Aspire Details"] : null);
         }
         Add(A.AspireOpenLink, "Open Aspire Resource Endpoint", "Aspire", _ =>
         {

@@ -315,20 +315,30 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             window.KeyTextInput("Edit Configurations");
             Ui.Press(window, "ENTER");
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
-            Ui.WaitFor(() => ResourceRows(dialog).Length == 2, "generic and unassigned named-argument project resources");
-            Assert.Equal(["api", "worker"], ResourceRows(dialog).Select(row => row.Children.OfType<TextBlock>().First().Text).Order(StringComparer.Ordinal));
-            Assert.Contains(ResourceRows(dialog), row => row.Children.OfType<TextBlock>().Any(text => text.Text == "Api"));
-            Assert.Contains(ResourceRows(dialog), row => row.Children.OfType<TextBlock>().Any(text => text.Text == "Worker"));
-            Ui.Press(dialog, "ESCAPE");
+            Ui.WaitFor(() => dialog.AspireTable.Rows.Count == 2, "generic and unassigned named-argument project resources");
+            Assert.Equal(["api", "worker"], dialog.AspireTable.Rows.Select(row => row.Service).Order(StringComparer.Ordinal));
+            Assert.Contains(dialog.AspireTable.Rows, row => Equals(row.Project.SelectedItem, "Api"));
+            Assert.Contains(dialog.AspireTable.Rows, row => Equals(row.Project.SelectedItem, "Worker"));
+            // The services table a Compose configuration's is: each project its AppHost names, Run, Debug or Don't start.
+            DialogButtonsTests.Check(dialog);
+            Assert.True(dialog.AspireTable.Classes.Contains("framed"), "The Aspire resources are not the framed services table Compose's are");
+            ComboBox worker = dialog.AspireTable.Rows.Single(row => row.Service == "worker").Action;
+            Assert.Equal(["Run", "Debug", "Don't start"], Assert.IsType<string[]>(worker.ItemsSource));
+            Assert.False(dialog.AspireTable.Rows.Single(row => row.Service == "worker").Project.IsEnabled, "A resource's project was offered as a choice, where its AppHost names it");
+            Ui.Click(worker);
+            Ui.Press(dialog, "END");
+            Ui.Press(dialog, "ENTER");
+            Ui.Click(dialog.OkButton);
+            RunConfiguration kept = window.Configurations.First(configuration => configuration.Name == host.Name);
+            Assert.Equal(ServiceStart.DontStart, kept.ServiceActions["worker"]);
+            Assert.Equal(ServiceStart.Run, kept.ServiceActions["api"]);
+            Assert.True(PathNames.Same(PathNames.Canonical(project.PathOf("Worker/Worker.csproj")), kept.ServiceProjects["worker"]),
+                $"The worker's project was kept as {kept.ServiceProjects.GetValueOrDefault("worker")}");
         }
         finally
         {
             window.Close();
         }
-
-        static Grid[] ResourceRows(RunConfigurationsDialog dialog) => dialog.GetVisualDescendants().OfType<Grid>()
-            .Where(row => row.Children.OfType<ComboBox>().Any(combo => combo.ItemsSource is string[] items && items.SequenceEqual(["Run", "Debug"])))
-            .ToArray();
     }
 
     /// <summary>A file no AppHost involves pays nothing for the AppHost in the folder: a key typed in it and its pause allocate

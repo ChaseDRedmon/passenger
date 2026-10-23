@@ -5,40 +5,54 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Layout;
-using Passenger.App.ToolWindows;
+using Avalonia.Media;
 using Passenger.App.Containers;
 using Passenger.App.Telemetry;
+using Passenger.App.ToolWindows;
 using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.App.Aspire;
 
-/// <summary>Native AppHost resources, with owned live streams and scoped CLI snapshots for external apps.</summary>
+/// <summary>A resource of the Aspire window's list at its depth: a parent's children are listed under it, opened and closed
+/// by its chevron as the Containers window's rows are.</summary>
+public sealed record AspireRow(AspireResource Resource, int Depth, bool Expands, bool Expanded);
+
+/// <summary>The Aspire window, the Containers window's parts over an AppHost's resources: an icon toolbar of the window's
+/// actions, the resources as rows (<see cref="RunRows"/>: a chevron over a parent's children, the state's dot, health's tag
+/// and addresses as links), the chosen one's Details (<see cref="AspireDetailsPane"/>), the resources' consoles merged
+/// (<see cref="MergedLog"/>), the dashboard's structured logs and traces (<see cref="TelemetryView"/>'s pages), and the
+/// AppHost's own console. An AppHost the window runs streams live; another is read through the CLI.</summary>
 public sealed class AspireView : DockPanel, IDisposable
 {
+    private const string DetailsPage = "Details";
+    private const string ConsolePage = "Console";
+    private const string LogsPage = "Structured logs";
+    private const string TracesPage = "Traces";
+    private const string AppHostPage = "AppHost console";
+
     private readonly AspireClient client;
-    private readonly TextBlock status = new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap, Text = "Choose a running Aspire AppHost, or refresh to discover one." };
-    private readonly StackPanel commandBar = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
+    private readonly TextBlock status = new() { Classes = { "muted" }, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Text = "Choose a running Aspire AppHost, or refresh to discover one." };
+    private readonly TextBlock empty = new() { Classes = { "emptyText" } };
+    private readonly HashSet<string> collapsed = new(StringComparer.Ordinal);
+    private readonly List<(Button Button, string Action)> tools = [];
+    private readonly Button commands;
     private readonly ContentControl page = new();
     private readonly ContentControl appHostConsole = new();
-    private readonly TextBlock readiness = new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBlock readiness = new() { Classes = { "muted" }, Margin = new Thickness(8, 6), TextWrapping = TextWrapping.Wrap };
     private readonly Dictionary<string, (ToggleButton Tab, Control Page)> pages = new(StringComparer.Ordinal);
-    private readonly TextBlock consoleStatus = new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-    private readonly OutputView resourceDetails = new(toolbar: false);
-    private readonly Button debug;
-    private readonly Button profile;
-    private readonly Button attach;
-    private readonly Button noDebug;
+    private readonly TextBlock consoleStatus = Said();
     private IReadOnlyList<AspireResource> resources = [];
     private CancellationTokenSource? reading;
     private readonly CancellationTokenSource commandLifetime = new();
     private int generation;
     private bool updating;
     private bool disposed;
+    private bool executing;
     private Func<AspireSelection, string, Func<bool>, CancellationToken, Task>? argumentCommand;
     private CancellationTokenSource? consoleReading;
     private int consoleGeneration;
-    private string currentPage = "Resources";
+    private string currentPage = DetailsPage;
     private bool liveResources;
     private int resourceUpdateVersion;
     private bool displayVisible;
@@ -46,12 +60,9 @@ public sealed class AspireView : DockPanel, IDisposable
     /// <summary>Discover or Refresh asked while the window was hidden, which their actions show it for first: done as it shows.</summary>
     private bool discoverWhenShown;
     private bool refreshWhenShown;
-    private readonly Dictionary<string, TreeViewItem> resourceNodes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> streamedResources = new(StringComparer.Ordinal);
     private Func<string, bool>? requestAction;
     private ActionRegistry? actionRegistry;
-    private readonly List<Button> advertisedButtons = [];
-    private int advertisedButtonIndex;
     private string? pendingCommand;
     private AspireSelection? pendingCommandSelection;
     private Uri? pendingLink;
@@ -59,43 +70,49 @@ public sealed class AspireView : DockPanel, IDisposable
     public AspireView(AspireClient? client = null)
     {
         this.client = client ?? new AspireClient();
-        AppSelector = new ComboBox { MaxWidth = 360, MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
+        AppSelector = new ComboBox { MaxWidth = 300, MinWidth = 200, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
         AutomationProperties.SetName(AppSelector, "Aspire AppHost");
         ToolTip.SetTip(AppSelector, "Running AppHost (every request uses its absolute project path)");
-        Button discover = ActionButton("AppHosts", "Discover running Aspire AppHosts", AppActions.AspireDiscover);
-        Button refresh = ActionButton("Refresh", "Refresh resources", AppActions.AspireRefresh);
-        debug = ActionButton("Debug", "Debug the selected service", AppActions.AspireDebug);
-        profile = ActionButton("Profile", "Profile the selected service", AppActions.AspireProfile);
-        debug.IsEnabled = false;
-        attach = ActionButton("Attach", "Attach selected .NET resource without restarting it", AppActions.AspireAttach);
-        noDebug = ActionButton("Run without debugger", "Restart selected .NET resource without debugger", AppActions.AspireRun);
-        attach.IsEnabled = false;
-        noDebug.IsEnabled = false;
-        commandBar.Children.Add(attach);
-        commandBar.Children.Add(noDebug);
-        profile.IsEnabled = false;
-        ShrinkingRow bar = new()
+        StackPanel bar = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Children = { AppSelector } };
+        foreach ((string action, string icon, string tip) in (ReadOnlySpan<(string, string, string)>)[
+            (AppActions.AspireDiscover, "Icon.Search", "Discover running Aspire AppHosts"),
+            (AppActions.AspireRefresh, "Icon.Rerun", "Refresh resources"),
+            (AppActions.AspireDebug, "Icon.Debug", "Debug the chosen service from its start"),
+            (AppActions.AspireAttach, "Icon.Attach", "Attach to the chosen service as it runs"),
+            (AppActions.AspireRun, "Icon.RunOutline", "Run the chosen service without the debugger"),
+            (AppActions.AspireProfile, "Icon.Profile", "Profile the chosen service"),
+            (AppActions.AspireCommand, "Icon.Menu", "The chosen resource's commands"),
+            (AppActions.AspireOpenLink, "Icon.Endpoints", "Open one of the chosen resource's addresses"),
+            (AppActions.AspireSource, "Icon.DocumentText", "Open the chosen resource's source"),
+            (AppActions.AspireContainer, "Icon.Containers", "Show the chosen resource's container in Containers")])
         {
-            Margin = new Thickness(6, 4),
-            Children = { AppSelector, discover, refresh, debug, profile },
-        };
-        DockPanel.SetDock(bar, Dock.Top);
-        Children.Add(bar);
-        DockPanel.SetDock(status, Dock.Top);
-        Children.Add(status);
+            Button button = ToolButtons.Of(icon, tip);
+            button.Name = action;
+            tools.Add((button, action));
+            bar.Children.Add(button);
+        }
+        commands = tools.Single(t => t.Action == AppActions.AspireCommand).Button;
+        DockPanel top = new() { Children = { bar, status } };
+        DockPanel.SetDock(bar, Dock.Left);
+        Border toolbar = new() { [DockProperty] = Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = top };
+        toolbar.Bind(Border.BorderBrushProperty, toolbar.GetResourceObservable("Passenger.Divider"));
+        Children.Add(toolbar);
 
-        ResourceList = new TreeView { Classes = { "tree" } };
+        ResourceList = new ListBox
+        {
+            Classes = { "tree" },
+            ItemTemplate = new FuncDataTemplate<AspireRow>((row, _) => row is null ? new Panel() : Row(row), supportsRecycling: false),
+        };
         AutomationProperties.SetName(ResourceList, "Aspire resources");
-        ResourceList.MinHeight = ListRow.Height * 2;
         ResourceList.SelectionChanged += (_, _) =>
         {
             if (!updating)
             {
-                ShowResource();
-                ResourceSelectionChanged?.Invoke(this, Selection);
-                _ = RefreshSelectionAsync();
+                Chose();
             }
         };
+        RunRows.Toggles(ResourceList, () => Chosen is { Expands: true }, () => Toggle(Chosen));
+        ListMenus.Attach(ResourceList, RowMenu);
         AppSelector.SelectionChanged += (_, _) =>
         {
             ToolTip.SetTip(AppSelector, SelectedApp?.ToString() ?? "Choose a running AppHost");
@@ -106,43 +123,39 @@ public sealed class AspireView : DockPanel, IDisposable
             }
         };
 
-        Console = new OutputView(toolbar: false) { Limit = OutputView.DefaultLimitKb * 1024 };
-        Find = new Editors.FindBar();
-        Find.Attach(Console.Editor);
+        Details = new AspireDetailsPane(uri => Browse?.Invoke(uri), OpenFile);
+        Log = new MergedLog("aspireLogFind", consoleStatus);
+        Log.Toggled += (_, _) => UpdateConsole(again: true);
+        // A log's trace and a span's logs are the window's actions here, as its other buttons are.
+        Telemetry = new TelemetryView(AppActions.AspireShowTrace, AppActions.AspireShowRelatedLogs, id => requestAction?.Invoke(id) == true);
         Telemetry.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
         Telemetry.Folders = () => SelectedApp is { } app ? [Path.GetDirectoryName(app.AppHostPath)!] : [];
-        Telemetry.PageWanted += (_, wanted) => ShowPage(wanted == TelemetryPage.Logs ? "Structured logs" : "Traces");
-        foreach (OutputView output in new[] { Console, resourceDetails })
+        Telemetry.PageWanted += (_, wanted) => ShowPage(wanted == TelemetryPage.Logs ? LogsPage : TracesPage);
+        foreach (OutputView output in new[] { Console })
         {
             output.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
             output.Links.Folders = () => SelectedApp is { } app ? [Path.GetDirectoryName(app.AppHostPath)!] : [];
         }
 
-        StackPanel tabs = new() { Orientation = Orientation.Horizontal };
-        ScrollViewer commands = new()
+        StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
+        AddPage(DetailsPage, Details, strip);
+        AddPage(ConsolePage, Log, strip);
+        AddPage(LogsPage, Telemetry.LogsPage, strip);
+        AddPage(TracesPage, Telemetry.TracesPage, strip);
+        AddPage(AppHostPage, WithHeader(readiness, appHostConsole), strip);
+        Border tabBar = new()
         {
-            Content = commandBar,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = new ScrollViewer { Content = strip, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled },
         };
-        AddPage("Resources", WithHeader(commands, resourceDetails), tabs);
-        AddPage("Console", WithHeader(new StackPanel { Children = { consoleStatus,
-            ActionButton("Find", "Find in merged resource logs", AppActions.AspireLogFind) } }, WithHeader(Find, Console)), tabs);
-        AddPage("Structured logs", Telemetry.LogsPage, tabs);
-        AddPage("Traces", Telemetry.TracesPage, tabs);
-        AddPage("AppHost console", WithHeader(readiness, appHostConsole), tabs);
-        ScrollViewer pageTabs = new()
-        {
-            Content = tabs,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        };
-        DockPanel lower = WithHeader(pageTabs, page);
-        Grid panes = new() { RowDefinitions = new RowDefinitions("2*,1,3*") };
-        panes.Children.Add(new Border { Classes = { "framed" }, Child = ResourceList });
-        panes.Children.Add(new HairlineDivider(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 });
-        lower[Grid.RowProperty] = 2;
-        panes.Children.Add(lower);
+        tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
+        DockPanel right = new() { Children = { tabBar, page } };
+
+        Grid panes = new() { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
+        panes.Children.Add(new Panel { Children = { ResourceList, empty } });
+        panes.Children.Add(new HairlineDivider(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 });
+        right[Grid.ColumnProperty] = 2;
+        panes.Children.Add(right);
         Children.Add(panes);
         DetachedFromVisualTree += (_, _) => SetDisplayVisible(false);
         PropertyChanged += (_, change) =>
@@ -152,23 +165,49 @@ public sealed class AspireView : DockPanel, IDisposable
                 SetDisplayVisible(false);
             }
         };
-        ShowPage("Resources");
+        ShowPage(DetailsPage);
+        ShowResource();
+        ShowEmpty();
     }
 
     public ComboBox AppSelector { get; }
-    public TreeView ResourceList { get; }
-    public Editors.FindBar Find { get; }
-    public OutputView Console { get; }
+
+    /// <summary>The resources, each a row (<see cref="AspireRow"/>) at its depth.</summary>
+    public ListBox ResourceList { get; }
+
+    /// <summary>The rows listed now.</summary>
+    public IReadOnlyList<AspireRow> Rows => ResourceList.ItemsSource as IReadOnlyList<AspireRow> ?? [];
+
+    /// <summary>The chosen resource's Details tab.</summary>
+    public AspireDetailsPane Details { get; }
+
+    /// <summary>The resources' consoles merged, a toggle each, with Find.</summary>
+    public MergedLog Log { get; }
+
+    public Editors.FindBar Find => Log.Find;
+    public OutputView Console => Log.Console;
+
     /// <summary>The AppHost's structured logs and traces, the Telemetry view every kind of run shows them in.</summary>
-    public TelemetryView Telemetry { get; } = new();
+    public TelemetryView Telemetry { get; }
     public ListBox StructuredLogs => Telemetry.StructuredLogs;
     public ListBox TraceList => Telemetry.TraceList;
     public ListBox SpanList => Telemetry.SpanList;
+
+    /// <summary>The window's toolbar buttons, by the actions they run.</summary>
+    public IReadOnlyDictionary<string, Button> Tools => tools.ToDictionary(t => t.Action, t => t.Button);
+
     public AspireApp? SelectedApp => AppSelector.SelectedItem as AspireApp;
-    public AspireResource? SelectedResource => (ResourceList.SelectedItem as TreeViewItem)?.Tag as AspireResource;
+    private AspireRow? Chosen => ResourceList.SelectedItem as AspireRow;
+    public AspireResource? SelectedResource => Chosen?.Resource;
     public AspireSelection? Selection => SelectedApp is { } app && SelectedResource is { } resource ? new(app.AppHostPath, resource) : null;
     public string Status => status.Text ?? string.Empty;
     public IReadOnlyList<AspireResource> ResourceSnapshots => resources;
+
+    /// <summary>The page shown: Details, Console, Structured logs, Traces or AppHost console.</summary>
+    public string ShownPage => currentPage;
+
+    /// <summary>Opens an address in the browser (the window's one way to it).</summary>
+    public Action<Uri>? Browse { get; set; }
 
     /// <summary>Returns an owned connection snapshot task, or null to use the CLI for an external AppHost. Called on the UI thread.</summary>
     public Func<string, CancellationToken, Task<IReadOnlyList<AspireResource>>?>? ResourceProvider { get; set; }
@@ -204,6 +243,7 @@ public sealed class AspireView : DockPanel, IDisposable
         }
     }
 
+    /// <summary>The window's actions run by the toolbar's buttons (each showing its work), the tabs and the rows' menus.</summary>
     public void BindActions(ActionRegistry actions, Func<string, bool> request)
     {
         if (actionRegistry is not null)
@@ -212,6 +252,11 @@ public sealed class AspireView : DockPanel, IDisposable
         }
         actionRegistry = actions;
         requestAction = request;
+        foreach ((Button button, string action) in tools)
+        {
+            ActionTips.Set(button, action, actions[action]?.Title ?? ToolTip.GetTip(button) as string ?? action);
+            ActionButtons.Bind(button, action, actions, request);
+        }
         ActionButtons.ShowMarked(this, actions);
     }
 
@@ -219,6 +264,10 @@ public sealed class AspireView : DockPanel, IDisposable
     public string? SelectedContainerId => SelectedResource is { } resource
         ? AspireJson.Properties(resource.Data, "properties").FirstOrDefault(property => property.Name == "container.id").Value is { ValueKind: JsonValueKind.String } id ? id.GetString() : null
         : null;
+
+    /// <summary>The chosen resource's addresses a browser opens.</summary>
+    public IReadOnlyList<Uri> SelectedLinks => SelectedResource is { } resource ? Links(resource) : [];
+
     public Uri? TakePendingLink()
     {
         Uri? link = pendingLink;
@@ -226,6 +275,7 @@ public sealed class AspireView : DockPanel, IDisposable
         return link;
     }
 
+    /// <summary>The chosen resource's addresses as a menu under the toolbar's button, each opened in the browser.</summary>
     public void ShowEndpointChoices()
     {
         if (SelectedResource is not { } resource)
@@ -233,25 +283,24 @@ public sealed class AspireView : DockPanel, IDisposable
             return;
         }
         ContextMenu menu = new();
-        foreach (JsonElement url in AspireJson.Array(resource.Data, "urls"))
+        foreach (Uri target in Links(resource))
         {
-            if (!Uri.TryCreate(AspireJson.String(url, "url"), UriKind.Absolute, out Uri? target) || target.Scheme is not ("http" or "https"))
-            {
-                continue;
-            }
             MenuItem item = new() { Header = target.AbsoluteUri };
             item.Click += (_, _) => { pendingLink = target; requestAction?.Invoke(AppActions.AspireOpenLink); };
             menu.Items.Add(item);
         }
-        menu.Open(commandBar);
+        menu.Open(tools.Single(t => t.Action == AppActions.AspireOpenLink).Button);
     }
+
     public void OpenSource()
     {
         if (SelectedResource?.Source is { } source && Path.IsPathFullyQualified(source))
         {
-            LinkClicked?.Invoke(this, new FileLink(source, new TextPosition(0, 0)));
+            OpenFile(source);
         }
     }
+
+    private void OpenFile(string path) => LinkClicked?.Invoke(this, new FileLink(path, new TextPosition(0, 0)));
 
     public void OpenFind() => Find.Open(replace: false);
 
@@ -270,21 +319,33 @@ public sealed class AspireView : DockPanel, IDisposable
             && current.Resource.Generation == captured.Resource.Generation ? command : null;
     }
 
+    /// <summary>The chosen resource's commands as a menu under the toolbar's button.</summary>
     public void ShowCommandChoices()
     {
         if (Selection is not { } selected)
         {
             return;
         }
-        ContextMenu menu = new();
-        foreach (AspireResourceCommand command in selected.Resource.Commands.Where(command => !command.Hidden))
-        {
-            MenuItem item = new() { Header = command.DisplayName, IsEnabled = command.Enabled && (!command.HasArguments || argumentCommand is not null) };
-            item.Click += (_, _) => RequestCommand(selected, command.Name);
-            menu.Items.Add(item);
-        }
-        menu.Open(commandBar);
+        ContextMenu menu = new() { ItemsSource = CommandItems(selected) };
+        menu.Open(commands);
     }
+
+    /// <summary>A resource's commands as menu items, those it advertises disabled (or that need a form the CLI must give) greyed.</summary>
+    private IReadOnlyList<Control> CommandItems(AspireSelection selected) =>
+    [
+        .. selected.Resource.Commands.Where(command => !command.Hidden).OrderBy(Order).Select(command =>
+        {
+            MenuItem item = ListMenus.Item(command.DisplayName, null, () => RequestCommand(selected, command.Name),
+                enabled: !executing && command.Enabled && (!command.HasArguments || argumentCommand is not null));
+            ToolTip.SetTip(item, command.HasArguments && argumentCommand is null
+                ? "This command needs an argument form. Use the Aspire CLI; Passenger will not send incomplete arguments."
+                : command.Description ?? command.Name);
+            return (Control)item;
+        }),
+    ];
+
+    private static int Order(AspireResourceCommand command) => command.Data.TryGetProperty("sortOrder", out JsonElement order)
+        && order.ValueKind == JsonValueKind.Number && order.TryGetInt32(out int number) ? number : 0;
 
     private void RequestCommand(AspireSelection selected, string command)
     {
@@ -371,18 +432,55 @@ public sealed class AspireView : DockPanel, IDisposable
         AppSelector.SelectedItem = app;
     }
 
+    /// <summary>Chooses a resource's row, its parents opened so it is listed.</summary>
     public void SelectResource(string name)
     {
         UiThread.Check();
-        TreeViewItem node = resourceNodes.GetValueOrDefault(name)
-            ?? throw new ArgumentException("The resource is not in the current snapshot.", nameof(name));
-        TreeViewItem current = node;
-        while (resourceNodes.Values.FirstOrDefault(item => item.Items.Contains(current)) is { } parent)
+        if (!resources.Any(resource => resource.Name == name))
         {
-            parent.IsExpanded = true;
-            current = parent;
+            throw new ArgumentException("The resource is not in the current snapshot.", nameof(name));
         }
-        ResourceList.SelectedItem = node;
+        Dictionary<string, string> parents = Parents(Visible());
+        bool opened = false;
+        for (string current = name; parents.TryGetValue(current, out string? parent); current = parent)
+        {
+            opened |= collapsed.Remove(parent);
+        }
+        if (opened)
+        {
+            Fill(SelectedResource?.Name);
+        }
+        AspireRow chosen = Rows.First(row => row.Resource.Name == name);
+        ResourceList.SelectedItem = chosen;
+        ResourceList.ScrollIntoView(chosen);
+    }
+
+    /// <summary>Opens or closes a row with rows under it, as its chevron does; a row it hides that was chosen gives its
+    /// choice to the row closed.</summary>
+    public void Toggle(AspireRow? row)
+    {
+        if (row is not { Expands: true })
+        {
+            return;
+        }
+        if (!collapsed.Remove(row.Resource.Name))
+        {
+            collapsed.Add(row.Resource.Name);
+        }
+        string? before = SelectedResource?.Name;
+        Fill(before, row.Resource.Name);
+        if (SelectedResource?.Name != before)
+        {
+            Chose();
+        }
+    }
+
+    /// <summary>What a choice of another row does: its details shown, the window told, its streams followed.</summary>
+    private void Chose()
+    {
+        ShowResource();
+        ResourceSelectionChanged?.Invoke(this, Selection);
+        _ = RefreshSelectionAsync();
     }
 
     public void ShowPage(string name)
@@ -440,13 +538,13 @@ public sealed class AspireView : DockPanel, IDisposable
             return;
         }
         (int version, CancellationToken cancel) = BeginRead();
-        status.Text = "Checking Aspire CLI and discovering running AppHosts…";
+        Say("Checking Aspire CLI and discovering running AppHosts…");
         await WorkAsync(version, cancel, async () =>
         {
             AspireAvailability available = await client.ProbeAsync(cancel);
             if (!available.Available)
             {
-                await ApplyAsync(version, () => { SetApps([]); status.Text = available.Message; });
+                await ApplyAsync(version, () => { SetApps([]); Say(available.Message); });
                 return;
             }
             IReadOnlyList<AspireApp> apps = await client.DiscoverRunningAppHostsAsync(cancel);
@@ -455,7 +553,7 @@ public sealed class AspireView : DockPanel, IDisposable
                 SetApps(apps);
                 if (apps.Count == 0)
                 {
-                    status.Text = "No running AppHosts. Start an AppHost with Aspire, then refresh AppHosts.";
+                    Say("No running AppHosts. Start an AppHost with Aspire, then refresh AppHosts.");
                 }
             });
         });
@@ -475,7 +573,7 @@ public sealed class AspireView : DockPanel, IDisposable
         (int version, CancellationToken cancel) = BeginRead();
         int resourceUpdates = resourceUpdateVersion;
         string? selectedName = SelectedResource?.Name;
-        status.Text = "Refreshing resource snapshot…";
+        Say("Refreshing resource snapshot…");
         StopConsole();
         ClearTelemetry();
         await WorkAsync(version, cancel, async () =>
@@ -488,12 +586,10 @@ public sealed class AspireView : DockPanel, IDisposable
                     UpdateConsole();
                     return;
                 }
-                updating = true;
                 resources = found;
-                SetVisibleResources(selectedName);
-                updating = false;
+                Fill(selectedName);
                 liveResources = live;
-                status.Text = live ? $"Live · {resources.Count} resources" : $"Snapshot · {resources.Count} resources · {DateTime.Now:T} · Refresh to update";
+                Say(live ? $"Live · {Core.Plural.Of(resources.Count, "resource")}" : $"Snapshot · {Core.Plural.Of(resources.Count, "resource")} · {DateTime.Now:T} · Refresh to update");
                 ShowResource();
                 UpdateConsole();
                 ResourceSelectionChanged?.Invoke(this, Selection);
@@ -505,57 +601,49 @@ public sealed class AspireView : DockPanel, IDisposable
     public async Task ExecuteSelectedCommandAsync(string name)
     {
         UiThread.Check();
-        if (Selection is not { } selected || disposed || !commandBar.IsEnabled)
+        if (Selection is not { } selected || disposed || executing)
         {
             return;
         }
         (int version, _) = BeginRead();
         CancellationToken cancel = commandLifetime.Token;
-        commandBar.IsEnabled = false;
-        status.Text = "Executing advertised resource command…";
-        if ((liveResources && argumentCommand is not null)
-            || selected.Resource.Commands.FirstOrDefault(command => command.Name == name) is { HasArguments: true })
+        executing = true;
+        Say("Executing advertised resource command…");
+        try
         {
-            try
+            if ((liveResources && argumentCommand is not null)
+                || selected.Resource.Commands.FirstOrDefault(command => command.Name == name) is { HasArguments: true })
             {
-                Func<AspireSelection, string, Func<bool>, CancellationToken, Task> execute = argumentCommand
-                    ?? throw new InvalidOperationException("Native command arguments are unavailable for this AppHost.");
-                await execute(selected, name, () => !disposed && version == generation
-                    && Selection is { } current && current.AppHostPath == selected.AppHostPath
-                    && current.Resource.Name == selected.Resource.Name && current.Resource.Generation == selected.Resource.Generation, cancel);
-                if (version == generation)
+                try
                 {
-                    await RequestRefreshAsync();
+                    Func<AspireSelection, string, Func<bool>, CancellationToken, Task> execute = argumentCommand
+                        ?? throw new InvalidOperationException("Native command arguments are unavailable for this AppHost.");
+                    await execute(selected, name, () => !disposed && version == generation
+                        && Selection is { } current && current.AppHostPath == selected.AppHostPath
+                        && current.Resource.Name == selected.Resource.Name && current.Resource.Generation == selected.Resource.Generation, cancel);
+                    if (version == generation)
+                    {
+                        await RequestRefreshAsync();
+                    }
                 }
-            }
-            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
-            {
-            }
-            catch (Exception error) when (Expected(error))
-            {
-                await ApplyAsync(version, () => status.Text = SafeError(error));
-            }
-            finally
-            {
-                if (!disposed)
+                catch (OperationCanceledException) when (cancel.IsCancellationRequested)
                 {
-                    commandBar.IsEnabled = true;
                 }
+                catch (Exception error) when (Expected(error))
+                {
+                    await ApplyAsync(version, () => Say(SafeError(error)));
+                }
+                return;
             }
-            return;
-        }
-        await WorkAsync(version, cancel, async () =>
-        {
-            await client.ExecuteCommandAsync(selected.AppHostPath, selected.Resource, name, cancel);
-            await ApplyAsync(version, () => commandBar.IsEnabled = true);
-        });
-        if (!disposed)
-        {
-            commandBar.IsEnabled = true;
-            if (version == generation)
+            await WorkAsync(version, cancel, () => client.ExecuteCommandAsync(selected.AppHostPath, selected.Resource, name, cancel));
+            if (!disposed && version == generation)
             {
                 await RequestRefreshAsync();
             }
+        }
+        finally
+        {
+            executing = false;
         }
     }
 
@@ -574,24 +662,17 @@ public sealed class AspireView : DockPanel, IDisposable
             .Select(resource => (resource.Name, resource.Generation)).OrderBy(item => item.Name)
             .SequenceEqual(snapshot.Where(resource => !resource.IsHidden)
                 .Select(resource => (resource.Name, resource.Generation)).OrderBy(item => item.Name));
-        bool commandEnabled = commandBar.IsEnabled;
-        updating = true;
         resources = Array.AsReadOnly(snapshot.ToArray());
-        SetVisibleResources(old?.Name);
-        updating = false;
+        Fill(old?.Name);
         liveResources = true;
         resourceUpdateVersion++;
-        status.Text = $"Live · {resources.Count} resources";
+        Say($"Live · {Core.Plural.Of(resources.Count, "resource")}");
         ShowResource();
         AspireResource? selected = SelectedResource;
         if (old?.Name != selected?.Name || old?.Generation != selected?.Generation)
         {
             ResourceSelectionChanged?.Invoke(this, Selection);
             _ = RefreshSelectionAsync();
-        }
-        else
-        {
-            commandBar.IsEnabled = commandEnabled;
         }
         if (consoleChanged)
         {
@@ -616,18 +697,21 @@ public sealed class AspireView : DockPanel, IDisposable
         consoleReading = null;
     }
 
-    private void UpdateConsole()
+    /// <summary>Streams the consoles of the resources whose toggles are on into the merged log while the Console page shows;
+    /// <paramref name="again"/> (a toggle turned) reads them again from their start, as a project's merged log does.</summary>
+    private void UpdateConsole(bool again = false)
     {
         UiThread.Check();
-        if (disposed || !displayVisible || currentPage != "Console" || SelectedApp is not { } app || ConsoleProvider is null)
+        if (disposed || !displayVisible || currentPage != ConsolePage || SelectedApp is not { } app || ConsoleProvider is null)
         {
             StopConsole();
             streamedResources.Clear();
             return;
         }
-        Dictionary<string, string> next = resources.Where(resource => !resource.IsHidden)
+        AspireResource[] offered = Visible();
+        Dictionary<string, string> next = offered.Where(resource => Log.Shows(resource.Name))
             .ToDictionary(resource => resource.Name, resource => resource.Generation, StringComparer.Ordinal);
-        if (consoleReading is not null && next.Count == streamedResources.Count
+        if (!again && consoleReading is not null && next.Count == streamedResources.Count
             && next.All(pair => streamedResources.GetValueOrDefault(pair.Key) == pair.Value))
         {
             return;
@@ -638,11 +722,15 @@ public sealed class AspireView : DockPanel, IDisposable
         {
             streamedResources.Add(name, version);
         }
+        if (!again)
+        {
+            Log.Offer([.. offered.Select(resource => (resource.Name, resource.DisplayName))], forget: false);
+        }
         consoleReading = new CancellationTokenSource();
         CancellationToken cancel = consoleReading.Token;
         Console.Clear();
-        consoleStatus.Text = "Live merged resource logs · retained output is bounded";
-        foreach (AspireResource resource in resources.Where(resource => next.ContainsKey(resource.Name)))
+        consoleStatus.Text = "Live · retained output is bounded";
+        foreach (AspireResource resource in offered.Where(resource => next.ContainsKey(resource.Name)))
         {
             AspireSelection selected = new(app.AppHostPath, resource);
             IAsyncEnumerable<IReadOnlyList<AspireConsoleLog>>? stream = ConsoleProvider(selected, cancel);
@@ -664,7 +752,7 @@ public sealed class AspireView : DockPanel, IDisposable
             {
                 await UiThread.InvokeAsync(() =>
                 {
-                    if (!disposed && displayVisible && !cancel.IsCancellationRequested && version == consoleGeneration && currentPage == "Console"
+                    if (!disposed && displayVisible && !cancel.IsCancellationRequested && version == consoleGeneration && currentPage == ConsolePage
                         && SelectedApp?.AppHostPath == selected.AppHostPath
                         && streamedResources.GetValueOrDefault(selected.Resource.Name) == selected.Resource.Generation)
                     {
@@ -680,8 +768,6 @@ public sealed class AspireView : DockPanel, IDisposable
                             }
                             Console.Sink.Write($"[{selected.Resource.DisplayName}] {line.Content}\n", line.IsError ? ConsoleStream.Error : ConsoleStream.Output);
                         }
-                        consoleStatus.Text = lastLineNumber is { } number
-                            ? $"Live · line {number} · retained output is bounded" : "Live · retained output is bounded";
                     }
                     return true;
                 }).WaitAsync(cancel).ConfigureAwait(false);
@@ -721,7 +807,7 @@ public sealed class AspireView : DockPanel, IDisposable
 
     private void UpdateTelemetry() =>
         Telemetry.Watch(!disposed && displayVisible && SelectedApp is { } selected ? TelemetryProvider?.Invoke(selected.AppHostPath) : null,
-            currentPage switch { "Structured logs" => TelemetryPage.Logs, "Traces" => TelemetryPage.Traces, _ => null });
+            currentPage switch { LogsPage => TelemetryPage.Logs, TracesPage => TelemetryPage.Traces, _ => null });
 
     private async Task WorkAsync(int version, CancellationToken cancel, Func<Task> work)
     {
@@ -735,7 +821,7 @@ public sealed class AspireView : DockPanel, IDisposable
         catch (Exception error) when (Expected(error))
         {
             string message = SafeError(error);
-            await ApplyAsync(version, () => status.Text = message);
+            await ApplyAsync(version, () => Say(message));
         }
     }
 
@@ -765,260 +851,205 @@ public sealed class AspireView : DockPanel, IDisposable
         liveResources = false;
         reading?.Cancel();
         generation++;
-        updating = true;
         resources = [];
-        ResourceList.ItemsSource = null;
-        resourceNodes.Clear();
-        updating = false;
+        collapsed.Clear();
+        Fill(null);
+        Log.Offer([], forget: true);
         ShowResource();
         ClearTelemetry();
         UpdateTelemetry();
-        status.Text = SelectedApp is null ? "No AppHost selected." : "AppHost selected. Refreshing…";
+        Say(SelectedApp is null ? "No AppHost selected." : "AppHost selected. Refreshing…");
     }
 
     private void ClearTelemetry()
     {
         Console.Clear();
         Telemetry.Clear();
-        consoleStatus.Text = "Open Console for merged live resource logs.";
+        consoleStatus.Text = string.Empty;
     }
 
-    private void SetVisibleResources(string? selectedName)
+    /// <summary>What the window says of its AppHost and resources: beside the toolbar, and in the list's place while it is empty.</summary>
+    private void Say(string words)
     {
-        AspireResource[] visible = resources.Where(resource => !resource.IsHidden).ToArray();
-        HashSet<string> expanded = resourceNodes.Where(pair => pair.Value.IsExpanded).Select(pair => pair.Key).ToHashSet(StringComparer.Ordinal);
-        resourceNodes.Clear();
+        status.Text = words;
+        ToolTip.SetTip(status, words);
+        ShowEmpty();
+    }
+
+    private void ShowEmpty()
+    {
+        empty.Text = status.Text;
+        empty.IsVisible = Rows.Count == 0;
+    }
+
+    /// <summary>The resources the AppHost lists (its hidden ones left out).</summary>
+    private AspireResource[] Visible() => [.. resources.Where(resource => !resource.IsHidden)];
+
+    /// <summary>Each resource's parent among those listed, a loop or a missing parent's child listed as a root.</summary>
+    private static Dictionary<string, string> Parents(IReadOnlyList<AspireResource> visible)
+    {
+        HashSet<string> names = visible.Select(resource => resource.Name).ToHashSet(StringComparer.Ordinal);
         Dictionary<string, string> parents = new(StringComparer.Ordinal);
         foreach (AspireResource resource in visible)
         {
-            resourceNodes.Add(resource.Name, new TreeViewItem { Tag = resource, Header = ResourceRow(resource), IsExpanded = expanded.Contains(resource.Name) });
             string? parent = AspireJson.Array(resource.Data, "relationships")
                 .Where(relation => string.Equals(AspireJson.String(relation, "type"), "Parent", StringComparison.OrdinalIgnoreCase))
                 .Select(relation => AspireJson.String(relation, "resourceName")).FirstOrDefault();
-            if (parent is not null)
+            if (parent is not null && names.Contains(parent) && parent != resource.Name)
             {
                 parents[resource.Name] = parent;
             }
         }
-        foreach (string name in resourceNodes.Keys)
+        foreach (string name in parents.Keys.ToArray())
         {
             HashSet<string> path = new(StringComparer.Ordinal) { name };
-            string current = name;
-            while (parents.TryGetValue(current, out string? parent))
+            for (string current = name; parents.TryGetValue(current, out string? parent); current = parent)
             {
-                if (!resourceNodes.ContainsKey(parent) || !path.Add(parent))
+                if (!path.Add(parent))
                 {
-                    parents.Remove(current);
+                    parents.Remove(name);
                     break;
                 }
-                current = parent;
             }
         }
-        List<TreeViewItem> roots = [];
-        foreach ((string name, TreeViewItem node) in resourceNodes)
+        return parents;
+    }
+
+    /// <summary>The rows: each root, then its children under it while it is open, the one chosen kept (else the
+    /// <paramref name="fallback"/>'s, else the first).</summary>
+    private void Fill(string? chosen, string? fallback = null)
+    {
+        AspireResource[] visible = Visible();
+        Dictionary<string, string> parents = Parents(visible);
+        ILookup<string, AspireResource> children = visible.Where(resource => parents.ContainsKey(resource.Name)).ToLookup(resource => parents[resource.Name], StringComparer.Ordinal);
+        List<AspireRow> rows = [];
+        foreach (AspireResource root in visible.Where(resource => !parents.ContainsKey(resource.Name)))
         {
-            if (parents.TryGetValue(name, out string? parent))
+            Add(root, 0);
+        }
+        updating = true;
+        try
+        {
+            ResourceList.ItemsSource = rows;
+            ResourceList.SelectedItem = rows.FirstOrDefault(row => row.Resource.Name == chosen)
+                ?? rows.FirstOrDefault(row => row.Resource.Name == fallback) ?? rows.FirstOrDefault();
+        }
+        finally
+        {
+            updating = false;
+        }
+        ShowEmpty();
+
+        void Add(AspireResource resource, int depth)
+        {
+            bool expands = children[resource.Name].Any();
+            bool open = expands && !collapsed.Contains(resource.Name);
+            rows.Add(new AspireRow(resource, depth, expands, open));
+            if (open)
             {
-                resourceNodes[parent].Items.Add(node);
+                foreach (AspireResource child in children[resource.Name])
+                {
+                    Add(child, depth + 1);
+                }
             }
-            else
-            {
-                roots.Add(node);
-            }
-        }
-        ResourceList.ItemsSource = roots;
-        if (selectedName is not null && resourceNodes.ContainsKey(selectedName))
-        {
-            SelectResource(selectedName);
-        }
-        else
-        {
-            ResourceList.SelectedItem = roots.FirstOrDefault();
         }
     }
 
-    private Control ResourceRow(AspireResource resource)
+    /// <summary>A resource's row as every list of what runs draws one (<see cref="RunRows"/>): its state's dot, what it runs
+    /// after its name, its health's tag and its addresses as links.</summary>
+    private Control Row(AspireRow row)
     {
-        ShrinkingRow row = new() { Height = ListRow.Height };
-        TextBlock dot = new() { Text = "●", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-        dot.Bind(TextBlock.ForegroundProperty, dot.GetResourceObservable(resource.State switch
+        AspireResource resource = row.Resource;
+        RunRow shown = new(row.Depth, resource.DisplayName)
         {
-            "Running" => "Passenger.Test.Passed", "FailedToStart" or "Exited" => "Passenger.Error", _ => "Passenger.TextMuted",
-        }));
-        ToolTip.SetTip(dot, resource.State ?? "Unknown state");
-        row.Children.Add(dot);
-        row.Children.Add(new TextBlock { Text = resource.DisplayName, VerticalAlignment = VerticalAlignment.Center });
-        row.Children.Add(new Border { Classes = { "tag" }, Margin = new Thickness(6, 0), Child = new TextBlock { Text = resource.HealthStatus ?? "No health report" } });
-        foreach (JsonElement url in AspireJson.Array(resource.Data, "urls"))
+            Expands = row.Expands,
+            Expanded = row.Expanded,
+            State = StateOf(resource),
+            StateTip = resource.State ?? "Unknown state",
+            Health = AspireDetailsPane.Health(resource),
+            Links = [.. Links(resource).Take(3).Select(url => new RunLink(url.Authority, url, url.AbsoluteUri))],
+            Detail = resource.Source is { } source ? Path.IsPathFullyQualified(source) ? Path.GetFileName(source) : source
+                : AspireJson.String(resource.Data, "resourceType"),
+            Tip = resource.ToString(),
+        };
+        return RunRows.Of(shown, () => Toggle(row), uri => Browse?.Invoke(uri), "aspireUrl");
+    }
+
+    /// <summary>A resource's state as the dot says it: Aspire's own style of it first (an error's red), then running (unhealthy
+    /// while a health report fails), starting or stopping between states, the rest stopped.</summary>
+    private static RunState StateOf(AspireResource resource) => (resource.State, AspireJson.String(resource.Data, "stateStyle")) switch
+    {
+        (_, "error") or ("FailedToStart" or "RuntimeUnhealthy", _) => RunState.Failed,
+        ("Running", _) => resource.HealthStatus == "Unhealthy" ? RunState.Unhealthy : RunState.Running,
+        ("Starting" or "Waiting" or "Stopping" or "Building" or "Activating", _) => RunState.Between,
+        _ => RunState.Stopped,
+    };
+
+    /// <summary>A resource's addresses a browser opens: its http and https URLs, not those inactive or the AppHost's own.</summary>
+    private static IReadOnlyList<Uri> Links(AspireResource resource) =>
+    [
+        .. AspireJson.Array(resource.Data, "urls")
+            .Where(url => !(url.TryGetProperty("isInactive", out JsonElement inactive) && inactive.ValueKind == JsonValueKind.True))
+            .Select(url => Uri.TryCreate(AspireJson.String(url, "url"), UriKind.Absolute, out Uri? target) && target.Scheme is "http" or "https" ? target : null)
+            .OfType<Uri>(),
+    ];
+
+    /// <summary>A row's menu: the chosen resource's actions as the toolbar runs them, then its commands.</summary>
+    private IReadOnlyList<Control> RowMenu()
+    {
+        if (Selection is not { } selected || actionRegistry is not { } actions)
         {
-            if (!Uri.TryCreate(AspireJson.String(url, "url"), UriKind.Absolute, out Uri? target) || target.Scheme is not ("http" or "https"))
-            {
-                continue;
-            }
-            row.Children.Add(ActionButton(AspireJson.String(url, "displayName") ?? target.Authority, target.AbsoluteUri, AppActions.AspireOpenLink, () => pendingLink = target));
+            return [];
         }
-        AutomationProperties.SetName(row, resource.ToString());
-        return row;
+        Control Item(string id) => ListMenus.Item(actions[id]?.Title ?? id, null, () => requestAction?.Invoke(id));
+        IReadOnlyList<Control> advertised = CommandItems(selected);
+        return
+        [
+            Item(AppActions.AspireDebug),
+            Item(AppActions.AspireAttach),
+            Item(AppActions.AspireRun),
+            Item(AppActions.AspireProfile),
+            .. advertised.Count > 0 ? (Control[])[new Separator(), .. advertised] : [],
+            new Separator(),
+            Item(AppActions.AspireOpenLink),
+            Item(AppActions.AspireSource),
+            Item(AppActions.AspireContainer),
+        ];
     }
 
     private void ShowResource()
     {
-        resourceDetails.Clear();
-        advertisedButtonIndex = 0;
-        foreach (Button button in advertisedButtons)
-        {
-            button.Tag = null;
-        }
-        commandBar.Children.Clear();
-        commandBar.Children.Add(attach);
-        commandBar.Children.Add(noDebug);
-        commandBar.IsEnabled = true;
-        debug.IsEnabled = SelectedResource is not null;
-        profile.IsEnabled = SelectedResource is not null;
-        bool projectService = SelectedResource is { State: "Running" or "Starting", Source: { } projectSource }
-            && Path.IsPathFullyQualified(projectSource)
-            && Path.GetExtension(projectSource) is ".csproj" or ".fsproj" or ".vbproj" or ".cs";
-        attach.IsEnabled = projectService;
-        noDebug.IsEnabled = projectService;
-        if (SelectedResource is not { } resource)
-        {
-            resourceDetails.Append("Select a resource to inspect its health, URLs, relationships, properties, and environment.\n");
-            return;
-        }
-        if (resource.Source is { } source && Path.IsPathFullyQualified(source))
-        {
-            commandBar.Children.Add(ActionButton("Source", "Open this resource's source", AppActions.AspireSource));
-        }
-        if (SelectedContainerId is not null && SelectContainer is not null)
-        {
-            commandBar.Children.Add(ActionButton("Container", "Select this container in Containers", AppActions.AspireContainer));
-        }
-        foreach (AspireResourceCommand command in resource.Commands.Where(command => !command.Hidden).OrderBy(c => c.Data.TryGetProperty("sortOrder", out JsonElement order)
-            && order.ValueKind == JsonValueKind.Number && order.TryGetInt32(out int number) ? number : 0))
-        {
-            Button button = CommandButton(command.DisplayName, command.HasArguments && argumentCommand is null
-                ? "This command needs an argument form. Use the Aspire CLI; Passenger will not send incomplete arguments."
-                : command.Description ?? command.Name, () =>
-                {
-                    if (SelectedResource is { } current && current.Name == resource.Name && current.Generation == resource.Generation)
-                    {
-                        if (Selection is { } selected)
-                        {
-                            RequestCommand(selected, command.Name);
-                        }
-                    }
-                });
-            button.IsEnabled = command.Enabled && (!command.HasArguments || argumentCommand is not null);
-            commandBar.Children.Add(button);
-        }
-        resourceDetails.Append(JsonSerializer.Serialize(resource.Data, new JsonSerializerOptions { WriteIndented = true }) + "\n");
+        Details.Show(SelectedResource);
     }
 
-    private void AddPage(string name, Control content, StackPanel tabs)
+    private void AddPage(string name, Control content, StackPanel strip)
     {
         ToggleButton tab = ToolTabs.Tab(name, false);
+        tab.Name = $"aspire{name.Replace(" ", string.Empty, StringComparison.Ordinal)}Tab";
         string id = PageAction(name);
         ActionButtons.Mark(tab, id);
         tab.Click += (_, _) => requestAction?.Invoke(id);
         pages.Add(name, (tab, content));
-        tabs.Children.Add(tab);
+        strip.Children.Add(tab);
     }
 
     public static string PageAction(string name) => name switch
     {
-        "Resources" => AppActions.AspireResources, "Console" => AppActions.AspireConsole,
-        "Structured logs" => AppActions.AspireLogs, "Traces" => AppActions.AspireTraces,
-        "AppHost console" => AppActions.AspireAppHostConsole,
+        DetailsPage => AppActions.AspireResources, ConsolePage => AppActions.AspireConsole,
+        LogsPage => AppActions.AspireLogs, TracesPage => AppActions.AspireTraces,
+        AppHostPage => AppActions.AspireAppHostConsole,
         _ => throw new ArgumentException("Unknown Aspire page.", nameof(name)),
     };
 
-    private Button ActionButton(string title, string tip, string id, Action? before = null)
-    {
-        Button button = new() { Content = new TextBlock { Text = title } };
-        ToolTip.SetTip(button, tip);
-        ActionButtons.Mark(button, id);
-        button.Click += (_, _) => { before?.Invoke(); requestAction?.Invoke(id); };
-        return button;
-    }
+    /// <summary>The pages' names, as their tabs and actions say them.</summary>
+    public static IReadOnlyList<string> Pages { get; } = [DetailsPage, ConsolePage, LogsPage, TracesPage, AppHostPage];
 
-    private Button CommandButton(string title, string tip, Action request)
-    {
-        Button button;
-        if (advertisedButtonIndex < advertisedButtons.Count)
-        {
-            button = advertisedButtons[advertisedButtonIndex];
-        }
-        else
-        {
-            button = new Button();
-            advertisedButtons.Add(button);
-            ActionButtons.Mark(button, AppActions.AspireCommand);
-            if (actionRegistry is { } actions)
-            {
-                ActionButtons.Bind(button, AppActions.AspireCommand, actions, _ => { (button.Tag as Action)?.Invoke(); return true; });
-            }
-            else
-            {
-                button.Click += (_, _) => (button.Tag as Action)?.Invoke();
-            }
-        }
-        advertisedButtonIndex++;
-        button.Tag = request;
-        if (button.Content is TextBlock text)
-        {
-            text.Text = title;
-        }
-        else if (button.Content is Panel panel && panel.Children.OfType<TextBlock>().FirstOrDefault() is { } label)
-        {
-            label.Text = title;
-        }
-        else
-        {
-            button.Content = new TextBlock { Text = title };
-        }
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
-
-    private static ListBox List<T>(Func<T, string> text, string name)
-    {
-        ListBox list = new()
-        {
-            Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<T>((item, _) => item is null ? null : new ShrinkingRow
-            {
-                Height = ListRow.Height,
-                Children = { new TextBlock { Text = text(item), VerticalAlignment = VerticalAlignment.Center } },
-            }),
-        };
-        AutomationProperties.SetName(list, name);
-        return list;
-    }
+    private static TextBlock Said() => new() { Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
 
     private static DockPanel WithHeader(Control header, Control body)
     {
         DockPanel.SetDock(header, Dock.Top);
         return new DockPanel { Children = { header, body } };
-    }
-
-    private static Control Split(Control top, Control bottom, GridResizeDirection direction = GridResizeDirection.Rows)
-    {
-        Grid split = new();
-        bool columns = direction == GridResizeDirection.Columns;
-        if (columns)
-        {
-            split.ColumnDefinitions = new ColumnDefinitions("*,1,*");
-        }
-        else
-        {
-            split.RowDefinitions = new RowDefinitions("*,1,*");
-        }
-        split.Children.Add(new Border { Classes = { "framed" }, Child = top });
-        AttachedProperty<int> place = columns ? Grid.ColumnProperty : Grid.RowProperty;
-        split.Children.Add(new HairlineDivider(direction) { [place] = 1 });
-        bottom[place] = 2;
-        split.Children.Add(bottom);
-        return split;
     }
 
     private static bool Expected(Exception error) => error is IOException or InvalidDataException or InvalidOperationException or TimeoutException

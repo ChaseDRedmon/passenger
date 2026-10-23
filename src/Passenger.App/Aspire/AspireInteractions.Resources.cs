@@ -320,26 +320,33 @@ public sealed partial class AspireInteractions
         {
             throw new InvalidDataException("The AppHost sent duplicate resources.");
         }
+        // What a resource says is shown as a container's is (Containers' Details): a secret by Passenger's one rule masked
+        // (ContainerSecrets: by its name, a URL's password, a connection string's part so named), one the AppHost marks
+        // sensitive masked whatever its name, the rest as it is.
         Resource resource = incoming.Clone();
         foreach (ResourceProperty property in resource.Properties)
         {
             if (property.IsSensitive)
             {
-                property.Value = Google.Protobuf.WellKnownTypes.Value.ForString(Redacted);
+                property.Value = Google.Protobuf.WellKnownTypes.Value.ForString(ContainerSecrets.Masked);
+            }
+            else if (property.Value?.KindCase == Google.Protobuf.WellKnownTypes.Value.KindOneofCase.StringValue)
+            {
+                property.Value = Google.Protobuf.WellKnownTypes.Value.ForString(ContainerSecrets.Shown(property.Name, property.Value.StringValue));
             }
         }
         foreach (Protocol.EnvironmentVariable variable in resource.Environment)
         {
             if (variable.HasValue)
             {
-                variable.Value = Redacted;
+                variable.Value = ContainerSecrets.Shown(variable.Name, variable.Value);
             }
         }
         foreach (HealthReport report in resource.HealthReports)
         {
             if (report.Exception.Length > 0)
             {
-                report.Exception = Redacted;
+                report.Exception = ContainerSecrets.InValue(report.Exception);
             }
         }
         ResourceCommand[] commands = resource.Commands.Select(SafeCommand).ToArray();
@@ -413,7 +420,7 @@ public sealed partial class AspireInteractions
             healthStatus = health,
             properties,
             propertyMetadata = resource.Properties.ToDictionary(property => property.Name, property => new { isSensitive = property.IsSensitive, displayName = property.DisplayName }),
-            environment = resource.Environment.ToDictionary(variable => variable.Name, _ => (string?)null),
+            environment = resource.Environment.ToDictionary(variable => variable.Name, variable => variable.HasValue ? variable.Value : null),
             environmentMetadata = resource.Environment.ToDictionary(variable => variable.Name, variable => new { isFromSpec = variable.IsFromSpec, isMasked = variable.HasValue }),
             urls = resource.Urls.Select(url => new { name = url.HasEndpointName ? url.EndpointName : null, displayName = url.DisplayProperties?.DisplayName, url = ContainerSecrets.PublicHttpUrl(url.FullUrl), isInternal = url.IsInternal, isInactive = url.IsInactive }),
             healthReports = resource.HealthReports.ToDictionary(report => report.Key, report => new { status = report.HasStatus ? report.Status.ToString() : null, description = report.Description, exceptionMessage = report.Exception.Length > 0 ? report.Exception : null, lastRunAt = Timestamp(report.LastRunAt) }),

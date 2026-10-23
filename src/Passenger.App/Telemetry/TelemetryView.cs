@@ -28,8 +28,8 @@ public sealed class TelemetryView : IDisposable
 {
     private readonly OutputView logDetails = new(toolbar: false);
     private readonly OutputView spanDetails = new(toolbar: false);
-    private readonly TextBlock logsStatus = Status();
-    private readonly TextBlock tracesStatus = Status();
+    private readonly TextBlock logsStatus = Said();
+    private readonly TextBlock tracesStatus = Said();
     private readonly Button logTrace;
     private readonly Button spanLogs;
     private readonly object gate = new();
@@ -46,7 +46,9 @@ public sealed class TelemetryView : IDisposable
     private (string TraceId, string? SpanId)? wantedTrace;
     private (string TraceId, string? SpanId)? wantedLogs;
 
-    public TelemetryView()
+    /// <summary>The pages, their two buttons (a log's trace, a span's logs) running a host's actions of those ids through
+    /// <paramref name="request"/> when it gives them, as the Aspire window's buttons do, else this view's own.</summary>
+    public TelemetryView(string? showTrace = null, string? showLogs = null, Func<string, bool>? request = null)
     {
         StructuredLogs = List<AspireStructuredLog>(log => log.ToString(), "Structured logs");
         TraceList = List<AspireTrace>(trace => trace.ToString(), "Traces");
@@ -54,25 +56,23 @@ public sealed class TelemetryView : IDisposable
         StructuredLogs.SelectionChanged += (_, _) => ShowLog();
         TraceList.SelectionChanged += (_, _) => ShowTrace();
         SpanList.SelectionChanged += (_, _) => ShowSpan();
-        logTrace = new Button { Content = new TextBlock { Text = "Show trace" }, IsEnabled = false };
-        ToolTip.SetTip(logTrace, "Select the structured log's trace and span");
-        logTrace.Click += (_, _) => ShowSelectedTrace();
-        spanLogs = new Button { Content = new TextBlock { Text = "Show related logs" }, IsEnabled = false };
-        ToolTip.SetTip(spanLogs, "Select a retained log for this trace and span");
-        spanLogs.Click += (_, _) => ShowRelatedLogs();
+        logTrace = PageTool("Icon.Locate", "Show the structured log's trace and span", showTrace, "telemetryShowTrace", ShowSelectedTrace, request);
+        spanLogs = PageTool("Icon.DocumentText", "Show a retained log of this trace and span", showLogs, "telemetryShowLogs", ShowRelatedLogs, request);
+        logTrace.IsEnabled = false;
+        spanLogs.IsEnabled = false;
         foreach (OutputView output in new[] { logDetails, spanDetails })
         {
             output.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
             output.Links.Folders = () => Folders?.Invoke() ?? [];
         }
-        LogsPage = WithHeader(new StackPanel { Children = { logsStatus, logTrace } }, Split(StructuredLogs, logDetails));
+        LogsPage = WithHeader(PageBar(logsStatus, logTrace), Split(StructuredLogs, logDetails));
         Grid traceBody = new() { ColumnDefinitions = new ColumnDefinitions("*,1,2*") };
         traceBody.Children.Add(new Border { Classes = { "framed" }, Child = TraceList });
         traceBody.Children.Add(new HairlineDivider(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 });
-        Control spanBody = WithHeader(spanLogs, Split(SpanList, spanDetails, GridResizeDirection.Columns));
+        Control spanBody = Split(SpanList, spanDetails);
         spanBody[Grid.ColumnProperty] = 2;
         traceBody.Children.Add(spanBody);
-        TracesPage = WithHeader(tracesStatus, traceBody);
+        TracesPage = WithHeader(PageBar(tracesStatus, spanLogs), traceBody);
         Clear();
     }
 
@@ -104,21 +104,25 @@ public sealed class TelemetryView : IDisposable
     /// <summary>The page shown in <see cref="Both"/>, which a host with one place for telemetry gives it.</summary>
     public TelemetryPage Shown { get; private set; }
 
-    /// <summary>Both pages in one place, a Logs and Traces choice over them (the Containers window's Telemetry tab).</summary>
+    /// <summary>Both pages in one place, their tabs over them as a tool window's are (the Containers window's Telemetry tab).</summary>
     public Control Both
     {
         get
         {
             if (both is null)
             {
-                ToggleButton logs = new() { Classes = { "segment" }, Content = "Logs", IsChecked = Shown == TelemetryPage.Logs, Name = "telemetryLogs" };
-                ToggleButton spans = new() { Classes = { "segment" }, Content = "Traces", IsChecked = Shown == TelemetryPage.Traces, Name = "telemetryTraces" };
+                ToggleButton logs = ToolTabs.Tab("Structured logs", Shown == TelemetryPage.Logs);
+                ToggleButton spans = ToolTabs.Tab("Traces", Shown == TelemetryPage.Traces);
+                logs.Name = "telemetryLogs";
+                spans.Name = "telemetryTraces";
                 ContentControl page = new() { Content = Shown == TelemetryPage.Logs ? LogsPage : TracesPage };
                 logs.Click += (_, _) => Choose(TelemetryPage.Logs);
                 spans.Click += (_, _) => Choose(TelemetryPage.Traces);
                 PageWanted += (_, wanted) => Choose(wanted);
-                StackPanel choice = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 4), Children = { logs, spans } };
-                both = WithHeader(choice, page);
+                StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center, Children = { logs, spans } };
+                Border tabBar = new() { Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = strip };
+                tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
+                both = WithHeader(tabBar, page);
 
                 void Choose(TelemetryPage chosen)
                 {
@@ -468,7 +472,36 @@ public sealed class TelemetryView : IDisposable
         }
     }
 
-    private static TextBlock Status() => new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private static TextBlock Said() => new() { Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis };
+
+    /// <summary>A page's toolbar button: the host's action of that id when it gives one (shown with its work), else the view's own.</summary>
+    private static Button PageTool(string icon, string tip, string? action, string name, Action own, Func<string, bool>? request)
+    {
+        Button button = ToolButtons.Of(icon, tip, () =>
+        {
+            if (action is null || request?.Invoke(action) != true)
+            {
+                own();
+            }
+        });
+        button.Name = action ?? name;
+        if (action is not null)
+        {
+            ActionButtons.Mark(button, action);
+        }
+        return button;
+    }
+
+    /// <summary>A page's bar: what it says, its buttons at the right.</summary>
+    private static DockPanel PageBar(TextBlock said, params Button[] buttons)
+    {
+        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, [DockPanel.DockProperty] = Dock.Right };
+        foreach (Button button in buttons)
+        {
+            right.Children.Add(button);
+        }
+        return new DockPanel { Height = 32, Margin = new Thickness(8, 0), Children = { right, said } };
+    }
 
     private static ListBox List<T>(Func<T, string> text, string name)
     {
@@ -491,22 +524,12 @@ public sealed class TelemetryView : IDisposable
         return new DockPanel { Children = { header, body } };
     }
 
-    private static Control Split(Control top, Control bottom, GridResizeDirection direction = GridResizeDirection.Rows)
+    private static Control Split(Control top, Control bottom)
     {
-        Grid split = new();
-        bool columns = direction == GridResizeDirection.Columns;
-        if (columns)
-        {
-            split.ColumnDefinitions = new ColumnDefinitions("*,1,*");
-        }
-        else
-        {
-            split.RowDefinitions = new RowDefinitions("*,1,*");
-        }
+        Grid split = new() { RowDefinitions = new RowDefinitions("*,1,*") };
         split.Children.Add(new Border { Classes = { "framed" }, Child = top });
-        AttachedProperty<int> place = columns ? Grid.ColumnProperty : Grid.RowProperty;
-        split.Children.Add(new HairlineDivider(direction) { [place] = 1 });
-        bottom[place] = 2;
+        split.Children.Add(new HairlineDivider(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 });
+        bottom[Grid.RowProperty] = 2;
         split.Children.Add(bottom);
         return split;
     }

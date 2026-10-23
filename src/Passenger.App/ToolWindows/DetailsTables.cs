@@ -1,0 +1,107 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+
+namespace Passenger.App.ToolWindows;
+
+/// <summary>A Details tab's page, the Containers window's and the Aspire window's alike: headings over framed tables of names
+/// and what each is, every table's names in one column as wide as the widest of any so the values line up down the page, and
+/// in their place a word of why there is nothing to show (being read, a failure).</summary>
+public class DetailsTables : DockPanel
+{
+    private readonly StackPanel sections = new() { Margin = new Thickness(8, 0, 8, 8) };
+    private readonly TextBlock said = new() { Classes = { "emptyText" } };
+
+    public DetailsTables()
+    {
+        Grid.SetIsSharedSizeScope(sections, true);
+        Children.Add(new Panel { Children = { new ScrollViewer { Content = sections }, said } });
+        said.IsVisible = false;
+    }
+
+    /// <summary>What is said in the tables' place, or empty while tables (or nothing) are shown.</summary>
+    public string Said => said.IsVisible ? said.Text ?? string.Empty : string.Empty;
+
+    /// <summary>Takes the tables away and says why in their place; null says nothing.</summary>
+    public void Say(string? why)
+    {
+        sections.Children.Clear();
+        said.Text = why ?? string.Empty;
+        said.IsVisible = why is not null;
+    }
+
+    /// <summary>A heading over a framed table of names and what each is, the names in the page's one column of names.</summary>
+    public void Section(string title, IReadOnlyList<(string Name, Control Value)> rows)
+    {
+        TextBlock heading = new() { Text = title, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 10, 0, 4) };
+        Grid table = new()
+        {
+            ColumnDefinitions = { new ColumnDefinition(GridLength.Auto) { SharedSizeGroup = "DetailsNames" }, new ColumnDefinition(GridLength.Star) },
+            Margin = new Thickness(8, 0),
+        };
+        for (int i = 0; i < rows.Count; i++)
+        {
+            table.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            TextBlock name = new()
+            {
+                Text = rows[i].Name, Classes = { "muted" }, MaxWidth = 260, MinHeight = ListRow.Height, Margin = new Thickness(0, 0, 16, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Top, Padding = new Thickness(0, 4),
+                [Grid.RowProperty] = i,
+            };
+            ToolTip.SetTip(name, rows[i].Name);
+            Control value = rows[i].Value;
+            value[Grid.RowProperty] = i;
+            value[Grid.ColumnProperty] = 1;
+            table.Children.Add(name);
+            table.Children.Add(value);
+        }
+        sections.Children.Add(heading);
+        sections.Children.Add(new Border { Classes = { "framed" }, Padding = new Thickness(0, 2), Child = table });
+    }
+
+    /// <summary>A value to read and copy, wrapped rather than cut; a program's words in the editor's font.</summary>
+    public static SelectableTextBlock Words(string text, bool code = false, string? brush = null)
+    {
+        SelectableTextBlock words = new()
+        {
+            Text = text, TextWrapping = TextWrapping.Wrap, MinHeight = ListRow.Height, Padding = new Thickness(0, 4), VerticalAlignment = VerticalAlignment.Top,
+        };
+        if (code)
+        {
+            words.FontFamily = CodeBlock.Font;
+            words.FontSize = 12;
+        }
+        if (brush is not null)
+        {
+            words.Bind(TextBlock.ForegroundProperty, words.GetResourceObservable(brush));
+        }
+        return words;
+    }
+
+    /// <summary>A value that opens something (an address in the browser, a file in the editor) as a link, named as a test
+    /// finds it.</summary>
+    public static Button Link(string words, string tip, Action open, string name)
+    {
+        Button link = new()
+        {
+            Classes = { "link" }, Content = words, Name = name, HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center, MinHeight = ListRow.Height,
+        };
+        ToolTip.SetTip(link, tip);
+        link.Click += (_, _) => open();
+        return link;
+    }
+
+    /// <summary>A state in words beside its health's tag, as the lists show it.</summary>
+    public static Control State(string state, string? health)
+    {
+        StackPanel shown = new() { Orientation = Orientation.Horizontal, Spacing = 8, MinHeight = ListRow.Height };
+        shown.Children.Add(new TextBlock { Text = state, VerticalAlignment = VerticalAlignment.Center });
+        if (health is not null)
+        {
+            shown.Children.Add(Containers.ContainerDetailsPane.HealthTag(health));
+        }
+        return shown;
+    }
+}
