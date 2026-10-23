@@ -198,7 +198,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Razor tooling) colour Razor files before the server answers, and C#'s colours Markdown's C# blocks. `TypeHints` turns Roslyn's type hints
   into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
-  before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
+  before through the nodes Roslyn reused, never from a walk of the whole tree, a range classified takes only the trivia
+  it covers (`CSharpClassifier.AddTrivia`, found by halving: a run of thousands of `//` lines is the trivia of the one
+  token after it), and the server's colours are asked for
   the screen's lines first and the whole file only once typing stops. Each line's colours read from the tree are kept
   and carried through the edits made until the next parse lands (`CSharpHighlighter`'s lines, by a frame's runs of whole
   lines; `CharactersClassified` counts what the UI thread classifies), so a key classifies again only the lines it

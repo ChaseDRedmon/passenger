@@ -531,6 +531,50 @@ public sealed class FileColoursResponsivenessTests : FileColoursFolder
         TestContext.Current.TestOutputHelper?.WriteLine($"Opening a comment at the top: {after - before:N0} lines read in {(took - time).TotalMilliseconds:F0} ms");
         window.Close();
     }
+
+    /// <summary>A key typed at the end of 20,000 <c>//</c> lines costs the UI thread about what one at the end of as many
+    /// lines inside one <c>/* */</c> does (#434): the run of comments is the leading trivia of the one token after it, and
+    /// the screen's lines take only the comments they cover, where each range asked took every comment of the run. The
+    /// comments are still coloured as comments, on screen and far from it.</summary>
+    [AvaloniaFact]
+    public void A_key_at_the_end_of_twenty_thousand_line_comments_costs_what_it_does_in_one_block_comment()
+    {
+        string[] lines = [.. Enumerable.Range(0, 20_000).Select(i => $"The notes, line {i}")];
+        string head = "namespace Notes;\n\npublic static class Kept\n{\n    public const int Count = 1;\n}\n\n";
+        string slashed = head + string.Concat(lines.Select(l => $"// {l}\n"));
+        string blocked = head + $"/*\n{string.Concat(lines.Select(l => $"{l}\n"))}*/\n";
+        MainWindow window = Window();
+        long block = KeyCost(window, "Block.cs", blocked);
+        long slashes = KeyCost(window, "Slashes.cs", slashed);
+        TestContext.Current.TestOutputHelper?.WriteLine($"A key at the end of 20,000 // lines allocated {slashes / 1024} KB on the UI thread, inside one /* */ {block / 1024} KB");
+        Assert.True(slashes <= block + (256 * 1024),
+            $"A key at the end of 20,000 // lines allocated {slashes / 1024} KB on the UI thread, against {block / 1024} KB inside one /* */: every comment of the run was classified");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "// The notes, line 19998"));
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "// The notes, line 100\n"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "const"));
+        window.Close();
+
+        // The least a key typed at the end of the file's last comment line allocated on the UI thread, with its frame.
+        long KeyCost(MainWindow window, string file, string text)
+        {
+            CodeEditor editor = Open(window, file, text);
+            editor.Selections = SelectionSet.Single(text.IndexOf("line 19999", StringComparison.Ordinal) + "line 19999".Length);
+            editor.Focus();
+            Ui.Settle();
+            long least = long.MaxValue;
+            for (int i = 0; i < 5; i++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                window.KeyTextInput("x");
+                Dispatcher(window);
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+                Ui.Settle();
+            }
+            Assert.Equal(TokenKind.Comment, KindOf(editor, "line 19999xxxxx"));
+            return least;
+        }
+    }
 }
 
 /// <summary>The folder a colours test writes its files to, and the helpers that open them in a window and read their colours.</summary>
