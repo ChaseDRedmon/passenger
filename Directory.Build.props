@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
     <!-- What a package says it is (tools/package-mac.sh) until a vX.Y.Z tag on the commit names the version. -->
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
