@@ -937,6 +937,10 @@ public partial class ManagedDebugger
                 {
                     if (IsEnumerable(objectValue.ExactType))
                     {
+                        if (EfQueryModule(objectValue.ExactType) is not null)
+                        {
+                            AddQuerySqlRow(variablesReference, result);
+                        }
                         AddEnumerablePseudoVariables(variablesReference, result);
                     }
                     else
@@ -962,6 +966,10 @@ public partial class ManagedDebugger
             else if (variablesReference.ReferenceKind is StoredReferenceKind.EnumerableResults)
             {
                 await AddEnumerableResults(variablesReference, result);
+            }
+            else if (variablesReference.ReferenceKind is StoredReferenceKind.QuerySql)
+            {
+                result.Add(await ReadQuerySql(variablesReference));
             }
             else if (variablesReference.ReferenceKind is StoredReferenceKind.ArrayRange)
             {

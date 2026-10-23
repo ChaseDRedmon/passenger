@@ -631,20 +631,33 @@ window or takes the focus; it shows everything but the system's own window chrom
   service restores Grpc.AspNetCore and Google.Protobuf at the versions tests/AspireGraphs' AppHost puts in the package
   cache (Aspire's dashboard client brings them).
   The Requests window (#418, `RequestsView`, `MainWindow.Requests.cs`, `ToolWindowIds.Requests` at the bottom right, beside
-  Run) lists the live requests of the web app Run runs, else the chosen Debug tab's program, and the database commands each
-  issued, with no change to the app: `Passenger.Profiler/LiveRequests` starts an EventPipe session at the program's own
-  diagnostic port asking the DiagnosticSource bridge (`Microsoft-Diagnostics-DiagnosticSource`, its `FilterAndPayloadSpecs`)
-  for ASP.NET Core's `HttpRequestIn` Start and Stop and unhandled exceptions (each with `HttpContext.TraceIdentifier`) and
-  EF Core's `CommandExecuted`, `CommandError` and `DataReaderDisposing`, each with `*Activity.RootId`, which ties a command
-  to its request; the runtime's counters once a second keep the stream's reader handing on what it holds. Only while the
-  window shows: it follows from the moment it shows or the program starts, and lets go as it hides or the program ends.
-  `RequestLog` takes the events on the UI thread a batch at a time (500 requests kept), marks a command its request ran
-  `LiveCommand.RepeatedAt` times or more as repeated (the request as N+1) and one over `SlowMilliseconds` as slow (a
-  non-query with the rows it changed, a query with its reader's reads, EF Core's ReadCount), and gives
-  each request the folder's route it reached (`RouteRequests.Fits`, a literal template before one with parameters). A
-  request opens where its exception was thrown in the folder's code, else at its route's handler; a command's text opens
-  read-only from a copy under the state's `cache/requests/` (`RequestLog.IsCommandCopy`). `LiveRequestsTests` run a web
-  app on EF Core and SQLite (tests/EfGraphs' packages, `ShopApp.Version`) and send it requests from loopback.
+  Run) lists the live requests of the web apps running from the folder and the database commands each issued, with no change
+  to the apps: Run's program, Profile's, each live Debug tab's on this machine (once `DebugSession.ProcessStarted` says it
+  started) and each started .NET service of a run of services under way (`ServiceRun.ProgramAsync`: an AppHost's on this
+  machine, a container's through Passenger's tools there), all at once, one program once (`RequestTargetsAsync`), in passes
+  a change during one runs again. `Passenger.Profiler/LiveRequests` starts an EventPipe session at a program's own diagnostic
+  port (in a container, the tools' `trace --requests`, `InContainer.TraceAsync`, its stream on their output, stopped by
+  closing their input) asking the DiagnosticSource bridge (`Microsoft-Diagnostics-DiagnosticSource`, its
+  `FilterAndPayloadSpecs`) for ASP.NET Core's `HttpRequestIn` Start and Stop and unhandled exceptions (each with
+  `HttpContext.TraceIdentifier`) and EF Core's `CommandExecuted`, `CommandError` and `DataReaderDisposing`, each with
+  `*Activity.RootId`, which ties a command to its request; `Microsoft-Extensions-Logging`'s `FormattedMessage` for EF Core's
+  log of each command (20101, the app's own logging, tied by its `ActivityTraceId`), which names its parameters; and the
+  runtime's counters once a second, which keep the stream's reader handing on what it holds. Only while someone looks: the
+  window shows, or an agent asked (run_output's `requests`, `RequestsForAgentAsync`, until another folder opens); it follows
+  from the moment it shows or a program starts, and lets go as it hides or the program ends. `RequestLog` takes the events
+  on the UI thread a batch at a time (500 requests kept, each with the program that served it), marks a command its request
+  ran `LiveCommand.RepeatedAt` times or more as repeated (the request as N+1) and one over `SlowMilliseconds` as slow (a
+  non-query with the rows it changed, a query with its reader's reads, EF Core's ReadCount), gives each command the
+  parameters its log names (`CommandParameters`: each value as `ContainerSecrets.Shown` shows a value of that name, a
+  secret's as dots, '?' where the app does not log values; a log heard before its command kept masked), and each request
+  the route it reached in its program's project (`RouteRequests.Fits`, a literal template before one with parameters,
+  looked for again as routes are read, `Reroute`). A request opens where its exception was thrown in the folder's code,
+  else at its route's handler; a command's text opens read-only, its parameters as a comment over it, from a copy under the
+  state's `cache/requests/` (`RequestLog.IsCommandCopy`, `MainWindow.OpenSql`, as an EF Core query's SQL the debugger read
+  opens, its bar saying so: `OpenDocument.Origin`). `LiveRequestsTests` run a web app on EF Core and SQLite
+  (tests/EfGraphs' packages, `ShopApp.Version`, its sensitive data logging on) and send it requests from loopback;
+  `LiveRequestsDebuggingTests` (Alone) debug it, `McpRequestsTests` have an agent read it, and `ContainerServicesTests`
+  follow a Compose run's services in their containers.
 - A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run (`ContainerRun`) and an
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot
@@ -1802,7 +1815,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   shown, scrolls past 16 rows, stays while the pointer, its keys (a click, or Quick Documentation pressed again) or its
   menu are on it, and goes 300 ms after they leave, on Escape, and with its stop (`DebuggerHover.Gone`, which
   `NextShown` cancels); a value set in it shows the value read again with what was open still open
-  (`VariablesTree.ShowAgain`). The engine decides exception breakpoints (`ExceptionRule`)
+  (`VariablesTree.ShowAgain`). An EF Core query (an IQueryable whose type, or a type it derives from, is EF Core's own)
+  lists first a SQL row (#420), the engine's (`ManagedDebugger_QuerySql.cs`), so Variables, the hover card and an agent's
+  `debug_variables` read the one row alike: the protocol's lazy row (`DapPresentationHint.Lazy`, kind virtual, its name
+  and words `DapRows`'), whose value is read only as it is opened (`VariablesTree.Read`, the row read put in its place,
+  read again as rows are by `ShowAgain`), the program then running `ToQueryString()` through the debugger's own evaluation,
+  as one asked for by name, under its time limit and aborts; what keeps it from SQL (a query its provider cannot translate,
+  an evaluation refused or past its time) is its value, and a row shows a value's lines as one (`VariableNode.Shown`). Its
+  SQL opens whole in a read-only tab from a copy under the state's `cache/requests/`, as a command's text from the
+  Requests window does (`MainWindow.OpenSql`; a double-click, Enter or its menu's Open in Editor). The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
@@ -2375,7 +2396,11 @@ in the package cache. `DecompiledSymbolsTests` and `DecompiledSymbolsTimingTests
 decompile) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in a callback from
 List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
 values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
-(`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
+(`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show); its helpers (`Hover`, `Toggle`, `Member`) are
+`QuerySqlTests`' (Alone) too, which debug a console app on EF Core and SQLite they write (`Shop`, a `SharedProject`, its
+packages from the package cache through the run's local feed, as `LiveRequestsTests`' shop's), stopped holding a query EF
+Core translates and one it cannot: each one's SQL row read in Variables and the hover card, its tab opened, and an agent's
+`debug_variables` reading it as it opens the row. `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
 ("rename" typed into its console renames the customer on the UI thread, which it names UI). `DebuggedAppsTests` (Alone)
 debug BindingErrorsApp and LiveTreeApp at once (a solution over both), choosing each one's Debug tab in turn, and
 `McpAvaloniaAppTests` has an agent's app tools name one by its tab's name. `AvaloniaFramesTests` (Alone) profile,

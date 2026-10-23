@@ -924,6 +924,7 @@ public sealed class OpenDocument : Observable
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
         : Containers.ContainerFilesPane.IsCopy(Path) ? "A copy of what a container holds, or of what the engine says of it, read-only"
+        : Endpoints.RequestLog.IsCommandCopy(Path) ? "SQL a running app issued, or an EF Core query's the debugger read, copied to read, read-only"
         : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
         ? "Source from the library's Source Link or PDB, read-only"
         : "Decompiled code: the language server made this from the assembly, so it is read-only";

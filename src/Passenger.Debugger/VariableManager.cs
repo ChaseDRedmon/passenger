@@ -11,6 +11,7 @@ public enum StoredReferenceKind
     RawView,
     EnumerableResults,
     ArrayRange,
+    QuerySql, // An EF Core query's SQL row, read only as it is opened
 }
 
 public readonly record struct ThreadId

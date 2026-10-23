@@ -153,7 +153,7 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
     }
 
     /// <summary>The card shown with the pointer resting on the start of some text of the editor's, which shows a value's rows.</summary>
-    private static VariablesList Hover(MainWindow window, string text)
+    internal static VariablesList Hover(MainWindow window, string text)
     {
         CodeEditor editor = window.EditorArea.CodeEditor;
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal) + 1;
@@ -163,17 +163,17 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
     }
 
     /// <summary>A row's member in the card, by name, once the row has opened.</summary>
-    private static VariableNode? Member(VariablesList values, VariableNode row, string name) =>
+    internal static VariableNode? Member(VariablesList values, VariableNode row, string name) =>
         values.Tree.Rows.FirstOrDefault(r => r.Parent == row && r.Name == name);
 
     /// <summary>The card's rows as they are, for a failure to say.</summary>
-    private static string Shown(VariablesList values) => string.Join("; ", values.Tree.Rows.Select(r => $"{r.Name} = {r.Value}{(r.IsExpanded ? " (open)" : "")}"));
+    internal static string Shown(VariablesList values) => string.Join("; ", values.Tree.Rows.Select(r => $"{r.Name} = {r.Value}{(r.IsExpanded ? " (open)" : "")}"));
 
     private static VariableNode Chosen(VariablesList values) =>
         values.SelectedItem as VariableNode ?? throw new InvalidOperationException("No row of the card is chosen");
 
     /// <summary>A row's chevron clicked, as a person opens or closes it.</summary>
-    private static void Toggle(MainWindow window, VariablesList values, VariableNode row)
+    internal static void Toggle(MainWindow window, VariablesList values, VariableNode row)
     {
         values.ScrollIntoView(row);
         Ui.Settle();
@@ -184,7 +184,7 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
 
     /// <summary>A click in a control (its middle unless said), the pointer moved there first as a person's is, which the
     /// card follows.</summary>
-    private static void Click(MainWindow window, Control control, Point? within = null)
+    internal static void Click(MainWindow window, Control control, Point? within = null)
     {
         window.MouseMove(within is { } point ? control.TranslatePoint(point, window)!.Value : Ui.Centre(control, window), RawInputModifiers.None);
         Ui.Click(control, within);

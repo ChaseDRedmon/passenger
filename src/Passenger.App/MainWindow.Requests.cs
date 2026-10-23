@@ -1,5 +1,8 @@
+using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using Passenger.App.Endpoints;
+using Passenger.App.Run;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Profiler;
@@ -8,19 +11,34 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The Requests window (#418): the live requests of the web app Run runs, else the program the chosen Debug tab
-/// debugs, and the database commands each issued, heard from ASP.NET Core's and EF Core's own diagnostic events at the
-/// program's diagnostic port (<see cref="LiveRequests"/>), with no change to the app. The app is followedRequests only while the
-/// window shows, from the moment it does or the program starts, and let go as it hides or the program ends. A request opens
-/// at its route's handler (the folder's routes, <see cref="ProjectSession.Routes"/>), or where its exception was thrown; a
-/// command's text opens in a read-only tab.</summary>
+/// <summary>The Requests window (#418): the live requests of the web apps running from the folder and the database commands
+/// each issued, heard from ASP.NET Core's and EF Core's own diagnostic events at each program's diagnostic port
+/// (<see cref="LiveRequests"/>), with no change to the apps: Run's program, Profile's, each Debug tab's on this machine, and
+/// each .NET service of a container run (through Passenger's tools in its container) or an AppHost's run (on this machine).
+/// They are followed only while the window shows, from the moment it does or a program starts, and let go as it hides or
+/// the program ends. A request opens at its route's handler (the folder's routes, <see cref="ProjectSession.Routes"/>), or
+/// where its exception was thrown; a command's text opens in a read-only tab.</summary>
 public partial class MainWindow
 {
     private RequestsView? requestsView;
     private RequestLog? requestLog;
-    private LiveRequests? followedRequests;
-    private int followedProcess;
-    private int follows;
+    private readonly Dictionary<string, (RequestTarget Target, LiveRequests Live)> followedRequests = new(StringComparer.Ordinal);
+    private bool followingRequests;
+    private bool followRequestsAgain;
+
+    /// <summary>Whether an agent has asked for the requests: from then on they are followed as while the window shows, which a
+    /// windowless IDE's never does.</summary>
+    private bool requestsAsked;
+
+    /// <summary>The debugged programs' starts waited for, each once.</summary>
+    private readonly HashSet<Task<int>> waitedStarts = [];
+
+    /// <summary>Whether someone looks at the requests: the window shows, or an agent asked for them.</summary>
+    private bool RequestsLooked => requestsView is { IsShown: true } || requestsAsked;
+
+    /// <summary>A program whose requests are followed: what it is known by, what the window calls it, its project when known,
+    /// its process id where it runs, and where that is when not on this machine (a container's tools).</summary>
+    private sealed record RequestTarget(string Key, string Name, string? Project, int Process, ProfilePlace? Place);
 
     /// <summary>The Requests window.</summary>
     public RequestsView Requests => requestsView!;
@@ -53,9 +71,12 @@ public partial class MainWindow
         Closed += (_, _) => _ = LetGoOfRequestsAsync();
     }
 
-    /// <summary>A session's run or debugging began or ended: the app followedRequests follows it.</summary>
+    /// <summary>A session's runs, debugging and profiling began or ended: the programs followed follow them.</summary>
     private void BindRequests(ProjectSession next)
     {
+        // Another folder: an agent asks again for its requests.
+        requestsAsked = false;
+        waitedStarts.Clear();
         buildRun.RunningChanged += (_, _) =>
         {
             if (session == next)
@@ -70,63 +91,127 @@ public partial class MainWindow
                 _ = FollowRequestsAsync();
             }
         };
+        next.ProfiledChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                _ = FollowRequestsAsync();
+            }
+        };
         _ = FollowRequestsAsync();
     }
 
-    /// <summary>The program whose requests are followedRequests now: Run's, else the chosen Debug tab's, while it runs here.</summary>
-    private async Task<(int Process, string Name)?> RequestTargetAsync()
+    /// <summary>The programs whose requests are followed now: Run's, Profile's, each live Debug tab's on this machine, and
+    /// each started .NET service of the runs of services under way; one program once.</summary>
+    private async Task<IReadOnlyList<RequestTarget>> RequestTargetsAsync()
     {
+        List<RequestTarget> targets = [];
         if (session.Runner.IsRunning && session.Runner.ProcessId is int run && buildRun.RunPlan is { } plan)
         {
-            return (run, plan.Name);
+            targets.Add(new RequestTarget("run", plan.Name, plan.Project, run, null));
         }
-        if (session.Debug.Session is { IsLocal: true, State: not Debugging.DebugState.Ended } debugged && debugged.ProcessStarted.IsCompletedSuccessfully)
+        if (session.Profiled is { Run.Place: null } profiled && !profiled.Landed.IsCompleted)
         {
-            return (await debugged.ProcessStarted, session.Debug.Chosen?.Name ?? "the program debugged");
+            targets.Add(new RequestTarget("profile", profiled.Name, null, profiled.Run.ProcessId, null));
         }
-        return null;
+        foreach (ToolWindows.DebugTab tab in session.Debug.Tabs.Where(t => t.IsLive && t.Session is { IsLocal: true }))
+        {
+            Task<int> started = tab.Session!.ProcessStarted;
+            if (started.IsCompletedSuccessfully)
+            {
+                targets.Add(new RequestTarget($"debug:{tab.Name}", tab.Name, null, await started, null));
+            }
+            else if (!started.IsCompleted && waitedStarts.Add(started))
+            {
+                // Its program is followed once the debugger says it has started.
+                _ = started.ContinueWith(_ => UiThread.Post(() => _ = FollowRequestsAsync()), TaskScheduler.Default);
+            }
+        }
+        foreach (ServiceRun services in buildRun.ServiceRuns.Where(r => !r.IsStopped).ToArray())
+        {
+            foreach (IRunService service in services.Services.Where(s => s.Starts && !services.LeftUnstarted(s)).ToArray())
+            {
+                // One followed already is kept as it is: finding it again in its container costs docker commands each pass.
+                if (followedRequests.TryGetValue($"{services.Name}:{service.Name}", out (RequestTarget Target, LiveRequests Live) known))
+                {
+                    targets.Add(known.Target);
+                    continue;
+                }
+                try
+                {
+                    if (await services.ProgramAsync(service, Task.CompletedTask, CancellationToken.None) is { WhyNot: null } program)
+                    {
+                        targets.Add(new RequestTarget($"{services.Name}:{service.Name}", services.NameOf(service), service.Project, program.Id, program.Recorded));
+                    }
+                }
+                catch (Exception error) when (error is ServiceUnreachedException || services.Refused(error))
+                {
+                    // A service not yet started, or one its tools cannot reach, is followed once it can be.
+                }
+            }
+        }
+        return [.. targets.DistinctBy(t => t.Place is null ? $"process {t.Process}" : t.Key)];
     }
 
-    /// <summary>Follows the program due (none while the window is hidden), letting go of the one before; a program whose
-    /// runtime has yet to open its diagnostic port is asked again for a few seconds.</summary>
+    /// <summary>Follows the programs due (none while the window is hidden), letting go of those no longer due, one pass at a
+    /// time: a change during a pass makes another. A program whose runtime has yet to open its diagnostic port is asked
+    /// again for a few seconds.</summary>
     private async Task FollowRequestsAsync()
     {
         UiThread.Check();
-        int follow = ++follows;
-        (int Process, string Name)? target = requestsView is { IsShown: true } ? await RequestTargetAsync() : null;
-        if (follow != follows || (target?.Process ?? 0) == followedProcess && (followedRequests is not null || target is null))
+        if (followingRequests)
         {
+            followRequestsAgain = true;
             return;
         }
-        await LetGoOfRequestsAsync();
-        if (follow != follows || target is not { } program)
-        {
-            Requests.Following = requestsView is { IsShown: true } ? "Nothing runs: Run or Debug a web app to see its requests" : string.Empty;
-            return;
-        }
-        Requests.Following = $"Following {program.Name}…";
-        RequestLog log = RequestLog;
+        followingRequests = true;
         using IDisposable held = BackgroundWork.Scope();
-        for (int attempt = 0; attempt < 30 && follow == follows; attempt++)
+        try
+        {
+            do
+            {
+                followRequestsAgain = false;
+                IReadOnlyList<RequestTarget> due = RequestsLooked ? await RequestTargetsAsync() : [];
+                foreach ((string key, (RequestTarget target, LiveRequests live)) in followedRequests.ToArray())
+                {
+                    if (!due.Contains(target))
+                    {
+                        followedRequests.Remove(key);
+                        await live.DisposeAsync();
+                    }
+                }
+                foreach (RequestTarget target in due.Where(t => !followedRequests.ContainsKey(t.Key)))
+                {
+                    await FollowAsync(target);
+                }
+                SayFollowed(due.Count == 0 ? null : string.Empty);
+            }
+            while (followRequestsAgain);
+        }
+        finally
+        {
+            followingRequests = false;
+        }
+    }
+
+    /// <summary>One program followed, asked again while its runtime has yet to open its port; why not said.</summary>
+    private async Task FollowAsync(RequestTarget target)
+    {
+        RequestLog log = RequestLog;
+        for (int attempt = 0; attempt < 30; attempt++)
         {
             try
             {
-                LiveRequests live = await LiveRequests.AttachAsync(program.Process, log.Hear);
-                if (follow != follows)
-                {
-                    await live.DisposeAsync();
-                    return;
-                }
-                followedRequests = live;
-                followedProcess = program.Process;
-                Requests.Following = $"Following {program.Name} (process {program.Process})";
+                LiveRequests live = target.Place is { } place
+                    ? await LiveRequests.AttachAsync(target.Process, place, told => log.Hear(told, target.Name, target.Project))
+                    : await LiveRequests.AttachAsync(target.Process, told => log.Hear(told, target.Name, target.Project));
+                followedRequests[target.Key] = (target, live);
                 _ = live.Ended.ContinueWith(_ => UiThread.Post(() =>
                 {
-                    if (followedRequests == live)
+                    if (followedRequests.TryGetValue(target.Key, out (RequestTarget Target, LiveRequests Live) now) && now.Live == live)
                     {
-                        followedRequests = null;
-                        followedProcess = 0;
-                        Requests.Following = $"{program.Name} ended";
+                        followedRequests.Remove(target.Key);
+                        SayFollowed($"{target.Name} ended");
                     }
                 }), TaskScheduler.Default);
                 return;
@@ -134,26 +219,102 @@ public partial class MainWindow
             catch (ProfilingException failed)
             {
                 Requests.Following = failed.Message;
+                if (target.Place is not null)
+                {
+                    // Tools that answered have said why: asking again would only say it again.
+                    return;
+                }
                 await Task.Delay(TimeSpan.FromMilliseconds(200));
             }
         }
     }
 
-    private async Task LetGoOfRequestsAsync()
+    /// <summary>The requests heard, for an agent: the window shown first (which follows the running apps), the last ones
+    /// as lines, each request's method, path, status, time, route and handler, then its commands, repeated and slow ones
+    /// marked; what the window follows heads them.</summary>
+    public async Task<string> RequestsForAgentAsync(int most, CancellationToken cancel)
     {
-        if (followedRequests is { } live)
+        UiThread.Check();
+        requestsAsked = true;
+        ShowToolWindow(ToolWindowIds.Requests);
+        // The routes the requests reached, read now where the language server is ready, later as it is.
+        WantRoutes();
+        if (session.CSharp is { IsReady: true })
         {
-            followedRequests = null;
-            followedProcess = 0;
-            await live.DisposeAsync();
+            await RoutesAsync(cancel);
+            RequestLog.Reroute();
+        }
+        // The programs due are followed before the answer, so a request sent after it is heard.
+        while (followingRequests)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancel);
+        }
+        await FollowRequestsAsync();
+        StringBuilder said = new(Requests.Following);
+        foreach (LiveRequest request in RequestLog.Requests.TakeLast(Math.Max(1, most)))
+        {
+            said.Append('\n').Append(request.Method).Append(' ').Append(request.Path).Append(request.Query)
+                .Append(request.Status is { } status ? $" {status.ToString(CultureInfo.InvariantCulture)}" : " (under way)")
+                .Append(request.Milliseconds is { } ms ? string.Create(CultureInfo.InvariantCulture, $" {ms:0} ms") : string.Empty);
+            if (request.Route is { } route)
+            {
+                said.Append(" -> ").Append(RouteRequests.Title(route)).Append(", ").Append(route.Handler)
+                    .Append(route.HandlerPath is { } handler ? $" ({PathNames.Shown(handler, session.Folder)}:{(route.HandlerAt?.Line ?? route.At.Line) + 1})" : string.Empty);
+            }
+            if (request.HasRepeats)
+            {
+                said.Append(" N+1");
+            }
+            if (request.Error is { } error)
+            {
+                said.Append("\n  failed: ").Append(error.Split('\n')[0].Trim());
+            }
+            foreach (LiveCommand command in request.Commands)
+            {
+                said.Append("\n  ").Append(string.Join(' ', command.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)))
+                    .Append(string.Create(CultureInfo.InvariantCulture, $" ({command.Milliseconds:0.#} ms"))
+                    .Append(command.Rows is { } rows and >= 0 ? $", {rows} rows changed" : command.Reads is { } reads ? $", {reads} reads" : string.Empty)
+                    .Append(command.Parameters is { Length: > 0 } parameters ? $", {parameters}" : string.Empty)
+                    .Append(command.Repeated ? $", run {command.Runs} times in this request" : string.Empty)
+                    .Append(command.Slow ? ", slow" : string.Empty)
+                    .Append(command.Error is { } failed ? $", failed: {failed}" : string.Empty).Append(')');
+            }
+        }
+        return said.ToString();
+    }
+
+    /// <summary>What the window says it follows; with none, why (<paramref name="none"/>, else that nothing runs).</summary>
+    private void SayFollowed(string? none)
+    {
+        if (followedRequests.Count > 0)
+        {
+            Requests.Following = "Following " + string.Join(", ", followedRequests.Values.Select(f =>
+                f.Target.Place is { } place ? $"{f.Target.Name} in {place.Where} (process {f.Target.Process})" : $"{f.Target.Name} (process {f.Target.Process})"));
+        }
+        else if (none is { Length: > 0 })
+        {
+            Requests.Following = none;
+        }
+        else if (none is null)
+        {
+            Requests.Following = RequestsLooked ? "Nothing runs: Run, Debug or Profile a web app, or start its containers or AppHost, to see its requests" : string.Empty;
         }
     }
 
-    /// <summary>The folder's route a request's method and path reach, as ASP.NET Core's matcher would: the first whose
-    /// template fits, a literal one before one with parameters.</summary>
-    private WebRoute? RouteReached(string method, string path) =>
-        session.Routes.All.Where(r => r.Kind != RouteKinds.Grpc && (r.Methods.Count == 0 || r.Methods.Contains(method, StringComparer.OrdinalIgnoreCase))
-                && RouteRequests.Fits(r.Template, path))
+    private async Task LetGoOfRequestsAsync()
+    {
+        foreach ((RequestTarget _, LiveRequests live) in followedRequests.Values.ToArray())
+        {
+            await live.DisposeAsync();
+        }
+        followedRequests.Clear();
+    }
+
+    /// <summary>The folder's route a request's method and path reach, as ASP.NET Core's matcher would: of the program's own
+    /// project when known, the first whose template fits, a literal one before one with parameters.</summary>
+    private WebRoute? RouteReached(string method, string path, string? project) =>
+        session.Routes.All.Where(r => r.Kind != RouteKinds.Grpc && (project is null || PathNames.Same(r.Project, project))
+                && (r.Methods.Count == 0 || r.Methods.Contains(method, StringComparer.OrdinalIgnoreCase)) && RouteRequests.Fits(r.Template, path))
             .OrderBy(r => r.Template.Count(c => c == '{'))
             .FirstOrDefault();
 
@@ -190,19 +351,30 @@ public partial class MainWindow
     [GeneratedRegex(@" in (?<path>.+?):line (?<line>\d+)")]
     private static partial Regex StackFrame();
 
-    /// <summary>A command's text in a read-only tab, from a copy under the state's cache.</summary>
-    private void OpenCommand(LiveCommand command)
+    /// <summary>A command's text in a read-only tab, from a copy under the state's cache, its parameters, masked, as a comment
+    /// over it.</summary>
+    private void OpenCommand(LiveCommand command) =>
+        OpenSql($"command-{(command.Id.Length > 0 ? command.Id : Guid.NewGuid().ToString("N"))}",
+            command.Parameters is { Length: > 0 } parameters ? $"-- {parameters}\n{command.Text}" : command.Text, "The command");
+
+    /// <summary>An EF Core query's SQL the debugger read (#420) in a read-only tab, as a command's opens: one copy for each
+    /// text, so the same SQL opened again shows the tab it has.</summary>
+    private void OpenQuerySql(string sql) =>
+        OpenSql($"query-{Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(sql)))[..16]}", sql, "The query's SQL");
+
+    /// <summary>SQL opened whole in a read-only tab, from a copy under the state's cache (<see cref="RequestLog.IsCommandCopy"/>).</summary>
+    private void OpenSql(string name, string text, string what)
     {
         string folder = Path.Combine(StateFolder, "cache", RequestLog.CommandCopies);
-        string path = Path.Combine(folder, $"command-{(command.Id.Length > 0 ? command.Id : Guid.NewGuid().ToString("N"))}.sql");
+        string path = Path.Combine(folder, $"{name}.sql");
         try
         {
             Directory.CreateDirectory(folder);
-            AtomicFile.Write(path, System.Text.Encoding.UTF8.GetBytes(command.Text));
+            AtomicFile.Write(path, Encoding.UTF8.GetBytes(text));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            status.Text = $"The command could not be opened: {error.Message}";
+            status.Text = $"{what} could not be opened: {error.Message}";
             return;
         }
         OpenFile(path);
