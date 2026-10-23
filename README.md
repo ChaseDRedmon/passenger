@@ -16,7 +16,7 @@ Windows, macOS and Linux ([how to install it there](https://passenger-ide.net/li
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="site/images/requests-light.webp">
-  <img src="site/images/requests-dark.webp" alt="Passenger's Requests window beside the code of an ASP.NET Core API: each live request with its time, and the chosen one's SQL commands, the one repeated for every row marked as an N+1">
+  <img src="site/images/requests-dark.webp" alt="Passenger's Requests window following an Aspire app's ASP.NET Core API as it runs, under the minimal API handler that loops over the plants: each GET /plants/thirsty request marked N+1, its repeated SQL query marked ×6 with its reads and times">
 </picture>
 
 Passenger edits, builds, runs, tests, debugs and profiles C# and modern .NET. Most of what it includes usually takes a
@@ -86,7 +86,7 @@ everywhere, and a service that reads a connection string its AppHost never gives
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="site/images/aspire-light.webp">
-  <img src="site/images/aspire-dark.webp" alt="An Aspire AppHost debugged in Passenger: the Aspire window with its API and worker services running, and a Debug tab for each service">
+  <img src="site/images/aspire-dark.webp" alt="An Aspire AppHost debugged in Passenger: the API service stopped at a breakpoint with its values after the lines, a Debug tab for each service, and the Aspire window listing both services running with the API's details">
 </picture>
 
 ### Web apps and their data
@@ -303,7 +303,8 @@ With Settings | Diagnostics | Trace protocol messages on, `mcp.log` in the logs 
 waited on and for how long.
 
 The quickest way in is Passenger's own Settings | MCP Server: it shows each agent's setup below with this copy's own
-path filled in, each with a Copy button, and lists the folders agents join unasked, each one to take back.
+path filled in, each with a Copy button, and lists the folders agents join unasked, each one to take back. The
+website's [agents page](https://passenger-ide.net/agents) has the same setups.
 
 Passenger is `/Applications/Passenger.app/Contents/MacOS/Passenger` on a Mac,
 `%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe` on Windows, and `~/.local/bin/passenger` on Linux

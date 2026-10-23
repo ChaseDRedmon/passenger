@@ -1,13 +1,13 @@
 <!doctype html>
 <!-- The site's share card (site/images/social-<first 8 of its SHA-256>.png, 1200x630, named by its content because
      Cloudflare and the sites that embed it keep an image by its URL for a week), drawn by Chrome from the site's dark
-     editor picture, with a profile of its own under artifacts/ (never the person's):
+     hero picture, with a profile of its own under artifacts/ (never the person's):
      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
        --user-data-dir=artifacts/social-card-chrome --window-size=1200,630 --force-device-scale-factor=2 \
        --screenshot=artifacts/card.png tools/social-card.html
      then halved to 1200x630 (sips -z 630 1200 artifacts/card.png --out artifacts/social.png), moved to
      site/images/social-$(shasum -a 256 artifacts/social.png | cut -c1-8).png in place of the old one, and named so in
-     site/index.html and site/linux.html (og:image, twitter:image, the JSON-LD image). -->
+     every page of site/ that has them (og:image, twitter:image, the JSON-LD image). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -39,10 +39,10 @@
 <body>
     <div class="text">
         <div class="brand"><img src="../src/Passenger.App/Assets/passenger.svg" alt="">Passenger</div>
-        <h1><span>An IDE for C# and .NET,</span>written in C#.</h1>
-        <p>Performance and memory profiling, a debugger with Hot&nbsp;Reload, XAML tooling for Avalonia and WPF, and your coding agent driving it all.</p>
+        <h1><span>Debug the whole stack.</span>The free IDE for<br>C# and .NET.</h1>
+        <p>Docker Compose and Aspire services debugged and profiled, every request with its SQL, EF&nbsp;Core migrations, and your coding agent driving it all.</p>
     </div>
     <div class="url">passenger-ide.net · free and open source, MIT</div>
-    <div class="shot"><img src="../site/images/editor-dark.webp" alt=""></div>
+    <div class="shot"><img src="../site/images/requests-dark.webp" alt=""></div>
 </body>
 </html>
