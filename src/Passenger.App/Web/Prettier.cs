@@ -40,7 +40,7 @@ public sealed class PrettierService : IAsyncDisposable
     }
 
     /// <summary>The runner carried beside the app.</summary>
-    public static string Script => Path.Combine(AppContext.BaseDirectory, "web", "passenger", "prettier.cjs");
+    public static string Script => Path.Combine(WebLanguages.Carried, "passenger", "prettier.cjs");
 
     /// <summary>The Prettier package that formats a file as Settings configure it, null for none (Disabled, or no package
     /// found). The glob is not asked: Reformat with Prettier formats any file Prettier reads.</summary>

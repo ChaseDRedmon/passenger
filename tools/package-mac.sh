@@ -119,6 +119,10 @@ dotnet publish "$root/src/Passenger.App" -c Release -r "$rid" --self-contained -
     -p:RestoreLockedMode=true -nodeReuse:false -o "$publish" -nologo -v quiet
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp -R "$publish/." "$app/Contents/MacOS/"
+# The web language servers are no code of the bundle's, and codesign takes a folder in Contents/MacOS named with a dot (a
+# package's .github, yaml's dist/schema/yaml-1.1) for a nested bundle and refuses the app: Resources holds them, where
+# WebLanguages.Carried finds them.
+mv "$app/Contents/MacOS/web" "$app/Contents/Resources/web"
 cp "$root/src/Passenger.App/Assets/Passenger.icns" "$app/Contents/Resources/Passenger.icns"
 # The document types are what the Finder's Open With and a drop on the Dock's icon offer Passenger: solutions and C#
 # projects (by extension, having no system type) and folders, never claimed as their default. macOS hands them to the
@@ -311,6 +315,9 @@ said=$(plutil -extract CFBundleVersion raw -o - "$plist")
 [ "$said" = "$build" ] || fail "the app's Info.plist says build $said, not $build"
 for part in roslyn/Microsoft.CodeAnalysis.LanguageServer.dll roslyn-extension/Passenger.Roslyn.Extension.dll debugger/Passenger.DebugAdapter.dll LICENSE.txt THIRD-PARTY-NOTICES.txt; do
     [ -f "$shipped/Contents/MacOS/$part" ] || fail "the app has no $part"
+done
+for part in web/passenger/prettier.cjs web/passenger/docker-hub.cjs web/schemas/compose-spec.json; do
+    [ -f "$shipped/Contents/Resources/$part" ] || fail "the app has no $part in its Resources"
 done
 find "$shipped/Contents/MacOS" -type f -exec file -F '|' {} + | grep '| *Mach-O' | cut -d'|' -f1 > "$work/mach-o"
 [ -s "$work/mach-o" ] || fail "the app has no Mach-O file"

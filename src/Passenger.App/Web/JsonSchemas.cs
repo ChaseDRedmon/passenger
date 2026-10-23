@@ -39,7 +39,7 @@ public sealed class JsonSchemas(Func<bool> download)
     private readonly ConcurrentDictionary<string, Task<string>> downloaded = new(StringComparer.Ordinal);
 
     /// <summary>Where the carried schemas are, beside the app.</summary>
-    public static string Folder => Path.Combine(AppContext.BaseDirectory, "web", "schemas");
+    public static string Folder => Path.Combine(WebLanguages.Carried, "schemas");
 
     /// <summary>The Compose specification's schema, carried, as the YAML server reads it from disk.</summary>
     public static string ComposeUri => new Uri(Path.Combine(Folder, "compose-spec.json")).AbsoluteUri;
