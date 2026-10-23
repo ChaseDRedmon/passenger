@@ -77,6 +77,13 @@ public sealed partial class BuildRunController
     {
         parts.Editors.SaveAll();
         parts.Views.Run.Clear();
+        // The configuration's own fault first: a Dockerfile one with none would send the person to start an engine for nothing.
+        if (chosen.Kind == RunKind.Dockerfile && chosen.Dockerfile.Length == 0
+            && session.Projects.FirstOrDefault(p => PathNames.Same(p.Path, chosen.Project)) is { } project
+            && ContainerConfigurations.Dockerfile(project) is null)
+        {
+            return Said($"{chosen.Name} cannot run: {project.Name} has no Dockerfile");
+        }
         ContainerEngine engine = session.Containers.Engine;
         work.Say("Asking the container engine…");
         EngineState state;
