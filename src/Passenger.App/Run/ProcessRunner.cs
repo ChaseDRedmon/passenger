@@ -103,6 +103,23 @@ public sealed class ProcessRunner : IDisposable
         return Start(start, environment, after);
     }
 
+    /// <summary><see cref="StartDotnet"/> with no wait, its fork off the window's thread as <see cref="StartAsync(ProcessStartInfo,
+    /// IReadOnlyDictionary{string, string}?)"/>'s is.</summary>
+    public Task<string?> StartDotnetAsync(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        ProcessStartInfo start;
+        try
+        {
+            start = ChildProcesses.DotnetCommand(arguments, folder);
+        }
+        catch (FileNotFoundException missing)
+        {
+            console.Append($"{missing.Message}\n", error: true);
+            return Task.FromResult<string?>(missing.Message);
+        }
+        return StartAsync(start, environment);
+    }
+
     /// <summary>Starts a program; why it could not (a working folder gone, a missing program), or null once it runs.</summary>
     public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null) =>
         Start(ChildProcesses.Command(file, arguments, folder), environment);

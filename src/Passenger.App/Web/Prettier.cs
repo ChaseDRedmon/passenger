@@ -121,11 +121,17 @@ public sealed class PrettierService : IAsyncDisposable
             Runner running;
             try
             {
-                running = runner ??= Runner.Start(runtime.Path!, folder);
+                running = runner ??= await Runner.StartAsync(runtime.Path!, folder).ConfigureAwait(false);
             }
             catch (Exception error) when (error is Win32Exception or IOException or InvalidOperationException)
             {
                 return new PrettierAnswer(Error: $"Prettier's runner could not start on {runtime.Path}: {error.Message}");
+            }
+            if (disposed)
+            {
+                // Its folder closed as it started, which took no runner away: this one goes with it.
+                End(running);
+                return new PrettierAnswer(Error: "the folder was closed");
             }
             int id = ++asked;
             JsonObject request = new()
@@ -269,13 +275,14 @@ public sealed class PrettierService : IAsyncDisposable
             }
         }
 
-        public static Runner Start(string node, string folder)
+        /// <summary>A runner started, its fork off the window's thread (#441), where a format pressed there would wait it out.</summary>
+        public static async Task<Runner> StartAsync(string node, string folder)
         {
             ProcessStartInfo start = ChildProcesses.Command(node, [Script], folder);
             start.RedirectStandardInput = true;
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            Process process = ChildProcesses.Start(start);
+            Process process = await ChildProcesses.StartAsync(start).ConfigureAwait(false);
             int id = process.Id;
             // What a plugin or configuration prints comes here too: the runner keeps its output for the answers.
             process.ErrorDataReceived += (_, e) =>

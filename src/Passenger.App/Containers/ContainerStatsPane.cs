@@ -50,6 +50,11 @@ public sealed class ContainerStatsPane : DockPanel
     private readonly TextBlock waiting = new() { Classes = { "emptyText" }, Text = "Waiting for the engine's first reading…" };
     private readonly Dictionary<string, ContainerStatsSample> latest = new(StringComparer.Ordinal);
     private Process? streaming;
+
+    /// <summary>Each stream asked for and each stop counted, so a start that lands after either is let go; and whether the
+    /// last asked for is still starting.</summary>
+    private int streams;
+    private bool forking;
     private readonly HashSet<string> sinceLast = new(StringComparer.Ordinal);
     private string? key;
 
@@ -84,7 +89,7 @@ public sealed class ContainerStatsPane : DockPanel
         UiThread.Check();
         string[] running = row is null ? [] : [.. row.Containers.Where(c => c.IsRunning).Select(c => c.Id)];
         string? next = running.Length == 0 ? null : string.Join(',', running);
-        if (next == key && (next is null || streaming is { HasExited: false }))
+        if (next == key && (next is null || forking || streaming is { HasExited: false }))
         {
             return;
         }
@@ -98,21 +103,49 @@ public sealed class ContainerStatsPane : DockPanel
         }
         // Each reading named by the container it was asked of: Docker's CLI on Podman's socket cuts a name's first letter.
         Dictionary<string, string> names = row!.Containers.Where(c => c.IsRunning).ToDictionary(c => c.Id, c => c.Name, StringComparer.Ordinal);
-        Process process;
+        ProcessStartInfo start;
         try
         {
             // Podman's own stats writes its JSON over several lines, under its own names: a line of Docker's names asked of it.
             string format = engine().Known is { PodmanCli: true } ? PodmanLine : "json";
-            ProcessStartInfo start = engine().Command(["stats", "--format", format, .. running]);
+            start = engine().Command(["stats", "--format", format, .. running]);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            process = ChildProcesses.Start(start);
         }
-        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (FileNotFoundException failed)
         {
             waiting.Text = failed.Message;
             return;
         }
+        _ = StreamAsync(start, names, ++streams);
+    }
+
+    /// <summary>Starts a stream, its fork off the window's thread (#441); one let go of as it started (another row chosen,
+    /// the tab left) is ended as it comes.</summary>
+    private async Task StreamAsync(ProcessStartInfo start, Dictionary<string, string> names, int stream)
+    {
+        Process process;
+        forking = true;
+        try
+        {
+            process = await ChildProcesses.StartAsync(start);
+        }
+        catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            if (stream == streams)
+            {
+                forking = false;
+                waiting.Text = failed.Message;
+            }
+            return;
+        }
+        if (stream != streams)
+        {
+            ChildProcesses.Kill(process);
+            process.Dispose();
+            return;
+        }
+        forking = false;
         streaming = process;
         // Not background work: it streams for as long as the tab is shown, which no screenshot or settling test waits for.
         _ = Task.Run(async () =>
@@ -186,6 +219,8 @@ public sealed class ContainerStatsPane : DockPanel
     /// <summary>Stops the stream, the readings let go.</summary>
     public void Stop()
     {
+        streams++;
+        forking = false;
         if (streaming is { } process)
         {
             streaming = null;

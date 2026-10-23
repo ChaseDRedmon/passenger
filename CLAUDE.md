@@ -131,9 +131,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
   thread's), on the caller's thread otherwise: every git command (`Git`) starts so, and every start an async caller
   makes (the project host, a test host, NuGet's changes and credential providers, dotnet ef, the container engine's
-  commands); `Start` stays on the caller's thread for what needs the child at once (a console's `ProcessRunner.Start`),
-  while `ProcessRunner.StartAsync` (an AppHost and its services) and a run started after a wait (`StartDotnet`'s `after`:
-  every build) fork off it, held as background work, a Stop meanwhile ending the child as it comes. A child the IDE ends (`Kill`, or
+  commands, the debug adapter, a debugged container's output followed, a compose run's watch, container Stats, the XAML
+  previewers, Prettier's runner: #441, each one let go of as it started, its tab closed or its run stopped, ended as it
+  comes); `Start` stays on the caller's thread for what needs the child at once (a console's `ProcessRunner.Start`: a
+  container's log in the Containers window, a container run's log followed again as it ended), while
+  `ProcessRunner.StartAsync` (Run's program and dotnet watch, `StartDotnetAsync`, a container run's log, an AppHost and its
+  services) and a run started after a wait (`StartDotnet`'s `after`: every build) fork off it, held as background work, a
+  Stop meanwhile ending the child as it comes. A child the IDE ends (`Kill`, or
   `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
   only with Log every program. `RunAsync`'s limit covers a child's run to its exit; once it has exited, whatever the

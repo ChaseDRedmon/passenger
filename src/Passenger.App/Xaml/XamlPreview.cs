@@ -77,7 +77,13 @@ public sealed class XamlPreview : IDisposable
         switch (builder.Dialect)
         {
             case AvaloniaDialect:
-                host = AvaloniaPreviewHost.Start(this, builder.Current.Inputs);
+                IPreviewHost? drawing = await AvaloniaPreviewHost.StartAsync(this, builder.Current.Inputs);
+                if (disposed || start != starts)
+                {
+                    drawing?.Dispose();
+                    return;
+                }
+                host = drawing;
                 break;
             case WpfDialect when !OperatingSystem.IsWindows():
                 // WPF draws with Windows' own graphics, which no other system has: said in its place, rather than a pane that never draws.

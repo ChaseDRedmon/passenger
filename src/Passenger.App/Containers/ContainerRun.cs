@@ -1164,7 +1164,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         }
         if (Plan.Watched.Count > 0)
         {
-            Watch();
+            await WatchAsync();
         }
         if (Plan.Telemetry is { } dashboard)
         {
@@ -1183,14 +1183,20 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     public override TelemetrySource? Telemetry => IsStopped ? null : telemetry;
 
     /// <summary>Compose's own watch of the services that declare <c>develop.watch</c>, while the run lasts.</summary>
-    private void Watch()
+    private async Task WatchAsync()
     {
         try
         {
             ProcessStartInfo start = engine.Command([.. Plan.Compose, "watch", "--no-up", "--", .. Plan.Watched], Plan.Folder);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            Process started = ChildProcesses.Start(start);
+            // Its fork off the window's thread (#441); a run stopped meanwhile, whose stop found no watch, ends it here.
+            Process started = await ChildProcesses.StartAsync(start);
+            if (IsStopped)
+            {
+                ChildProcesses.Kill(started);
+                return;
+            }
             watching = started;
             Task pumped = Task.WhenAll(console.PumpAsync(started.StandardOutput, ConsoleStream.Output), console.PumpAsync(started.StandardError, ConsoleStream.Output));
             _ = Ended();

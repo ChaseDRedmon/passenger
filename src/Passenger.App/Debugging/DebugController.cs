@@ -588,7 +588,7 @@ public sealed class DebugController : IDisposable
         }
         else if (!launched && place?.Output is { } follow)
         {
-            Follow(follow, shown, tab);
+            await FollowAsync(follow, shown, tab);
         }
         else if (!launched)
         {
@@ -619,6 +619,8 @@ public sealed class DebugController : IDisposable
                 tab.Session = made;
                 if (disposed || ending || tab.OpeningStopped || !view.Sessions.Contains(tab))
                 {
+                    // Stopped as its adapter started, before there was a session to stop: its start fails as one stopped.
+                    stoppedStarting.Add(made);
                     Send(made.CloseAsync());
                     return;
                 }
@@ -685,7 +687,7 @@ public sealed class DebugController : IDisposable
 
     /// <summary>A program's output followed from outside into its console (a container's log, which an attach gets none of
     /// through the protocol), from before the debugger lets it go until its session's end has let its last words land.</summary>
-    private static void Follow(Func<System.Diagnostics.ProcessStartInfo> follow, OutputView console, DebugTab tab)
+    private async Task FollowAsync(Func<System.Diagnostics.ProcessStartInfo> follow, OutputView console, DebugTab tab)
     {
         System.Diagnostics.Process process;
         try
@@ -693,11 +695,18 @@ public sealed class DebugController : IDisposable
             System.Diagnostics.ProcessStartInfo start = follow();
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            process = ChildProcesses.Start(start);
+            // Its fork off the window's thread (#441).
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             console.Append($"Its output could not be followed: {failed.Message}\n");
+            return;
+        }
+        if (disposed || !view.Sessions.Contains(tab))
+        {
+            // Its tab went as it started (closed, taken by another, its folder left), and its follower with it.
+            ChildProcesses.Kill(process);
             return;
         }
         tab.Following = process;

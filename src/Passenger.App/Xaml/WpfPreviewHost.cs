@@ -78,7 +78,7 @@ internal sealed class WpfPreviewHost : IPreviewHost
         WpfPreviewHost started = new(preview, builder, Path.Combine(shadow, Path.GetFileName(built)), shadow);
         try
         {
-            started.Run(inputs);
+            await started.RunAsync(inputs);
             return started;
         }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or FileNotFoundException)
@@ -89,7 +89,9 @@ internal sealed class WpfPreviewHost : IPreviewHost
         }
     }
 
-    private void Run(ProjectInputs inputs)
+    /// <summary>The previewer started on the copy, its fork off the window's thread (#441), held as background work so a
+    /// screenshot waits for the frame it draws.</summary>
+    private async Task RunAsync(ProjectInputs inputs)
     {
         string name = Path.GetFileNameWithoutExtension(assembly);
         string configuration = Path.Combine(shadow, name + ".runtimeconfig.json");
@@ -121,7 +123,11 @@ internal sealed class WpfPreviewHost : IPreviewHost
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        Process started = ChildProcesses.Start(start);
+        Process started;
+        using (BackgroundWork.Scope())
+        {
+            started = await ChildProcesses.StartAsync(start);
+        }
         process = started;
         started.ErrorDataReceived += (_, e) => Heard(e.Data);
         started.Exited += (_, _) => UiThread.Post(() => Ended(started));

@@ -9,6 +9,7 @@ using Avalonia.Remote.Protocol.Designer;
 using Avalonia.Remote.Protocol.Viewport;
 using RemoteFormat = Avalonia.Remote.Protocol.Viewport.PixelFormat;
 using Passenger.Core;
+using Passenger.Editor;
 using Passenger.Text;
 using Passenger.Xaml.Projects;
 
@@ -42,7 +43,7 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
     }
 
     /// <summary>Starts the host on the project's last build; null, having said why, when there is none to start.</summary>
-    public static AvaloniaPreviewHost? Start(XamlPreview preview, ProjectInputs inputs)
+    public static async Task<AvaloniaPreviewHost?> StartAsync(XamlPreview preview, ProjectInputs inputs)
     {
         if (XamlPreview.Output(inputs) is not { } built)
         {
@@ -57,7 +58,7 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
         AvaloniaPreviewHost started = new(preview, built);
         try
         {
-            started.Run(designer);
+            await started.RunAsync(designer);
             return started;
         }
         catch (Exception error) when (error is SocketException or IOException or System.ComponentModel.Win32Exception or FileNotFoundException)
@@ -68,7 +69,9 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
         }
     }
 
-    private void Run(string designer)
+    /// <summary>The host started on the build, its fork off the window's thread (#441), held as background work so a
+    /// screenshot waits for the frame it draws.</summary>
+    private async Task RunAsync(string designer)
     {
         int port = FreePort();
         listening = new BsonTcpTransport().Listen(IPAddress.Loopback, port, UiThread.Marshal<IAvaloniaRemoteTransportConnection>(Connected));
@@ -79,7 +82,11 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
             "--session-id", Guid.NewGuid().ToString("N"), output], folder);
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        Process started = ChildProcesses.Start(start);
+        Process started;
+        using (BackgroundWork.Scope())
+        {
+            started = await ChildProcesses.StartAsync(start);
+        }
         host = started;
         started.OutputDataReceived += (_, e) => Heard(e.Data);
         started.ErrorDataReceived += (_, e) => Heard(e.Data);

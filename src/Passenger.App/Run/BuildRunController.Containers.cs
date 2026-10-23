@@ -319,7 +319,7 @@ public sealed partial class BuildRunController
             }
             return Said(failed);
         }
-        string? following = Started(session.Runner.Start(engine.Cli!, run.Logs, plan.Folder, Quiet));
+        string? following = Started(await session.Runner.StartAsync(engine.Cli!, run.Logs, plan.Folder, Quiet));
         if (following is not null)
         {
             await session.StopContainersAsync(run);

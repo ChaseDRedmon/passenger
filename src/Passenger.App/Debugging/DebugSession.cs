@@ -88,16 +88,9 @@ public sealed class DebugSession
     /// <summary>Why a start failed that was stopped (Stop, Detach, the window's close) before it was done.</summary>
     public const string StoppedStarting = "the session was stopped as it started";
 
-    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns, bool elsewhere,
-        AdapterPlace? place, bool quiet = false)
+    /// <summary>How the adapter starts: beside the app, or where the program is (a container's, over docker exec).</summary>
+    private static ProcessStartInfo AdapterStart(AdapterPlace? place, bool elsewhere)
     {
-        Elsewhere = elsewhere || place is not null;
-        this.place = place;
-        this.breakpoints = breakpoints;
-        this.lines = lines;
-        this.columns = columns ?? (_ => null);
-        // The log is called from the adapter's error stream and the connection's own threads: each line lands on the UI's.
-        log = UiThread.Marshal(log);
         ProcessStartInfo start;
         if (place is not null)
         {
@@ -127,7 +120,20 @@ public sealed class DebugSession
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        adapter = ChildProcesses.Start(start);
+        return start;
+    }
+
+    private DebugSession(Process adapter, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns,
+        bool elsewhere, AdapterPlace? place, bool quiet = false)
+    {
+        Elsewhere = elsewhere || place is not null;
+        this.place = place;
+        this.breakpoints = breakpoints;
+        this.lines = lines;
+        this.columns = columns ?? (_ => null);
+        // The log is called from the adapter's error stream and the connection's own threads: each line lands on the UI's.
+        log = UiThread.Marshal(log);
+        this.adapter = adapter;
         // What the adapter and the conversation say goes to the debugger's log as well as the console, so it outlives the session.
         string name = $"adapter {adapter.Id}";
         Action<string> console = log;
@@ -310,7 +316,10 @@ public sealed class DebugSession
         bool quiet = false)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere, place, quiet) { Program = program, Attached = request == DapCommands.Attach };
+        // The adapter's fork off the window's thread (#441); Stop meanwhile finds the tab still opening, which its session
+        // closes as it is handed over.
+        Process adapter = await ChildProcesses.StartAsync(AdapterStart(place, elsewhere));
+        DebugSession session = new(adapter, breakpoints, lines, log, output, columns, elsewhere, place, quiet) { Program = program, Attached = request == DapCommands.Attach };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         if (runInTerminal is not null)
         {

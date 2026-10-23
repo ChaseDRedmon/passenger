@@ -657,9 +657,10 @@ public sealed partial class BuildRunController
             parts.Dock.Show(ToolWindowIds.Run);
             parts.Say(running);
             WatchBindings(inspected, parts.Views.Run);
+            // Its fork off the window's thread (#441): the program runs from now as Stop and IsRunning see it, its id known once started.
             string? notStarted = Started(watched
-                ? session.Runner.StartDotnet(Watch(plan), plan.WorkingDirectory, variables)
-                : session.Runner.Start(plan.Program, plan.Arguments, plan.WorkingDirectory, variables));
+                ? await session.Runner.StartDotnetAsync(Watch(plan), plan.WorkingDirectory, variables)
+                : await session.Runner.StartAsync(plan.Program, plan.Arguments, plan.WorkingDirectory, variables));
             if (notStarted is null)
             {
                 parts.OpenBrowser(plan, session.Runner.Ended);
