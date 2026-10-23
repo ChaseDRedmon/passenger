@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Explorer;
@@ -32,6 +34,12 @@ public sealed class ConfigurationTests : IClassFixture<ConfigurationTests.Projec
         try
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
+            // A key's card says what the code reads it as.
+            string card = Hover(window, "\"Region\"");
+            Assert.True(card.Contains("Payments:Region: string (PaymentOptions.Region)", StringComparison.Ordinal), $"Region's card: {card}");
+            card = Hover(window, "\"Mode\"");
+            Assert.True(card.Contains("One of Test, Live", StringComparison.Ordinal), $"Mode's card: {card}");
+            Ui.Press(window, "ESCAPE");
             Ui.PlaceAfter(editor, "\"Payments\": {");
             Ui.Run(window, AppActions.Complete);
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Enabled"), "the options class's keys to be offered in its section");
@@ -81,6 +89,14 @@ public sealed class ConfigurationTests : IClassFixture<ConfigurationTests.Projec
             window.OpenFile(project.PathOf("Shop/Program.cs"));
             Ui.Settle();
             GoesTo(window, "Configuration[\"Payments:Reg", "appsettings.json", "\"Region\": \"eu\"");
+
+            // An agent's definition of the key goes where the window's goes.
+            int line = Project.Settings.Split('\n').ToList().FindIndex(l => l.Contains("\"Host\"", StringComparison.Ordinal)) + 1;
+            Passenger.App.Mcp.PassengerTools agent = new(window);
+            IReadOnlyList<Passenger.App.Mcp.Place> places = Ui.Await(agent.Definition("Shop/appsettings.json", line, 7), "an agent's definition of Mail:Host");
+            Passenger.App.Mcp.Place place = Assert.Single(places);
+            Assert.True(place.Path.EndsWith("Options.cs", StringComparison.Ordinal) && place.Text.Contains("public string Host", StringComparison.Ordinal),
+                $"The agent's definition of Mail:Host went to {place.Path}:{place.Line}: {place.Text}");
         }
         finally
         {
@@ -136,6 +152,10 @@ public sealed class ConfigurationTests : IClassFixture<ConfigurationTests.Projec
             // Shop:Banner's, which undo brought back, stays.
             Ui.WaitFor(() => Missing(window).SetEquals(["Shop:Banner"]), $"the secret's warning to go once user secrets give it: {string.Join(", ", Missing(window))}");
             Assert.DoesNotContain("s3cret-value", window.Status ?? string.Empty, StringComparison.Ordinal);
+            // The read's card says where the key is given, a user secret's value as dots.
+            string card = Hover(window, "Payments:ApiKey\"");
+            Assert.True(card.Contains("user secrets = ••••••", StringComparison.Ordinal) && !card.Contains("s3cret-value", StringComparison.Ordinal),
+                $"The read's card did not say the user secret masked: {card}");
             Ui.Run(window, AppActions.FocusExplorer);
             Ui.Run(window, EditorActions.Undo);
             Ui.WaitFor(() => File.ReadAllText(projectFile) == writtenProject && !File.Exists(secrets), "undo to take back the UserSecretsId and the secrets it made");
@@ -236,6 +256,20 @@ public sealed class ConfigurationTests : IClassFixture<ConfigurationTests.Projec
     }
 
     private static string? ProjectEditsPropertyIn(string text) => Passenger.App.Workspace.ProjectEdits.PropertyIn(text, "UserSecretsId");
+
+    /// <summary>The card shown with the pointer resting on some text of the editor's.</summary>
+    private static string Hover(MainWindow window, string text)
+    {
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.Press(window, "ESCAPE");
+        window.MouseMove(new Point(0, 0), RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is null, "the last card to go");
+        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal) + 1;
+        Point point = editor.TranslatePoint(editor.PointOf(at) + new Point(1, editor.LineHeight / 2), window)!.Value;
+        window.MouseMove(point, RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, $"the card on {text}");
+        return window.Assist.HoverText!;
+    }
 
     public sealed class Project : SharedProject
     {

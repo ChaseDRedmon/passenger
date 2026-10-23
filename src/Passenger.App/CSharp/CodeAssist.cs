@@ -1147,6 +1147,15 @@ public sealed partial class CodeAssist
                 // The card says what the markers there say, without the symbol's description.
             }
         }
+        // A configuration key's: where a read's is given and with what, or what reads a settings file's.
+        if (debuggerValue is null && XamlCurrent is null && MSBuildCurrent is null && await ConfigurationHoverAsync(offset, cancel.Token) is { } configured)
+        {
+            if (cancel.IsCancellationRequested)
+            {
+                return;
+            }
+            hoverCard.AddText(configured);
+        }
         if ((hoverCard.IsEmpty && values is null) || completion.IsVisible)
         {
             hoverCard.IsVisible = false;

@@ -151,6 +151,11 @@ public sealed partial class PassengerTools
     /// <summary>Go to Declaration in JSON, whose server has none: a package.json dependency's package, a script's run.</summary>
     private async Task<IReadOnlyList<Place>> JsonDefinition(ServerServed json, int offset, CancellationToken cancel)
     {
+        // A settings file's key: the options property it sets, else what reads it, as the window's goes.
+        if (await window.Assist.SettingsDeclarationsAsync(json.Document, offset) is { } settings)
+        {
+            return await PlacesOf(settings, cancel);
+        }
         ((string Path, TextPosition Position)? place, string said) = await CodeAssist.JsonDeclarationAsync(json.Lsp, json.Document, offset);
         return place is { } found ? await PlacesOf([found], cancel)
             : said == CodeAssist.NoDeclaration ? []
@@ -184,8 +189,8 @@ public sealed partial class PassengerTools
             ? await PlacesOf([place], cancel) : null;
 
     /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, a file reading what an open compose
-    /// file's service lacks too, so the fixes Passenger offers on Aspire's and Compose's warnings stand on the text as the
-    /// agent wrote it, not on a pull still to come.</summary>
+    /// file's service lacks or one that may read configuration too, so the fixes Passenger offers on Aspire's, Compose's and
+    /// a configuration key's warnings stand on the text as the agent wrote it, not on a pull still to come.</summary>
     private async Task AspireMarked(Served served, CancellationToken cancel)
     {
         if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { } csharp

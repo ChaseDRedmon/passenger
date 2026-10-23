@@ -170,24 +170,47 @@ public sealed partial class CodeAssist
     /// that reads it or binds its section; false where the caret is on no key, for the JSON server's.</summary>
     private async Task<bool> SettingsGoTo(OpenDocument document, IReadOnlyList<ConfigurationProject> projects, int offset)
     {
-        if (SettingsKeyAt(document.Text.Snapshot.ToString(), offset) is not { } key)
+        if (await SettingsDeclaredAsync(document, projects, offset) is not (string key, IReadOnlyList<ConfigurationKey> declared))
         {
             return false;
         }
-        IReadOnlyList<ConfigurationKey> found = await KeysOfAsync(projects);
         if (editors.Active != document)
         {
             return true;
         }
-        string[] segments = key.Split(':');
-        ConfigurationKey[] declared = [.. found.Where(k => k.Path is not null && k.At is not null && k.End is not null && k.Key.Length > 0
-                && (k.Kind == ConfigurationKinds.Option ? ConfigurationFiles.Matches(k.Key, segments) : k.Key.Equals(key, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(k => k.Kind switch { ConfigurationKinds.Option => 0, ConfigurationKinds.Binding => 1, _ => 2 })
-            .DistinctBy(k => (k.Path, k.At!.Line, k.At.Character))];
         string names = string.Join(" or ", projects.Select(p => p.Name));
         Go([.. declared.Select(k => new LspLocation(DocumentUris.FromPath(k.Path!), new LspRange(new LspPosition(k.At!.Line, k.At.Character), new LspPosition(k.End!.Line, k.End.Character))))],
             offset, "Declarations", $"No code of {names} reads {key}", [.. declared.Select(k => (string?)(k.Owner ?? $"{k.Key} ({k.Kind})"))]);
         return true;
+    }
+
+    /// <summary>The key at an offset of a settings file and what declares it in the projects' code: the options properties it
+    /// sets first, then the bindings of its section, then the reads; null where the offset is on no key.</summary>
+    private async Task<(string Key, IReadOnlyList<ConfigurationKey> Declared)?> SettingsDeclaredAsync(OpenDocument document, IReadOnlyList<ConfigurationProject> projects, int offset)
+    {
+        if (SettingsKeyAt(document.Text.Snapshot.ToString(), offset) is not { } key)
+        {
+            return null;
+        }
+        IReadOnlyList<ConfigurationKey> found = await KeysOfAsync(projects);
+        string[] segments = key.Split(':');
+        return (key, [.. found.Where(k => k.Path is not null && k.At is not null && k.End is not null && k.Key.Length > 0
+                && (k.Kind == ConfigurationKinds.Option ? ConfigurationFiles.Matches(k.Key, segments) : k.Key.Equals(key, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(k => k.Kind switch { ConfigurationKinds.Option => 0, ConfigurationKinds.Binding => 1, _ => 2 })
+            .DistinctBy(k => (k.Path, k.At!.Line, k.At.Character))]);
+    }
+
+    /// <summary>Where Go to Declaration goes from a key of a settings file or a secrets.json, at the editor's lines; null for
+    /// any other file or where no key is. Shared with the agents' definition.</summary>
+    internal async Task<IReadOnlyList<(string Path, TextPosition Position)>?> SettingsDeclarationsAsync(OpenDocument document, int offset)
+    {
+        if (ConfiguredBy?.Invoke(document.Path) is not { Count: > 0 } projects
+            || await SettingsDeclaredAsync(document, projects, offset) is not (_, IReadOnlyList<ConfigurationKey> declared))
+        {
+            return null;
+        }
+        Func<string, TextSnapshot?> texts = ServerPlaces.Texts(editors);
+        return [.. declared.Select(k => (k.Path!, ServerPlaces.PositionOf(texts(k.Path!), new LspPosition(k.At!.Line, k.At.Character))))];
     }
 
     /// <summary>The key whose name, or whose value, an offset of a configuration file is on, its sections joined by ':'.</summary>
@@ -220,17 +243,7 @@ public sealed partial class CodeAssist
     /// is on no read of the project's, for the server's own. Only a string's place asks.</summary>
     private async Task<bool> ConfigurationGoTo(LspDocument lsp, int offset)
     {
-        if (editors.Active is not { } document || Syntax is not { } parsed || !ReferenceEquals(parsed.Text, Editor.Document.Snapshot)
-            || !parsed.Root.FindToken(Math.Max(0, offset - 1)).IsKind(SyntaxKind.StringLiteralToken) && !parsed.Root.FindToken(offset).IsKind(SyntaxKind.StringLiteralToken)
-            || ConfigurationOf?.Invoke(document.Path) is not { } project)
-        {
-            return false;
-        }
-        LspPosition at = lsp.PositionOf(offset);
-        IReadOnlyList<ConfigurationKey> keys = await KeysOfAsync([project]);
-        if (keys.FirstOrDefault(k => k.Kind is ConfigurationKinds.Read or ConfigurationKinds.Section or ConfigurationKinds.Binding && k.Key.Length > 0
-            && k.Path is { } path && Passenger.Core.PathNames.Same(path, document.Path) && k.At is { } start && k.End is { } end
-            && start.Line == at.Line && start.Character <= at.Character && at.Character <= end.Character) is not { } read)
+        if (editors.Active is not { } document || await ReadAtAsync(lsp, document, offset) is not ({ } project, { } read))
         {
             return false;
         }
@@ -257,6 +270,55 @@ public sealed partial class CodeAssist
         Go([.. given.Select(g => g.Place)], offset, "Declarations", $"Nothing {project.Name} runs with gives {read.Key}",
             [.. given.Select(g => (string?)$"{Path.GetFileName(g.Given.File)}: {g.Given.Key} = {g.Given.Shown}")]);
         return true;
+    }
+
+    /// <summary>The read of a configuration key whose string an offset of a C# file is in, with its project's configuration; null
+    /// elsewhere, and asking nothing where the offset is in no string.</summary>
+    private async Task<(ConfigurationProject Project, ConfigurationKey Read)?> ReadAtAsync(LspDocument lsp, OpenDocument document, int offset, CancellationToken cancel = default)
+    {
+        if (Syntax is not { } parsed || !ReferenceEquals(parsed.Text, Editor.Document.Snapshot)
+            || !parsed.Root.FindToken(Math.Max(0, offset - 1)).IsKind(SyntaxKind.StringLiteralToken) && !parsed.Root.FindToken(offset).IsKind(SyntaxKind.StringLiteralToken)
+            || ConfigurationOf?.Invoke(document.Path) is not { } project)
+        {
+            return null;
+        }
+        LspPosition at = lsp.PositionOf(offset);
+        IReadOnlyList<ConfigurationKey> keys = await KeysOfAsync([project], cancel);
+        return keys.FirstOrDefault(k => k.Kind is ConfigurationKinds.Read or ConfigurationKinds.Section or ConfigurationKinds.Binding && k.Key.Length > 0
+            && k.Path is { } path && Passenger.Core.PathNames.Same(path, document.Path) && k.At is { } start && k.End is { } end
+            && start.Line == at.Line && start.Character <= at.Character && at.Character <= end.Character) is { } read ? (project, read) : null;
+    }
+
+    /// <summary>What the hover card says of a configuration key: on a read in C#, the key and where each file the project runs
+    /// with gives it with its value (a user secret's always as dots, any other masked by Passenger's rule for secrets), or that
+    /// nothing does; on a key in a settings file, the type the code reads it as and what declares it. None elsewhere.</summary>
+    private async Task<string?> ConfigurationHoverAsync(int offset, CancellationToken cancel)
+    {
+        if (editors.Active is not { } document)
+        {
+            return null;
+        }
+        if (WebCurrent is { Kind: WebServerKind.Json } && ConfiguredBy?.Invoke(document.Path) is { Count: > 0 } projects)
+        {
+            if (SettingsKeyAt(document.Text.Snapshot.ToString(), offset) is not { } key)
+            {
+                return null;
+            }
+            string[] segments = key.Split(':');
+            ConfigurationKey? read = (await KeysOfAsync(projects, cancel)).Where(k => k.Kind == ConfigurationKinds.Option ? ConfigurationFiles.Matches(k.Key, segments)
+                : k.Key.Equals(key, StringComparison.OrdinalIgnoreCase)).OrderBy(k => k.Kind == ConfigurationKinds.Option ? 0 : 1).FirstOrDefault();
+            return read is null ? null : $"{key}: {read.TypeName}" + (read.Owner is { } owner ? $" ({owner})" : read.Kind == ConfigurationKinds.Read ? " (read by the code)" : string.Empty)
+                + (read.Values is { Count: > 0 } names ? $"\nOne of {string.Join(", ", names)}" : string.Empty);
+        }
+        if (WebCurrent is not null || service()?.For(document)?.Lsp is not { } lsp || await ReadAtAsync(lsp, document, offset, cancel) is not ({ } project, { } found))
+        {
+            return null;
+        }
+        Func<string, string?> text = service()?.Texts?.Invoke() ?? ConfigurationFiles.Disk;
+        IReadOnlyList<GivenKey> given = await BackgroundWork.Run(() => ConfigurationFiles.Where(ConfigurationFiles.Given(project, text), found.Key, found.Kind != ConfigurationKinds.Read));
+        return given.Count == 0 ? $"{found.Key}: given by nothing {project.Name} runs with"
+            : $"{found.Key}:\n" + string.Join('\n', given.Select(g => $"{(g.By == GivenBy.UserSecrets ? "user secrets" : Path.GetFileName(g.File))}"
+                + (g.Key.Equals(found.Key, StringComparison.OrdinalIgnoreCase) ? string.Empty : $" ({g.Key})") + (g.Value is null ? string.Empty : $" = {g.Shown}")));
     }
 
     /// <summary>The fixes of a C# file's warnings, on an offset's line, that nothing gives a configuration key it reads
