@@ -241,6 +241,24 @@ public partial class MainWindow
             // how it stands, and container_action runs its commands.
             return null;
         }
+        if (action is "run" or "debug" && previous is null && StartOf(fresh.Resource) is null
+            && fresh.Resource.State is not ("Finished" or "Exited" or "FailedToStart"))
+        {
+            // Stopped a moment ago (an agent's stop, then run): its AppHost advertises its start only once its stream has the
+            // stop, which on a loaded machine comes a while after the program has gone.
+            try
+            {
+                AspireResource startable = await FollowAspireAsync(current, app, resources => Task.FromResult(
+                        resources.FirstOrDefault(resource => resource.Name == fresh.Resource.Name && StartOf(resource) is not null)),
+                    Waits.Of(TimeSpan.FromSeconds(30)), "its start command", cancel);
+                CheckAspireToolTarget(current, app);
+                fresh = new AspireSelection(fresh.AppHostPath, startable);
+            }
+            catch (TimeoutException)
+            {
+                // Refused below as it stands, naming the command it lacks.
+            }
+        }
         string? problem = action switch
         {
             "run" => await RestartAspireServiceAsync(current, fresh, debugging: false, cancel),

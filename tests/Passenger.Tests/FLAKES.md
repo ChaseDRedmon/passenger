@@ -266,3 +266,9 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   after, the load still 25–37. Not explained: the message tailed only the test's own state, which an attached window
   never writes; it now tails the run's passenger.log and mcp.log too (the test turns protocol traces on), so a repeat says
   where the call waited.
+- `McpAspireTests`' windowless Passenger's end, the Mac's full run at 6c42dff1: the agent's `run` of `apiservice`, straight
+  after its `stop` and the API's process gone, was refused "apiservice … advertises no start command". The AppHost's
+  resource stream still had it stopping, with no start command yet, which a loaded machine's stream says a while after
+  the program has gone; two runs alone passed. **A race in the IDE**: an agent's run or debug of a resource that is no
+  service Passenger runs and is not yet finished now waits, on the resource stream, up to 30 s for its start command
+  (`RunAspireToolResourceAsync`), a finished one with none still refused at once.
