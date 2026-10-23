@@ -264,9 +264,10 @@ public sealed partial class AspireInteractions : IDisposable, IAsyncDisposable
         return (await upload.ResponseAsync.ConfigureAwait(false)).FileId;
     }
 
-    /// <summary>Collects typed command arguments, revalidating both the native snapshot and selection before execution.</summary>
+    /// <summary>Collects typed command arguments, revalidating both the native snapshot and selection before execution; its
+    /// confirmation asked of the person unless <paramref name="confirmed"/> (an agent's call, which is its own).</summary>
     public async Task<ResourceCommandResponse?> ExecuteCommandAsync(AspireClient snapshots, AspireSelection selected,
-        string commandName, Func<bool> isCurrent, CancellationToken cancel)
+        string commandName, Func<bool> isCurrent, CancellationToken cancel, bool confirmed = false)
     {
         using CancellationTokenSource operation = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellation);
         CancellationToken token = operation.Token;
@@ -280,7 +281,7 @@ public sealed partial class AspireInteractions : IDisposable, IAsyncDisposable
                 metadata = await ReadCommandAsync(selected.Resource.Name, commandName, token).ConfigureAwait(false);
             }
             (Resource resource, ResourceCommand command) = metadata;
-            if (command.HasConfirmationMessage && command.ConfirmationMessage.Length > 0
+            if (!confirmed && command.HasConfirmationMessage && command.ConfirmationMessage.Length > 0
                 && !await ConfirmAsync(command, token).ConfigureAwait(false))
             {
                 return null;

@@ -230,11 +230,17 @@ public partial class MainWindow
         {
             AspireResourceCommand command = fresh.Resource.Commands.SingleOrDefault(command => command.Enabled && command.Name is "stop" or "resource-stop")
                 ?? throw new InvalidOperationException("The resource does not advertise one enabled stop command");
-            await ExecuteAspireCommandAsync(current, fresh, command.Name, () => current.Aspire.FindApp(selection.AppHostPath) == app && !app.Stopping, cancel);
+            await ExecuteAspireCommandAsync(current, fresh, command.Name, () => current.Aspire.FindApp(selection.AppHostPath) == app && !app.Stopping, cancel, forAgent: true);
             return null;
         }
         AspireResourceRun? previous = action is "run" or "debug" ? current.Aspire.FindService(fresh)
             : null;
+        if (action == "run" && previous is null && AspireJson.String(fresh.Resource.Data, "resourceType") != "Project")
+        {
+            // A resource its AppHost runs itself (a container), as a compose file's backing service is its run's: run answers
+            // how it stands, and container_action runs its commands.
+            return null;
+        }
         string? problem = action switch
         {
             "run" => await RestartAspireServiceAsync(current, fresh, debugging: false, cancel),

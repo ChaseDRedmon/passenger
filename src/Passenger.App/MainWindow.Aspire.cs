@@ -253,6 +253,9 @@ public partial class MainWindow
         return new(AspireClient.CanonicalAppHost(appHost), selected);
     }
 
+    /// <summary>An agent's run of an AppHost resource's command (container_action), as the Aspire window's menu runs it but
+    /// asking no one: the agent's call is its confirmation, as an agent's run asks no one about the certificate, and a command
+    /// that asks for input the person gives is refused. What it answered, its output after it; a failure is thrown.</summary>
     public async Task<string> ExecuteAspireResourceCommandAsync(string appHost, string resource, string command, CancellationToken cancel = default)
     {
         ProjectSession current = session;
@@ -261,23 +264,26 @@ public partial class MainWindow
         {
             throw new InvalidOperationException("The solution was closed");
         }
-        return await ResourceCommandAsync(current, selection, command, () => true, cancel);
+        return await ResourceCommandAsync(current, selection, command, () => true, cancel, forAgent: true);
     }
 
     /// <summary>A resource command a person or an agent runs: Restart of a .NET service of the AppHost the window runs goes
     /// through its run of services, as a container's Restart does (its session ended first, held again where debugged, one
-    /// attached as it ran attached again); any other goes to the AppHost. What it said, else throws why not.</summary>
-    private async Task<string> ResourceCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel)
+    /// attached as it ran attached again); any other goes to the AppHost, an agent's asking no one. What it said, else throws
+    /// why not.</summary>
+    private async Task<string> ResourceCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel,
+        bool forAgent = false)
     {
         if (command is "restart" or "resource-restart" && current.Aspire.FindService(selection) is IRunService service
             && current.Aspire.FindApp(selection.AppHostPath) is { IsTest: false } app)
         {
             return await buildRun.RestartServiceAsync(app, service.Name) is { } failed ? throw new InvalidOperationException(failed) : $"{app.Name}: restarted {service.Name}";
         }
-        return await ExecuteAspireCommandAsync(current, selection, command, isCurrent, cancel);
+        return await ExecuteAspireCommandAsync(current, selection, command, isCurrent, cancel, forAgent);
     }
 
-    private async Task<string> ExecuteAspireCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel)
+    private async Task<string> ExecuteAspireCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel,
+        bool forAgent = false)
     {
         if (session != current || current.IsEnded || !isCurrent())
         {
@@ -285,6 +291,10 @@ public partial class MainWindow
         }
         AspireResourceCommand advertised = selection.Resource.Commands.FirstOrDefault(candidate => candidate.Name == command)
             ?? throw new InvalidOperationException("The resource does not advertise this command");
+        if (forAgent && advertised.HasArguments)
+        {
+            throw new InvalidOperationException($"{advertised.DisplayName} asks for input the person gives: it runs from the Aspire window");
+        }
         AspireAppRun? app = current.Aspire.FindApp(selection.AppHostPath);
         if (app?.Interactions is not { } connection)
         {
@@ -296,13 +306,14 @@ public partial class MainWindow
             return "Resource command completed";
         }
         ResourceCommandResponse? result = await connection.ExecuteCommandAsync(AspireCli(), selection, command,
-            () => session == current && !current.IsEnded && isCurrent(), cancel);
+            () => session == current && !current.IsEnded && isCurrent(), cancel, confirmed: forAgent);
         if (result is null)
         {
             return "Resource command canceled";
         }
         ShowAspireCommandResult(app, command, result);
-        return $"{result.Kind}: {result.Message}";
+        return $"{result.Kind}{(result.Message.Length > 0 ? $": {result.Message}" : string.Empty)}"
+            + (result.Result is { Value.Length: > 0 } output ? $"\n{output.Value}" : string.Empty);
     }
 
     private static void ShowAspireCommandResult(AspireAppRun app, string command, ResourceCommandResponse result)

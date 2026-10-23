@@ -239,7 +239,7 @@ public sealed partial class PassengerTools
         "longest, measure, arrange, render and compositor totals, the layout table by control type with the heaviest controls " +
         "and their XAML lines, and the longest frame's breakdown (or 0 and why). With attach, Attach Profiler instead: the " +
         "debugged program, else Run's, or with container the .NET program in it (debug_processes lists them), from now for " +
-        "seconds (else until it ends), left running. With resource, that Aspire resource or compose service as it runs.")]
+        "seconds (else until it ends), left running. With resource, that Aspire resource or compose service, its configuration started for it if none runs it.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -271,7 +271,7 @@ public sealed partial class PassengerTools
         AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler, AppActions.RunProgram);
         using (LaunchBuild built = new(Builds))
         {
-            Task<string?> started = resource is not null ? ComposeService(resource) is { } service ? window.ServiceActionAsync(AppActions.ServiceProfile, service) : ProfileAspireTarget()
+            Task<string?> started = resource is not null ? ProfileResource()
                 : !attach ? window.ProfileAsync(arguments)
                 : container is null ? window.AttachProfilerAsync()
                 : window.AttachProfilerAsync(await ProfiledIn(container));
@@ -351,6 +351,24 @@ public sealed partial class PassengerTools
             return PathNames.IsUnder(file, folder)
                 ? $"{Relative(file)}:{CSharp.ServerPlaces.PositionOfCompiled(file, texts(file), new Lsp.LspPosition(at.Line - 1, 0)).Line + 1}"
                 : null;
+        }
+
+        // A compose service as it runs, else its configuration started for it profiled; else an Aspire resource.
+        async Task<string?> ProfileResource()
+        {
+            if (await ComposeTargetAsync(resource!, configuration, starts: !attach, cancel) is { } compose)
+            {
+                return arguments is not null ? throw new ArgumentException("A compose service runs as its compose files say; omit arguments")
+                    : compose.Start is null ? await ProfileRunningServiceAsync(compose)
+                    : await StartComposeServiceAsync(compose, global::Passenger.App.Run.RunStart.Profile, cancel);
+            }
+            return await ProfileAspireTarget();
+        }
+
+        Task<string?> ProfileRunningServiceAsync(ComposeTarget compose)
+        {
+            Debuggable(compose, global::Passenger.App.Run.RunStart.Profile);
+            return window.ServiceActionAsync(AppActions.ServiceProfile, compose.Service);
         }
 
         async Task<string?> ProfileAspireTarget()

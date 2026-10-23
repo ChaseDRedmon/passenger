@@ -93,9 +93,10 @@ public sealed partial class PassengerTools
         return snapshot;
     }
 
-    /// <summary>What an agent's run of a resource answers once the resource is up (Running, and not Unhealthy where it reports
-    /// its health) or has ended, or waitSeconds have passed, following its AppHost's resource stream as it goes: how it and its
-    /// AppHost's other resources stand, and its own console. A start that failed is an error.</summary>
+    /// <summary>What an agent's run of a resource answers once the resource is up or has ended, or waitSeconds have passed,
+    /// following its AppHost's resource stream as it goes, in the shape a compose service's run answers
+    /// (<see cref="ResourceAnswer"/>): how it and its AppHost's other resources stand, and its own console. A start that
+    /// failed is an error.</summary>
     private async Task<RunResult> AspireResourceUpAsync(AspireSelection target, int waitSeconds, CancellationToken cancel)
     {
         ProjectSession current = Session;
@@ -107,7 +108,7 @@ public sealed partial class PassengerTools
         try
         {
             resources = await window.FollowAspireAsync(current, app, now => Task.FromResult(now.FirstOrDefault(resource => resource.Name == name) is { } it
-                && (IsUp(it) || HasEnded(it)) ? now : null), TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), $"{name} is not up yet", cancel);
+                && (StandingOf(app, it).IsUp || StandingOf(app, it).HasEnded) ? now : null), TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), $"{name} is not up yet", cancel);
         }
         catch (TimeoutException)
         {
@@ -118,34 +119,35 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException("The workspace or owned AppHost changed");
         }
         AspireResource? resource = resources.FirstOrDefault(resource => resource.Name == name);
-        string states = string.Join('\n', resources.Where(shown => !(shown.Data.TryGetProperty("isHidden", out JsonElement hidden) && hidden.ValueKind == JsonValueKind.True))
-            .Select(shown => $"  {shown.Name}: {app.StateOf(shown) ?? "Unknown"}{(shown.State == "Running" && shown.HealthStatus is { } health ? $" ({health})" : string.Empty)}"));
         AspireResourceRun? service = app.Services.Where(run => ((IRunService)run).Name == name).MaxBy(run => run.Sequence);
         service?.Console.Flush();
         string output = service is null ? string.Empty : Tail(service.Console.Document.Snapshot, 200);
         bool unstarted = resource is not null && app.IsLeftUnstarted(resource);
-        string status = resource is null ? $"{name} is no longer one of {app.Name}'s resources"
-            : unstarted ? $"{name} of {app.Name}: {AspireAppRun.NotStarted}. {AspireAppRun.NotStartedWhy}"
-            : IsUp(resource) ? $"{name} of {app.Name} is up"
-            : HasEnded(resource) ? $"{name} of {app.Name} ended: {resource.State}"
-            : $"{name} of {app.Name} is not up within {Math.Max(0, waitSeconds)} s: {resource.State ?? "Unknown"}{(resource.HealthStatus is { } said ? $" ({said})" : string.Empty)}";
-        status += $"\nResources of {app.Name}:\n{states}" + string.Concat(app.Notes.Select(note => $"\nNote: {note}"));
+        RunResult answer = ResourceAnswer(name, app.Name, "Resources", resource is null ? null : StandingOf(app, resource),
+            [.. resources.Where(shown => !(shown.Data.TryGetProperty("isHidden", out JsonElement hidden) && hidden.ValueKind == JsonValueKind.True))
+                .Select(shown => StandingOf(app, shown))], app.Notes, output, waitSeconds,
+            unstarted ? $"{AspireAppRun.NotStarted}. {AspireAppRun.NotStartedWhy}" : null);
         if (resource?.State == "FailedToStart" && !unstarted)
         {
-            throw new InvalidOperationException($"{status}\n{output}".TrimEnd());
+            throw new InvalidOperationException($"{answer.Status}\n{output}".TrimEnd());
         }
-        return new RunResult(resource is not null && !HasEnded(resource), resource is null ? null : ExitCode(resource), status, output);
-
-        static bool IsUp(AspireResource resource) => resource.State == "Running" && resource.HealthStatus is not "Unhealthy";
-        static bool HasEnded(AspireResource resource) => resource.State is "Exited" or "Finished" or "FailedToStart";
-        static int? ExitCode(AspireResource resource) => AspireJson.Properties(resource.Data, "properties")
-            .Where(property => property.Name == "resource.exitCode")
-            .Select(property => property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out int code) ? code
-                : property.Value.ValueKind == JsonValueKind.String && int.TryParse(property.Value.GetString(), out int said) ? said : (int?)null)
-            .FirstOrDefault();
+        return answer;
     }
 
-    private async Task<Workspace> AspireWorkspace(Workspace snapshot, CancellationToken cancel)
+    /// <summary>An AppHost's resource as its run's answer says it: its state (Not started where its run left it so), health and
+    /// exit code.</summary>
+    private static Standing StandingOf(AspireAppRun app, AspireResource resource) =>
+        new(resource.Name, resource.State, resource.HealthStatus, ExitCode(resource)) { Shown = app.StateOf(resource) };
+
+    private static int? ExitCode(AspireResource resource) => AspireJson.Properties(resource.Data, "properties")
+        .Where(property => property.Name == "resource.exitCode")
+        .Select(property => property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out int code) ? code
+            : property.Value.ValueKind == JsonValueKind.String && int.TryParse(property.Value.GetString(), out int said) ? said : (int?)null)
+        .FirstOrDefault();
+
+    /// <summary>The workspace with the runs of services under way: each AppHost the window started, with its resources, and
+    /// the container run, with its services, in the one shape (<see cref="ResourceInfo"/>).</summary>
+    private async Task<Workspace> RunsWorkspace(Workspace snapshot, CancellationToken cancel)
     {
         ProjectSession current = Session;
         List<AspireOwnedAppInfo> apps = [];
@@ -167,30 +169,85 @@ public sealed partial class PassengerTools
                 throw new InvalidOperationException("The workspace or owned AppHost changed");
             }
             apps.Add(new AspireOwnedAppInfo(app.Configuration.Project, app.ProcessId ?? 0, state, app.Group,
-                [.. resources.Select(resource => ResourceInfo(app, resource))]));
+                [.. resources.Select(resource => ResourceInfoOf(app, resource))]) { How = Words(app.How) });
         }
-        return snapshot with { AspireApps = apps };
+        ContainerRunInfo? containers = await ContainerRunInfoAsync(cancel);
+        if (Session != current || current.IsEnded)
+        {
+            throw new InvalidOperationException("The workspace changed");
+        }
+        return snapshot with { AspireApps = apps, ContainerRun = containers };
     }
 
     /// <summary>A resource as an agent's workspace has it, its state as the window says it (Not started for one its run
-    /// left unstarted, as its configuration says Don't start).</summary>
-    private static AspireResourceInfo ResourceInfo(AspireAppRun app, AspireResource resource) => new(resource.Name, resource.Generation,
-        resource.DisplayName, AspireJson.String(resource.Data, "resourceType"), app.StateOf(resource), resource.HealthStatus,
-        [.. AspireJson.Array(resource.Data, "urls").Select(url => JsonSerializer.SerializeToElement(new
+    /// left unstarted, as its configuration says Don't start), its container's id where it is one, and what reaches its .NET
+    /// service from here.</summary>
+    private ResourceInfo ResourceInfoOf(AspireAppRun app, AspireResource resource) => Reached(new ResourceInfo(resource.Name,
+        AspireJson.String(resource.Data, "resourceType"), app.StateOf(resource), resource.HealthStatus)
+    {
+        Target = $"{app.Configuration.Project}::{resource.Name}",
+        Generation = resource.Generation,
+        DisplayName = resource.DisplayName,
+        Urls = [.. AspireJson.Array(resource.Data, "urls").Select(url => JsonSerializer.SerializeToElement(new
         {
             name = AspireJson.String(url, "name"),
             url = SafeUrl(AspireJson.String(url, "url")),
-        }))], AspireJson.Array(resource.Data, "relationships"),
-        [.. resource.Commands.Where(command => command.Enabled).Select(command => command.Name)]) { Target = $"{app.Configuration.Project}::{resource.Name}" };
+        }))],
+        Relationships = AspireJson.Array(resource.Data, "relationships"),
+        Commands = [.. resource.Commands.Where(command => command.Enabled).Select(command => command.Name)],
+        Container = AspireJson.Properties(resource.Data, "properties").FirstOrDefault(property => property.Name == "container.id").Value
+            is { ValueKind: JsonValueKind.String } id ? id.GetString() : null,
+    }, app, Session.Aspire.FindService(new AspireSelection(app.Configuration.Project, resource)));
+
+    /// <summary>The AppHost resource command an agent's container_action names: an owned AppHost's resource, by its name or
+    /// target, and the command its action names (its own name, or start, stop or restart as Aspire's resource-… one); none
+    /// when it names no resource (a container), refused listing the resource's commands when it has none of that name.</summary>
+    private async Task<(string? AppHost, string? Resource, string? Command)> AspireCommandOfAsync(string container, string action, CancellationToken cancel)
+    {
+        bool qualified = container.Contains("::", StringComparison.Ordinal);
+        if (!qualified && !Session.Aspire.Apps.Any(app => !app.IsTest && !app.Stopping)
+            || await window.ResolveOwnedAspireResourceAsync(container, null, cancel, allowMissing: !qualified) is not { } selected)
+        {
+            return default;
+        }
+        AspireResourceCommand[] shown = [.. selected.Resource.Commands.Where(command => !command.Hidden)];
+        AspireResourceCommand named = shown.FirstOrDefault(command => command.Name == action) ?? shown.FirstOrDefault(command => command.Name == $"resource-{action}")
+            ?? throw new ArgumentException($"{selected.Resource.Name} has no command {action}: "
+                + (shown.Length == 0 ? "it has none" : $"its commands are {string.Join(", ", shown.Select(command => command.Name))}"));
+        return named.Enabled ? (selected.AppHostPath, selected.Resource.Name, named.Name)
+            : throw new InvalidOperationException($"{selected.Resource.Name}'s {named.Name} is not enabled now ({selected.Resource.State ?? "Unknown"})");
+    }
 
     private static string? SafeUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https"
         ? new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty, Query = string.Empty, Fragment = string.Empty }.Uri.AbsoluteUri : null;
 }
 
 public sealed record AspireAppInfo(string AppHostPath, int ProcessId, string State, bool Owned, string? Group);
-public sealed record AspireResourceInfo(string Name, string Generation, string DisplayName, string? Type, string? State,
-    string? Health, IReadOnlyList<JsonElement> Urls, IReadOnlyList<JsonElement> Relationships, IReadOnlyList<string> Commands)
+
+/// <summary>A resource of a run of services as an agent's workspace has it, an AppHost's resource and the container run's
+/// compose service alike: its name, type (Project for a .NET service), state and health, the target the tools' resource
+/// takes; an AppHost's generation, display name, addresses, relationships and enabled commands (container_action runs
+/// them), a compose service's published ports; its container (an id, or a compose service's container's name); and for a
+/// .NET service what reaches it from here: what it is held at its start for, the Debug tab debugging it (debug tools'
+/// session) and that session's state, and whether the profiler records it.</summary>
+public sealed record ResourceInfo(string Name, string? Type, string? State, string? Health)
 {
     public string? Target { get; init; }
+    public string? Generation { get; init; }
+    public string? DisplayName { get; init; }
+    public IReadOnlyList<JsonElement>? Urls { get; init; }
+    public string? Ports { get; init; }
+    public IReadOnlyList<JsonElement>? Relationships { get; init; }
+    public IReadOnlyList<string>? Commands { get; init; }
+    public string? Container { get; init; }
+    public string? Held { get; init; }
+    public string? Session { get; init; }
+    public string? Debugger { get; init; }
+    public bool? Profiled { get; init; }
 }
-public sealed record AspireOwnedAppInfo(string AppHostPath, int ProcessId, string State, string Group, IReadOnlyList<AspireResourceInfo> Resources);
+
+public sealed record AspireOwnedAppInfo(string AppHostPath, int ProcessId, string State, string Group, IReadOnlyList<ResourceInfo> Resources)
+{
+    /// <summary>How its run was started: run, debug, hotReload or profile.</summary>
+    public string? How { get; init; }
+}

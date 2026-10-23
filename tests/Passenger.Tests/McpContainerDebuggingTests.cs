@@ -22,6 +22,9 @@ public sealed class McpContainerDebuggingTests : McpRig
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentdebug");
         DeleteAtEnd(shop);
+        // A second Compose configuration whose files run web too, so a resource no run has names two.
+        File.WriteAllText(Path.Combine(shop, "Web", "compose.yaml"),
+            $"name: {project}web\nservices:\n  web:\n    build: {{ context: .., dockerfile: Web/Dockerfile }}\n    ports: [\"8080\"]\n");
         await using McpClient client = await Start(["--mcp", shop], languageServer: false);
         foreach (string app in (string[])["Web", "Api"])
         {
@@ -30,6 +33,17 @@ public sealed class McpContainerDebuggingTests : McpRig
         string? attached = null;
         try
         {
+            // No run has web and the chosen configuration is a project's: the two Compose configurations whose files have it
+            // are named rather than one guessed, and nothing starts.
+            JsonElement opened = await Call(client, "workspace");
+            Assert.False(opened.GetProperty("chosenConfiguration").GetString()!.StartsWith("Compose:", StringComparison.Ordinal), $"The chosen configuration: {opened}");
+            Assert.False(opened.TryGetProperty("containerRun", out _), $"workspace listed a container run before any: {opened}");
+            ModelContextProtocol.Protocol.CallToolResult which = await Result(client, "run", new() { ["resource"] = "web" });
+            Assert.True(which.IsError == true && Text(which).Contains("web is a service of 2 configurations", StringComparison.Ordinal)
+                && Text(which).Contains("Compose: compose.yaml", StringComparison.Ordinal) && Text(which).Contains("Compose: Web/compose.yaml", StringComparison.Ordinal),
+                $"run of a service two configurations have answered: {Text(which)}");
+            Assert.True(Docker.NoneLeft(project), "A refused run started containers");
+
             JsonElement stop = await Call(client, "debug_start", new() { ["configuration"] = "Compose: compose.yaml", ["waitSeconds"] = 120 });
             Assert.True(stop.TryGetProperty("sessions", out JsonElement sessions), $"debug_start of two services answered no sessions: {stop}");
             string[] each = [.. sessions.EnumerateArray().Select(s => s.GetString()!)];
@@ -37,6 +51,22 @@ public sealed class McpContainerDebuggingTests : McpRig
                 $"debug_start answered: {stop}");
             Assert.Equal("paused", stop.GetProperty("state").GetString());
             Assert.Contains("Program.cs:1:", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
+
+            // workspace lists the run beside the AppHosts, each service as a resource: the .NET ones held for the debugger, each
+            // debugged in its session, and the cache as Compose runs it.
+            JsonElement run = (await Call(client, "workspace")).GetProperty("containerRun");
+            Assert.Equal(("Compose: compose.yaml", project, "debug"),
+                (run.GetProperty("configuration").GetString(), run.GetProperty("project").GetString(), run.GetProperty("how").GetString()));
+            Dictionary<string, JsonElement> services = run.GetProperty("resources").EnumerateArray().ToDictionary(r => r.GetProperty("name").GetString()!);
+            foreach (string service in (string[])["web", "api"])
+            {
+                JsonElement it = services[service];
+                Assert.True((it.GetProperty("type").GetString(), it.GetProperty("state").GetString(), it.GetProperty("held").GetString(), it.GetProperty("session").GetString(),
+                    it.GetProperty("target").GetString()) == ("Project", "running", "debug", service, service)
+                    && it.GetProperty("debugger").GetString() is "paused" or "running", $"workspace listed {service} as {it}");
+            }
+            Assert.True((services["cache"].GetProperty("type").GetString(), services["cache"].GetProperty("state").GetString(), services["cache"].TryGetProperty("held", out _))
+                == ("Container", "running", false), $"workspace listed the cache as {services["cache"]}");
 
             // Each let go from Main's breakpoint once it has stopped there.
             foreach (string service in (string[])["web", "api"])
@@ -58,10 +88,23 @@ public sealed class McpContainerDebuggingTests : McpRig
 
             // An agent's resource names a compose service as an Aspire resource, through the run of services: run lets web's
             // session go, its program running on, and debug_attach attaches to it again as it runs.
+            // Answered as an AppHost's resource's run is: up, its run's services one line each, and its own log.
             JsonElement unheld = await Call(client, "run", new() { ["resource"] = "web" });
-            Assert.Contains("runs without the debugger", unheld.GetProperty("status").GetString(), StringComparison.Ordinal);
+            string said = unheld.GetProperty("status").GetString()!;
+            Assert.True(unheld.GetProperty("stillRunning").GetBoolean() && said.StartsWith("web of Compose: compose.yaml is up\nServices of Compose: compose.yaml:\n", StringComparison.Ordinal)
+                && said.Contains("\n  cache: running (healthy)", StringComparison.Ordinal) && said.Contains("\n  api: running", StringComparison.Ordinal), $"run of web answered: {unheld}");
+            JsonElement letGo = (await Call(client, "workspace")).GetProperty("containerRun").GetProperty("resources").EnumerateArray().Single(r => r.GetProperty("name").GetString() == "web");
+            Assert.False(letGo.TryGetProperty("held", out _) || letGo.TryGetProperty("session", out _), $"web, run without the debugger, is listed as {letGo}");
             JsonElement reattached = await Call(client, "debug_attach", new() { ["resource"] = "web", ["waitSeconds"] = 2 });
             Assert.True(reattached.GetProperty("state").GetString() is "running" or "paused", $"debug_attach of the compose service web answered: {reattached}");
+
+            // run_output reads a compose service's own log; telemetry says what to turn on for a run that collects none.
+            string log = string.Empty;
+            Assert.True(await Waiting.UntilAsync(async () => (log = Text(await Call(client, "run_output", new() { ["resource"] = "web" })))
+                .Contains("Application started", StringComparison.Ordinal), TimeSpan.FromMinutes(1), test), $"run_output of web never had its log: {log}");
+            ModelContextProtocol.Protocol.CallToolResult uncollected = await Result(client, "telemetry");
+            Assert.True(uncollected.IsError == true && Text(uncollected).Contains("Collect logs and traces with Aspire's dashboard", StringComparison.Ordinal),
+                $"telemetry of a run that collects none answered: {Text(uncollected)}");
 
             // Stop through the run: api's session ends before its container goes, which an adapter losing it would make an error.
             Assert.Equal($"{project}/api: stop done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/api", ["action"] = "stop" })));
@@ -75,6 +118,24 @@ public sealed class McpContainerDebuggingTests : McpRig
             Assert.Equal("Stopped", Text(await Call(client, "stop")));
             Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken), "stop left the configuration's containers behind");
+
+            // With no run, a resource starts the configuration that has it, now the chosen one, as the gutter's icon starts a
+            // service: web with what it depends on, answered once it is up; then debug_start of api, which that run does not
+            // start, ends it and starts api's own, stopped in Main.
+            JsonElement started = await Call(client, "run", new() { ["resource"] = "web", ["waitSeconds"] = 60 });
+            string up = started.GetProperty("status").GetString()!;
+            Assert.True(started.GetProperty("stillRunning").GetBoolean() && up.StartsWith("web of Compose: compose.yaml: web is up\n", StringComparison.Ordinal)
+                && up.Contains("\n  cache: running (healthy)", StringComparison.Ordinal) && up.Contains("\n  api: Not started", StringComparison.Ordinal),
+                $"run of web with no run under way answered: {started}");
+            Assert.False(ContainerRunsTests.States(project).ContainsKey("api"), "run of web started api too");
+            JsonElement apiStop = await Call(client, "debug_start", new() { ["resource"] = "api", ["waitSeconds"] = 120 });
+            Assert.True(apiStop.GetProperty("state").GetString() == "paused" && apiStop.GetProperty("location").GetString()!.Contains("Program.cs:1:", StringComparison.Ordinal),
+                $"debug_start of api with no run under way that starts it answered: {apiStop}");
+            Dictionary<string, string> states = ContainerRunsTests.States(project);
+            Assert.True(states.GetValueOrDefault("api") == "running" && !states.ContainsKey("web"), $"debug_start of api left these: {string.Join(", ", states)}");
+            Assert.Equal("Stopped", Text(await Call(client, "stop")));
+            Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2),
+                TestContext.Current.CancellationToken), "stop left the service's run's containers behind");
 
             // A program in a container Passenger did not start: listed by its container, attached to there.
             string output = Path.Combine(shop, "Web", "bin", "Debug", TestProjects.Framework);

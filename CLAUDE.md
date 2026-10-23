@@ -7,7 +7,7 @@ Guidance for Claude Code working in this repository.
 **Passenger** is an IDE for C# and modern .NET (CoreCLR only: no .NET Framework, Mono or Unity), written in C# on
 .NET 11 with an Avalonia 12 UI, for Windows and macOS first. The MVP shipped as v0.1.0; the work to do is the issues
 of the release in progress, a milestone and a branch of its name (0.2.0 now:
-https://github.com/Zaneris/passenger/milestone/3), with the features waiting beyond it in Post-MVP 1
+https://github.com/Zaneris/passenger/milestone/3), with the features waiting beyond it in the Backlog
 (https://github.com/Zaneris/passenger/milestone/2), each issue saying what Passenger does now, what it should do and
 when it is done (**Now:**, **The aim:**, **Done when:**). Read the issue before starting anything larger than a fix, and
 close or tick it when it lands. A new feature is the best Passenger can make it from what
@@ -577,7 +577,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   only the services whose project holds it, in the run whose sessions the edit names (`RestartServicesForEditAsync`). The
   window's service rows (the Containers window's and the Aspire window's), the gutter's menus and an agent's `resource` (an
   Aspire resource, or the container run's compose service, on run, debug_start, debug_attach, profile and stop:
-  `PassengerTools.Services.cs`) all reach those. A kind supplies only what is its own: how its services restart
+  `PassengerTools.Services.cs`; with no run under way that has a compose service, run, debug_start and profile start the
+  configuration that has it as the gutter's icon does, `MainWindow.RunTarget`) all reach those. A kind supplies only what is its own: how its services restart
   (`RestartAsync`, built between their stop and start where `build` asks it of a kind that builds then), how a hold chosen
   takes effect at their next start (`HoldsChangedAsync`), where a service's program is for the debugger and the profiler
   (`ProgramAsync`, a `ServiceProgram`: its id there, the adapter's `AdapterPlace`, the profiler's `ProfilePlace`, its
@@ -1052,10 +1053,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
   `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
   (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `run_output` with it reads a service's
-  own console, `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
+  own console (a compose service's log), `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
   ended, or that sends no resources within 30 s, with that as its state and none listed:
-  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation), and `telemetry` reads
-  their logs and traces.
+  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation) beside the container run, each
+  resource in one shape with what reaches its .NET service from here (its container's id too), `container_action` given a
+  resource runs one of its advertised commands, and `telemetry` reads their logs and traces (Mcp below).
 - `src/Passenger.App/Telemetry` (#405): a run's structured logs and traces, one implementation for every kind of run.
   `ServiceRun.Telemetry` is where a run's are read (`TelemetrySource`: an Aspire dashboard's telemetry API on this machine
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
@@ -1069,7 +1071,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   records alone (`TelemetrySource.Of`), there because the Containers window is where a run's services are chosen and
   their logs read already, where the Run window shows one console and chooses no service. An agent's `telemetry` (not
   named for Aspire: `PassengerTools.Telemetry.cs`) reads the same: a Compose service of the container run that collects
-  telemetry by its name, an AppHost's resource or AppHost, or the one run there is.
+  telemetry by its name, an AppHost's resource or AppHost, or the one run there is; a container run that collects none,
+  named by a service of it or the only run, is refused saying to turn its configuration's Collect logs and traces on.
   A container run collects telemetry when its configuration's Collect logs and traces is on (Edit Configurations'
   Compose, Dockerfile and SDK container pages, `RunConfiguration.Telemetry`, off by default since its image is pulled
   the first time; the image is never pulled otherwise): `ContainerTelemetry` puts Aspire's standalone dashboard
@@ -1191,7 +1194,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty, which tells a program's end from
   the spawn on, so the start looks once more after listening: `sh -c "exit 3"` can end first); on Windows PowerShell is
   told `HISTFILE` as PSReadLine's `HistorySavePath` before its first prompt, so a test's or screenshot's never reaches
-  the person's history. `MainWindow.Terminal.cs` is its
+  the person's history. Off Windows the shell is told its folder as its PWD, never the IDE's inherited one, which a shell
+  keeps where it names that folder through a link (Passenger started from a shell there) and dotnet builds by: a build
+  through another spelling of a project's path after one by its real path, the IDE's, has MSBuild's IncrementalClean
+  delete what the first wrote and it did not write again, runtimeconfig.json and deps.json among them, so the program no
+  longer starts (exit code 131, #413). `MainWindow.Terminal.cs` is its
   tool window and the keys it takes ahead of the IDE's (a Ctrl+letter always, the shell's control character, whatever
   action a keymap gives it).
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
@@ -1226,7 +1233,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   Part puts the folder's edit back on Undo (`MainWindow.WriteToLaunchProfile`, `RunConfigurations.Rebase`); what the file
   has no place for (the framework, console, building first, a variable its application URL gives) stays the folder's.
   `LaunchPlan.ResolveAsync` works one out once, in one request of the project host, into what Run,
-  Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
+  Debug, Profile, Hot Reload and a debugged test host start (its build, `BuildStep`, by the project's real path, with
+  `--framework` only for a project of several frameworks or a configuration that chose one), and `RunConfigurationsDialog` is Run > Edit
   Configurations. While a run of a configuration is up (Run's program or container run while the Run console or the
   terminal has it, `ran` forgotten as it ends, a session Debug launched for it, Profile's program:
   `BuildRunController.IsRunningConfiguration`; an AppHost's by its own run), the toolbar, its chooser and Edit Configurations' row say
@@ -1468,7 +1476,25 @@ window or takes the focus; it shows everything but the system's own window chrom
   window's `SettingsRestart`, an agent's `RestartForAgentAsync`, which never asks; under dotnet watch, `SaveForWatchAsync`'s
   last word); the headless `--mcp` IDE
   starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
-  container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests`' actions
+  container configuration debugs each service in a session of its own, answering with them (`sessions`). An agent gets as much
+  from a container run's services as from an AppHost's resources (`PassengerTools.Services.cs`): `workspace` lists the
+  container run beside the AppHosts (`ContainerRunInfo`: its configuration, Compose project, how it was started, state),
+  every resource of either in one shape (`ResourceInfo`; for a .NET service `Reached`: what it is held at its start for,
+  the live Debug tab debugging it and its state, a quiet Hot Reload session, the profiler's recording). A compose
+  `resource` no run has is started with the configuration that has it, the one named, else the chosen one, else the one
+  Compose configuration whose model has it (`ComposeTargetAsync`, refused naming them when several do, and for attach and
+  stop refused saying no run has it). `run` of a resource of either kind answers once it is up (running, and not unhealthy
+  or still starting its health check), has ended or waitSeconds pass, with its run's resources one line each, its notes
+  and its own console (`ResourceAnswer`, `Standing`: an AppHost's waited on through its resource stream, a compose
+  service's through the engine's events), one its run runs itself (a backing service, an AppHost's container) run by
+  nothing and answered as it stands. `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
+  `telemetry` of a container run that collects none says to turn its configuration's Collect logs and traces on.
+  `container_action` given an AppHost resource runs one of its advertised commands by its name, or start, stop and
+  restart as Aspire's `resource-…` ones (`AspireCommandOfAsync`, `MainWindow.ExecuteAspireResourceCommandAsync`, through
+  the window's `ResourceCommandAsync`, a .NET service's Restart through its run; asking no one, as an agent's run asks no
+  one about the certificate, a command that asks the person for input refused): there,
+  since the Aspire window's rows are the Containers window's, rather than in a tool or a run tool's parameter of their
+  own, which every session's list would pay more for. `McpTests`' actions
   test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
@@ -2165,7 +2191,9 @@ A test waits for a Run, Debug, Profile or test run with `Ui.Launched`, and says 
 the build's errors (`Ui.BuildErrors`: Problems' rows, else the Build window's last lines) when it failed, so a CI-only
 build failure says why. A test's stand-in that holds a file a target writes leaves it as it found it: a file it creates, newer than the
 target's inputs, makes MSBuild skip the target as up to date (an empty `obj/…/Avalonia/resources` was embedded:
-AVLN9999). Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
+AVLN9999). A test's own build of a project the IDE builds too names it by its real path (`PathNames.Canonical`), as the
+IDE does: the run's folder is under macOS's TMPDIR, a link (/var), and a build through it after the IDE's deletes what
+the IDE's wrote (the terminal's paragraph; `StandInAppHost.BuildApi`). Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
 never throws, while what it waits for isn't there yet; `WaitFor`'s limit also covers background work held all along (a
 build, a test run), where `Settle` alone gives up after 90 s (scaled). A chord goes through one `Ui.Press(window, "control M ,
 control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a dispatcher timer that fires during a
@@ -2210,7 +2238,9 @@ method leads web's own (a web app's idle threads wait in the runtime's code). `C
 service of that solution's run from the Containers window's rows and the gutter, the others never restarted (web published on
 the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
 Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
-dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`);
+dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`,
+reads the run in `workspace`, runs a service as a resource and reads its log, and, a second compose file in Web/ making
+web two configurations', is refused a start of it until one is chosen, then starts web and api alone as resources);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
@@ -2254,7 +2284,8 @@ Profile asks which service in `AspireServiceDialog`;
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
 its execution listener; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
 have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
-applicationUrl) and its resource service's calls ended (`AspireInteractionHost.Drop`); AspireStandInTests' windows run a
+applicationUrl), its resource service's calls ended (`AspireInteractionHost.Drop`) and its resource's commands run through
+`container_action` (`AspireInteractionHost.Commands`); AspireStandInTests' windows run a
 stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`, a shell script, so skipped on Windows); and
 `AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine.
 `ContainerTelemetryTests` run a compose app whose ASP.NET Core service sends OpenTelemetry (its packages the ones the

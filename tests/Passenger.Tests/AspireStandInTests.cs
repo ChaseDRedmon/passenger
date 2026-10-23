@@ -1676,20 +1676,12 @@ public sealed class StandInAppHost : SharedProject
 
     public string ApiProject => PathOf($"{Api}/{Api}.csproj");
 
-    /// <summary>Builds the stand-in's service, which the IDE starts as it is built, from a clean folder: after an IDE's build of
-    /// it in an earlier test (a restart's, with its framework given), an incremental build here wrote no runtimeconfig.json or
-    /// deps.json and its IncrementalClean deleted those the IDE's had written, so the service could not start.</summary>
+    /// <summary>Builds the stand-in's service, which the IDE starts as it is built, by its real path, as the IDE's builds of it
+    /// (a restart's) name it: a build through the run folder's link (macOS's TMPDIR, under /var) after one of the IDE's would
+    /// have MSBuild's IncrementalClean delete the runtimeconfig.json and deps.json the IDE's wrote (#413).</summary>
     internal void BuildApi()
     {
-        string folder = Path.GetDirectoryName(ApiProject)!;
-        foreach (string built in (string[])["bin", "obj"])
-        {
-            if (Directory.Exists(Path.Combine(folder, built)))
-            {
-                Directory.Delete(Path.Combine(folder, built), recursive: true);
-            }
-        }
-        ChildResult result = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", ApiProject, "-nologo", "-v:q"]),
+        ChildResult result = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", PathNames.Canonical(ApiProject), "-nologo", "-v:q"]),
             limit: TimeSpan.FromMinutes(3).Scaled()), "the stand-in API's build");
         Assert.True(result.Succeeded, $"The stand-in API did not build: {result.Output}{result.Error}");
     }

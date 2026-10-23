@@ -949,6 +949,74 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             : [];
     }
 
+    /// <summary>A program Run built, built again by a dotnet build typed in the Terminal window, still starts with no build
+    /// before it, though Passenger was started from a shell whose PWD names the folder through a link: the terminal's shell
+    /// is told its folder as the IDE's builds name it, its real path. A shell keeps an inherited PWD that names its folder,
+    /// dotnet builds by it, and MSBuild's IncrementalClean in a build through another spelling of the project's path deletes
+    /// what the IDE's build wrote and it did not write again, runtimeconfig.json and deps.json, so the program could not
+    /// start (exit code 131, #413).</summary>
+    [AvaloniaFact]
+    public void A_program_run_built_and_built_again_in_the_terminal_starts_with_no_build_before_it()
+    {
+        string folder = Folder;
+        // Windows' shells read no PWD.
+        string? linked = OperatingSystem.IsWindows() ? null : Path.Combine(TestFolders.Create("build-link-"), "Sample");
+        if (linked is not null)
+        {
+            TestFolders.LinkFolder(linked, PathNames.Canonical(folder));
+        }
+        MainWindow window = Open();
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "the run built before it", TimeSpan.FromMinutes(2));
+            Assert.Contains("Hello from the run", Ended(window), StringComparison.Ordinal);
+
+            window.TerminalPanel.Shell = OperatingSystem.IsWindows() ? ("cmd.exe", []) : ("/bin/sh", []);
+            string? pwd = Environment.GetEnvironmentVariable("PWD");
+            Environment.SetEnvironmentVariable("PWD", linked ?? pwd);
+            try
+            {
+                Ui.Run(window, AppActions.ShowTerminal);
+                Ui.WaitFor(() => window.TerminalPanel.Active is { IsRunning: true }, "the shell to start");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PWD", pwd);
+            }
+            Passenger.Terminal.TerminalSession shell = window.TerminalPanel.Active!;
+            Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the terminal");
+            // Its nodes end with it: what it writes is the same, and nothing of it outlives the test.
+            window.KeyTextInput($"\"{Dotnet.Host()}\" build -nodeReuse:false && echo built-0 || echo built-1");
+            Ui.Press(window, "ENTER");
+            try
+            {
+                Ui.WaitFor(() => Said(shell) is not null, "the terminal's build to end", TimeSpan.FromMinutes(3));
+            }
+            catch (TimeoutException waited)
+            {
+                throw new TimeoutException($"{waited.Message}. The terminal shows:\n{TerminalTests.Screen(shell)}", waited);
+            }
+            Assert.True(Said(shell) == "built-0", $"The build typed in the terminal failed:\n{TerminalTests.Screen(shell)}");
+
+            RunConfigurationsDialog dialog = DialogButtonsTests.Check(window.ShowRunConfigurations());
+            dialog.BuildBox.IsChecked = false;
+            Ui.Settle();
+            Ui.Click(dialog.OkButton);
+            Assert.False(window.Configuration?.BuildBeforeLaunch, "Edit Configurations kept Hello's build before launch");
+            Ui.Launched(window, window.RunAsync(), "the run with no build before it");
+            string output = Ended(window);
+            Assert.True(output.Contains("Hello from the run", StringComparison.Ordinal) && output.Contains("Process finished with exit code 0.", StringComparison.Ordinal),
+                $"After a build in the terminal, Hello did not start as the IDE's build left it:\n{output}");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static string? Said(Passenger.Terminal.TerminalSession shell) =>
+            TerminalTests.Screen(shell).Split('\n').Select(line => line.Trim()).LastOrDefault(line => line is "built-0" or "built-1");
+    }
+
     [AvaloniaFact]
     public void A_build_still_running_when_the_window_closes_ends_with_it()
     {
