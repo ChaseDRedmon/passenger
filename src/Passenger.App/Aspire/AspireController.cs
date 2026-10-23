@@ -507,15 +507,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             using CancellationTokenSource startup = CancellationTokenSource.CreateLinkedTokenSource(cancellation, app.Lifetime.Token);
             AspireExecutionServer execution = await AspireExecutionServer.StartAsync(
                 (launch, cancel) => CreateOnUiAsync(app, launch, cancel),
-                (handle, cancel) => app.Lifetime.IsCancellationRequested ? Task.CompletedTask : UiThread.InvokeAsync(async () =>
-                {
-                    cancel.ThrowIfCancellationRequested();
-                    if (!app.Lifetime.IsCancellationRequested)
-                    {
-                        await StopResourceAsync(app, handle.Id);
-                    }
-                    return true;
-                }).WaitAsync(cancel).WaitAsync(app.Lifetime.Token), startup.Token).ConfigureAwait(false);
+                (handle, cancel) => app.Lifetime.IsCancellationRequested ? Task.CompletedTask : StopForServerAsync(app, handle, cancel), startup.Token).ConfigureAwait(false);
             app.Execution = execution;
             if (startup.IsCancellationRequested)
             {
@@ -523,6 +515,28 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 startup.Token.ThrowIfCancellationRequested();
             }
             return execution;
+        }
+    }
+
+    /// <summary>A session's stop the orchestrator asks, or its connection's end leaves to the server: done once its program has
+    /// gone, or once the run itself is ending, whose own end stops every session it has.</summary>
+    private async Task StopForServerAsync(AspireAppRun app, AspireProjectSession handle, CancellationToken cancel)
+    {
+        try
+        {
+            await UiThread.InvokeAsync(async () =>
+            {
+                cancel.ThrowIfCancellationRequested();
+                if (!app.Lifetime.IsCancellationRequested)
+                {
+                    await StopResourceAsync(app, handle.Id);
+                }
+                return true;
+            }).WaitAsync(cancel).WaitAsync(app.Lifetime.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (app.Lifetime.IsCancellationRequested && !cancel.IsCancellationRequested)
+        {
+            // The run ended as the stop waited: its own end (Stop, the folder's) stops the session.
         }
     }
 
