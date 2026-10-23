@@ -159,16 +159,18 @@ public sealed partial class PassengerTools
         }
         AspireResource? resource = resources.FirstOrDefault(resource => resource.Name == name);
         string states = string.Join('\n', resources.Where(shown => !(shown.Data.TryGetProperty("isHidden", out JsonElement hidden) && hidden.ValueKind == JsonValueKind.True))
-            .Select(shown => $"  {shown.Name}: {shown.State ?? "Unknown"}{(shown.State == "Running" && shown.HealthStatus is { } health ? $" ({health})" : string.Empty)}"));
+            .Select(shown => $"  {shown.Name}: {app.StateOf(shown) ?? "Unknown"}{(shown.State == "Running" && shown.HealthStatus is { } health ? $" ({health})" : string.Empty)}"));
         AspireResourceRun? service = app.Services.Where(run => ((IRunService)run).Name == name).MaxBy(run => run.Sequence);
         service?.Console.Flush();
         string output = service is null ? string.Empty : Tail(service.Console.Document.Snapshot, 200);
+        bool unstarted = resource is not null && app.IsLeftUnstarted(resource);
         string status = resource is null ? $"{name} is no longer one of {app.Name}'s resources"
+            : unstarted ? $"{name} of {app.Name}: {AspireAppRun.NotStarted}. {AspireAppRun.NotStartedWhy}"
             : IsUp(resource) ? $"{name} of {app.Name} is up"
             : HasEnded(resource) ? $"{name} of {app.Name} ended: {resource.State}"
             : $"{name} of {app.Name} is not up within {Math.Max(0, waitSeconds)} s: {resource.State ?? "Unknown"}{(resource.HealthStatus is { } said ? $" ({said})" : string.Empty)}";
         status += $"\nResources of {app.Name}:\n{states}" + string.Concat(app.Notes.Select(note => $"\nNote: {note}"));
-        if (resource?.State == "FailedToStart")
+        if (resource?.State == "FailedToStart" && !unstarted)
         {
             throw new InvalidOperationException($"{status}\n{output}".TrimEnd());
         }
@@ -205,19 +207,21 @@ public sealed partial class PassengerTools
                 throw new InvalidOperationException("The workspace or owned AppHost changed");
             }
             apps.Add(new AspireOwnedAppInfo(app.Configuration.Project, app.ProcessId ?? 0, state, app.Group,
-                [.. resources.Select(resource => ResourceInfo(app.Configuration.Project, resource))]));
+                [.. resources.Select(resource => ResourceInfo(app, resource))]));
         }
         return snapshot with { AspireApps = apps };
     }
 
-    private static AspireResourceInfo ResourceInfo(string path, AspireResource resource) => new(resource.Name, resource.Generation,
-        resource.DisplayName, AspireJson.String(resource.Data, "resourceType"), resource.State, resource.HealthStatus,
+    /// <summary>A resource as an agent's workspace has it, its state as the window says it (Not started for one its run
+    /// left unstarted, as its configuration says Don't start).</summary>
+    private static AspireResourceInfo ResourceInfo(AspireAppRun app, AspireResource resource) => new(resource.Name, resource.Generation,
+        resource.DisplayName, AspireJson.String(resource.Data, "resourceType"), app.StateOf(resource), resource.HealthStatus,
         [.. AspireJson.Array(resource.Data, "urls").Select(url => JsonSerializer.SerializeToElement(new
         {
             name = AspireJson.String(url, "name"),
             url = SafeUrl(AspireJson.String(url, "url")),
         }))], AspireJson.Array(resource.Data, "relationships"),
-        [.. resource.Commands.Where(command => command.Enabled).Select(command => command.Name)]) { Target = $"{path}::{resource.Name}" };
+        [.. resource.Commands.Where(command => command.Enabled).Select(command => command.Name)]) { Target = $"{app.Configuration.Project}::{resource.Name}" };
 
     private static string? SafeUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https"
         ? new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty, Query = string.Empty, Fragment = string.Empty }.Uri.AbsoluteUri : null;

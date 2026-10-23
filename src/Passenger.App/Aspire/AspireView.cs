@@ -15,7 +15,11 @@ namespace Passenger.App.Aspire;
 
 /// <summary>A resource of the Aspire window's list at its depth: a parent's children are listed under it, opened and closed
 /// by its chevron as the Containers window's rows are.</summary>
-public sealed record AspireRow(AspireResource Resource, int Depth, bool Expands, bool Expanded);
+public sealed record AspireRow(AspireResource Resource, int Depth, bool Expands, bool Expanded)
+{
+    /// <summary>Whether its run left it unstarted, as its configuration says Don't start: Not started, never a failure.</summary>
+    public bool LeftUnstarted { get; init; }
+}
 
 /// <summary>The Aspire window, the Containers window's parts over an AppHost's resources: an icon toolbar of the window's
 /// actions (the AppHost chosen, Discover, Refresh, a resource's Debug, Attach, Run without Debugger, Profile, its commands,
@@ -243,6 +247,10 @@ public sealed class AspireView : DockPanel, IDisposable
 
     /// <summary>Returns this app's dashboard endpoint and key on the UI thread. Null means no owned telemetry.</summary>
     public Func<string, (Uri Endpoint, string ApiKey)?>? TelemetryProvider { get; set; }
+
+    /// <summary>Whether the run of the AppHost at a path left a resource unstarted, as its configuration says Don't start
+    /// (<see cref="AspireAppRun.IsLeftUnstarted"/>); null for an AppHost the window did not start. Called on the UI thread.</summary>
+    public Func<string, AspireResource, bool>? LeftUnstarted { get; set; }
 
     public void SetDisplayVisible(bool visible)
     {
@@ -1106,7 +1114,10 @@ public sealed class AspireView : DockPanel, IDisposable
         {
             bool expands = children[resource.Name].Any();
             bool open = expands && !collapsed.Contains(resource.Name);
-            rows.Add((resource.Name, new AspireRow(resource, depth, expands, open)));
+            rows.Add((resource.Name, new AspireRow(resource, depth, expands, open)
+            {
+                LeftUnstarted = SelectedApp is { } app && LeftUnstarted?.Invoke(app.AppHostPath, resource) == true,
+            }));
             if (open)
             {
                 foreach (AspireResource child in children[resource.Name])
@@ -1126,8 +1137,8 @@ public sealed class AspireView : DockPanel, IDisposable
         {
             Expands = row.Expands,
             Expanded = row.Expanded,
-            State = StateOf(resource),
-            StateTip = resource.State ?? "Unknown state",
+            State = row.LeftUnstarted ? RunState.Stopped : StateOf(resource),
+            StateTip = row.LeftUnstarted ? $"{AspireAppRun.NotStarted}. {AspireAppRun.NotStartedWhy}" : resource.State ?? "Unknown state",
             Health = AspireDetailsPane.Health(resource),
             Links = [.. Links(resource).Take(3).Select(url => new RunLink(url.Authority, url, url.AbsoluteUri))],
             Detail = resource.Source is { } source ? Path.IsPathFullyQualified(source) ? Path.GetFileName(source) : source
@@ -1180,7 +1191,7 @@ public sealed class AspireView : DockPanel, IDisposable
 
     private void ShowResource()
     {
-        Details.Show(SelectedResource);
+        Details.Show(SelectedResource, Chosen?.LeftUnstarted == true);
     }
 
     private void ShowLog()

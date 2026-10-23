@@ -963,7 +963,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Compose configuration's is, `ComposeServicesTable.SetNamed`: each .NET resource's project as its AppHost names it, not
   chosen there, and Run, Debug or Don't start, every resource's choice kept, since one kept as Run is not debugged when
   the AppHost is; a resource marked Don't start is refused its first start in a run, `AspireAppRun.LeftUnstarted`, a start
-  asked later from the Aspire window running it unheld), an AppHost's icons asked for that AppHost alone as an
+  asked later from the Aspire window running it unheld; DCP then calls it FailedToStart, which Passenger says as Not
+  started, never a failure, with why and how it runs, in its row (a muted dot), its Details and an agent's `workspace` and
+  `run` answers, `AspireAppRun.StateOf`), an AppHost's icons asked for that AppHost alone as an
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
   references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only

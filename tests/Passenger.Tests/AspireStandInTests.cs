@@ -495,38 +495,14 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
     public void Profile_of_a_running_AppHost_asks_which_service_in_a_dialog_held_to_the_dialogs_rules()
     {
         project.Reset();
-        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", project.ApiProject, "-nologo", "-v:q"]),
-            limit: TimeSpan.FromMinutes(3).Scaled()), "the stand-in API's build");
-        Assert.True(built.Succeeded, $"The stand-in API did not build: {built.Output}{built.Error}");
+        project.BuildApi();
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
         MainWindow window = OpenRunning(backend);
         try
         {
-            // As DCP starts a project resource: a run session asked of the IDE's execution endpoint.
-            string[] session = File.ReadAllText(project.SessionFile).Split('\n', 3);
-            using JsonDocument info = JsonDocument.Parse(session[2]);
-            string version = info.RootElement.GetProperty("protocols_supported")[0].GetString()!;
-            const string Instance = "standin-tests-abcdefghijkl";
-            // DCP subscribes to the sessions' notifications before it asks for one.
-            using System.Net.WebSockets.ClientWebSocket notified = new();
-            notified.Options.SetRequestHeader("Authorization", "Bearer " + session[1]);
-            notified.Options.SetRequestHeader("Microsoft-Developer-DCP-Instance-ID", Instance);
-            Ui.Await(Complete(notified.ConnectAsync(new Uri($"ws://{session[0]}/run_session/notify?api-version={version}"), CancellationToken.None)),
-                "the subscription to the sessions' notifications");
-            using HttpClient http = new();
-            using HttpRequestMessage start = new(HttpMethod.Put, $"http://{session[0]}/run_session?api-version={version}")
-            {
-                Content = new StringContent(JsonSerializer.Serialize(new
-                {
-                    launch_configurations = new[] { new { type = "project", project_path = project.ApiProject, mode = "NoDebug" } },
-                    env = new[] { new { name = "OTEL_SERVICE_NAME", value = "apiservice" } },
-                    args = Array.Empty<string>(),
-                }), System.Text.Encoding.UTF8, "application/json"),
-            };
-            start.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session[1]);
-            start.Headers.Add("Microsoft-Developer-DCP-Instance-ID", Instance);
-            using HttpResponseMessage started = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
-            Assert.True(started.IsSuccessStatusCode, $"The IDE refused the run session: {started.StatusCode}");
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the run session: {answer}");
             Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.Any(service => service.ProcessId is > 0), "the API started as DCP asked");
             backend.PushResource(new Resource
             {
@@ -549,6 +525,54 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             window.Close();
             Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
         }
+    }
+
+    /// <summary>A service its run configuration says not to start is Not started, never a failure: the IDE refuses DCP's first
+    /// start of it, and the resource DCP then calls FailedToStart has a muted dot and a tip saying why and how it runs, in its
+    /// row and in its Details.</summary>
+    [AvaloniaFact]
+    public void A_service_marked_Dont_start_reads_Not_started_in_its_row_and_Details()
+    {
+        project.Reset();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            RunConfiguration marked = project.DontStartApi(window.Configurations.First(configuration => configuration.Name == StandInAppHost.Configuration));
+            window.SetConfigurations([marked], marked.Name);
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1, $"the stand-in AppHost's start ({window.Status})");
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.False((int)answer is >= 200 and < 300, "The IDE started a service its configuration says not to start");
+            Assert.DoesNotContain(window.AspireRuntime.Apps.Single().Services, service => service.ProcessId is > 0);
+            // As DCP then says it: its start failed.
+            backend.PushResource(project.Refused());
+            FindAction(window, "Show Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Rows.Any(row => row.Resource.Name == "apiservice"), "the refused service's row");
+            Control row = Row(window, "apiservice");
+            Avalonia.Controls.Shapes.Ellipse dot = row.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Ellipse>().Single();
+            Assert.Equal($"{AspireAppRun.NotStarted}. {AspireAppRun.NotStartedWhy}", ToolTip.GetTip(dot));
+            Assert.Equal(Colour(window, "Passenger.TextMuted"), (dot.Fill as Avalonia.Media.ISolidColorBrush)?.Color);
+            Ui.Click(Words(row, "apiservice"));
+            Ui.Click(Tab(window, "Details"));
+            string[] shown = [.. window.Aspire.Details.GetVisualDescendants().OfType<TextBlock>().Select(text => text.Text ?? string.Empty)];
+            Assert.Contains(AspireAppRun.NotStarted, shown);
+            Assert.Contains(AspireAppRun.NotStartedWhy, shown);
+            Assert.DoesNotContain("FailedToStart", shown);
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        static Avalonia.Media.Color Colour(MainWindow window, string token) =>
+            window.TryFindResource(token, window.ActualThemeVariant, out object? found) && found is Avalonia.Media.ISolidColorBrush brush ? brush.Color : default;
     }
 
     /// <summary>A resource's row as the Aspire window shows it, scrolled into view.</summary>
@@ -1152,6 +1176,63 @@ public sealed class StandInAppHost : SharedProject
     public const string Api = "StandIn.Api";
 
     public string ApiProject => PathOf($"{Api}/{Api}.csproj");
+
+    /// <summary>Builds the stand-in's service, which the IDE starts as it is built.</summary>
+    internal void BuildApi()
+    {
+        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", ApiProject, "-nologo", "-v:q"]),
+            limit: TimeSpan.FromMinutes(3).Scaled()), "the stand-in API's build");
+        Assert.True(built.Succeeded, $"The stand-in API did not build: {built.Output}{built.Error}");
+    }
+
+    /// <summary>Asks the IDE to start the stand-in's service as a resource of that name, as DCP starts a project resource: the
+    /// sessions' notifications subscribed to first (held while the socket given back is open), then a run session asked of
+    /// the execution endpoint the IDE gave the AppHost; with the IDE's answer.</summary>
+    internal (System.Net.WebSockets.ClientWebSocket Notified, System.Net.HttpStatusCode Answer) AskToStartApi(string resource)
+    {
+        string[] session = File.ReadAllText(SessionFile).Split('\n', 3);
+        using JsonDocument info = JsonDocument.Parse(session[2]);
+        string version = info.RootElement.GetProperty("protocols_supported")[0].GetString()!;
+        const string Instance = "standin-tests-abcdefghijkl";
+        System.Net.WebSockets.ClientWebSocket notified = new();
+        notified.Options.SetRequestHeader("Authorization", "Bearer " + session[1]);
+        notified.Options.SetRequestHeader("Microsoft-Developer-DCP-Instance-ID", Instance);
+        Ui.Await(Task.Run(async () =>
+        {
+            await notified.ConnectAsync(new Uri($"ws://{session[0]}/run_session/notify?api-version={version}"), CancellationToken.None);
+            return true;
+        }), "the subscription to the sessions' notifications");
+        using HttpClient http = new();
+        using HttpRequestMessage start = new(HttpMethod.Put, $"http://{session[0]}/run_session?api-version={version}")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                launch_configurations = new[] { new { type = "project", project_path = ApiProject, mode = "NoDebug" } },
+                env = new[] { new { name = "OTEL_SERVICE_NAME", value = resource } },
+                args = Array.Empty<string>(),
+            }), System.Text.Encoding.UTF8, "application/json"),
+        };
+        start.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session[1]);
+        start.Headers.Add("Microsoft-Developer-DCP-Instance-ID", Instance);
+        using HttpResponseMessage answered = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
+        return (notified, answered.StatusCode);
+    }
+
+    /// <summary>The stand-in AppHost's configuration with its service, apiservice, marked Don't start.</summary>
+    internal RunConfiguration DontStartApi(RunConfiguration generated) => generated with
+    {
+        Name = "Stand-in, API not started",
+        Generated = false,
+        ServiceActions = new Dictionary<string, ServiceStart> { ["apiservice"] = ServiceStart.DontStart },
+        ServiceProjects = new Dictionary<string, string> { ["apiservice"] = PathNames.Canonical(ApiProject) },
+    };
+
+    /// <summary>The service as DCP says it once the IDE refused its start.</summary>
+    internal Resource Refused() => new()
+    {
+        Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "FailedToStart",
+        Properties = { new ResourceProperty { Name = "project.path", Value = Google.Protobuf.WellKnownTypes.Value.ForString(PathNames.Canonical(ApiProject)) } },
+    };
 
     /// <summary>Where the stand-in AppHost writes, before its key, the IDE's execution endpoint (DEBUG_SESSION_PORT), its token
     /// and its session's info, a line each, as DCP reads them.</summary>
