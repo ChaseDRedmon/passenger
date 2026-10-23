@@ -396,8 +396,7 @@ public sealed class ContainerEngine
         }
         return Made(EngineStatus.Ready, null);
 
-        // Whether Podman runs rootless, and where its API socket is (Podman's own command): Docker's info through its CLI,
-        // Podman's through its own.
+        // Whether Podman runs rootless, and where its own command's API socket is: Docker's info through its CLI, Podman's through its own.
         async Task<(bool Rootless, string? Socket, bool SocketThere)> PodmanInfoAsync()
         {
             try

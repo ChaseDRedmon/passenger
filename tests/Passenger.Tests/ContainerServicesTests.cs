@@ -193,7 +193,8 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
     private static Task<string> Request(string project, string service)
     {
         string said = Docker.Ask(["compose", "-p", project, "port", service, "8080"]).Split('\n')[0].Trim();
-        return said.LastIndexOf(':') is int colon and > 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
+        // Docker's CLI says 0.0.0.0:port; on Podman's socket ":port", the address left out.
+        return said.LastIndexOf(':') is int colon and >= 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
             ? ContainerRunDebuggingTests.Get(port)
             : Task.FromResult($"(no answer: {service} publishes no port: {said})");
     }

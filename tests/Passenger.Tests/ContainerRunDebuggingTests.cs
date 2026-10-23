@@ -376,8 +376,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             WhyNot = Docker.WhyNot;
             if (WhyNot is null)
             {
-                string processor = Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64";
-                ContainerPrograms.Publish($"linux-{processor}");
+                ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}");
             }
         }
 
