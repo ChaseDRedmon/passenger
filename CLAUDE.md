@@ -283,7 +283,8 @@ is named by its content, so a changed one takes a new name.
 - **Aspire's CLI and AppHosts** keep running AppHosts in `$HOME/.aspire/cli/bch` whatever ASPIRE_HOME says; on Windows in
   the profile whatever the environment says (those tests skip there).
 - **Windows**: a write waits out a reader that shares no writes for up to 2 s (`FileText.WhileHeld`); closing a socket
-  with unread input resets it, losing what was written.
+  with unread input resets it, losing what was written (servers shut their side and drain first); the diagnostics library
+  leaves a profiler pipe open after its listener goes (`ProfilingSession.CloseLeftListener` closes it, by reflection).
 - **macOS**: a Unix socket path holds 104 bytes; `codesign` takes a dotted folder under `Contents/MacOS` for a bundle (so
   the web servers live in Resources); TMPDIR is reached through the /var link, so a build or restore of a test's project
   goes by its real path, and two spellings of one project restored at once collide.
@@ -352,7 +353,9 @@ Consoles: `Ui.TypeLine` (`TypeToRun`, `TypeToDebugged`); the caret: `Ui.PlaceAft
 a log the IDE may be writing with `Ui.Shared`. A dialog is held to `DialogButtonsTests.Check`, the window to
 `UiRulesTests`. A stand-in leaves files a target writes as it found them (a new one makes MSBuild skip the target).
 Containers: `Docker.Stopped`/`TakenDown`; MCP: `McpRig.Text`, `Gone`; an agent that gives up sends "cancelled" itself
-(`CallGivingUp`).
+(`CallGivingUp`). A headless click runs the window's queued work and draws frames after itself, so what a status said
+during a click is read from what it showed throughout, not after; a count of a key's frames sets aside the caret's
+blinks (`CodeEditor.Blinks`).
 
 **What a test needs, or skips saying why without:** a Linux container engine (`docker info`'s OSType; tests label
 everything with `Docker.RunLabel`, remove dead runs' leftovers, never prune or start or stop Docker Desktop, and pull
