@@ -78,11 +78,13 @@ public sealed class RoslynSession : IAsyncDisposable, IDocumentHost
     /// file's and those it references), which the server loads alone, so the file being worked on is answered for first.</param>
     /// <param name="feed">The client's design-time builds of the projects: with one, a server that has Passenger's project
     /// loader loads the projects from them rather than building each itself.</param>
+    /// <param name="stateCache">The IDE's state's cache folder, where the server runs from a copy of its own when it may not
+    /// write beside its assemblies (<see cref="RoslynServerFolder"/>); with none it runs where the app carries it.</param>
     public static async Task<RoslynSession> StartAsync(string folder, string? solution, IReadOnlyList<string> projects, string logFolder,
         CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null, Action<LanguageServer>? started = null,
-        Func<Task<IReadOnlyList<string>>>? first = null, IProjectFeed? feed = null)
+        Func<Task<IReadOnlyList<string>>>? first = null, IProjectFeed? feed = null, string? stateCache = null)
     {
-        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options).ConfigureAwait(false);
+        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options, stateCache).ConfigureAwait(false);
         RoslynSession session = new(server, folder, solution, projects);
         try
         {

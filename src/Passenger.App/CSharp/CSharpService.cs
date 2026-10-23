@@ -78,6 +78,9 @@ public sealed class CSharpService : IAsyncDisposable
     /// Log finds them, and the newest kept as servers start.</summary>
     public static string LogFolder => Path.Combine(IdeErrors.LogFolder, "roslyn");
 
+    /// <summary>The state's cache, where the server runs from a copy when it may not write beside itself in the app (#450).</summary>
+    public static string ServerCache => Path.Combine(Passenger.App.State.StateStore.DefaultRoot, "cache");
+
     public string State { get; private set; } = string.Empty;
     public bool IsReady => session is { IsLoaded: true };
     public RoslynSession? Session => session;
@@ -581,11 +584,12 @@ public sealed class CSharpService : IAsyncDisposable
                 IProjectFeed? feed = Feed;
                 started = await BackgroundWork.Run(async () =>
                 {
-                    RoslynSession begun = await RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first, feed);
+                    RoslynSession begun = await RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first, feed, ServerCache);
                     // Said as its start comes back, however long the window's thread takes to get to it.
                     if (!cancel.IsCancellationRequested)
                     {
-                        IdeErrors.Write($"C# language server (process {begun.Server.ProcessId}) started for {opening.Folder} in {Since(began)}, loading {loading}");
+                        string copy = begun.Server.ServerCopy is { } from ? $", run from its copy in {from}" : string.Empty;
+                        IdeErrors.Write($"C# language server (process {begun.Server.ProcessId}) started for {opening.Folder} in {Since(began)}{copy}, loading {loading}");
                     }
                     return begun;
                 }, cancel);

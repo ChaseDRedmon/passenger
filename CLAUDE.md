@@ -265,6 +265,9 @@ aspire and requests scenes run `tools/site-shots/services`, an AppHost that need
 - **Roslyn's server** stays at the latest *stable* build, 5.11.0 (owner's rule): later builds start Visual Studio
   Telemetry's session even with telemetry off (dotnet/roslyn#86122, fixed by #86130 in no package yet; #234). After
   lowering it, delete `artifacts/bin/*/debug/roslyn*`, or the copy leaves a mixed server that won't start.
+- **Roslyn's server writes its MEF caches beside its DLLs** (`roslyn/cache/`, no option for elsewhere), so where that
+  folder is in a macOS bundle (a file added breaks the seal: "damaged", #450) or read-only, it runs from a copy in the
+  state's `cache/roslyn/` (`RoslynServerFolder`); nothing a Passenger runs may write inside the app.
 - **The debugger's engine.** `EngineLock` is not re-entrant. A read of the stop waits behind continue, steps, pause and
   disconnect. Never leave `_stepper` set but inactive (async stepping reads it as a queued StepComplete). An evaluation
   past its time is aborted only where the abort takes (never rude: one left pending fires later inside a lock, #238).

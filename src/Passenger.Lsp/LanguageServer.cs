@@ -99,6 +99,10 @@ public sealed class LanguageServer : IAsyncDisposable
     /// with what waited, on any thread; the server is left running for the caller to <see cref="Kill"/>.</summary>
     public event EventHandler<string>? NotResponding;
 
+    /// <summary>The copy of Roslyn's server this one runs from, in the state's cache (<see cref="RoslynServerFolder"/>); null
+    /// where it runs from the app's own roslyn/, and for every other server.</summary>
+    public string? ServerCopy { get; private set; }
+
     /// <summary>The server's process, for the IDE's log and for a test to end it; kept once the process is gone.</summary>
     public int ProcessId { get; }
 
@@ -255,16 +259,20 @@ public sealed class LanguageServer : IAsyncDisposable
         }
     }
 
-    /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the
-    /// app), initializes it for a folder, and returns once it has said what it can do. Cancelled or failed, it leaves no
-    /// process behind, at once rather than once the server answers.</summary>
-    public static async Task<LanguageServer> StartRoslynAsync(string folder, string logFolder, CancellationToken cancel, IReadOnlyDictionary<string, object?>? options = null)
+    /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the app, run from its copy
+    /// in <paramref name="stateCache"/> where it may not write there, <see cref="RoslynServerFolder"/>), initializes it for
+    /// a folder, and returns once it has said what it can do. Cancelled or failed, it leaves no process behind, at once
+    /// rather than once the server answers.</summary>
+    public static async Task<LanguageServer> StartRoslynAsync(string folder, string logFolder, CancellationToken cancel, IReadOnlyDictionary<string, object?>? options = null,
+        string? stateCache = null)
     {
-        string server = Path.Combine(AppContext.BaseDirectory, "roslyn", "Microsoft.CodeAnalysis.LanguageServer.dll");
-        if (!File.Exists(server))
+        string carried = Path.Combine(RoslynServerFolder.Carried, RoslynServerFolder.Assembly);
+        if (!File.Exists(carried))
         {
-            throw new FileNotFoundException("The Roslyn language server is missing from the app's folder.", server);
+            throw new FileNotFoundException("The Roslyn language server is missing from the app's folder.", carried);
         }
+        string? copy = await RoslynServerFolder.CopyAsync(stateCache, cancel).ConfigureAwait(false);
+        string server = Path.Combine(copy ?? RoslynServerFolder.Carried, RoslynServerFolder.Assembly);
         Directory.CreateDirectory(logFolder);
         List<string> arguments =
         [
@@ -288,6 +296,11 @@ public sealed class LanguageServer : IAsyncDisposable
             start.Environment["EnableWindowsTargeting"] = "true";
         }
         LanguageServer server2 = await StartCoreAsync(start, folder, logFolder, ClientCapabilities.Value, null, options, null, null, null, cancel).ConfigureAwait(false);
+        if (copy is not null)
+        {
+            server2.ServerCopy = copy;
+            RoslynServerFolder.Running(copy, server2);
+        }
         try
         {
             try

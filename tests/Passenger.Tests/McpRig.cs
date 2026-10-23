@@ -104,18 +104,20 @@ public abstract class McpRig : IDisposable
 
     /// <summary>Passenger started as an agent's MCP server (<see cref="StartPassenger"/>), and the agent's client to it.</summary>
     protected Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null, string? protocol = null,
-        bool languageServer = true) =>
-        Connect(StartPassenger(arguments, workingDirectory, environment, languageServer), arguments, protocol);
+        bool languageServer = true, string? executable = null) =>
+        Connect(StartPassenger(arguments, workingDirectory, environment, languageServer, executable), arguments, protocol);
 
     /// <summary>Passenger started as the IDE starts a child, with a state folder of the test's own for its log (or, joining
     /// a window, the run's, where the windows' sockets are), the engine's log and any other change to the environment
     /// (null takes a variable away), its standard error kept; an <c>--mcp</c> Passenger whose agent asks nothing of C# starts
     /// no C# language server (<paramref name="languageServer"/>, <see cref="McpHost.LanguageServerVariable"/>). Not the SDK's
     /// own process transport: that ends a server with the runtime's tree kill, which can hang this process
-    /// (ChildProcesses.Kill says why). The agent going closes its input; <see cref="Dispose"/> ends the rest.</summary>
-    protected Process StartPassenger(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null, bool languageServer = true)
+    /// (ChildProcesses.Kill says why). The agent going closes its input; <see cref="Dispose"/> ends the rest. The build's
+    /// Passenger beside the tests, or <paramref name="executable"/> (a copy of it laid out otherwise).</summary>
+    protected Process StartPassenger(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null, bool languageServer = true,
+        string? executable = null)
     {
-        ProcessStartInfo start = ChildProcesses.Command(Passenger, arguments, workingDirectory);
+        ProcessStartInfo start = ChildProcesses.Command(executable ?? Passenger, arguments, workingDirectory);
         start.Environment["PASSENGER_SETTINGS"] = arguments.Contains("--mcp-attach") ? TestRun.Settings : OwnState;
         start.Environment[global::Passenger.Dap.AdapterEnvironment.EngineLogVariable] = EngineLog;
         if (!languageServer)
