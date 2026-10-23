@@ -545,9 +545,9 @@ public sealed partial class BuildRunController
             return await RunAspireAsync(chosen, arguments, mode, cancellation);
         }
         // The Run console's program is one at a time; an AppHost of another configuration runs beside it.
-        if (RunsInConsole)
+        if (await TakeConsoleAsync(chosen) is { } taken)
         {
-            return Said("Already running");
+            return Said(taken);
         }
         aspireEnd = null;
         // The Run console is one program's: Profile's writes there too, from its start to its end.
@@ -635,6 +635,35 @@ public sealed partial class BuildRunController
         {
             work.Dispose();
         }
+    }
+
+    /// <summary>The Run console (or the terminal's tab) for a start of a configuration: free; the same configuration's program
+    /// there ended first and its end waited for, as a start of a configuration that runs ends it and starts again; or a
+    /// container run there, which a container start ends itself (one container run at a time). Null once it is the start's,
+    /// else why not: another configuration's program has it, named.</summary>
+    private async Task<string?> TakeConsoleAsync(RunConfiguration chosen)
+    {
+        if (!RunsInConsole || chosen.IsContainer && session.ContainerRun is { IsStopped: false })
+        {
+            return null;
+        }
+        if (session.ContainerRun is { IsStopped: false } || ran != chosen.Name)
+        {
+            return AlreadyRunning();
+        }
+        await EndInConsoleAsync();
+        return session.IsEnded ? Left : null;
+    }
+
+    /// <summary>Why a start that needs the Run console cannot have it: what has it, by its configuration's name.</summary>
+    private string AlreadyRunning() => $"Already running: {(ran.Length > 0 ? ran : "a program")} has the Run console; stop it first";
+
+    /// <summary>Ends what the Run console (or the terminal's tab) has, done once its end has landed.</summary>
+    private async Task EndInConsoleAsync()
+    {
+        Task<int> ended = session.InTerminal is { IsRunning: true } terminal ? terminal.Ended : session.Runner.Ended;
+        StopRun();
+        await ended;
     }
 
     /// <summary>dotnet watch starts in the program's working folder, which its first build makes for a project never built:
@@ -748,7 +777,8 @@ public sealed partial class BuildRunController
 
     public async Task<string?> RunAspireAsync(RunConfiguration chosen, string? arguments, RunStart mode, CancellationToken cancellation = default)
     {
-        string action = mode == RunStart.Debug ? AppActions.Debug : AppActions.RunProgram;
+        // Each start under its own action's work: Debug's, Profile's, else Run's.
+        string action = mode switch { RunStart.Debug => AppActions.Debug, RunStart.Profile => AppActions.Profile, _ => AppActions.RunProgram };
         if (parts.Work.Begin(action, $"Starting {chosen.Name}…") is not { } work)
         {
             return Said(ActionWork.Busy(parts.Work.Of(action)!));
@@ -775,6 +805,23 @@ public sealed partial class BuildRunController
                 {
                     return Said(StoppedStarting(chosen.Name));
                 }
+                // The same configuration's AppHosts running end first, as a start of a configuration that runs ends it and starts
+                // it again (a container run's does); an AppHost a test run holds is the test run's.
+                string[] hosts = [configuration.Project, .. configuration.LinkedAppHosts];
+                List<string> running = [.. session.Aspire.Apps.Where(app => !app.IsTest && !app.Stopping && hosts.Any(host => PathNames.Same(host, app.Configuration.Project)))
+                    .Select(app => app.Group).Distinct(StringComparer.Ordinal)];
+                if (running.Count > 0)
+                {
+                    work.Say($"Ending {chosen.Name}'s run to start it again…");
+                    foreach (string group in running)
+                    {
+                        await session.Aspire.StopGroupAsync(group);
+                    }
+                    if (session.IsEnded || work.IsStopped)
+                    {
+                        return Said(StoppedStarting(chosen.Name));
+                    }
+                }
                 // Once, before any AppHost starts, as a container run's certificate is checked before its services come up.
                 HttpsChoice https = await CertificateAsync(chosen.Name, session.Aspire.ServingHttps(configuration), Path.GetDirectoryName(configuration.Project)!,
                     ContainerPlans.StateOf(parts.StateFolder(), session.Folder ?? Path.GetDirectoryName(configuration.Project)!), export: false, work);
@@ -788,10 +835,10 @@ public sealed partial class BuildRunController
                 {
                     return Said(problem);
                 }
-                AspireAppRun[] running = session.Aspire.Apps.Where(app => !app.IsTest).ToArray();
-                aspireEnd = Ended(running);
-                parts.Say($"{mode switch { RunStart.Debug => "Debugging", RunStart.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}"
-                    + (https.OverHttp is { } overHttp ? $" ({overHttp})" : string.Empty), StatusPlace.Window(parts.Dock, ToolWindowIds.Aspire));
+                AspireAppRun[] started = session.Aspire.Apps.Where(app => !app.IsTest).ToArray();
+                aspireEnd = Ended(started);
+                parts.Say(AspireStarted(configuration, mode, started) + (https.OverHttp is { } overHttp ? $" ({overHttp})" : string.Empty),
+                    StatusPlace.Window(parts.Dock, ToolWindowIds.Aspire));
                 RunningChanged?.Invoke(this, EventArgs.Empty);
                 return null;
             }
@@ -810,6 +857,23 @@ public sealed partial class BuildRunController
             int[] codes = await Task.WhenAll(running.Select(app => app.Runner.Ended));
             return codes.FirstOrDefault(code => code != 0);
         }
+    }
+
+    /// <summary>What an AppHost's start says once up, in the words a container run's start says: debugged, the services it
+    /// debugs (those marked Debug, else each it starts) under the debugger; run with Hot Reload; profiled, the service recorded;
+    /// or run.</summary>
+    private static string AspireStarted(RunConfiguration configuration, RunStart mode, IReadOnlyList<AspireAppRun> started)
+    {
+        string[] marked = [.. configuration.ServiceActions.Where(pair => pair.Value == ServiceStart.Debug).Select(pair => pair.Key).Order(StringComparer.Ordinal)];
+        string debugged = marked.Length > 0 ? string.Join(" and ", marked) : "each .NET service it starts";
+        return mode switch
+        {
+            RunStart.Debug => $"Debugging {configuration.Name}: {debugged} under the debugger",
+            RunStart.HotReload => $"Running {configuration.Name} with Hot Reload: a save applies its changes to its .NET services",
+            RunStart.Profile => $"Profiling {started.Select(app => app.Profiled).OfType<string>().FirstOrDefault() ?? "its service"} of {configuration.Name}: "
+                + "Get Snapshot when it has done what is to be measured",
+            _ => $"Running {configuration.Name}",
+        };
     }
 
     public Task<string?> ProfileAspireAsync(RunConfiguration configuration, string? arguments = null, CancellationToken cancellation = default) =>
@@ -837,9 +901,7 @@ public sealed partial class BuildRunController
         }
         if (RunsInConsole || session.ContainerRun is { IsStopped: false })
         {
-            Task<int> ended = session.InTerminal is { IsRunning: true } terminal ? terminal.Ended : session.Runner.Ended;
-            StopRun();
-            await ended;
+            await EndInConsoleAsync();
             if (session.IsEnded)
             {
                 return Left;
@@ -963,6 +1025,16 @@ public sealed partial class BuildRunController
         }
         debugged[chosen.Name] = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();
+        // Its own program Run started ends first, as a start of a configuration that runs ends it and starts again.
+        if (RunsInConsole && ran == chosen.Name && session.ContainerRun is not { IsStopped: false })
+        {
+            work.Say($"Ending {chosen.Name}'s run to debug it…");
+            await EndInConsoleAsync();
+            if (session.IsEnded)
+            {
+                return Left;
+            }
+        }
         (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, work);
         if (plan is null)
         {

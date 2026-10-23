@@ -399,16 +399,11 @@ public partial class MainWindow
         {
             return "The selected AppHost resource changed";
         }
-        RunConfiguration configuration = target.Configuration with
-        {
-            ServiceActions = declared.ToDictionary(resource => resource.Name,
-                resource => resource.Name == name && how is RunStart.Debug or RunStart.Profile ? ServiceStart.Debug : ServiceStart.Run,
-                StringComparer.Ordinal),
-            ServiceProjects = declared.ToDictionary(resource => resource.Name, resource => resource.Project, StringComparer.Ordinal),
-            LaunchService = name,
-        };
+        RunConfiguration configuration = Targeting(target.Configuration, declared.Select(resource => (resource.Name, resource.Project)), name,
+            debug: how is RunStart.Debug or RunStart.Profile);
+        // Under its own action's work and words: Debug's debugging, Profile's profiling, Run's running.
         return how == RunStart.Profile ? await buildRun.ProfileAspireAsync(configuration)
-            : await buildRun.RunAspireAsync(configuration, null, RunStart.Run);
+            : await buildRun.RunAspireAsync(configuration, null, how == RunStart.Debug ? RunStart.Debug : RunStart.Run);
     }
 
     /// <summary>Whether a compose file's service is a .NET service of the container run under way, which reads that file.</summary>

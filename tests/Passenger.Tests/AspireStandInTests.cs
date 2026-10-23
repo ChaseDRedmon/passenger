@@ -711,6 +711,8 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Ui.PumpUntil(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1 || profiling.IsCompleted,
                 "the AppHost to come up for Profile", TimeSpan.FromMinutes(2));
             Assert.False(profiling.IsCompleted, $"Profile ended before its AppHost asked for a service: {(profiling.IsCompleted ? profiling.Result : null)}");
+            Assert.True(window.Actions.Work.Of(AppActions.Profile) is not null && window.Actions.Work.Of(AppActions.RunProgram) is null,
+                "Profile of the AppHost did not start under Profile's own work");
             Ui.Hold(TimeSpan.FromSeconds(1), "Profile to wait on with no service asked for, however long its AppHost takes");
             Assert.False(profiling.IsCompleted, $"Profile gave up before its AppHost asked for a service: {(profiling.IsCompleted ? profiling.Result : null)}");
 
@@ -721,6 +723,59 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
                 && why.EndsWith(" s of its AppHost asking for it", StringComparison.Ordinal), $"Profile's time limit was said as {why}");
             Assert.Equal(why, window.Status);
             Ui.WaitFor(() => window.AspireRuntime.Apps.Count == 0, "the AppHost to stop as Profile gave up");
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>Run or Debug of a configuration that runs ends it and starts it again, a plain program's in the Run console and an
+    /// AppHost's alike, each start in its own words; and "Already running" is said only of what shares the Run console, naming
+    /// it: another configuration's Run while the API has it.</summary>
+    [AvaloniaFact]
+    public void Run_or_Debug_of_a_configuration_that_runs_starts_it_again_and_only_the_Run_consoles_own_is_said_running()
+    {
+        project.Reset();
+        File.Delete(project.KeyFile);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration)
+                && window.Configurations.Any(configuration => !configuration.Aspire && PathNames.Same(configuration.Project, PathNames.Canonical(project.ApiProject))),
+                "the AppHost's and the API's configurations");
+            RunConfiguration api = window.Configurations.First(configuration => !configuration.Aspire && PathNames.Same(configuration.Project, PathNames.Canonical(project.ApiProject)));
+            Assert.True(window.SelectConfiguration(api.Name));
+            Ui.Launched(window, window.RunAsync(), "the API to run", TimeSpan.FromMinutes(3));
+            int first = window.Session.Runner.ProcessId!.Value;
+            Ui.Launched(window, window.RunAsync(), "Run of the API that runs to run it again", TimeSpan.FromMinutes(3));
+            Assert.True(window.Session.Runner.ProcessId is int again && again != first && !Processes.IsRunning(first), "Run of the API that ran did not end it and run it again");
+
+            RunConfiguration other = api.Copied() with { Name = "The API again", Generated = false };
+            window.SetConfigurations([other], other.Name);
+            Assert.Equal($"Already running: {api.Name} has the Run console; stop it first", Ui.Await(window.RunAsync(), "Run of another configuration"));
+            Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+            Ui.WaitFor(() => !window.IsRunning, "Stop to end the API");
+
+            string config = StandInAppHost.Configuration;
+            Assert.True(window.SelectConfiguration(config));
+            Ui.Launched(window, window.RunAsync(), "the stand-in AppHost to come up");
+            int host = Assert.Single(window.AspireRuntime.Apps).ProcessId!.Value;
+            // Each AppHost writes its own key, which its resource connection is read by: none an earlier one's.
+            File.Delete(project.KeyFile);
+            Ui.Launched(window, window.RunAsync(), "Run of the AppHost that runs to run it again");
+            Assert.True(window.AspireRuntime.Apps is [{ ProcessId: int rerun }] && rerun != host && !Processes.IsRunning(host),
+                $"Run of the AppHost that ran did not end it and run it again ({window.Status})");
+            Assert.Equal($"Running {config}", window.Status);
+            host = window.AspireRuntime.Apps.Single().ProcessId!.Value;
+            File.Delete(project.KeyFile);
+            Ui.Launched(window, window.DebugAsync(), "Debug of the AppHost that runs to debug it");
+            Assert.True(window.AspireRuntime.Apps is [{ ProcessId: int debugged, Mode: RunStart.Debug }] && debugged != host && !Processes.IsRunning(host),
+                $"Debug of the AppHost that ran did not end it and debug it ({window.Status})");
+            Assert.Equal($"Debugging {config}: each .NET service it starts under the debugger", window.Status);
         }
         finally
         {

@@ -582,7 +582,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   started (`RunStart`: Run, Debug, Run with Hot Reload, Profile), its certificate (`BuildRunController.Certificate.cs`) and
   one start at a time of what it starts (`TakeStartAsync`, a `StartUnderWay` in `ProjectSession.Starting`, which the
   folder's end ends): a start of a container configuration, or of an AppHost a start under way also starts, ends that one
-  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has. Rerun follows the configuration chosen
+  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has. Debug or Run of a configuration that
+  runs ends that run and starts it again, an AppHost's (`RunAspireAsync`, its group stopped first) as a container run's and a
+  plain program's in the Run console (`TakeConsoleAsync`); "Already running" is said only of what shares the Run console,
+  naming it (`AlreadyRunning`), an AppHost running beside anything; each start is under its own action's work (Debug's,
+  Profile's, Run's) and says itself in a container run's words (`AspireStarted`: "Debugging X: Y under the debugger"); and a
+  start of one resource (the AppHost gutter's, an agent's `resource`) keeps its configuration's Don't start, setting only
+  its target's entry (`MainWindow.Targeting`). Rerun follows the configuration chosen
   (`BuildRunController.RerunAsync`): its AppHost's when it runs (what changed restarted), else its container run in fast mode
   (the services whose build changed restarted), else what the Run console has stopped and the chosen run again, another
   configuration's AppHost running on; what changed is read by one stamp of a build's output (`BuiltInputs.Stamp`, a file
