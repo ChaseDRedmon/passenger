@@ -54,7 +54,12 @@ public sealed record EfDone(bool Done, string Said);
 /// makes it from (with the framework, folder and environment of the run configuration that runs it: the database the run
 /// uses), the context, and the tool.</summary>
 internal sealed record EfSetting(ProjectModel Project, ProjectModel Startup, string? Framework, string Folder, IReadOnlyDictionary<string, string> Environment,
-    string? Context, EfTool Tool, string Runtime);
+    string? Context, EfTool Tool, string Runtime)
+{
+    /// <summary>The database of a compose run or an AppHost that runs the startup project, as this machine reaches it; null
+    /// for the one its configuration gives.</summary>
+    public EfRunDatabase? Database { get; init; }
+}
 
 /// <summary>The Migrations window's model and commands, the window's own over each session it binds: the folder's projects
 /// that use EF Core, the project, startup project and context chosen, the migrations of that context with which the
@@ -110,6 +115,10 @@ public sealed partial class MigrationsController(MigrationsParts parts)
 
     /// <summary>Add Migration asked for by a gap's fix, for a context's pending model changes.</summary>
     public event EventHandler? AddAsked;
+
+    /// <summary>Where the last command reached the database, when a compose run or an AppHost gave it; null for the one
+    /// the configuration gives.</summary>
+    public string? Database { get; private set; }
 
     /// <summary>The last command's failure, read into one line with its fix; null once one succeeds.</summary>
     public EfGap? Failure { get; private set; }
@@ -558,7 +567,13 @@ public sealed partial class MigrationsController(MigrationsParts parts)
         {
             return (null, "No project here uses EF Core");
         }
-        (string? framework, string folder, IReadOnlyDictionary<string, string> environment) = await RunOfAsync(startup, work);
+        // A run of services that runs the startup project (a compose run's .NET service, an AppHost's resource) gives the
+        // database; a run configuration of the project its working folder and environment.
+        bool servedBy = session.ContainerRun is { IsStopped: false } up && up.Plan.Dotnet.Any(d => PathNames.Same(d.Project, startup.Path))
+            || session.Aspire.Apps.Any(a => a.Services.Any(r => PathNames.Same(r.Project, startup.Path)));
+        (string? framework, string folder, IReadOnlyDictionary<string, string> environment) = servedBy
+            ? (startup.TargetFrameworks.Count > 1 ? startup.TargetFrameworks[0] : null, startup.Folder, new Dictionary<string, string>())
+            : await RunOfAsync(startup, work);
         if (EfRestore.Of(startup.Path, framework) is not { Runtime: not null })
         {
             if (await BuildAsync(project, startup, framework, work) is { } unbuilt)
@@ -626,7 +641,15 @@ public sealed partial class MigrationsController(MigrationsParts parts)
         {
             return (null, $"dotnet ef is not installed here: {EfGaps.PinFix(runtime).Title} first");
         }
-        return (new EfSetting(project, startup, framework, folder, environment, Context, tool, restore.Runtime ?? runtime), null);
+        // A compose run's or an AppHost's database, as this machine reaches it, in place of what the configuration gives.
+        EfRunDatabase? database = session.ContainerRun is { IsStopped: false } containers ? await EfDatabases.OfComposeAsync(containers, startup, work.Stopping) : null;
+        database ??= EfDatabases.OfAspire(session.Aspire, startup);
+        if (database is not null)
+        {
+            environment = new Dictionary<string, string>(environment.Concat(database.Environment).GroupBy(e => e.Key).Select(g => g.Last()));
+        }
+        Database = database?.Where;
+        return (new EfSetting(project, startup, framework, folder, environment, Context, tool, restore.Runtime ?? runtime) { Database = database }, null);
     }
 
     private static string Title(string stage)
@@ -966,7 +989,10 @@ public sealed partial class MigrationsController(MigrationsParts parts)
             return (framework, startup.Folder, new Dictionary<string, string>());
         }
         work.Say($"Reading how {runs.Name} runs…");
-        (LaunchPlan? plan, _) = await parts.Builds().ResolvePlanAsync(runs, null, work.Stopping);
+        // MSBuild's word on the run's folder, waited for a while: without it the command runs in the project's folder.
+        using CancellationTokenSource reading = CancellationTokenSource.CreateLinkedTokenSource(work.Stopping);
+        reading.CancelAfter(Waits.Of(TimeSpan.FromSeconds(30)));
+        (LaunchPlan? plan, _) = await parts.Builds().ResolvePlanAsync(runs, null, reading.Token);
         return plan is null ? (framework, startup.Folder, runs.Environment)
             : (plan.Framework ?? framework, Directory.Exists(plan.WorkingDirectory) ? plan.WorkingDirectory : startup.Folder, plan.Environment);
     }
@@ -984,6 +1010,11 @@ public sealed partial class MigrationsController(MigrationsParts parts)
         {
             arguments.AddRange(["--context", context]);
         }
+        // The commands that reach the database take the run's own, where it has one connection string.
+        if (setting.Database?.Connection is { } connection && verb is ["database", "update", ..] or ["migrations", "list", ..] or ["dbcontext", "info", ..])
+        {
+            arguments.AddRange(["--connection", connection]);
+        }
         System.Diagnostics.ProcessStartInfo start;
         try
         {
@@ -998,7 +1029,9 @@ public sealed partial class MigrationsController(MigrationsParts parts)
             start.Environment[name] = value;
         }
         work.Say($"{Title(work.Stage).TrimEnd('…')}: dotnet ef {string.Join(' ', verb.TakeWhile(v => !v.StartsWith('-')))}…");
-        parts.Views.Build.Append($"\n{ChildProcesses.Display(start)}\n");
+        // The command line names no password: the connection given is said by where it reaches.
+        parts.Views.Build.Append($"\n{ChildProcesses.Display(start).Replace(setting.Database?.Connection ?? "\0", "…", StringComparison.Ordinal)}\n"
+            + (setting.Database is { } database ? $"Against {database.Where}\n" : string.Empty));
         Task<EfOutcome> running = EfRun.RunAsync(start, Tell, work.Stopping);
         BackgroundWork.Track(running);
         EfOutcome outcome = await running;

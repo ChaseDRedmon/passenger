@@ -31,14 +31,21 @@ public partial class MainWindow
         MigrationsView view = migrationsView = new MigrationsView(controller);
         view.ActionRequested += (_, action) => Request(action);
         controller.AddAsked += (_, _) => Request(A.AddMigration);
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Migrations, "Migrations", "Icon.Database", view, Docking.ToolAnchor.BottomLeft)
+        Docking.ToolWindow shown = new(ToolWindowIds.Migrations, "Migrations", "Icon.Database", view, Docking.ToolAnchor.BottomLeft)
         {
             Action = A.ShowMigrations,
             Menus = [new MenuPlace("Tools", 0, 5)],
             Chosen = () => view.Chosen,
-        });
-        // Shown, it lists what it can at once: the commands it runs found ready the moment the window says what is missing.
-        view.AttachedToVisualTree += (_, _) => UiThread.Post(ListMigrationsIfShown);
+        };
+        Dock.Add(shown);
+        // Shown however it is (its action, its stripe button, a layout), it lists what it can at once.
+        shown.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(Docking.ToolWindow.IsShown) && shown.IsShown)
+            {
+                UiThread.Post(ListMigrationsIfShown);
+            }
+        };
         controller.Changed += (_, _) => ListMigrationsIfShown();
         Func<ActionContext, string?> none = _ => Folder is null ? Refusals.NoFolder : controller.Projects.Count == 0 ? "No project here uses EF Core" : null;
         actions!.Add(new IdeAction(A.MigrationsRefresh, "Refresh Migrations", "Migrations", c => _ = controller.ListAsync(A.MigrationsRefresh))
@@ -299,7 +306,8 @@ public partial class MainWindow
         {
             lines.Add($"{controller.Context ?? "Its context"} of {project.Name}, started from {controller.Startup?.Name ?? project.Name}"
                 + (controller.Contexts.Count > 1 ? $" (contexts: {string.Join(", ", controller.Contexts.Select(c => c.Name))})" : string.Empty)
-                + (controller.Listed ? $": {Core.Plural.Of(controller.Migrations.Count, "migration")}" : ": not listed yet"));
+                + (controller.Listed ? $": {Core.Plural.Of(controller.Migrations.Count, "migration")}" : ": not listed yet")
+                + (controller.Database is { } database ? $", against {database}" : string.Empty));
         }
         lines.AddRange(controller.Migrations.Select(m => $"- {m.Id}: {m.Applied switch { true => "applied", false => "pending", null => "not read" }}"));
         IEnumerable<EfGap> gaps = controller.Gaps.Concat(controller.Pending.Select(p => new EfGap($"{p.Context}'s model has changes no migration covers",

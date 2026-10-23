@@ -22,6 +22,9 @@ public sealed class MigrationsView : DockPanel
     private readonly StackPanel gaps;
     private readonly ListBox list;
     private readonly TextBlock placeholder;
+
+    /// <summary>Where the last command reached the database, when a compose run or an AppHost gave it.</summary>
+    private readonly TextBlock against;
     private bool showing;
 
     public MigrationsView(MigrationsController controller)
@@ -52,10 +55,12 @@ public sealed class MigrationsView : DockPanel
                 ActionRequested?.Invoke(this, AppActions.MigrationsRefresh);
             }
         };
+        against = MutedText.Of(string.Empty);
+        against.Name = "MigrationsDatabase";
         WrapPanel top = new()
         {
             Margin = new Thickness(8, 4),
-            Children = { Labelled("Project", projects), Labelled("Startup", startups), Labelled("Context", contexts) },
+            Children = { Labelled("Project", projects), Labelled("Startup", startups), Labelled("Context", contexts), against },
         };
         Border topBar = new() { [DockProperty] = Dock.Top, BorderThickness = new Thickness(0, 0, 0, 1), Child = top };
         topBar.Bind(Border.BorderBrushProperty, topBar.GetResourceObservable("Passenger.Divider"));
@@ -135,6 +140,8 @@ public sealed class MigrationsView : DockPanel
         {
             showing = false;
         }
+        against.Text = controller.Database is { } database ? $"Against {database}" : string.Empty;
+        against.IsVisible = against.Text.Length > 0;
         gaps.Children.Clear();
         IEnumerable<EfGap> pending = controller.Pending.Select(p => new EfGap($"{p.Context}'s model has changes no migration covers",
             [new EfFix(EfFixKind.AddMigration, "Add Migration…")], Blocks: false));

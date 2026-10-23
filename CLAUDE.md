@@ -1220,8 +1220,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   update with the provider that supports it, or the update as asked. Then Passenger's own build of the project and the startup project (the Build window and Problems as
   any build's), then `dotnet ef … --no-build --prefix-output` through `ChildProcesses` (`EfRun`, the tool the manifest names
   run by `dotnet tool run`, else the person's global one by its program), its lines in the Build window, run in the folder
-  and environment of the run configuration that runs the startup project (`LaunchPlan`: the database the run uses), a
-  multi-targeted startup project given its framework; a manifest's tool never restored whose package the cache holds is
+  and environment of the run configuration that runs the startup project (`LaunchPlan`, waited for 30 s at most: the
+  database the run uses), a multi-targeted startup project given its framework. While a compose run or an AppHost runs the
+  startup project, its database is the run's (`EfDatabases`, said in the window and the Build window as Against …, and in
+  an agent's answer): a compose run's .NET service's resolved connection strings (Compose's model) given again at the port
+  Compose published their database's service on (`compose port`, on the engine's machine, `ContainerPort.LinkOn`), the
+  rest (database, user, password) as the service has it; an AppHost's resource's own, which this machine reaches already;
+  given as the environment the app's configuration reads, and as `--connection` to `database update`, `migrations list` and
+  `dbcontext info` where there is one, the command line never showing it; a manifest's tool never restored whose package the cache holds is
   restored and the command run again. After a listing, a command that changes the migrations, and any build the window's
   commands did not start (once the window has listed, then listing again with no build of its own), the context is checked
   for model changes no migration covers (`dotnet ef migrations has-pending-model-changes`, EF Core 8 on; `Pending`): each is
