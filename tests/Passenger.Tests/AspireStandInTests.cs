@@ -428,12 +428,13 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
-    /// <summary>A click on a resource's address lands while the AppHost streams updates, as a real AppHost's health and logs
-    /// stream: an update that comes between the press and the release (its health turned degraded) changes the row in place,
-    /// its control and its link kept, where rows made anew on every update took the link from under the pointer and the
-    /// click never opened the browser.</summary>
+    /// <summary>A click on a resource's address or command lands while the AppHost streams updates, as a real AppHost's health
+    /// and logs stream: an update that comes between the press and the release (its health turned degraded) changes the row
+    /// in place, its control and its link kept, where rows made anew on every update took the link from under the pointer and
+    /// the click never opened the browser; and the commands button and its menu's item, each pressed as one comes, still run
+    /// the command at the AppHost.</summary>
     [AvaloniaFact]
-    public void A_click_on_a_resources_address_lands_while_the_AppHost_streams_updates()
+    public void A_click_on_a_resources_address_or_command_lands_while_the_AppHost_streams_updates()
     {
         project.Reset();
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
@@ -479,6 +480,32 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             window.MouseUp(at, Avalonia.Input.MouseButton.Left);
             Ui.Settle();
             Assert.Equal(2, window.Browsed.Count);
+
+            // A command the same: the commands button and its menu's item, each pressed as an update comes, run it at the
+            // AppHost, where command buttons made anew on every update let a real AppHost's command go unsent (FLAKES.md).
+            api.Commands.Add(new ResourceCommand { Name = "passenger-ping", DisplayName = "Ping", State = ResourceCommandState.Enabled });
+            backend.PushResource(api);
+            Ui.WaitFor(() => window.Aspire.SelectedResource?.Commands.Any(command => command.Name == "passenger-ping") == true, "the API's Ping command");
+            Button commands = window.Aspire.Tools[AppActions.AspireCommand];
+            at = Ui.Centre(commands, window);
+            window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+            api.HealthReports[0].Status = HealthStatus.Healthy;
+            backend.PushResource(api);
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Single().HealthStatus == "Healthy", "the AppHost's update as the commands button is pressed");
+            window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+            Ui.Settle();
+            ContextMenu menu = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(open => open.IsOpen)
+                ?? throw new Xunit.Sdk.XunitException("The commands button pressed as an update came opened no menu");
+            MenuItem ping = menu.Items.OfType<MenuItem>().Single(item => Equals(item.Header, "Ping"));
+            TopLevel shown = TopLevel.GetTopLevel(ping)!;
+            at = Ui.Centre(ping, shown);
+            shown.MouseDown(at, Avalonia.Input.MouseButton.Left);
+            api.HealthReports[0].Status = HealthStatus.Degraded;
+            backend.PushResource(api);
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Single().HealthStatus == "Degraded", "the AppHost's update as the command's item is pressed");
+            shown.MouseUp(at, Avalonia.Input.MouseButton.Left);
+            Ui.WaitFor(() => backend.Commands.Any(command => command is { ResourceName: "apiservice", CommandName: "passenger-ping" }),
+                "the command pressed as an update came to reach the AppHost");
             Assert.Empty(backend.Errors);
         }
         finally

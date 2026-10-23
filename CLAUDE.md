@@ -2162,7 +2162,13 @@ CLI or reaches their ~/.aspire. On Windows an AppHost keeps that record in the p
 says, so there `AspireTests` (Alone) and `McpAspireTests`' tests of a real AppHost skip (`AspireApp.Unavailable`), and
 `AspireExternalDataTests` (`AspireApp.CliUnavailable`), which runs `aspire run` through ChildProcesses, finds its AppHost
 in the window and ends it with its process group, waiting until no service or orchestrator of it is left; `AspireApp` makes two of
-Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
+Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, which
+`AspireTests` share as a `SharedProject` already holding what each test asks of them (an edited method, the API's command
+and its prompts, a launch profile whose folder is missing, a file-based service), so no test writes a file of its own,
+and whose AppHost writes DCP's record and the dashboard's data under its obj, so a run leaves the next window the warm
+server; a window there starts no C# language server unless its test reads C# (the gutter, Edit Configurations' services,
+Hot Reload), what a running starter shows is read in one run of it, and a test that changes the app (Hot Reload, Rerun, a
+restart, a debugged or profiled start) runs its own; and
 `AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`), as do `AspireOrchestrationTests`, on a
 solution of the tests' own target, the rest from the package cache: `tests/AspireGraphs` (an AppHost's, ServiceDefaults'
 and the starter's API service's graphs at net10.0, restore-only projects of the solution, built empty) puts them there,
@@ -2175,8 +2181,9 @@ Directory.Build.targets that takes them out of its AppHosts' references after th
 runs an AppHost skips saying so (`AspireApp.Unavailable`);
 `AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
-stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key), so its console, resources and
-prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
+stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key, recording the commands the
+window runs), so its console, resources, commands and prompts are the window's as a person's AppHost's are (a row's
+address and a command each pressed as an update streams in), and nothing swaps the window's own connection or providers
 (BannedSymbols); the stand-in AppHost also writes the IDE's execution endpoint and token (`StandInAppHost.SessionFile`),
 with which a test asks the IDE to start its built service (`StandIn.Api`) as DCP does, by the execution protocol, so its
 Profile asks which service in `AspireServiceDialog`;

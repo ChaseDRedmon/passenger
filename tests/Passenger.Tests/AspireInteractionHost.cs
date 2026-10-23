@@ -28,6 +28,7 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Resource> resources = new(StringComparer.Ordinal);
     private readonly Channel<WatchResourcesUpdate> resourceUpdates = Channel.CreateUnbounded<WatchResourcesUpdate>();
     private readonly ConcurrentQueue<ConsoleSubscription> consoles = new();
+    private readonly ConcurrentQueue<ResourceCommandRequest> commands = new();
     private readonly ConcurrentDictionary<HttpContext, byte> open = new();
     private WireBarrier? nextAnswer;
 
@@ -55,6 +56,14 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
         }));
         server.MapPost(Service + "WatchResourceConsoleLogs", Guard(WatchConsoleAsync));
         server.MapPost(Service + "UploadFile", Guard(UploadAsync));
+        server.MapPost(Service + "ExecuteResourceCommand", Guard(async context =>
+        {
+            byte[] frame = await ReadFrameAsync(context.Request.Body, context.RequestAborted)
+                ?? throw new InvalidDataException("Missing resource command request");
+            commands.Enqueue(ResourceCommandRequest.Parser.ParseFrom(frame));
+            await WriteFrameAsync(context, new ResourceCommandResponse { Kind = ResourceCommandResponseKind.Succeeded });
+            context.Response.AppendTrailer("grpc-status", "0");
+        }));
     }
 
     /// <summary>Where the stand-in AppHost writes the resource service key the IDE gave it.</summary>
@@ -67,6 +76,8 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
     public WatchInteractionsRequestUpdate[] Answers => answers.ToArray();
     public UploadFileChunk[][] Uploads => uploads.ToArray();
     public ConsoleSubscription[] Consoles => consoles.ToArray();
+    /// <summary>The resource commands the window ran, each answered as done.</summary>
+    public ResourceCommandRequest[] Commands => commands.ToArray();
 
     public void PushResource(Resource resource)
     {
