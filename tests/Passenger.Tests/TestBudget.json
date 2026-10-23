@@ -75,6 +75,7 @@
     "AspireOrchestrationTests": 120,
     "AspireStandInTests": 90,
     "AspireCodeHelpTests": 120,
+    "ConfigurationTests": 90,
     "AspireExternalDataTests": 120,
     "AspireTests": 1500,
     "McpAspireStandInTests": 180,

@@ -207,10 +207,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync(cancel);
-        // Aspire's own, as the editor marks them: a service's missing references, an AppHost's parameters with no value.
+        // Passenger's own, as the editor marks them: a service's missing references, an AppHost's parameters with no value, a
+        // configuration key nothing gives.
         if (Session.CSharp?.For(document) is { } csharp)
         {
-            found = [.. found, .. await csharp.AspireFindingsAsync(lsp, cancel)];
+            found = [.. found, .. await csharp.PassengerFindingsAsync(lsp, cancel)];
         }
         TextSnapshot answered = lsp.Text.Snapshot;
         return (IReadOnlyList<Finding>)[.. found.Select(d =>

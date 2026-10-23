@@ -120,14 +120,24 @@ public static partial class ProjectEdits
         return null;
     }
 
-    /// <summary>Sets a property in the project file, as Add > Docker Support sets the SDK's container properties: where an
-    /// unconditioned property group sets it already, its value there; else on a line of its own at the end of the first
-    /// unconditioned property group, indented as that group's last property; else in a property group of its own before
-    /// &lt;/Project&gt;. Null once done, else why not.</summary>
+    /// <summary>Sets a property in the project file, as Add > Docker Support sets the SDK's container properties and Manage User
+    /// Secrets a UserSecretsId (<see cref="WithProperty"/>). Null once done, else why not.</summary>
     public static string? SetProperty(string project, string name, string value)
     {
         ProjectText file = new(project);
-        string text = file.Text;
+        (string? text, string? problem) = WithProperty(file.Text, project, name, value);
+        if (text is not null && text != file.Text)
+        {
+            file.Write(text);
+        }
+        return problem;
+    }
+
+    /// <summary>A project file's text with a property set: where an unconditioned property group sets it already, its value
+    /// there; else on a line of its own at the end of the first unconditioned property group, indented as that group's last
+    /// property; else in a property group of its own before &lt;/Project&gt;. The text, else why not.</summary>
+    public static (string? Text, string? Problem) WithProperty(string text, string project, string name, string value)
+    {
         string written = System.Security.SecurityElement.Escape(value);
         List<(int Start, int End)> comments = [.. Comment().Matches(text).Select(m => (m.Index, m.Index + m.Length))];
         List<Match> groups = [.. PropertyGroup().Matches(text).Where(m => !comments.Any(c => m.Index >= c.Start && m.Index < c.End)
@@ -145,11 +155,7 @@ public static partial class ProjectEdits
             if (set.Success)
             {
                 Capture old = set.Groups["value"];
-                if (old.Value != written)
-                {
-                    file.Write(text.Remove(old.Index, old.Length).Insert(old.Index, written));
-                }
-                return null;
+                return (old.Value == written ? text : text.Remove(old.Index, old.Length).Insert(old.Index, written), null);
             }
         }
         string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
@@ -162,23 +168,41 @@ public static partial class ProjectEdits
             if (closeLine <= body.Index || text[closeLine..(body.Index + body.Length)].Trim().Length > 0)
             {
                 // The group closes on a line it shares: the property goes just before its close.
-                file.Write(text.Insert(body.Index + body.Length, line));
-                return null;
+                return (text.Insert(body.Index + body.Length, line), null);
             }
             // Indented as the group's last property, or a level under the group with none.
             int previous = text.LastIndexOf('\n', Math.Max(0, closeLine - 2)) + 1;
             string under = previous <= first.Index ? LineIndent(text, first.Index) + indent : LineIndent(text, closeLine - 1);
-            file.Write(text.Insert(closeLine, $"{under}{line}{eol}"));
-            return null;
+            return (text.Insert(closeLine, $"{under}{line}{eol}"), null);
         }
         int close = text.LastIndexOf("</Project>", StringComparison.Ordinal);
         if (close < 0)
         {
-            return $"{Path.GetFileName(project)} is not a project file";
+            return (null, $"{Path.GetFileName(project)} is not a project file");
         }
         int closeAt = text.LastIndexOf('\n', Math.Max(0, close - 1)) + 1;
         bool spaced = closeAt >= 2 && text[..closeAt].TrimEnd('\r', '\n').Length < text[..closeAt].Length - eol.Length;
-        file.Write(text.Insert(closeAt, $"{indent}<PropertyGroup>{eol}{indent}{indent}{line}{eol}{indent}</PropertyGroup>{eol}{(spaced ? eol : string.Empty)}"));
+        return (text.Insert(closeAt, $"{indent}<PropertyGroup>{eol}{indent}{indent}{line}{eol}{indent}</PropertyGroup>{eol}{(spaced ? eol : string.Empty)}"), null);
+    }
+
+    /// <summary>A property's value as the project file's own text sets it, outside comments and conditioned groups; null where it
+    /// sets none.</summary>
+    public static string? PropertyIn(string text, string name)
+    {
+        List<(int Start, int End)> comments = [.. Comment().Matches(text).Select(m => (m.Index, m.Index + m.Length))];
+        Regex element = new($@"<{Regex.Escape(name)}\s*>(?<value>[^<]*)</{Regex.Escape(name)}\s*>");
+        foreach (Match group in PropertyGroup().Matches(text).Where(m => !comments.Any(c => m.Index >= c.Start && m.Index < c.End)
+            && !m.Groups["attributes"].Value.Contains("Condition", StringComparison.OrdinalIgnoreCase)))
+        {
+            Capture body = group.Groups["body"];
+            for (Match set = element.Match(text, body.Index, body.Length); set.Success; set = set.NextMatch())
+            {
+                if (!comments.Any(c => set.Index >= c.Start && set.Index < c.End))
+                {
+                    return System.Net.WebUtility.HtmlDecode(set.Groups["value"].Value.Trim());
+                }
+            }
+        }
         return null;
     }
 

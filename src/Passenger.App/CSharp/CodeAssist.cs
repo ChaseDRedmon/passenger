@@ -607,6 +607,11 @@ public sealed partial class CodeAssist
         }
         if (Current?.Lsp is not { } lsp)
         {
+            // A settings file's keys are Passenger's own, which need no JSON server (none without Node.js).
+            if (WebCurrent is { Kind: WebServerKind.Json } json)
+            {
+                await StartSettingsCompletion(json);
+            }
             return;
         }
         xamlOffered.Clear();
@@ -623,8 +628,15 @@ public sealed partial class CodeAssist
             int caret = Editor.Selections.Primary.Caret;
             TextSnapshot asked = Editor.Document.Snapshot;
             Web.WebDocument? web = WebCurrent;
-            // A compose file's own names where one is typed, merged with the server's by label, ahead of them.
+            // A compose file's own names where one is typed, merged with the server's by label, ahead of them; a settings file's
+            // keys and values from what the code reads, the same way.
             (int Start, IReadOnlyList<CompletionItem> Items)? named = web is not null ? await ComposeCompletionAsync(web, lsp, asked, caret) : null;
+            (int Start, IReadOnlyList<CompletionItem> Items, string Tail)? settings = named is null && web is not null
+                ? await SettingsCompletionAsync(web, asked, caret, cancel.Token) : null;
+            if (settings is { } configured)
+            {
+                named = (configured.Start, configured.Items);
+            }
             (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token, incomplete);
             IReadOnlyList<CompletionItem> served = list?.Items ?? [];
             if (named is { } own)
@@ -660,7 +672,7 @@ public sealed partial class CodeAssist
             open = new Completion([.. named?.Items ?? [], .. served, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
                 list?.ItemDefaults?.CommitCharacters ?? [], list?.IsIncomplete ?? false)
             {
-                Tail = web is not null ? Tail(asked, served, caret) : string.Empty,
+                Tail = settings is { } settled ? settled.Tail : web is not null ? Tail(asked, served, caret) : string.Empty,
                 Lead = web is not null && start < caret && caret <= asked.Length ? asked.GetText(start, caret - start) : string.Empty,
             };
             Filter();
@@ -810,7 +822,8 @@ public sealed partial class CodeAssist
             CommitMSBuild(msbuildItem, from);
             return;
         }
-        if (Current?.Lsp is not { } lsp)
+        LspDocument? lsp = Current?.Lsp;
+        if (lsp is null && !open.Settings)
         {
             return;
         }
@@ -834,7 +847,7 @@ public sealed partial class CodeAssist
         int typed = end ?? Editor.Selections.Primary.Caret;
         try
         {
-            if (item.Data is not null && item.AdditionalTextEdits is null)
+            if (item.Data is not null && item.AdditionalTextEdits is null && lsp is not null)
             {
                 item = await lsp.ResolveAsync(item) ?? item;
             }
@@ -1133,6 +1146,15 @@ public sealed partial class CodeAssist
             {
                 // The card says what the markers there say, without the symbol's description.
             }
+        }
+        // A configuration key's: where a read's is given and with what, or what reads a settings file's.
+        if (debuggerValue is null && XamlCurrent is null && MSBuildCurrent is null && await ConfigurationHoverAsync(offset, cancel.Token) is { } configured)
+        {
+            if (cancel.IsCancellationRequested)
+            {
+                return;
+            }
+            hoverCard.AddText(configured);
         }
         if ((hoverCard.IsEmpty && values is null) || completion.IsVisible)
         {
@@ -1815,6 +1837,11 @@ public sealed partial class CodeAssist
         {
             return;
         }
+        if (WebCurrent is { Kind: WebServerKind.Json } && editors.Active is { } settings && ConfiguredBy?.Invoke(settings.Path) is { Count: > 0 } configured
+            && await SettingsGoTo(settings, configured, offset))
+        {
+            return;
+        }
         if (WebCurrent is { Lsp: not null } web && !web.Provides("definitionProvider"))
         {
             await WebGoTo(web, offset);
@@ -1826,7 +1853,7 @@ public sealed partial class CodeAssist
         }
         try
         {
-            if (await AspireGoTo(lsp, offset))
+            if (await AspireGoTo(lsp, offset) || await ConfigurationGoTo(lsp, offset))
             {
                 return;
             }
@@ -2525,6 +2552,9 @@ public sealed partial class CodeAssist
     private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start, IReadOnlyList<string> CommitCharacters, bool IsIncomplete)
     {
         public bool ResourceNames { get; init; }
+
+        /// <summary>A settings file's keys alone, Passenger's own, offered where its JSON server does not run.</summary>
+        public bool Settings { get; init; }
 
         /// <summary>The text after the caret a web server's items replace as well (a JSON string's closing quote, the rest
         /// of a CSS name the caret is inside), as it stood when the list was asked for; empty for none.</summary>

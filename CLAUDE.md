@@ -279,7 +279,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   assemblies through `RoslynServer.targets`, carried under `roslyn-extension/` with none of them): the server loads it
   with `--extension`, `server/_vs_activateExtension` registers its handlers, and `LspDocument.ExtensionAsync` sends a
   message through `textDocument/_vs_dipatchExtensionMessage` (`RoslynSession.ExtensionAsync` one about the whole
-  solution, as `ConnectionReads` and `WebRoutes` are). A handler reads the server's solution and answers with
+  solution, as `ConnectionReads`, which with `keys` also answers every configuration key a project reads or binds, and
+  `WebRoutes` are). A handler reads the server's solution and answers with
   edits or what it found, never changing its workspace. Razor (.razor, .cshtml) is the server's own, cohosted in it: `LspDocument.IsRazor`
   opens such a file as `aspnetcorerazor`, its colours take the legend Razor registers as it starts (why the client
   capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
@@ -453,6 +454,33 @@ window or takes the focus; it shows everything but the system's own window chrom
   Environment tab. The server's progress is followed by its token (`OnProgress`); a restore is held until it names a
   project, and the server's own `CanonicalProject` (temp's roslyn-canonical-misc/…/Canonical.csproj, made for files no
   project holds) is never shown, logged as a warning, or read as a load problem.
+- Configuration known from what the app reads (#421). The extension reads a project's keys in the one reading of what it
+  reads (`Passenger.Roslyn.Extension/Configuration.cs`, `ConfigurationSource`, from `ConnectionReads`' walk and cache, asked
+  with `keys`): a key by string (an indexer, GetValue, GetConnectionString, a section's Value) under the GetSection chain of
+  its receiver (through a local assigned once; a section passed in reads nothing), the sections (GetRequiredSection's
+  wanting one), and the options classes bound to a section (Configure<T>, AddOptions<T>().Bind and BindConfiguration,
+  ConfigurationBinder's Bind and Get) with their properties nested, collections and dictionaries under `*`,
+  `[ConfigurationKeyName]` honoured, each a `ConfigurationKey` with its type, its place and whether a read has a default
+  or is checked for null (`??`, `?.`, a comparison or pattern, IsNullOrEmpty, the ThrowIfNull guards, in its local too).
+  What gives a key before the app runs is `Workspace/ConfigurationFiles` (`ConfigurationProject`, the session's
+  `ConfigurationOf` and `ConfiguredBy`): appsettings.json and appsettings.{environment}.json for the environments the
+  launch profiles run in (Development where none says), a launch profile's `A__B`, the user secrets (the evaluated
+  UserSecretsId, else the file's), a compose file beside or above the project or an AppHost referencing it naming `A__B`,
+  and Passenger's own environment; the files read off the UI thread, the open ones as the editor has them
+  (`ConfigurationFiles.Reader`). A C# file whose text names configuration's API (`CSharpDocument.MayReadConfiguration`, a
+  look through its pieces) has each unguarded read of a key nothing gives warned of in its pull
+  (`CSharpDocument.Configuration.cs`), but where Aspire's or a compose file's warning stands or an Aspire service reads a
+  connection string; pulled again as a settings file, launch profile or compose file changes or a settings file is saved.
+  Its fix (`CodeAssist.ConfigurationFixes`, an `EditorFix` that `Asks`) sets the key in appsettings.json as nested
+  sections (`JsonText.SetKey`), or for a secret's name (`ContainerSecrets.Secret`) in user secrets as `dotnet
+  user-secrets` keeps them, giving the project a UserSecretsId first where it has none, one command of global undo. In
+  appsettings*.json and a project's secrets.json (`ConfigurationFiles.IsSettings`, `SecretsIdOf`), where the caret is read
+  from the text as typed (`Workspace/JsonSpot`), completion lists a section's keys with their types and a bool's or an
+  enum's values ahead of the JSON server's items (alone without one, `Completion.Settings`), Go to Declaration goes to the
+  options property or the read, and the hover card says the type; from a read in C# Go to Declaration goes to where each
+  file gives the key and the card says each with its value, a user secret's always as dots
+  (`CodeAssist.Configuration.cs`). Manage User Secrets (`MainWindow.Configuration.cs`: a project's row, Find Action on the
+  file shown's project) gives a project with none a UserSecretsId and opens its secrets.json, made where missing.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
   editor's events goes through `ForEachEditor`, since a split makes a new one. An editor window (Open Tab in New Window,
@@ -1135,8 +1163,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
   references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
   an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings and an AppHost's its
-  parameters' (`CSharpDocument.AspireFindingsAsync`, which an agent's `diagnostics` adds too, and whose pull its
-  `code_actions` and `apply_code_action` make first, `PullNowAsync`), an AppHost's edit pulls its open services' again,
+  parameters' (`CSharpDocument.AspireFindingsAsync`, which an agent's `diagnostics` adds too with the configuration
+  warnings, `PassengerFindingsAsync`, and whose pull its `code_actions` and `apply_code_action` make first, `PullNowAsync`,
+  as they do for a file that may read configuration), an AppHost's edit pulls its open services' again,
   and any other file's typing pause, completion, actions and declarations cost Aspire nothing (AspireCodeHelpTests holds a
   pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
   `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
@@ -1464,8 +1493,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`MainWindow.RenameProject`) renames its file, its solution entry (a .sln's name too) and every reference to it
   following, one command Undo and Redo take whole. `ProjectEdits` puts a project's
   `ProjectReference`s in and takes them out as text, the rest kept byte for byte (never `dotnet add reference`), for
-  Add > Reference (`MainWindow.References.cs`), and sets a property (`SetProperty`, one in a comment passed over) for
-  Add > Docker Support's SDK route. `MainWindow.DockerSupport.cs` is Add > Docker Support on a project (a Dockerfile
+  Add > Reference (`MainWindow.References.cs`), and sets a property (`SetProperty`, one in a comment passed over, over
+  `WithProperty`'s text, which a fix's command takes as an edit; `PropertyIn` what the file's own text sets) for
+  Add > Docker Support's SDK route and Manage User Secrets' UserSecretsId. `MainWindow.DockerSupport.cs` is Add > Docker Support on a project (a Dockerfile
   beside it and a .dockerignore at the context, the solution's folder; or EnableSdkContainerSupport and
   ContainerRepository) and Add > Docker Compose on the solution (compose.yaml, a Dockerfile for each project chosen
   without one, the backing services its packages call for with healthchecks and connection strings, listed in Solution
@@ -2287,7 +2317,10 @@ waits with `Ui.PumpUntil` meanwhile, since the failures keep the window busy. `X
 background and width, the buttons' style class, and the caption's binding). `XamlEditingTests` drive each XAML editing
 tool in an Avalonia app and a WPF app of their own (`AvaloniaGallery`, `WpfGallery`), the MVVM Toolkit stood in by its
 attributes' full names. `ProjectFileHelpTests` drive the MSBuild code help on an SDK-style project and a
-Directory.Packages.props with `StandInFeed`. No test sees the system's window frame: `TitleBarTests` checks the roles
+Directory.Packages.props with `StandInFeed`. `ConfigurationTests` work a web project's configuration (`TestProjects.Web`,
+its options classes and reads, nothing from nuget.org): completion, declaration both ways, the hover cards, the warning
+and its two fixes with an agent's, and Manage User Secrets, every user secret in the run's own folder
+(`TestRun.UserSecrets`), each test removing the ones it made. No test sees the system's window frame: `TitleBarTests` checks the roles
 Windows is asked about through Avalonia's internal `IInputRoot.HitTestChromeElement` and counts moves by
 `MovesStarted`; a real Windows window is checked by hand in the VM (`~/Documents/passenger-vm/handcheck/bar205`). A
 screenshot's `--type` sends its text as one input, so completion opens only when its trigger is typed alone

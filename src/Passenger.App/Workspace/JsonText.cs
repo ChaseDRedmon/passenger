@@ -33,6 +33,48 @@ public static class JsonText
         return (entry is null ? layout.Set(root, property, value) : layout.SetEntry(root, property, entry, value), null);
     }
 
+    /// <summary>The text with a configuration key set (appsettings.json's <c>Payments</c> → <c>ApiKey</c>): each section the
+    /// text holds as an object followed (its name's letter case aside, as configuration reads keys), a key written whole at a
+    /// level (<c>"Payments:ApiKey"</c>, as user secrets keep them) set where it stands, the first section it lacks made with
+    /// the rest under it, a level in each, as the file indents; null with why when the text does not read as JSON, its root
+    /// is no object or a section is a value.</summary>
+    public static (string? Text, string? Problem) SetKey(string text, IReadOnlyList<string> path, JsonNode? value)
+    {
+        Node root;
+        try
+        {
+            root = new Reader(text).Document();
+        }
+        catch (FormatException unreadable)
+        {
+            return (null, $"it does not read as JSON: {unreadable.Message}");
+        }
+        if (root.Kind != Kind.Object)
+        {
+            return (null, "its root is not an object");
+        }
+        Layout layout = new(text, Unit(text, root));
+        Node holder = root;
+        for (int i = 0; i < path.Count; i++)
+        {
+            string rest = string.Join(':', path.Skip(i));
+            if (holder.Members.LastOrDefault(m => m.Name.Equals(rest, StringComparison.OrdinalIgnoreCase)) is { } whole)
+            {
+                return (layout.Set(holder, whole.Name, value), null);
+            }
+            if (i == path.Count - 1 || holder.Members.LastOrDefault(m => m.Name.Equals(path[i], StringComparison.OrdinalIgnoreCase)) is not { } section)
+            {
+                return (layout.SetNested(holder, [.. path.Skip(i)], value), null);
+            }
+            if (section.Value.Kind != Kind.Object)
+            {
+                return (null, $"{string.Join(':', path.Take(i + 1))} is a value there, not a section");
+            }
+            holder = section.Value;
+        }
+        return (text, null);
+    }
+
     /// <summary>One level of the file's indentation: what its root's first property stands in from the root's own line,
     /// else two spaces, as dotnet new writes launchSettings.json.</summary>
     internal static string Unit(string text, Node root)
@@ -73,6 +115,23 @@ public static class JsonText
             }
             string written = value.ToJsonString(Written);
             return member is null ? Insert(holder, name, written) : Replace(member.Value.Start, member.Value.End, written);
+        }
+
+        /// <summary>A member set whose value is the rest of a key's sections, each an object a level in from the one holding it.</summary>
+        public string SetNested(Node holder, IReadOnlyList<string> names, JsonNode? value)
+        {
+            if (names.Count == 1)
+            {
+                return Set(holder, names[0], value);
+            }
+            string indent = MemberIndent(holder);
+            string written = value?.ToJsonString(Written) ?? "null";
+            for (int i = names.Count - 1; i >= 1; i--)
+            {
+                string inner = indent + string.Concat(Enumerable.Repeat(unit, i));
+                written = $"{{{eol}{inner}{Quoted(names[i])}: {written}{eol}{indent}{string.Concat(Enumerable.Repeat(unit, i - 1))}}}";
+            }
+            return Insert(holder, names[0], written);
         }
 
         public string SetEntry(Node holder, string name, string entry, JsonNode? value)
@@ -203,6 +262,9 @@ public static class JsonText
 
         public List<Member> Members { get; } = [];
 
+        /// <summary>An array's items, in order.</summary>
+        public List<Node> Items { get; } = [];
+
         /// <summary>The last member of that name, the one a reader takes.</summary>
         public Member? Member(string name) => Members.LastOrDefault(m => m.Name == name);
     }
@@ -319,7 +381,7 @@ public static class JsonText
                     node.End = at;
                     return node;
                 }
-                Value();
+                node.Items.Add(Value());
                 Trivia();
                 if (at < text.Length && text[at] == ',')
                 {

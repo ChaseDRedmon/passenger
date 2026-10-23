@@ -150,9 +150,9 @@ public static class AppActions
 
     // The Explorer's own actions, on the row its menu opened on or the one chosen while it has the keys: Rider's Project
     // view's NewFile, NewDir, Class/Interface, the solution's own (New Solution Folder, Existing Project, Existing Item),
-    // Add Reference, Docker Support and Compose, Aspire Orchestration, NuGet, Edit Project File, Unload and Reload Project,
-    // Compare Files (CompareTwoFiles, off macOS sharing the editor's Duplicate keys), Copy Path (CopyPaths), Reveal in Finder
-    // (RevealIn) and Open in Terminal. Rename and Delete are Rename's and the editor's Delete, as Rider's RenameElement and
+    // Add Reference, Docker Support and Compose, Aspire Orchestration, NuGet, Manage User Secrets (no keys of Rider's), Edit
+    // Project File, Unload and Reload Project, Compare Files (CompareTwoFiles, off macOS sharing the editor's Duplicate keys),
+    // Copy Path (CopyPaths), Reveal in Finder (RevealIn) and Open in Terminal. Rename and Delete are Rename's and the editor's Delete, as Rider's RenameElement and
     // $Delete are one action wherever they are pressed.
     public const string NewFile = "app.explorer.newFile";
     public const string NewFolder = "app.explorer.newFolder";
@@ -165,6 +165,7 @@ public static class AppActions
     public const string AddDockerCompose = "app.explorer.addDockerCompose";
     public const string AddAspireOrchestration = "app.explorer.addAspireOrchestration";
     public const string ManageNuGet = "app.explorer.manageNuGet";
+    public const string ManageUserSecrets = "app.explorer.manageUserSecrets";
     public const string EditProjectFile = "app.explorer.editProjectFile";
     public const string UnloadProject = "app.explorer.unloadProject";
     public const string ReloadProject = "app.explorer.reloadProject";

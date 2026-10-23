@@ -20,6 +20,7 @@ public partial class MainWindow
     private void AddFileOperations()
     {
         AddExplorerActions();
+        AddConfiguration();
         Explorer.Dropped += (_, dropped) => _ = DropAsync(dropped);
         Explorer.NestingAsked += (_, _) => _ = AskNestingAsync();
         Editors.Moved += (_, move) => OnFileMoved(move);

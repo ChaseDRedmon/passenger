@@ -175,6 +175,42 @@ public sealed class ProjectSession : IAsyncDisposable
     /// them all.</summary>
     public ProjectModel? ProjectOf(string path) => Workspace is null ? null : ProjectModel.Owning(Workspace.Projects.Where(p => !Unloaded.Contains(p.Path)), path);
 
+    /// <summary>The configuration of the project a file belongs to (<see cref="ConfigurationFiles"/>); null outside them all.</summary>
+    public ConfigurationProject? ConfigurationOf(string path) => ProjectOf(path) is { } project ? ConfigurationOf(project) : null;
+
+    /// <summary>A project's configuration: its evaluated UserSecretsId, the folders from its own up to the folder open whose
+    /// compose files may run it, and the folders of the AppHosts that reference it.</summary>
+    public ConfigurationProject ConfigurationOf(ProjectModel project)
+    {
+        List<string> composing = [];
+        for (string? folder = Path.GetDirectoryName(project.Path); folder is not null; folder = Path.GetDirectoryName(folder))
+        {
+            composing.Add(folder);
+            if (Folder is null || !PathNames.IsUnder(folder, Folder) || PathNames.Same(folder, Folder))
+            {
+                break;
+            }
+        }
+        string[] hosts = [.. Projects.Where(p => p.IsAspireHost && p.ProjectReferences.Any(r => PathNames.Same(r, project.Path))).Select(p => Path.GetDirectoryName(p.Path)!)];
+        return new ConfigurationProject(project.Path, project.Property(Passenger.Host.CarriedProperties.UserSecretsId) is { Length: > 0 } id ? id : null, composing, hosts);
+    }
+
+    /// <summary>The projects whose configuration a settings file gives: an appsettings*.json's, the project whose folder holds
+    /// it; a secrets.json under the user secrets' folder, those whose UserSecretsId names its folder.</summary>
+    public IReadOnlyList<ConfigurationProject> ConfiguredBy(string path)
+    {
+        if (ConfigurationFiles.IsSettings(path))
+        {
+            return ProjectOf(path) is { } project && PathNames.Same(Path.GetDirectoryName(project.Path)!, Path.GetDirectoryName(path)!) ? [ConfigurationOf(project)] : [];
+        }
+        if (ConfigurationFiles.SecretsIdOf(path) is not { } id)
+        {
+            return [];
+        }
+        string secrets = PathNames.Canonical(UserSecrets.FileOf(id)!);
+        return [.. Projects.Select(ConfigurationOf).Where(c => c.SecretsIn(ConfigurationFiles.Disk) is { } own && PathNames.Same(own, secrets))];
+    }
+
     /// <summary>The name of the project a file belongs to, as Find and Problems group by it; outside them all, Rider's
     /// Miscellaneous Files.</summary>
     public string ProjectNameOf(string path) => ProjectOf(path) is { } owner ? Path.GetFileNameWithoutExtension(owner.Path) : "Miscellaneous Files";
@@ -737,6 +773,8 @@ public sealed class ProjectSession : IAsyncDisposable
                     ? new AspireAppHostSettings(host, Projects.FirstOrDefault(p => PathNames.Same(p.Path, host))?.Property(Passenger.Host.CarriedProperties.UserSecretsId))
                     : null,
                 ComposeGaps = () => Web?.Checks.Gaps ?? [],
+                ConfigurationOf = ConfigurationOf,
+                Texts = () => ConfigurationFiles.Reader(setup.Editors.Documents),
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharpService started = CSharp;
