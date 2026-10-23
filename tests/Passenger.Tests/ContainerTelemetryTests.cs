@@ -59,6 +59,10 @@ public sealed class ContainerTelemetryTests : McpRig
             string? answered = null;
             Assert.True(Ui.Pumped(() => (answered = Answer(port)) == "in stock", TimeSpan.FromMinutes(1)), $"web did not answer: {answered}\n{ContainerRunsTests.Run(window)}");
 
+            // The Run console follows the services, never the dashboard's own log of its container's login address.
+            Ui.WaitFor(() => ContainerRunsTests.Run(window).Contains("Now listening on", StringComparison.Ordinal), "web's log in the Run window", TimeSpan.FromMinutes(1));
+            Assert.DoesNotContain("Login to the dashboard", ContainerRunsTests.Run(window), StringComparison.Ordinal);
+
             // The Containers window's Telemetry tab for web: its log, and the request's trace, the request web made under it.
             window.ShowToolWindow(ToolWindowIds.Containers);
             ContainersView view = window.ContainersWindow;

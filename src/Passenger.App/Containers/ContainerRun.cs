@@ -1125,7 +1125,11 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     }
 
     /// <summary>The <c>docker compose logs -f</c> words that follow every service's output into the Run console.</summary>
-    public IReadOnlyList<string> Logs => [.. Plan.Compose, "logs", "--follow", "--no-color", "--tail", "all"];
+    public IReadOnlyList<string> Logs => [.. Plan.Compose, "logs", "--follow", "--no-color", "--tail", "all", .. Logged];
+
+    /// <summary>The services the Run console follows: every one but Passenger's dashboard, whose records are the Telemetry
+    /// view's and whose own log names a login address of its container's, not this machine's.</summary>
+    private IReadOnlyList<string> Logged => Plan.Telemetry is null ? [] : ["--", .. Plan.Dotnet.Select(d => d.Service), .. Plan.Backing];
 
     /// <summary>The workspace folder whose label is on what the run made (<see cref="FolderContainers"/>), by which Stop
     /// finds what is its own to take down.</summary>
@@ -1230,7 +1234,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
     /// <summary>The <c>docker compose logs -f</c> words that follow every service's output again from <paramref name="since"/>
     /// (RFC 3339), after the run's log ended while its services ran.</summary>
-    public IReadOnlyList<string> LogsSince(string since) => [.. Plan.Compose, "logs", "--follow", "--no-color", "--since", since];
+    public IReadOnlyList<string> LogsSince(string since) => [.. Plan.Compose, "logs", "--follow", "--no-color", "--since", since, .. Logged];
 
     private async Task<string?> RestartNowAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why)
     {
