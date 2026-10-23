@@ -542,14 +542,8 @@ public sealed class CommitView : DockPanel
     /// scrolling let go of is not kept by a row, which lives through refreshes.</summary>
     private static void Follow(Control control, Observable item, Action show)
     {
-        void Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => show();
         show();
-        control.AttachedToVisualTree += (_, _) =>
-        {
-            show();
-            item.PropertyChanged += Changed;
-        };
-        control.DetachedFromVisualTree += (_, _) => item.PropertyChanged -= Changed;
+        item.FollowWhileShown(control, (_, _) => show());
     }
 
     /// <summary>A changed file as the window shows it: its icon, its name in its change's colour (struck through when

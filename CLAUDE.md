@@ -2583,7 +2583,8 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   table in a page is `Border.framed`; a rule inside a page is `Passenger.Separator` (`Passenger.Divider` is for edges
   between panels). PopupHost gives each popup room for its frame's shadow. A menu's value in force is `MenuChoice`
   (checked, never greyed); a tool window's tab is `ToolTabs.Tab` (`panelTab`), a choice among a few `segment`; popups
-  take widths from `PopupFrame` and titles from `popupTitle`; every list, menu and popup row is `ListRow.Height` (24); a
+  take widths from `PopupFrame` and titles from `popupTitle`; every list, menu and popup row is `ListRow.Height` (24), and
+  one a template makes hears its item only while shown (`Observable.FollowWhileShown`), never kept by it after; a
   tool window's empty state is `TextBlock.emptyText`; a row that narrows is a `ShrinkingRow`; menus' shadow room and
   placement are `MenuShadow`, scrollbars `ControlThemes.axaml`, the focus ring `FocusRing`; every Window's ground is the
   chrome. `MainWindow.SmallestWidth` is 640: the layout works at half a 1366-wide screen, and the person's first window
