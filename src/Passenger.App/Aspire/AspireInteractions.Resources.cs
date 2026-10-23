@@ -13,6 +13,7 @@ public sealed partial class AspireInteractions
 {
     public const int ResourceLimit = 256;
     private const string Redacted = "[redacted]";
+    private static readonly TimeSpan ResourcesWait = TimeSpan.FromSeconds(30);
     private readonly object resourceSync = new();
     private readonly Dictionary<string, (Resource Protocol, AspireResource Snapshot)> watchedResources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResourceCommand[]> resourceTypeCommands = new(StringComparer.Ordinal);
@@ -83,10 +84,26 @@ public sealed partial class AspireInteractions
         }
     }
 
+    /// <summary>The AppHost's resources now. A connection that has ended, or an AppHost that sends none in time, is said as
+    /// such (an <see cref="IOException"/> or a <see cref="TimeoutException"/>): only the caller's own cancellation cancels.</summary>
     public async Task<IReadOnlyList<AspireResource>> GetResourcesAsync(CancellationToken cancel = default)
     {
         using CancellationTokenSource request = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellation);
-        request.CancelAfter(TimeSpan.FromSeconds(30));
+        request.CancelAfter(ResourcesWait);
+        try
+        {
+            return await ReadResourcesAsync(request.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            throw cancellation.IsCancellationRequested
+                ? new IOException(Failure ?? "The AppHost's resource connection has ended.")
+                : new TimeoutException($"The AppHost sent no resources within {ResourcesWait.TotalSeconds:0} s.");
+        }
+    }
+
+    private async Task<IReadOnlyList<AspireResource>> ReadResourcesAsync(CancellationToken request)
+    {
         while (true)
         {
             Task? loaded;
@@ -94,13 +111,13 @@ public sealed partial class AspireInteractions
             lock (resourceSync)
             {
                 loaded = resourceWatch is not null ? resourcesLoaded.Task : null;
-                acquire = loaded is null ? resourceReading.WaitAsync(request.Token) : Task.CompletedTask;
+                acquire = loaded is null ? resourceReading.WaitAsync(request) : Task.CompletedTask;
             }
             if (loaded is not null)
             {
                 try
                 {
-                    await loaded.WaitAsync(request.Token).ConfigureAwait(false);
+                    await loaded.WaitAsync(request).ConfigureAwait(false);
                     break;
                 }
                 catch (OperationCanceledException) when (!request.IsCancellationRequested)
@@ -119,7 +136,7 @@ public sealed partial class AspireInteractions
                     }
                     resourceFailure = null;
                 }
-                await ListenResourcesAsync(request.Token, new(TaskCreationOptions.RunContinuationsAsynchronously), singleSnapshot: true).ConfigureAwait(false);
+                await ListenResourcesAsync(request, new(TaskCreationOptions.RunContinuationsAsynchronously), singleSnapshot: true).ConfigureAwait(false);
                 break;
             }
             finally
@@ -127,7 +144,7 @@ public sealed partial class AspireInteractions
                 resourceReading.Release();
             }
         }
-        request.Token.ThrowIfCancellationRequested();
+        request.ThrowIfCancellationRequested();
         lock (resourceSync)
         {
             if (resourceFailure is not null)

@@ -682,7 +682,70 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
-    /// <summary>A stand-in aspire CLI in a folder of the test's: its version and ps answers files beside it.</summary>
+    /// <summary>An AppHost the window did not start is read through the CLI: its addresses shown without the credentials or
+    /// query keys they carried, one that is no web address not offered at all, and the CLI's failure said with its secrets
+    /// masked.</summary>
+    [AvaloniaFact]
+    public void An_AppHost_read_through_the_CLI_shows_its_addresses_without_credentials_and_its_failure_masked()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in aspire CLI is a shell script, and Windows runs no shell script as a program");
+        project.Reset();
+        string cli = StandInCli();
+        string folder = Path.GetDirectoryName(cli)!;
+        File.WriteAllText(Path.Combine(folder, "version"), "13.6.3\n");
+        File.WriteAllText(Path.Combine(folder, "ps.json"), JsonSerializer.Serialize(new[]
+        {
+            new { appHostPath = PathNames.Canonical(project.ProjectFile), appHostPid = Environment.ProcessId, status = "Running" },
+        }));
+        File.WriteAllText(Path.Combine(folder, "resources.json"), JsonSerializer.Serialize(new
+        {
+            resources = new[]
+            {
+                new
+                {
+                    name = "api",
+                    displayName = "api",
+                    state = "Running",
+                    healthStatus = "Healthy",
+                    properties = new { },
+                    environment = new { },
+                    commands = new { },
+                    urls = new[] { new { url = "http://user:password@localhost:8080/?api_key=private&view=1" }, new { url = "javascript:alert(1)" } },
+                },
+            },
+        }));
+        MainWindow window = OpenWithCli(cli);
+        try
+        {
+            FindAction(window, "Discover Aspire AppHosts");
+            Ui.WaitFor(() => window.Aspire.AppSelector.Items.Count == 1, $"the CLI's AppHost ({window.Aspire.Status})");
+            ComboBox chooser = window.Aspire.AppSelector;
+            Ui.Click(chooser);
+            Ui.Press(window, "HOME");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "api"), $"the CLI's resource ({window.Aspire.Status})");
+            FindAction(window, "Show Aspire Resources");
+            string[] Tips() => [.. window.Aspire.ResourceList.GetVisualDescendants().OfType<Button>().Select(button => ToolTip.GetTip(button) as string).OfType<string>()];
+            Ui.WaitFor(() => Tips().Any(tip => tip.TrimEnd('/') == "http://localhost:8080/?view=1"), $"the resource's address as a link ({string.Join(", ", Tips())})");
+            string[] tips = Tips();
+            Assert.DoesNotContain(tips, tip => tip.Contains("password", StringComparison.Ordinal) || tip.Contains("private", StringComparison.Ordinal)
+                || tip.StartsWith("javascript", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain("password", window.Aspire.ResourceSnapshots.Single().Data.GetRawText(), StringComparison.Ordinal);
+
+            File.WriteAllText(Path.Combine(folder, "failure"), "Configuration failed: Password=synthetic-password; Authorization=Bearer synthetic-token");
+            FindAction(window, "Refresh Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Status.Contains("Configuration failed", StringComparison.Ordinal), $"the CLI's failure said ({window.Aspire.Status})");
+            Assert.DoesNotContain("synthetic-password", window.Aspire.Status, StringComparison.Ordinal);
+            Assert.DoesNotContain("synthetic-token", window.Aspire.Status, StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A stand-in aspire CLI in a folder of the test's: its version, ps and describe answers files beside it, and a
+    /// failure file, when there is one, its error and exit code 9.</summary>
     private static string StandInCli()
     {
         string folder = TestFolders.Create("aspire-cli-");
@@ -900,6 +963,7 @@ public sealed class StandInAppHost : SharedProject
 
             string keyFile = Environment.GetEnvironmentVariable("PASSENGER_STAND_IN_KEY")!;
             File.WriteAllText(keyFile + ".urls", $"{Environment.GetEnvironmentVariable("ASPNETCORE_URLS")}\n{Environment.GetEnvironmentVariable("ASPIRE_ALLOW_UNSECURED_TRANSPORT")}");
+            File.WriteAllText(keyFile + ".dashboard", Environment.GetEnvironmentVariable("AppHost__DashboardApiKey"));
             File.WriteAllText(keyFile + ".part", Environment.GetEnvironmentVariable("ASPIRE_DASHBOARD_RESOURCESERVICE_APIKEY"));
             File.Move(keyFile + ".part", keyFile, overwrite: true);
             Console.WriteLine("The stand-in AppHost is up");
@@ -921,11 +985,20 @@ public sealed class StandInAppHost : SharedProject
     /// whether it may serve them unsecured (ASPIRE_ALLOW_UNSECURED_TRANSPORT), a line each, before its key.</summary>
     public string UrlsFile => KeyFile + ".urls";
 
+    /// <summary>Where the stand-in AppHost writes, before its key, the dashboard key the IDE gave it, which the IDE's telemetry
+    /// requests carry.</summary>
+    public string DashboardKeyFile => KeyFile + ".dashboard";
+
     /// <summary>The AppHost's launch profile, naming the stand-in resource service's address, as an AppHost's names its own;
     /// with <paramref name="https"/>, its dashboard served there as an https profile serves it, with no unsecured transport.</summary>
     internal void Serve(AspireInteractionHost backend, string? https = null) => Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint, https));
 
-    private string Profile(Uri? resourceService, string? https = null)
+    /// <summary>The launch profile of <see cref="Serve(AspireInteractionHost, string?)"/>, the AppHost's own address
+    /// (applicationUrl, where the IDE finds its dashboard) the stand-in dashboard's.</summary>
+    internal void Serve(AspireInteractionHost backend, Uri dashboard) =>
+        Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint, applicationUrl: dashboard.AbsoluteUri.TrimEnd('/')));
+
+    private string Profile(Uri? resourceService, string? https = null, string? applicationUrl = null)
     {
         Dictionary<string, string> environment = new()
         {
@@ -943,6 +1016,8 @@ public sealed class StandInAppHost : SharedProject
         {
             environment["ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL"] = resourceService.AbsoluteUri;
         }
-        return JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", environmentVariables = environment } } });
+        return applicationUrl is null
+            ? JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", environmentVariables = environment } } })
+            : JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", applicationUrl, environmentVariables = environment } } });
     }
 }

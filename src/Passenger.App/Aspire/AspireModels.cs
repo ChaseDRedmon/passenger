@@ -23,6 +23,11 @@ public sealed class AspireResource(JsonElement data)
     public string? State => AspireJson.String(Data, "state");
     public string? HealthStatus => AspireJson.String(Data, "healthStatus");
     public string? Source => AspireJson.String(Data, "source");
+
+    /// <summary>Whether the AppHost hides the resource: false when it says nothing of it, as the CLI's snapshot of one it
+    /// shows need not.</summary>
+    public bool IsHidden => Data.TryGetProperty("isHidden", out JsonElement hidden) && hidden.ValueKind == JsonValueKind.True;
+
     public IReadOnlyList<AspireResourceCommand> Commands => AspireJson.Properties(Data, "commands")
         .Select(p => new AspireResourceCommand(p.Name, p.Value)).ToArray();
     public override string ToString() => $"{DisplayName} · {State ?? "Unknown"} · {HealthStatus ?? "No health report"}";

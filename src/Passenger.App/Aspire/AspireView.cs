@@ -690,9 +690,9 @@ public sealed class AspireView : DockPanel, IDisposable
             throw new InvalidDataException("The owned AppHost snapshot exceeds 256 resources or has duplicate names.");
         }
         AspireResource? old = SelectedResource;
-        bool consoleChanged = !resources.Where(resource => !AspireJson.Boolean(resource.Data, "isHidden"))
+        bool consoleChanged = !resources.Where(resource => !resource.IsHidden)
             .Select(resource => (resource.Name, resource.Generation)).OrderBy(item => item.Name)
-            .SequenceEqual(snapshot.Where(resource => !AspireJson.Boolean(resource.Data, "isHidden"))
+            .SequenceEqual(snapshot.Where(resource => !resource.IsHidden)
                 .Select(resource => (resource.Name, resource.Generation)).OrderBy(item => item.Name));
         resources = Array.AsReadOnly(snapshot.ToArray());
         Fill(old?.Name);
@@ -1038,7 +1038,7 @@ public sealed class AspireView : DockPanel, IDisposable
     }
 
     /// <summary>The resources the AppHost lists (its hidden ones left out).</summary>
-    private AspireResource[] Visible() => [.. resources.Where(resource => !AspireJson.Boolean(resource.Data, "isHidden"))];
+    private AspireResource[] Visible() => [.. resources.Where(resource => !resource.IsHidden)];
 
     /// <summary>Each resource's parent among those listed, a loop or a missing parent's child listed as a root.</summary>
     private static Dictionary<string, string> Parents(IReadOnlyList<AspireResource> visible)
