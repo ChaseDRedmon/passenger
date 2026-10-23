@@ -226,6 +226,12 @@ public partial class MainWindow
         }
         AspireResourceRun? previous = action is "run" or "debug" ? current.Aspire.FindService(fresh)
             : null;
+        if (action == "run" && previous is null && AspireJson.String(fresh.Resource.Data, "resourceType") != "Project")
+        {
+            // A resource its AppHost runs itself (a container), as a compose file's backing service is its run's: run answers
+            // how it stands, and container_action runs its commands.
+            return null;
+        }
         string? problem = action switch
         {
             "run" => await RestartAspireServiceAsync(current, fresh, debugging: false, cancel),

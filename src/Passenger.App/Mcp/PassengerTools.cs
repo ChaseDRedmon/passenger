@@ -608,8 +608,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "it has one; a run refused (one running already, nothing to run, a failed build) is an error. A configuration that " +
         "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it. A container configuration " +
         "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state. " +
-        "With resource, that Aspire resource (answering once it is up) or compose service alone (its configuration started " +
-        "if no run has it), without the debugger.")]
+        "With resource, that Aspire resource or compose service alone without the debugger (its configuration started if no run " +
+        "has it), answering once it is up with its run's states and its console.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -626,7 +626,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
             if (await ComposeTargetAsync(resource, configuration, starts: true, cancel) is { } service)
             {
-                return arguments is null ? await RunComposeServiceAsync(service, cancel)
+                return arguments is null ? await RunComposeServiceAsync(service, waitSeconds, cancel)
                     : throw new ArgumentException("A compose service runs as its compose files say; omit arguments");
             }
             AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
@@ -700,7 +700,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             : Tail(Session.Runner.Shown(), lines);
     });
 
-    /// <summary>A container run's services as the engine has them now, one line each: its state, health and ports.</summary>
+    /// <summary>A container run's services as the engine has them now, one line each as a resource's run says them
+    /// (<see cref="ResourceAnswer"/>): its state, health and ports.</summary>
     private static async Task<string> ServicesAsync(global::Passenger.App.Containers.ContainerRun run, CancellationToken cancel)
     {
         try

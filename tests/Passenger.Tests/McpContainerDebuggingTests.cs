@@ -88,8 +88,11 @@ public sealed class McpContainerDebuggingTests : McpRig
 
             // An agent's resource names a compose service as an Aspire resource, through the run of services: run lets web's
             // session go, its program running on, and debug_attach attaches to it again as it runs.
+            // Answered as an AppHost's resource's run is: up, its run's services one line each, and its own log.
             JsonElement unheld = await Call(client, "run", new() { ["resource"] = "web" });
-            Assert.Contains("runs without the debugger", unheld.GetProperty("status").GetString(), StringComparison.Ordinal);
+            string said = unheld.GetProperty("status").GetString()!;
+            Assert.True(unheld.GetProperty("stillRunning").GetBoolean() && said.StartsWith("web of Compose: compose.yaml is up\nServices of Compose: compose.yaml:\n", StringComparison.Ordinal)
+                && said.Contains("\n  cache: running (healthy)", StringComparison.Ordinal) && said.Contains("\n  api: running", StringComparison.Ordinal), $"run of web answered: {unheld}");
             JsonElement letGo = (await Call(client, "workspace")).GetProperty("containerRun").GetProperty("resources").EnumerateArray().Single(r => r.GetProperty("name").GetString() == "web");
             Assert.False(letGo.TryGetProperty("held", out _) || letGo.TryGetProperty("session", out _), $"web, run without the debugger, is listed as {letGo}");
             JsonElement reattached = await Call(client, "debug_attach", new() { ["resource"] = "web", ["waitSeconds"] = 2 });
@@ -117,12 +120,13 @@ public sealed class McpContainerDebuggingTests : McpRig
                 TestContext.Current.CancellationToken), "stop left the configuration's containers behind");
 
             // With no run, a resource starts the configuration that has it, now the chosen one, as the gutter's icon starts a
-            // service: web with what it depends on; then debug_start of api, which that run does not start, ends it and starts
-            // api's own, stopped in Main.
-            JsonElement started = await Call(client, "run", new() { ["resource"] = "web" });
+            // service: web with what it depends on, answered once it is up; then debug_start of api, which that run does not
+            // start, ends it and starts api's own, stopped in Main.
+            JsonElement started = await Call(client, "run", new() { ["resource"] = "web", ["waitSeconds"] = 60 });
             string up = started.GetProperty("status").GetString()!;
-            Assert.True(started.GetProperty("stillRunning").GetBoolean() && up.Contains("Running Compose: compose.yaml: web", StringComparison.Ordinal)
-                && up.Contains("\n  web: running", StringComparison.Ordinal), $"run of web with no run under way answered: {started}");
+            Assert.True(started.GetProperty("stillRunning").GetBoolean() && up.StartsWith("web of Compose: compose.yaml: web is up\n", StringComparison.Ordinal)
+                && up.Contains("\n  cache: running (healthy)", StringComparison.Ordinal) && up.Contains("\n  api: Not started", StringComparison.Ordinal),
+                $"run of web with no run under way answered: {started}");
             Assert.False(ContainerRunsTests.States(project).ContainsKey("api"), "run of web started api too");
             JsonElement apiStop = await Call(client, "debug_start", new() { ["resource"] = "api", ["waitSeconds"] = 120 });
             Assert.True(apiStop.GetProperty("state").GetString() == "paused" && apiStop.GetProperty("location").GetString()!.Contains("Program.cs:1:", StringComparison.Ordinal),

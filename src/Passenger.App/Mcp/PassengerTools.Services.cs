@@ -144,9 +144,10 @@ public sealed partial class PassengerTools
         }
     }
 
-    /// <summary>run's compose service: the configuration that runs it started for it, answered with its services' states
-    /// once up, or, in the run under way, a .NET service's session let go (Run without Debugger).</summary>
-    private async Task<RunResult> RunComposeServiceAsync(ComposeTarget target, CancellationToken cancel)
+    /// <summary>run's compose service: the configuration that runs it started for it, or, in the run under way, a .NET
+    /// service's session let go (Run without Debugger); answered as an Aspire resource's run is, once it is up or has ended, or
+    /// waitSeconds pass.</summary>
+    private async Task<RunResult> RunComposeServiceAsync(ComposeTarget target, int waitSeconds, CancellationToken cancel)
     {
         AgentCall.Follow(window.Actions.Work, AppActions.ServiceRun, AppActions.RunProgram, AppActions.Build);
         using (LaunchBuild built = new(Builds))
@@ -156,15 +157,11 @@ public sealed partial class PassengerTools
                 throw new InvalidOperationException(WithBuildErrors(refused, built.Ended));
             }
         }
-        if (target.Start is not null)
-        {
-            return new RunResult(true, null, await ServicesAsync(Builds.Containers!, cancel), string.Empty);
-        }
-        if (target.Dotnet)
+        if (target.Start is null && target.Dotnet)
         {
             await ComposeServiceActionAsync(AppActions.ServiceRun, target.Service);
         }
-        return new RunResult(true, null, $"{target.Service} of {Builds.Containers?.Plan.Name} runs without the debugger", string.Empty);
+        return await ComposeServiceUpAsync(target.Service, waitSeconds, cancel);
     }
 
     /// <summary>debug_start's and debug_attach's compose service: debugged from its start (restarted held, or the configuration
@@ -189,6 +186,65 @@ public sealed partial class PassengerTools
         }
         DebugSession debugged = Debugging(target.Service) ?? throw new InvalidOperationException($"{target.Service} has no debugging session");
         return await AfterResume(TimeSpan.FromSeconds(Math.Clamp(waitSeconds, 1, 120)), cancel, debugged);
+    }
+
+    /// <summary>What an agent's run of a compose service answers, as an Aspire resource's does (<see cref="ResourceAnswer"/>):
+    /// once it is up or has ended, or waitSeconds have passed, the engine's word on its project's containers read again as
+    /// they change, how it and the run's other services stand, and its own log's last lines.</summary>
+    private async Task<RunResult> ComposeServiceUpAsync(string service, int waitSeconds, CancellationToken cancel)
+    {
+        ContainerRun run = Builds.Containers ?? throw new InvalidOperationException($"The container run that runs {service} has ended");
+        AgentCall.Say($"Waiting up to {Math.Max(0, waitSeconds)} s for {service} to be up");
+        IReadOnlyList<ServiceState> states = await ComposeStatesAsync(run, now => now.FirstOrDefault(s => s.Service == service) is { } it
+            && (Standing.Of(it).IsUp || Standing.Of(it).HasEnded), TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
+        string output = await ComposeLogAsync(run, service, 200, cancel);
+        if (Builds.Containers != run)
+        {
+            throw new InvalidOperationException($"The container run that runs {service} has ended");
+        }
+        return ResourceAnswer(service, run.Name, "Services", states.FirstOrDefault(s => s.Service == service) is { } own ? Standing.Of(own) : null,
+            [.. ServiceStandings(run, states)], run.Notes, output, waitSeconds);
+    }
+
+    /// <summary>The container run's services as the engine says they stand once <paramref name="done"/> holds or the time is
+    /// up, asked again whenever the engine says a container of its project changed (and every 2 s besides).</summary>
+    private async Task<IReadOnlyList<ServiceState>> ComposeStatesAsync(ContainerRun run, Func<IReadOnlyList<ServiceState>, bool> done, TimeSpan limit,
+        CancellationToken cancel)
+    {
+        DateTime until = DateTime.UtcNow + limit;
+        using SemaphoreSlim changed = new(0, 1);
+        using IDisposable following = run.Engine.Follow(seen =>
+        {
+            if (seen.Attributes.TryGetValue("com.docker.compose.project", out string? project) && project == run.Plan.ProjectName)
+            {
+                try
+                {
+                    changed.Release();
+                }
+                catch (Exception told) when (told is SemaphoreFullException or ObjectDisposedException)
+                {
+                    // Told already, or the wait is over.
+                }
+            }
+        });
+        while (true)
+        {
+            IReadOnlyList<ServiceState> states;
+            try
+            {
+                states = await run.StatesAsync(cancel);
+            }
+            catch (JsonException unread)
+            {
+                throw new InvalidOperationException($"The container engine's answer could not be read: {unread.Message}", unread);
+            }
+            TimeSpan left = until - DateTime.UtcNow;
+            if (done(states) || left <= TimeSpan.Zero || run.IsStopped)
+            {
+                return states;
+            }
+            await changed.WaitAsync(Min(left, TimeSpan.FromSeconds(2)), cancel);
+        }
     }
 
     /// <summary>A compose service's log, its last lines, as <c>compose logs</c> gives them without their prefix.</summary>
@@ -282,13 +338,37 @@ public sealed partial class PassengerTools
     /// <summary>How a run of services was started, or a service is held, in an agent's words: run, debug, hotReload, profile.</summary>
     private static string Words(RunStart how) => JsonNamingPolicy.CamelCase.ConvertName(how.ToString());
 
-    /// <summary>A resource of a run of services as an answer says it: its state (<see cref="Shown"/> where the window words it
-    /// otherwise than its kind does), health and exit code, and what follows them on its line.</summary>
+    /// <summary>What an agent's run of a resource of a run of services answers, an AppHost's and a container run's alike:
+    /// whether it is up (running, and not unhealthy where it reports its health), ended, or neither within the wait, every
+    /// resource of its run one line each, the run's notes, and the resource's own console's last lines.</summary>
+    private static RunResult ResourceAnswer(string name, string run, string listed, Standing? resource, IReadOnlyList<Standing> all,
+        IEnumerable<string> notes, string output, int waitSeconds, string? unstarted = null)
+    {
+        string status = resource is null ? $"{name} is no longer one of {run}'s {listed.ToLowerInvariant()}"
+            : unstarted is not null ? $"{name} of {run}: {unstarted}"
+            : resource.IsUp ? $"{name} of {run} is up"
+            : resource.HasEnded ? $"{name} of {run} ended: {resource.State}{(resource.ExitCode is { } code ? $" (exit code {code})" : string.Empty)}"
+            : $"{name} of {run} is not up within {Math.Max(0, waitSeconds)} s: {resource.State ?? "Unknown"}{(resource.Health is { } said ? $" ({said})" : string.Empty)}";
+        status += $"\n{listed} of {run}:\n{string.Join('\n', all.Select(s => $"  {s}"))}" + string.Concat(notes.Select(note => $"\nNote: {note}"));
+        return new RunResult(resource is not null && !resource.HasEnded, resource is { HasEnded: true } ? resource.ExitCode : null, status, output);
+    }
+
+    /// <summary>A resource of a run of services as its run's answer says it: its state (<see cref="Shown"/> where the window
+    /// words it otherwise than its kind does), health and exit code, and what follows them on its line.</summary>
     private sealed record Standing(string Name, string? State, string? Health, int? ExitCode)
     {
         public string? Shown { get; init; }
 
         public string Detail { get; init; } = string.Empty;
+
+        /// <summary>Running, and not unhealthy where it reports its health, nor still starting its health check.</summary>
+        public bool IsUp => string.Equals(State, "Running", StringComparison.OrdinalIgnoreCase)
+            && !(Health is { } health && (health.Equals("Unhealthy", StringComparison.OrdinalIgnoreCase) || health.Equals("Starting", StringComparison.OrdinalIgnoreCase)));
+
+        /// <summary>Exited, finished, failed to start or dead: it runs no more.</summary>
+        public bool HasEnded => State is { } state && Ended.Any(ended => ended.Equals(state, StringComparison.OrdinalIgnoreCase));
+
+        private static readonly string[] Ended = ["Exited", "Finished", "FailedToStart", "Dead"];
 
         public static Standing Of(ServiceState state) => new(state.Service, state.State, state.Health, state.ExitCode)
         {

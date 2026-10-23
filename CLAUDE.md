@@ -1414,7 +1414,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   the live Debug tab debugging it and its state, a quiet Hot Reload session, the profiler's recording). A compose
   `resource` no run has is started with the configuration that has it, the one named, else the chosen one, else the one
   Compose configuration whose model has it (`ComposeTargetAsync`, refused naming them when several do, and for attach and
-  stop refused saying no run has it). `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
+  stop refused saying no run has it). `run` of a resource of either kind answers once it is up (running, and not unhealthy
+  or still starting its health check), has ended or waitSeconds pass, with its run's resources one line each, its notes
+  and its own console (`ResourceAnswer`, `Standing`: an AppHost's waited on through its resource stream, a compose
+  service's through the engine's events), one its run runs itself (a backing service, an AppHost's container) run by
+  nothing and answered as it stands. `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
   `telemetry` of a container run that collects none says to turn its configuration's Collect logs and traces on.
   `container_action` given an AppHost resource runs one of its advertised commands by its name, or start, stop and
   restart as Aspire's `resource-…` ones (`AspireCommandOfAsync`, `MainWindow.ExecuteAspireResourceCommandAsync`: asking

@@ -193,6 +193,18 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
             Assert.True(refused.IsError == true && Text(refused).Contains(why, StringComparison.Ordinal), $"container_action {action} on the resource answered: {Text(refused)}");
         }
         Assert.Equal(2, resources.Commands.Length);
+
+        // run of a resource the AppHost itself runs (a container), as of a compose file's backing service, runs nothing (its
+        // commands are container_action's) and answers how it stands in the shape a compose service's run answers: its
+        // AppHost's resources one line each.
+        Passenger.App.Aspire.Protocol.Resource cache = new() { Name = "cache", DisplayName = "cache", Uid = "cache", ResourceType = "Container", State = "Running" };
+        cache.Commands.Add(new Passenger.App.Aspire.Protocol.ResourceCommand { Name = "resource-restart", DisplayName = "Restart", State = Passenger.App.Aspire.Protocol.ResourceCommandState.Enabled });
+        resources.PushResource(cache);
+        JsonElement ran = await Call(client, "run", new() { ["resource"] = "cache", ["waitSeconds"] = 10 });
+        string status = ran.GetProperty("status").GetString()!;
+        Assert.True(ran.GetProperty("stillRunning").GetBoolean() && status.StartsWith($"cache of {StandInAppHost.Configuration} is up\nResources of {StandInAppHost.Configuration}:\n", StringComparison.Ordinal)
+            && status.Contains("\n  api-owned-instance: Running", StringComparison.Ordinal) && status.Contains("\n  cache: Running", StringComparison.Ordinal), $"run of the cache answered: {ran}");
+        Assert.Equal(2, resources.Commands.Length);
         Assert.Equal("Stopped", (await Call(client, "stop")).GetString());
         Assert.Empty(resources.Errors);
     }
