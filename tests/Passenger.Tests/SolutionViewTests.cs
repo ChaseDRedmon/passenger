@@ -100,6 +100,61 @@ public sealed class SolutionViewTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Every file of a folder of 400 chosen and cut allocates on the UI thread, for each file, under twice what every
+    /// file of a folder of 40 does, each row dimmed and a file's dependent going with it: each file's dependents were found
+    /// by listing and nesting its whole folder again, and each row compared with every file cut, so cutting them all cost
+    /// the folder once for each file.</summary>
+    [AvaloniaFact]
+    public void Cutting_every_file_of_a_folder_of_four_hundred_costs_each_file_about_what_it_does_in_a_folder_of_forty()
+    {
+        WriteItems("Few", 40);
+        WriteItems("Many", 400);
+        MainWindow window = Open();
+        long few = CutEvery(window, "Few", 40);
+        long many = CutEvery(window, "Many", 400);
+        TestContext.Current.TestOutputHelper?.WriteLine($"Cutting each file allocated {few:N0} bytes among 40, {many:N0} among 400.");
+        Assert.True(many < few * 2,
+            $"Cutting every file of a folder of 400 allocated {many / 1024:N0} KB on the UI thread for each, of a folder of 40 {few / 1024:N0} KB: each file read its whole folder again");
+        window.Close();
+    }
+
+    /// <summary>A folder of the app's of some files, and a component whose code-behind nests under it.</summary>
+    private void WriteItems(string name, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            Write($"Shop.App/{name}/Item{i}.cs", $"namespace Shop.App.{name};\n\npublic class Item{i}\n{{\n}}\n");
+        }
+        Write($"Shop.App/{name}/Card.razor", "<p>Card</p>\n");
+        Write($"Shop.App/{name}/Card.razor.cs", $"namespace Shop.App.{name};\n\npublic partial class Card\n{{\n}}\n");
+    }
+
+    /// <summary>What choosing every row of a folder and cutting them allocates on the UI thread for each file, every row then
+    /// dimmed and the component's code-behind with them.</summary>
+    private long CutEvery(MainWindow window, string name, int count)
+    {
+        string at = Path.Combine(folder, "Shop.App", name);
+        Show(window, Path.Combine(at, "Item0.cs"));
+        ExplorerNode[] Rows() => [.. window.ExplorerView.Tree.Rows.Where(r => r.Path is { } path && PathNames.IsUnder(path, at))];
+        Assert.Equal(count + 1, Rows().Length);
+        // The first clicked, the last with Shift.
+        Ui.ClickRow(window, Rows()[0]);
+        Ui.Click(Ui.Row(window.ExplorerView, Rows()[^1]), modifiers: Avalonia.Input.RawInputModifiers.Shift);
+        Assert.Equal(count + 1, window.ExplorerView.SelectedNodes.Count);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Ui.Run(window, EditorActions.Cut);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.StartsWith("Cut ", window.Status, StringComparison.Ordinal);
+        Assert.All(Rows(), row => Assert.True(row.IsCut, $"{row.Name} was cut but is not dimmed"));
+        // The code-behind nested under the component is cut with it, dimmed as it shows.
+        ExplorerNode card = Assert.Single(Rows(), r => r.Name == "Card.razor");
+        Ui.ClickRow(window, card);
+        Ui.Press(window, "RIGHT");
+        ExplorerNode behind = Assert.Single(window.ExplorerView.Tree.Rows, r => r.Path == Path.Combine(at, "Card.razor.cs"));
+        Assert.True(behind.IsCut, "The component was cut but its code-behind, which goes with it, is not dimmed");
+        return allocated / count;
+    }
+
     /// <summary>A folder copied and pasted, and files dragged, in one window: what each leaves is checked before the next.</summary>
     [AvaloniaFact]
     public void A_folder_copied_and_pasted_copies_all_it_holds_named_as_Riders_Duplicate_asks_and_a_file_dragged_moves_or_with_the_copy_key_copies()

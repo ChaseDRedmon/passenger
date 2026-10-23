@@ -51,15 +51,29 @@ public sealed class ExplorerTree
     private void Mark(ExplorerNode node)
     {
         node.Change = node.IsFile && node.Path is { } path && changes.TryGetValue(path, out Vcs.ChangeKind kind) ? kind : null;
-        node.IsCut = node.Kind is NodeKind.File or NodeKind.Folder && node.Path is { } at && cut.Any(c => PathNames.Within(at, c));
+        node.IsCut = cut.Count > 0 && node.Kind is NodeKind.File or NodeKind.Folder && node.Path is { } at && IsCut(at);
     }
 
-    private IReadOnlyList<string> cut = [];
+    /// <summary>Whether a path was cut or is inside a folder that was, found by its own folders: every row is marked, and
+    /// compared with each of thousands of files cut, each row would cost them all.</summary>
+    private bool IsCut(string path)
+    {
+        for (string? at = path; at is not null; at = Path.GetDirectoryName(at))
+        {
+            if (cut.Contains(at))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private HashSet<string> cut = new(PathNames.Comparer);
 
     /// <summary>Dims what was cut and waits to be pasted, as Rider's Solution view does, and what it holds.</summary>
     public void SetCut(IReadOnlyList<string> paths)
     {
-        cut = paths;
+        cut = new HashSet<string>(paths, PathNames.Comparer);
         foreach (ExplorerNode row in Rows)
         {
             Mark(row);
