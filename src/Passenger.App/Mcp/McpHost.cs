@@ -83,7 +83,7 @@ public static partial class McpHost
         "Passenger on it, in a window the person sees, and waits for it. Unless the person has turned on Enable MCP Server, or let agents " +
         "into that folder always, the window asks them to let the agent in. The person is also asked before the agent first uses each tool " +
         "that changes something (edit, rename, build, run, debug_start, breakpoint_set, debug_evaluate, vcs_commit and the like; reading, " +
-        "stop and stepping never ask), and before it opens another folder in their window. A call waits for each answer 2 " +
+        "save_all, stop and stepping never ask), and before it opens another folder in their window. A call waits for each answer 2 " +
         "minutes at most, telling its progress meanwhile when asked to; one refused or left unanswered says so, and a later call asks " +
         "again. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
 

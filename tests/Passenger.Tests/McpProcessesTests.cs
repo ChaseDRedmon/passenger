@@ -59,7 +59,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         {
             Await(Task.Run(() => Call(client, "open", new() { ["path"] = "Notes.txt" })), "the agent opening Notes.txt");
             Await(Task.Run(() => Call(client, "app_type", new() { ["app"] = "ide", ["text"] = "second " })), "the agent typing");
-            Await(Task.Run(() => Call(client, "ide_action", new() { ["action"] = "app.saveAll" })), "the agent saving");
+            Await(Task.Run(() => Call(client, "save_all")), "the agent saving");
         }
         finally
         {

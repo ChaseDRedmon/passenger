@@ -493,7 +493,7 @@ public sealed class McpWindowDebuggingTests : McpRig, IClassFixture<RestoredFold
 
     /// <summary>On the person's window an agent is asked once, the first time, before it runs a configuration, sets a
     /// breakpoint (whose condition runs in their later sessions too), debugs, evaluates code in the paused program (setting
-    /// a value there with it unasked after) or types into its input; stopping is never asked about. The configuration uses
+    /// a value there with it unasked after) or types into its input; saving and stopping are never asked about. The configuration uses
     /// the terminal (DebuggerTests and TerminalTests run and debug one there through the window): run answers with what the
     /// program's tab shows, debug_start stops at a breakpoint on Main's first line, debug_input types into its tab, and
     /// output reads the tab, the program's end in it.</summary>
@@ -511,6 +511,7 @@ public sealed class McpWindowDebuggingTests : McpRig, IClassFixture<RestoredFold
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
         {
+            Assert.Equal("Nothing to save", Unasked(window, client, "save_all").GetString());
             JsonElement ran = Asked(window, client, "run", "run a configuration", new() { ["waitSeconds"] = 5 });
             string output = ran.GetProperty("output").GetString()!;
             Assert.True(ran.GetProperty("stillRunning").GetBoolean() && output.Contains("red at the third row's fifth column", StringComparison.Ordinal),

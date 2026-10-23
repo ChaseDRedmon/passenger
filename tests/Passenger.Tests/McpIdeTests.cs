@@ -47,9 +47,9 @@ public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
 
         // Two saves of Helper.cs are its Local History, the newest first, each with what the file held before it.
         await Call(client, "app_type", new() { ["app"] = "ide", ["text"] = "/* a */ " });
-        await Call(client, "ide_action", new() { ["action"] = "app.saveAll" });
+        await Call(client, "save_all");
         await Call(client, "app_type", new() { ["app"] = "ide", ["text"] = "/* b */ " });
-        await Call(client, "ide_action", new() { ["action"] = "app.saveAll" });
+        await Call(client, "save_all");
         JsonElement[] rows = [.. (await Call(client, "local_history", new() { ["path"] = "Helper.cs" })).GetProperty("rows").EnumerateArray()];
         Assert.True(rows.Length >= 2 && rows[0].GetProperty("title").GetString() == "Change" && rows[1].GetProperty("title").GetString() == "Change",
             $"Helper.cs's history after two saves: {string.Join("; ", rows.Select(r => r.GetRawText()))}");

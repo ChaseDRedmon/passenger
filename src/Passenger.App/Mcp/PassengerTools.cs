@@ -147,6 +147,22 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return Task.FromResult(string.Join('\n', Enumerable.Range(first, last - first + 1).Select(i => $"{i + 1,6}\t{text.GetLineText(i)}")));
     });
 
+    // Not ide_action's app.saveAll: never asked on a person's window (#278), and its answer names what was left unsaved.
+    [McpServerTool(Name = "save_all", Title = "Save every file", Destructive = false), Description("Saves every open file with unsaved changes.")]
+    public Task<string> SaveAll(CancellationToken cancel = default) => OnUi(cancel, () =>
+    {
+        int unsaved = Editors.Documents.Count(d => d.IsModified);
+        Editors.SaveAll();
+        // A read-only file, or one the system refused, keeps its changes, and the agent is told so rather than "Saved".
+        List<OpenDocument> left = [.. Editors.Documents.Where(d => d.IsModified)];
+        if (left.Count > 0)
+        {
+            string names = string.Join(", ", left.Select(d => FileText.IsReadOnly(d.Path) ? $"{Relative(d.Path)} (read-only)" : Relative(d.Path)));
+            throw new InvalidOperationException($"Saved {unsaved - left.Count} of {unsaved} files; not saved: {names}");
+        }
+        return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {Plural.Of(unsaved, "file")}");
+    });
+
     // Code: the language server's
 
     [McpServerTool(Name = "diagnostics", Title = "Errors and warnings in a file", ReadOnly = true), Description(
@@ -1287,7 +1303,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     // The IDE itself
 
     [McpServerTool(Name = "ide_action", Title = "Run an IDE action", Destructive = true), Description(
-        "Runs an IDE action by its id (app.saveAll, app.debug.stepOver...; ide_actions lists them) as its shortcut would, or " +
+        "Runs an IDE action by its id (app.build, app.debug.stepOver...; ide_actions lists them) as its shortcut would, or " +
         "says why it cannot. input: app.migrations.add's name, updateTo's target.")]
     public Task<string> IdeAction(string action, string? input = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
         action.StartsWith("app.migrations.", StringComparison.Ordinal) && window.Actions[action] is not null ? await window.MigrationsForAgentAsync(action, input, cancel)

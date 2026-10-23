@@ -1750,7 +1750,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `AgentConnection.AllowAsync`: one question per tool, which every call of it waits on and the last to give up takes
   away), and `open` asks before it replaces their folder. What runs code in a debugged program or changes it
   (`debug_evaluate`, its `value` set too, and `debug_input`) and `breakpoint_set` (whose condition runs in later sessions
-  too) are `Destructive`; `stop` and the debugger's steps are not, the owner's choice (#278). No wait on
+  too) are `Destructive`; `save_all`, `stop` and the debugger's steps are not, the owner's choice (#278). No wait on
   the person is unbounded (#255): each question goes through `MainWindow.AskForAgentAsync`, which closes it unanswered
   after `MainWindow.AgentAnswerLimit` (2 minutes), the call then saying nobody answered and a later one asking again, brings the window forward (`Attention.Ask` bounces
   the Dock icon on macOS, where Activate is refused while another app is in front) and has the status bar say who waits
@@ -1779,16 +1779,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   angle brackets never unicode escapes), and every tool is `McpHost.Lean`'s (no null default or null type, no title in its annotations). An
   agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpDebuggingTests until
   Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call, which 0.2.0 reached at 61,990
-  bytes; its folds and trim below took it to 46,321, so 15.7 KB are free), so it says each thing once: the element query
+  bytes; its folds and trim below took it to 46,512, so 15.5 KB are free), so it says each thing once: the element query
   (`control`, `filter`) in `app_tree`'s description, and every app_ tool's `app` and `window` in `app_windows`'; the wait
   for an agent's own write, and the parameters several tools share (`configuration`, `arguments`, `waitSeconds`,
   `session`, `resource`), in the instructions; a tool's title once (`Lean` drops the SDK's copy in its annotations); a
   parameter described only where its tool's description does not already name what it takes; lines and columns from 1
   never per parameter. Nor does it hold a tool another covers (the
   owner's call, 0.2.0): `open` shows a file at a line and column, the app_ tools with `app` ide picture Passenger's own
-  windows and type into its editor at the caret, `ide_action` saves (`app.saveAll`), `hierarchy` has implementations,
-  `debug_continue` runs to a line, `debug_evaluate` sets a `value`, `breakpoint_set` and `nuget_install` take `remove`, and
-  `output` reads the Run, Debug and Build consoles. `edit` replaces text in one file as the editor does (found once as written,
+  windows and type into its editor at the caret, `hierarchy` has implementations, `debug_continue` runs to a line,
+  `debug_evaluate` sets a `value`, `breakpoint_set` and `nuget_install` take `remove`, and `output` reads the Run, Debug
+  and Build consoles. `save_all` stays a tool of its own, not `ide_action`'s `app.saveAll`: it is never asked about on a
+  person's window (#278), where `ide_action` is, and its answer names the files a save left unsaved (a read-only one).
+  `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
   editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
   there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
