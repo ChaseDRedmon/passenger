@@ -2054,7 +2054,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `app`: run, debug (the chosen tab's app while it is debugged, else the only one), a Debug tab's name, or ide
   (`PassengerTools.DebugApp`, `NamedApp`). `App/LiveTree/BindingErrors` is how a
   failed binding shows: a console line with its place first in a compiler message's shape (so `ConsoleLinks` links it),
-  Problems' Bindings tab (`BindingProblem`, by file, each once with its count), and fixes through
+  Problems' Bindings tab (`BindingProblem`, by file, each once with its count, placed as it first fails in its XAML read
+  once for all told in that turn of the window's thread, `BuildRunController.FailureText`), and fixes through
   `CodeAssist.EditorFixes`, Passenger's own fixes that Show Context Actions lists before the server's.
 - `tools/Passenger.Notices`: writes the app's `THIRD-PARTY-NOTICES.txt` (beside `LICENSE.txt` in every build and
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
