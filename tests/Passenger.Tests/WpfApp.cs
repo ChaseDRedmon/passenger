@@ -86,11 +86,17 @@ internal static class WpfApp
         string downloaded = Path.Combine(AvaloniaApp.Metadata("NuGetPackageRoot"), "microsoft.windowsdesktop.app.ref", lower, $"microsoft.windowsdesktop.app.ref.{lower}.nupkg");
         Assert.True(File.Exists(downloaded), $"Microsoft.WindowsDesktop.App.Ref {version} is not in the package cache at {downloaded}: restore the tests first");
         string copy = Path.Combine(AvaloniaApp.Feed, Path.GetFileName(downloaded));
-        if (!File.Exists(copy))
+        // Two fixtures (WpfXamlTests' and XamlEditingTests' galleries) can make their apps at once: one copies, the other waits.
+        lock (FeedGate)
         {
-            File.Copy(downloaded, copy);
+            if (!File.Exists(copy))
+            {
+                File.Copy(downloaded, copy);
+            }
         }
     }
+
+    private static readonly Lock FeedGate = new();
 
     private static ChildResult Run(IReadOnlyList<string> arguments) =>
         Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments), limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
