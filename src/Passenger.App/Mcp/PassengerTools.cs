@@ -357,21 +357,25 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         (string Type, IReadOnlyList<string> Files)? named = server.Web is null && Session.CSharp?.Session?.Folder is { } folder
             ? await TypeRename.NamedAsync(Editors, folder, lsp, offset) : null;
-        DateTime asked = DateTime.UtcNow;
+        // The open files as the request went: what is typed meanwhile carries the answer on, as the window's Rename does.
+        using Asked asked = WorkspaceEdits.Track(Editors);
         if (await lsp.RenameAsync(offset, newName) is not { } edit)
         {
             return "This can't be renamed";
         }
-        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked, patience) is { } stale)
+        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked.Since, patience) is { } stale)
         {
             throw new InvalidOperationException($"Nothing was renamed: {stale}");
         }
-        IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => DocumentUris.ToPath(f.Uri)).Distinct()];
         List<(string From, string To)> moves = renameFiles && named is { } type ? [.. type.Files.Select(f => (f, TypeRename.Renamed(f, newName)))] : [];
-        TypeRename.Apply(Editors, edit, moves, $"Rename {named?.Type ?? "symbol"} to {newName}", null, []);
+        List<string> dropped = [];
+        TypeRename.Apply(Editors, edit, moves, $"Rename {named?.Type ?? "symbol"} to {newName}", asked, dropped);
         Editors.SaveAll();
+        IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => DocumentUris.ToPath(f.Uri)).Distinct()
+            .Where(f => !dropped.Contains(Path.GetFileName(f)))];
         string renamed = moves.Count > 0 ? $"; renamed {string.Join(", ", moves.Select(m => $"{Relative(m.From)} to {Relative(m.To)}"))}" : string.Empty;
-        return $"Renamed in {Plural.Of(files.Count, "file")}: {string.Join(", ", files.Select(Relative))}{renamed}";
+        string unrenamed = dropped.Count > 0 ? $"; not in {string.Join(", ", dropped)}, edited meanwhile" : string.Empty;
+        return $"Renamed in {Plural.Of(files.Count, "file")}: {string.Join(", ", files.Select(Relative))}{renamed}{unrenamed}";
     }, cancel));
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
@@ -432,8 +436,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             return await ApplyLintFix(server, lint);
         }
-        // Listed now, with any edit the server gives them as it lists them.
-        DateTime asked = DateTime.UtcNow;
+        // Listed now, with any edit the server gives them as it lists them; the open files as they were then, as the window's are.
+        using Asked asked = WorkspaceEdits.Track(Editors);
         LspDocument lsp = server.Lsp;
         IReadOnlyList<CodeAction> actions = await Actions(server, line, column, endLine, endColumn);
         CodeAction chosen = actions.FirstOrDefault(a => a.Title == title)
@@ -458,13 +462,14 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             return $"{what} changes nothing it can apply{unrun}";
         }
-        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked, patience) is { } stale)
+        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked.Since, patience) is { } stale)
         {
             throw new InvalidOperationException($"{what} was not applied: {stale}");
         }
-        int files = WorkspaceEdits.ApplyAsCommand(Editors, edit, title);
+        List<string> dropped = [];
+        int files = WorkspaceEdits.ApplyAsCommand(Editors, edit, title, asked, dropped);
         Editors.SaveAll();
-        return $"Applied {what} to {Plural.Of(files, "file")}{unrun}";
+        return $"Applied {what} to {Plural.Of(files, "file")}{unrun}{(dropped.Count > 0 ? $", but not to {string.Join(", ", dropped)}, edited meanwhile" : string.Empty)}";
     }, cancel));
 
     /// <summary>A code action as code_actions lists it: its title, its kind, and the choices it offers.</summary>
