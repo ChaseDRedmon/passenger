@@ -1040,7 +1040,7 @@ public partial class ManagedDebugger
         // A decompile under way is given up, its temporary file deleted, whether or not a process was ever held.
         _ending.Cancel();
         // An attach asked for and never made (no configurationDone, or it failed) leaves no program held at its start.
-        ReleaseHeldTarget();
+        ReleaseHeldTarget(within);
         if (_process is null)
         {
             return; // A client may call Terminate, then Disconnect, both of which call Dispose. Dispose only needs to be run once.

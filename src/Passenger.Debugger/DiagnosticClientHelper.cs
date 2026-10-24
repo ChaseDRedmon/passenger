@@ -15,8 +15,7 @@ public static class DiagnosticClientHelper
     /// Fails when the process or the session ends first, or 10 s pass with neither: no .NET in it, or none the debugger reaches.</summary>
     public static async Task LetGoIfHeld(Process process, Task answered, CancellationToken sessionEnded)
     {
-        // A program a terminal has only just started may take a while to load its runtime on a busy machine.
-        DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        DateTime until = DateTime.UtcNow + PortLimit;
         while (!answered.IsCompleted)
         {
             if (sessionEnded.IsCancellationRequested)
@@ -27,18 +26,9 @@ public static class DiagnosticClientHelper
             {
                 throw new InvalidOperationException("it ended before the debugger could take hold of it");
             }
-            // Looked for first: on Windows a client waits 30 s on a pipe that does not exist before it gives up.
-            if (DiagnosticsClient.GetPublishedProcesses().Contains(process.Id))
+            if (TryRelease(process.Id))
             {
-                try
-                {
-                    Release(new DiagnosticsClient(process.Id));
-                    return;
-                }
-                catch (ServerNotAvailableException)
-                {
-                    // Its port was closing, or not yet listening.
-                }
+                return;
             }
             if (DateTime.UtcNow >= until)
             {
@@ -49,24 +39,103 @@ public static class DiagnosticClientHelper
         }
     }
 
-    /// <summary>Lets go a process's runtime held at its start, when its diagnostic port is there to ask, as an attach would
-    /// have: a runtime already running takes the word as done. Null once asked, else why it could not be.</summary>
-    public static string? Resume(int processId)
+    /// <summary>Lets go a process's runtime held at its start, as an attach would have: a runtime already running takes the
+    /// word as done. A runtime opens its port as it starts, which on a busy machine comes after the session meant to take
+    /// hold of it may have ended, so the port is waited for while the process lives, until it is <see cref="PortLimit"/> old
+    /// (as an attach waits) and within <paramref name="within"/> when given. Null once asked, else why it could not be.</summary>
+    public static string? Resume(int processId, TimeSpan? within = null)
+    {
+        Process process;
+        try
+        {
+            process = Process.GetProcessById(processId);
+        }
+        catch (ArgumentException)
+        {
+            return "it had ended";
+        }
+        using (process)
+        {
+            DateTime until = StartingUntil(process);
+            if (within is { } given && DateTime.UtcNow + given < until)
+            {
+                until = DateTime.UtcNow + given;
+            }
+            while (true)
+            {
+                try
+                {
+                    if (TryRelease(processId))
+                    {
+                        return null;
+                    }
+                }
+                catch (Exception error) when (error is ServerErrorException or IOException or TimeoutException or UnauthorizedAccessException
+                    or InvalidOperationException)
+                {
+                    return error.Message;
+                }
+                if (Ended(process))
+                {
+                    return "it ended first";
+                }
+                if (DateTime.UtcNow >= until)
+                {
+                    return "it has no diagnostic port listening";
+                }
+                Thread.Sleep(50);
+            }
+        }
+    }
+
+    /// <summary>A program a terminal has only just started may take a while to load its runtime on a busy machine.</summary>
+    private static readonly TimeSpan PortLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>Until when a process may yet open its diagnostic port: <see cref="PortLimit"/> after it started, or from now
+    /// when the system will not say when it started.</summary>
+    private static DateTime StartingUntil(Process process)
     {
         try
         {
-            // Looked for first, as above: a client on Windows waits 30 s on a pipe that does not exist.
-            if (!DiagnosticsClient.GetPublishedProcesses().Contains(processId))
-            {
-                return "it has no diagnostic port open";
-            }
-            Release(new DiagnosticsClient(processId));
-            return null;
+            return process.StartTime.ToUniversalTime() + PortLimit;
         }
-        catch (Exception error) when (error is ServerNotAvailableException or ServerErrorException or IOException or TimeoutException or UnauthorizedAccessException
-            or InvalidOperationException)
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
         {
-            return error.Message;
+            return DateTime.UtcNow + PortLimit;
+        }
+    }
+
+    /// <summary>Whether the process has ended, false when the system will not say (the deadline then ends the wait).</summary>
+    private static bool Ended(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Asks the process's runtime to let go, once: false while it has no diagnostic port listening (none yet, one
+    /// closing, or one a process of the same id left when it was killed). On Windows the pipe is looked for first, as a
+    /// client there waits 30 s on one that does not exist; elsewhere the client finds the socket itself at once, so the list
+    /// of published processes, which reads the process of every socket ever left in the temporary folder, is not made.</summary>
+    private static bool TryRelease(int processId)
+    {
+        if (OperatingSystem.IsWindows() && !DiagnosticsClient.GetPublishedProcesses().Contains(processId))
+        {
+            return false;
+        }
+        try
+        {
+            Release(new DiagnosticsClient(processId));
+            return true;
+        }
+        catch (ServerNotAvailableException)
+        {
+            return false;
         }
     }
 

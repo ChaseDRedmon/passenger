@@ -119,6 +119,29 @@ public class AttachTests(ITestOutputHelper testOutputHelper)
         Assert.Equal("child ran", (await written).Trim());
     }
 
+    /// <summary>As above, for a program whose runtime opens its diagnostic port only after the attach has ended, as one a
+    /// busy machine starts late does: the end waits for the port and lets the program go once it is there.</summary>
+    [Fact]
+    public async Task A_program_held_at_its_start_whose_runtime_starts_after_its_attach_ended_runs_on()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has no exec: a program a shell starts late has an id of its own, not the shell's attached to");
+        // The shell becomes the program a second after it starts, keeping its id, so the attach ends before the runtime is there.
+        ProcessStartInfo start = Passenger.Core.ChildProcesses.Command("/bin/sh", ["-c", "sleep 1 && exec \"$0\" child", Debuggees.Apphost("PassengerCases")]);
+        start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+        start.RedirectStandardOutput = true;
+        using Process program = Passenger.Core.ChildProcesses.Start(start);
+        Task<string> written = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, program);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(program.Id)
+            .WaitForInitializedEvent();
+
+        Assert.True(host.Disconnect(DebugSession.RequestLimit), "The disconnect was not answered");
+        Assert.True(program.WaitForExit(TimeSpan.FromSeconds(30).Scaled()), "The program whose runtime started after its attach ended was left held at its start");
+        Assert.Equal("child ran", (await written).Trim());
+    }
+
     [Fact]
     public async Task An_attach_to_a_program_that_is_not_dotnet_fails_its_configurationDone_saying_why()
     {

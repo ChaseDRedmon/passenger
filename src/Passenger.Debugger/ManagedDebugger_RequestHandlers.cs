@@ -234,15 +234,16 @@ public partial class ManagedDebugger
 
     /// <summary>Lets go the runtime of a process an attach was to take hold of and did not (the session ended first, or the
     /// attach failed), should it be held at its start: it runs on undebugged rather than wait for good for a debugger that
-    /// is not coming. A runtime already running takes the word as done.</summary>
-    private void ReleaseHeldTarget()
+    /// is not coming. A runtime already running takes the word as done; one still starting is waited for, within
+    /// <paramref name="within"/> when the client gives a time for the let-go.</summary>
+    private void ReleaseHeldTarget(TimeSpan? within = null)
     {
         int target = Interlocked.Exchange(ref _heldTarget, 0);
         if (target == 0)
         {
             return;
         }
-        string? why = DiagnosticClientHelper.Resume(target);
+        string? why = DiagnosticClientHelper.Resume(target, within);
         _logger?.Invoke(why is null ? $"Let process {target} go: the debugger did not take hold of it" : $"Process {target}, not taken hold of, was not let go: {why}");
     }
 
