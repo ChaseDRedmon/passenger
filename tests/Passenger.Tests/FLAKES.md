@@ -10,6 +10,23 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-23
 
+- `LiveTreeTests`' `A_debugged_avalonia_app_shows_its_controls_where_each_value_and_style_comes_from_and_the_control_clicked_in_it`,
+  CI Linux 40051713618 (038a0f45): "A click on Button 'Go to …/MainWindow.axaml:6' lands on Border PART_LayoutRoot
+  instead", on the Styles page. The cover was the tooltip of the Go to Source link clicked just before, in the window's
+  own layer as headless popups are: a test's pointer jumps to each click without moving, so Avalonia hears it rests on what
+  it pressed only as the window redraws under it and opens that link's tooltip 400 ms on (a person's move there is heard,
+  and the press shuts the tip while the pointer stays). The runner's wait after that click outlasted it, and the run's
+  short /tmp path (pid 4411) made the tip narrow enough, 252 px, to stand right of the pointer over the style's link; the
+  Mac's TMPDIR path and the Ubuntu VM's 7-digit pid make it wide enough to flip left of the pointer, clear of it. Held
+  600 ms after that click with CI's words in the tip, the Mac fails as CI did. Neither race nor #449's layout: **the
+  test**'s click, which now shuts the tooltips its pointer leaves, as a person's move does (aec466ce).
+- `FoldingTests`' `Typing_above_two_thousand_regions_moves_them_on_the_UI_thread_without_copying_each_again_and_again`,
+  CI macOS 40051713618 (038a0f45): "A key allocated 88 KB on the UI thread above 2003 regions, 78 KB above 3: 5 bytes for
+  each region". The window allocates nothing for a region (the Mac's means, five tries before #448 and #449 and five at
+  0.2.0's head: 79.6 to 81.5 KB over either, 0 bytes a region). A key's wait is about 400 ms and the caret's blink draws the
+  editor again (28 KB) in any wait past its 530 ms, as a busy runner's doc-comment keys are: seven of twenty held 600 ms
+  on the Mac give the mean CI's 5 bytes. Neither race: **the test**, which averaged the keys; it takes the least of the
+  twenty (a9a80b10), which those slowed keys leave at 0 bytes, and a copy of every region each key still fails at 25.
 - `ProfilerTests`' `A_profiled_program_goes_on_after_its_snapshot_until_stop_ends_it`, CI Windows 39992190279 (e25b06d0),
   the test's first Windows run, and the Windows VM each time: the profiler's pipe still listed after Get Snapshot, 90 s on
   in the VM. The diagnostics library's Windows listener makes its next pipe instance as each connection comes in, after
