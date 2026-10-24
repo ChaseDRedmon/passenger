@@ -72,8 +72,8 @@ public sealed class TablesTests : IDisposable
         Assert.Equal(string.Empty, sales.Cell(2, 0));
         Assert.True(window.EditorArea.Active!.IsReadOnly, "A workbook's tab should be read-only, since it holds no text of the file");
 
-        ToggleButton other = window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>().First(b => (string?)b.Content == "Other");
-        Assert.DoesNotContain(window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>(), b => (string?)b.Content == "Hidden");
+        ToggleButton other = window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>().First(b => b.Content as string == "Other");
+        Assert.DoesNotContain(window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>(), b => b.Content as string == "Hidden");
         Ui.Click(other);
         Ui.WaitFor(() => Grid(window).Table is { RowCount: 2 } table && table.Cell(1, 1) == "42", "the Other sheet's cells");
 
@@ -211,7 +211,7 @@ public sealed class TablesTests : IDisposable
 
     /// <summary>A workbook's sheet's segment above its table.</summary>
     private static ToggleButton Sheet(MainWindow window, string name) =>
-        window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>().First(b => (string?)b.Content == name);
+        window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>().First(b => b.Content as string == name);
 
     /// <summary>A workbook of sheets of these names, each holding its place among them, from 1, in A1.</summary>
     private static void WriteSheets(string path, params string[] names)
