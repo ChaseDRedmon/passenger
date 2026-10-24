@@ -167,7 +167,9 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
                 int at = text.IndexOf(read, StringComparison.Ordinal) + read.IndexOf(".Welcome", StringComparison.Ordinal) + 2;
                 int line = text[..at].Count(c => c == '\n') + 1;
                 IReadOnlyList<Passenger.App.Mcp.Place> places = Ui.Await(agent.Definition(view, line, at - text.LastIndexOf('\n', at - 1)), $"an agent's definition of Welcome in {read}");
-                Assert.Equal(["Properties/Resources.Designer.cs", "Properties/Resources.resx", "Properties/Resources.fr.resx"], [.. places.Select(p => p.Path)]);
+                // An agent's paths are the folder's, in the system's own separators.
+                Assert.Equal([Path.Combine("Properties", "Resources.Designer.cs"), Path.Combine("Properties", "Resources.resx"), Path.Combine("Properties", "Resources.fr.resx")],
+                    [.. places.Select(p => p.Path)]);
                 Assert.Contains("static string Welcome", places[0].Text, StringComparison.Ordinal);
                 Assert.All(places.Skip(1), p => Assert.Contains("<data name=\"Welcome\"", p.Text, StringComparison.Ordinal));
             }
