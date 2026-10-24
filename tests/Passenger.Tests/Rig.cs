@@ -1016,15 +1016,17 @@ public static class Ui
         }
     }
 
-    /// <summary>Where a click on a control lands, in the window or popup showing it, scrolled into view and drawn (hit testing
-    /// reads the last frame drawn); fails unless the control is shown, enabled and inside it, and the pointer finds it there.</summary>
+    /// <summary>Where a click on a control lands, in the window or popup showing it, scrolled into view, the tooltips the pointer
+    /// leaves shut, and drawn (hit testing reads the last frame drawn); fails unless the control is shown, enabled and inside
+    /// it, and the pointer finds it there.</summary>
     private static (TopLevel Top, Point Point) Aim(Control control, Point? at)
     {
         // A person scrolls to what they click; one already in view stays where it is.
         control.BringIntoView();
-        Draw();
         string name = Named(control);
         TopLevel top = TopLevel.GetTopLevel(control) ?? throw new Xunit.Sdk.XunitException($"{name} is in no window, so a click cannot reach it");
+        ShutToolTipsLeft(top, control);
+        Draw();
         Assert.True(control.IsEffectivelyVisible, $"{name} is hidden, so a click cannot reach it");
         Assert.True(control.IsEffectivelyEnabled, $"{name} is disabled, so a click on it does nothing");
         Point point = control.TranslatePoint(at ?? new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), top)
@@ -1037,9 +1039,29 @@ public static class Ui
             found = top.InputHitTest(point, v => v.GetType().Name != "LightDismissOverlayLayer");
         }
         Assert.True(found is Visual visual && (visual == control || control.IsVisualAncestorOf(visual)),
-            $"A click on {name} lands on {(found is Control other ? Named(other) : found?.ToString() ?? "nothing")} instead, which covers it there");
+            $"A click on {name} lands on {(found is Control other ? Covering(other) : found?.ToString() ?? "nothing")} instead, which covers it there ({point} in {top.ClientSize})");
         return (top, point);
     }
+
+    /// <summary>Shuts each tooltip of what the pointer leaves for a click elsewhere, as a person's pointer moving there does. The
+    /// rig's pointer jumps to a click without moving, so Avalonia hears it rests on what it pressed only as the window redraws
+    /// under it, and opens that control's tooltip 400 ms on (a person's move there told it first, and the press shut it for
+    /// as long as the pointer stays); on a slow runner a click's wait outlasts that and the tip covers what is clicked next.</summary>
+    private static void ShutToolTipsLeft(TopLevel top, Control control)
+    {
+        foreach (ToolTip tip in top.GetVisualDescendants().OfType<ToolTip>().ToList())
+        {
+            if (tip.Parent is Avalonia.Controls.Primitives.Popup { PlacementTarget: Control owner } && owner != control && !owner.IsVisualAncestorOf(control))
+            {
+                ToolTip.SetIsOpen(owner, false);
+            }
+        }
+    }
+
+    /// <summary>What a control is, whose template part it is when it is one and what holds it, so a cover is known by what
+    /// drew it.</summary>
+    private static string Covering(Control control) => control.TemplatedParent is Control owner ? $"{Named(control)} of {Covering(owner)}"
+        : string.Join(" in ", control.GetVisualAncestors().OfType<Control>().Take(6).Prepend(control).Select(Named));
 
     /// <summary>A person's window shown on a folder, once the folder's opening work has landed; without the C# language
     /// server for a test that asks nothing of C# (<see cref="Passenger.App.MainWindow.StartsLanguageServer"/>), which then

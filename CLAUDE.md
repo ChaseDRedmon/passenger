@@ -355,8 +355,9 @@ the times. The run sets its nice value to 0; a test needing an MSBuild node wait
 skips saying why. The VMs run a filter on a commit: Windows on Arm, `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (no
 Node.js; it can't see dot folders), and Ubuntu 26.04 ARM64, `vm-test-linux.sh NAME FILTER`.
 
-**Helpers.** Clicks: `Ui.Click` (a real press on a control shown, enabled and hit; `RightClick`, `DoubleClick`,
-`ClickButton`, `ClickRow`, `ClickLink`); menus: `Ui.Choose`, `ChooseFromMenu`, `ChooseFromRowMenu`,
+**Helpers.** Clicks: `Ui.Click` (a real press on a control shown, enabled and hit, shutting first the tooltips its pointer
+leaves, which open in the window headless as the window redraws under a pointer that never moved; `RightClick`,
+`DoubleClick`, `ClickButton`, `ClickRow`, `ClickLink`); menus: `Ui.Choose`, `ChooseFromMenu`, `ChooseFromRowMenu`,
 `ChooseFromEditorMenu`. A chord in one `Ui.Press(window, "control M , control S")` (its first key is forgotten after 2 s).
 Consoles: `Ui.TypeLine` (`TypeToRun`, `TypeToDebugged`); the caret: `Ui.PlaceAfter`; a run: `Ui.Launched` and its status
 `Ui.Said`, both naming a failed build's errors. Projects: `TestProjects.Console`, `Library`, `Web` (`.With`) on
