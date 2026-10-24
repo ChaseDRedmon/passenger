@@ -220,7 +220,7 @@ public sealed class MarkdownPreviewTests
 
         // Split Right: each group its own preview of the one file, the closed split's let go with it.
         WeakReference<MarkdownPreview> closed = SplitAndClose(window);
-        // Collected once the frames and jobs queued as it closed have run, as a leak never is.
+        // Avalonia's hold gesture keeps the pressed close button (so the group) 300 ms, until a frame fires its timer.
         Ui.WaitFor(() =>
         {
             GC.Collect();
