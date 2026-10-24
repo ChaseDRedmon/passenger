@@ -46,12 +46,13 @@ public partial class MainWindow
         };
     }
 
-    /// <summary>Asks for the outline once editing pauses, when a language server has the file shown: a file no server has
-    /// gives none, and a pause waited out for nothing held every key's background work with it (a screenshot's, a test's).
-    /// A server that takes the file later asks at once (<see cref="OutlineWhenUnseen"/>).</summary>
+    /// <summary>Asks for the outline once editing pauses, for a file the C# server has or will have (a C# or Razor file a
+    /// window that starts one shows before its server, or its service, is up): a file no server serves gives none, and a
+    /// pause waited out for nothing held every key's background work with it (a screenshot's, a test's).</summary>
     private void OutlineLater()
     {
-        if (Editors.Active is { } document && session.CSharp?.For(document)?.Lsp is not null)
+        if (Editors.Active is { } document && (session.CSharp?.For(document)?.Lsp is not null
+            || StartsLanguageServer && document.Language.Name is "C#" or "Razor"))
         {
             outlineAgain?.Restart();
         }
