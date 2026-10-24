@@ -62,7 +62,7 @@ public static class ServerPlaces
 
     /// <summary>Whether a file is XAML, whose compilers (Avalonia's XamlIl, WPF's markup compiler) count its lines as an XML
     /// reader does (<see cref="ServerLines.OfXml"/>) in the places they write: a PDB's sequence points, an element's own.</summary>
-    public static bool CountedAsXml(string path) => Path.GetExtension(path).ToLowerInvariant() is ".axaml" or ".xaml";
+    public static bool CountedAsXml(string path) => Xaml.XamlService.IsXaml(path);
 
     /// <summary>Whether a file's compiler counts its lines apart from the editor's, Roslyn's or XAML's.</summary>
     public static bool CountedApart(string path) => CountedByRoslyn(path) || CountedAsXml(path);

@@ -10,7 +10,7 @@ namespace Passenger.App.Debugging;
 public static class XamlBreakpoints
 {
     /// <summary>Whether a file is XAML that Avalonia compiles to code a breakpoint can stop in.</summary>
-    public static bool Compiled(string path) => Path.GetExtension(path).Equals(".axaml", StringComparison.OrdinalIgnoreCase);
+    public static bool Compiled(string path) => Path.GetExtension(path).ToLowerInvariant() is ".axaml" or ".paml";
 
     /// <summary>The attribute an offset is on (its name or its value) that sets a property as its element is made, by its
     /// name as written; null elsewhere, and for the directives that set none (xmlns, x:Class, x:DataType, design-time ones).</summary>

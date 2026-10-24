@@ -71,7 +71,7 @@ public static class BuiltInputs
     {
         ".json" => !file.EndsWith(".dcp.json", StringComparison.OrdinalIgnoreCase),
         ".cs" or ".vb" or ".fs" or ".fsi" or ".csproj" or ".vbproj" or ".fsproj" or ".props" or ".targets" or ".razor" or ".cshtml"
-            or ".vbhtml" or ".resx" or ".xaml" or ".axaml" or ".config" or ".proto" => true,
+            or ".vbhtml" or ".resx" or ".xaml" or ".axaml" or ".paml" or ".config" or ".proto" => true,
         _ => false,
     };
 }

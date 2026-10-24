@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Passenger.Editor;
 using TextMateSharp.Grammars;
 using TextMateSharp.Internal.Grammars.Reader;
@@ -14,9 +15,10 @@ namespace Passenger.Languages.TextMate;
 /// under <c>TextMate/Grammars</c>) with the grammars it embeds, in a registry of its own: TextMateSharp compiles rules as
 /// it meets them and keeps no lock, so everything done with one language's rules holds <see cref="Gate"/>, and two
 /// languages never share any.</summary>
-internal sealed class Grammar
+internal sealed partial class Grammar
 {
-    /// <summary>Each scope a grammar here names, by its file.</summary>
+    /// <summary>Each scope a grammar here names, by its file. SCSS's includes SassDoc's (its <c>///</c> comments' tags),
+    /// which is not carried: those stay comments.</summary>
     private static readonly Dictionary<string, string> Files = new(StringComparer.Ordinal)
     {
         ["text.xml"] = "xml.tmLanguage.json",
@@ -25,6 +27,8 @@ internal sealed class Grammar
         ["text.html.markdown"] = "markdown.tmLanguage.json",
         ["text.html.basic"] = "html.tmLanguage.json",
         ["source.css"] = "css.tmLanguage.json",
+        ["source.css.scss"] = "scss.tmLanguage.json",
+        ["source.css.less"] = "less.tmLanguage.json",
         ["source.js"] = "JavaScript.tmLanguage.json",
         ["source.ts"] = "TypeScript.tmLanguage.json",
         ["source.shell"] = "shell-unix-bash.tmLanguage.json",
@@ -42,6 +46,8 @@ internal sealed class Grammar
         ["Markdown"] = ("text.html.markdown", Tags.None),
         ["HTML"] = ("text.html.basic", Tags.Html),
         ["CSS"] = ("source.css", Tags.None),
+        ["SCSS"] = ("source.css.scss", Tags.None),
+        ["Less"] = ("source.css.less", Tags.None),
         ["JavaScript"] = ("source.js", Tags.None),
         ["TypeScript"] = ("source.ts", Tags.None),
         ["Shell"] = ("source.shell", Tags.None),
@@ -121,7 +127,7 @@ internal sealed class Grammar
 
     /// <summary>Where TextMateSharp finds a grammar by scope: this assembly's, none for a scope it does not carry (a
     /// Markdown fence in a language without one, which then stays code).</summary>
-    private sealed class Locator : IRegistryOptions
+    private sealed partial class Locator : IRegistryOptions
     {
         public IRawTheme GetTheme(string scopeName) => null!;
 
@@ -171,9 +177,16 @@ internal sealed class Grammar
 
         public ICollection<string> GetInjections(string scopeName) => null!;
 
+        /// <summary>A class of every character past one, <c>[^\x{00}-\x{7F}]</c>: Onigwrap's Oniguruma reads it inside
+        /// another class (Less's identifiers, <c>[[-\w][^\x{00}-\x{7F}]]</c>) as every character, so a Less variable
+        /// took the rest of its line and never ended; the range past it reads the same everywhere.</summary>
+        [GeneratedRegex(@"\[\^\\x\{0+\}-\\x\{([0-9A-Fa-f]{1,5})\}\]")]
+        private static partial Regex PastCharacter();
+
         /// <summary>Reads what VS Code's reader reads and TextMateSharp's fails on as VS Code does: a capture that is not a
         /// rule is left out (XML's comments name their own end and scope among their captures, YAML's tag handles a
-        /// comment), and a rule that begins with no end or while never ends, as with VS Code's end of U+FFFF.</summary>
+        /// comment), a rule that begins with no end or while never ends, as with VS Code's end of U+FFFF, and a class
+        /// of every character past one is written as the range it is (<see cref="PastCharacter"/>).</summary>
         private static void Tidy(object node)
         {
             if (node is IDictionary<string, object> rule)
@@ -181,6 +194,14 @@ internal sealed class Grammar
                 if (rule.ContainsKey("begin") && !rule.ContainsKey("end") && !rule.ContainsKey("while"))
                 {
                     rule["end"] = "\uFFFF";
+                }
+                foreach (string key in (string[])["match", "begin", "end", "while"])
+                {
+                    if (rule.TryGetValue(key, out object? found) && found is string pattern && pattern.Contains("[^\\x{0", StringComparison.Ordinal))
+                    {
+                        rule[key] = PastCharacter().Replace(pattern, past =>
+                            $"[\\x{{{int.Parse(past.Groups[1].ValueSpan, NumberStyles.HexNumber, CultureInfo.InvariantCulture) + 1:X}}}-\\x{{10FFFF}}]");
+                    }
                 }
                 foreach ((string key, object value) in rule)
                 {

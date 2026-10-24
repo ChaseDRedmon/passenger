@@ -187,6 +187,37 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         window.Close();
     }
 
+    /// <summary>An SCSS and a Less stylesheet go to the CSS server as their own languages, the status bar naming each: a
+    /// property completes in either, one the server does not know is warned of, and their variables, mixins and nesting
+    /// are no error, as CSS's own reading would mark them.</summary>
+    [AvaloniaFact]
+    public void An_SCSS_and_a_Less_stylesheet_complete_and_are_checked_by_the_CSS_server_as_their_own_languages()
+    {
+        SkipWithoutNode();
+        MainWindow window = app.Open("wwwroot/css/theme.scss", languageServer: false);
+        foreach ((string file, string language) in (IEnumerable<(string, string)>)[("wwwroot/css/theme.scss", "SCSS"), ("wwwroot/css/theme.less", "Less")])
+        {
+            window.OpenFile(app.PathOf(file));
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            Ui.PlaceAfter(editor, "padding: 12px;");
+            Ui.Press(window, "ENTER");
+            TypeEach(window, "bord");
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("border-radius"), $"CSS's properties as one is typed in {file}");
+            Assert.Equal(language, window.LanguageShown);
+            Ui.Press(window, "ESCAPE");
+            int typed = editor.Selections.Primary.Caret;
+            editor.ApplyEdits([new TextEdit(typed - "bord".Length, "bord".Length, "colr: red;")]);
+            Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Warning), $"the warning under the property CSS has not in {file}");
+            Marker warning = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Warning);
+            Assert.Equal("colr", editor.Document.Snapshot.GetText(warning.Range.Start, warning.Range.Length));
+            Assert.True(!document.Markers.Any(m => m.Kind == MarkerKind.Error),
+                $"{file} was read as plain CSS, its {language} marked as errors: {string.Join("; ", document.Markers.Select(m => m.Message))}");
+        }
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Package_json_completes_and_checks_by_its_schema_goes_from_a_dependency_to_its_package_and_renames_a_script_with_its_runs()
     {

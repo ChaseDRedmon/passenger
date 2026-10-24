@@ -412,8 +412,8 @@ internal static class BlazorApp
 /// (<see cref="SharedProject"/>): for Razor, a component that takes parameters and a page that sets them, a component whose
 /// code is all in its code-behind, and a Razor Page whose markup misnames a member of its model; for the web languages,
 /// the files a web project carries beside its C#: wwwroot/js/site.js, TypeScript under Scripts/ with its tsconfig.json,
-/// wwwroot/css/site.css, a package.json with a dependency installed in node_modules, and a component with a &lt;style&gt;
-/// and a &lt;script&gt;.</summary>
+/// wwwroot/css/site.css and an SCSS and a Less stylesheet beside it, a package.json with a dependency installed in
+/// node_modules, and a component with a &lt;style&gt; and a &lt;script&gt;.</summary>
 public sealed class BlazorShop : SharedProject
 {
     public const string Script = "// Greets whoever opens the page.\nfunction greet(name) {\n    return \"Hello, \" + name;\n}\n\nconst message = greet(\"Ada\");\nconsole.log(message);\n";
@@ -428,6 +428,13 @@ public sealed class BlazorShop : SharedProject
         + "    \"strict\": true,\n    \"outDir\": \"wwwroot/js/out\"\n  },\n  \"include\": [\"Scripts/**/*.ts\"]\n}\n";
 
     public const string Style = ":root {\n    --accent: #1b6ec2;\n}\n\n.btn-primary {\n    color: var(--accent);\n    background-color: #ffffff;\n}\n";
+
+    /// <summary>A variable, a mixin and nesting: what CSS's own reading would mark as errors.</summary>
+    public const string Sass = "$accent: #1b6ec2;\n\n@mixin framed($width) {\n    border: $width solid $accent;\n}\n\n.card {\n    padding: 12px;\n"
+        + "    &:hover {\n        color: darken($accent, 10%);\n    }\n    @include framed(1px);\n}\n";
+
+    public const string Less = "@accent: #1b6ec2;\n\n.framed(@width) {\n    border: @width solid @accent;\n}\n\n.card {\n    padding: 12px;\n"
+        + "    &:hover {\n        color: darken(@accent, 10%);\n    }\n    .framed(1px);\n}\n";
 
     public const string Package = "{\n  \"name\": \"shop-client\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"scripts\": {\n"
         + "    \"build\": \"tsc -p .\",\n    \"watch\": \"npm run build -- --watch\"\n  },\n  \"devDependencies\": {\n    \"left-pad\": \"^1.3.0\"\n  }\n}\n";
@@ -450,6 +457,8 @@ public sealed class BlazorShop : SharedProject
         ("Scripts/cart.ts", Cart),
         ("tsconfig.json", Config),
         ("wwwroot/css/site.css", Style),
+        ("wwwroot/css/theme.scss", Sass),
+        ("wwwroot/css/theme.less", Less),
         ("package.json", Package),
         ("node_modules/left-pad/package.json", "{\n  \"name\": \"left-pad\",\n  \"version\": \"1.3.0\",\n  \"main\": \"index.js\"\n}\n"),
         ("node_modules/left-pad/index.js", "module.exports = (text, length) => text.padStart(length);\n"),

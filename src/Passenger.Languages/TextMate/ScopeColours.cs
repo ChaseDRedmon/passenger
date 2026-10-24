@@ -107,6 +107,8 @@ internal static class ScopeColours
         ("meta.embedded.block.javascript", TokenKind.Text),
         ("meta.embedded.block.json", TokenKind.Text),
         ("meta.embedded.block.jsonc", TokenKind.Text),
+        ("meta.embedded.block.less", TokenKind.Text),
+        ("meta.embedded.block.scss", TokenKind.Text),
         ("meta.embedded.block.shellscript", TokenKind.Text),
         ("meta.embedded.block.typescript", TokenKind.Text),
         ("meta.embedded.block.xml", TokenKind.Text),
@@ -123,6 +125,24 @@ internal static class ScopeColours
         ("constant.other.color", TokenKind.Number),
         ("variable.css", TokenKind.Text),
         ("variable.argument.css", TokenKind.Text),
+
+        // SCSS and Less as CSS is, their variables in a field's colour (Rider's Sass and Less variables are instance fields);
+        // Less's unquoted words and both's keyframe offsets plain, as CSS's are; an escaped Less string a string.
+        ("variable.scss", TokenKind.Field),
+        ("entity.other.attribute-name.placeholder.css", TokenKind.Tag),
+        ("entity.other.attribute-name.parent-selector-suffix.css", TokenKind.Tag),
+        ("entity.other.attribute-name.scss", TokenKind.Text),
+        ("variable.other.readwrite.less", TokenKind.Field),
+        ("entity.other.attribute-name.class.less", TokenKind.Tag),
+        ("entity.other.attribute-name.id.less", TokenKind.Tag),
+        ("entity.other.attribute-name.parent.less", TokenKind.Tag),
+        ("entity.other.attribute-name.pseudo-class.less", TokenKind.Tag),
+        ("entity.other.attribute-name.pseudo-element.less", TokenKind.Tag),
+        ("punctuation.definition.entity.less", TokenKind.Tag),
+        ("support.type.property-name.less", TokenKind.Keyword),
+        ("keyword.other.keyframe-selector.less", TokenKind.Text),
+        ("string.unquoted.less", TokenKind.Text),
+        ("markup.raw.inline.less", TokenKind.String),
 
         // Shell: commands, their arguments and variables plain, as Rider's are.
         ("string.unquoted.argument", TokenKind.Text),

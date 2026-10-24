@@ -1263,7 +1263,7 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
         {
             ".cs" or ".csx" => new Language("C#", "//", 4, "/*", "*/"),
             ".razor" or ".cshtml" => new Language("Razor", null, 4, "@*", "*@"),
-            ".csproj" or ".fsproj" or ".vbproj" or ".proj" or ".props" or ".targets" or ".xml" or ".axaml" or ".xaml" or ".slnx"
+            ".csproj" or ".fsproj" or ".vbproj" or ".proj" or ".props" or ".targets" or ".xml" or ".axaml" or ".paml" or ".xaml" or ".slnx"
                 or ".resx" or ".config" or ".nuspec" or ".manifest" or ".runsettings" or ".xsd" or ".xslt" or ".xsl" or ".svg"
                 or ".plist" or ".storyboard" => Xml,
             ".json" or ".jsonc" => new Language("JSON", "//", 2, "/*", "*/"),
@@ -1271,11 +1271,13 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
             ".md" or ".markdown" => new Language("Markdown", null, 2, "<!--", "-->"),
             ".html" or ".htm" => new Language("HTML", null, 4, "<!--", "-->"),
             ".css" => new Language("CSS", null, 4, "/*", "*/"),
+            ".scss" => new Language("SCSS", "//", 4, "/*", "*/"),
+            ".less" => new Language("Less", "//", 4, "/*", "*/"),
             ".js" or ".mjs" or ".cjs" or ".jsx" => new Language("JavaScript", "//", 4, "/*", "*/"),
             ".ts" or ".mts" or ".cts" or ".tsx" => new Language("TypeScript", "//", 4, "/*", "*/"),
             ".sh" or ".bash" or ".zsh" => new Language("Shell", "#"),
             ".dockerignore" => new Language("Ignore", "#"),
-            ".scss" or ".less" or ".rs" or ".go" or ".java" or ".kt" or ".swift" or ".c" or ".h" or ".cpp" => new Language("Code", "//", 4, "/*", "*/"),
+            ".rs" or ".go" or ".java" or ".kt" or ".swift" or ".c" or ".h" or ".cpp" => new Language("Code", "//", 4, "/*", "*/"),
             ".py" or ".toml" or ".ps1" or ".rb" => new Language("Script", "#"),
             _ when name.Equals("justfile", StringComparison.OrdinalIgnoreCase) => new Language("Script", "#"),
             _ => PlainText,

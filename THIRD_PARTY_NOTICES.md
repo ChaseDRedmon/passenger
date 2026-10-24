@@ -679,6 +679,12 @@ Microsoft Corporation), unchanged, from the project its header names:
 - `css.tmLanguage.json` (VS Code 1.142.0, `extensions/css`): from microsoft/vscode-css
   (https://github.com/microsoft/vscode-css), MIT, Copyright (c) Microsoft Corporation, derived from atom/language-css
   and the TextMate bundle textmate/css.tmbundle, under the TextMate bundle licence below.
+- `scss.tmLanguage.json` (VS Code 1.142.0, `extensions/scss`): from atom/language-sass
+  (https://github.com/atom/language-sass), MIT, Copyright (c) 2014 GitHub Inc., derived from the TextMate bundle
+  alexsancho/Sass.tmbundle (https://github.com/alexsancho/Sass.tmbundle), MIT, Copyright (c) 2012 Alex Sancho, as
+  atom/language-sass's `LICENSE.md` says.
+- `less.tmLanguage.json` (VS Code 1.142.0, `extensions/less`): from radium-v/Better-Less
+  (https://github.com/radium-v/Better-Less), MIT, Copyright (c) 2017 John Kreitlow.
 - `JavaScript.tmLanguage.json` (VS Code 1.142.0, `extensions/javascript`) and `TypeScript.tmLanguage.json` (VS Code
   1.142.0, `extensions/typescript-basics`): from microsoft/TypeScript-TmLanguage
   (https://github.com/microsoft/TypeScript-TmLanguage), MIT, Copyright (c) Microsoft Corporation; VS Code names
@@ -699,8 +705,9 @@ Foundation and Contributors) at the commit Roslyn's server is built from (dc1db3
   Copyright (c) 2016 .NET Foundation, as its header says; it colours a Markdown file's C# code blocks too.
 
 Reading them, Passenger leaves out what VS Code's reader passes over (a capture that is not a rule) and lets a rule
-that begins with no end never end, as VS Code does, and takes YAML's typed scalars (booleans, numbers, null) out of a
-block mapping's keys, so a key such as a workflow's `on` is read as a key.
+that begins with no end never end, as VS Code does, writes a class of every character past one (`[^\x{00}-\x{7F}]`,
+which its regular expressions misread inside another class, as Less's are) as the range it is, and takes YAML's typed
+scalars (booleans, numbers, null) out of a block mapping's keys, so a key such as a workflow's `on` is read as a key.
 
 ```
 MIT License
@@ -711,6 +718,8 @@ Copyright (c) 2015 simonzack, zertosh, benvie
 Copyright (c) 2015 FichteFoll <fichtefoll2@googlemail.com>
 Copyright (c) Microsoft 2018
 Copyright (c) Microsoft Corporation
+Copyright (c) 2012 Alex Sancho, http://alexsancho.name/
+Copyright (c) 2017 John Kreitlow
 Copyright (c) 2019 Jeff Hykin
 Copyright (c) .NET Foundation and Contributors
 Copyright (c) 2016 .NET Foundation

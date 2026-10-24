@@ -104,6 +104,53 @@ public sealed class FileColoursTests : FileColoursFolder
 
         """;
 
+    private const string Sass = """
+        // The theme's colours.
+        @use "sass:math";
+        $accent: #3b82f6 !default;
+
+        /* A frame round a card. */
+        @mixin framed($width) {
+            border: $width solid $accent;
+        }
+
+        .card > h2 {
+            padding: math.div(24px, 2);
+            &:hover { color: darken($accent, 10%); }
+            @include framed(1px);
+            #{$side}-margin: 0;
+        }
+
+        """;
+
+    private const string Less = """
+        // The theme's colours.
+        @accent: #3b82f6;
+        @import (reference) "base.less";
+
+        /* A frame round a card. */
+        .framed(@width) {
+            border: @width solid @accent;
+        }
+
+        .card > h2 {
+            padding: 12px;
+            &:hover { color: darken(@accent, 10%); }
+            .framed(1px);
+            @{side}-margin: 0;
+        }
+
+        """;
+
+    private const string Paml = """
+        <!-- The main window. -->
+        <Window xmlns="https://github.com/avaloniaui"
+                Title="Shapes &amp; areas">
+          <TextBlock Text="Hello" />
+        </Window>
+
+        """;
+
     [AvaloniaFact]
     public void A_project_file_settings_a_workflow_a_readme_and_a_script_each_show_their_tokens_in_Riders_colours()
     {
@@ -194,6 +241,78 @@ public sealed class FileColoursTests : FileColoursFolder
         Assert.Equal(TokenKind.Keyword, KindOf(editor, "RUN"));
         Assert.Equal(TokenKind.String, KindOf(editor, "\"Shapes.csproj\""));
         window.Close();
+    }
+
+    /// <summary>SCSS and Less coloured by their own grammars, as CSS is, with their variables, mixins and nesting, and
+    /// commented with <c>//</c>, where both opened with no colours; an Avalonia file of the old extension (.paml) as the
+    /// XAML it is, where it opened as plain text. A Less variable ends with its value, where the grammar's identifiers
+    /// read as every character had the first take the rest of the file.</summary>
+    [AvaloniaFact]
+    public void A_stylesheet_in_SCSS_or_Less_and_an_Avalonia_paml_file_show_their_tokens_as_their_kinds()
+    {
+        MainWindow window = Window();
+        CodeEditor editor = Open(window, "theme.scss", Sass);
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "// The theme's colours."));
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "/* A frame round a card. */"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "@use"));
+        Assert.Equal(TokenKind.String, KindOf(editor, "\"sass:math\""));
+        Assert.Equal(TokenKind.Field, KindOf(editor, "$accent"));
+        Assert.Equal(TokenKind.Number, KindOf(editor, "#3b82f6"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "!default"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "@mixin"));
+        Assert.Equal(TokenKind.Method, KindOf(editor, "framed"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "border"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, ".card"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, "h2"));
+        Assert.Equal(TokenKind.Number, KindOf(editor, "24px"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, "&:hover"));
+        Assert.Equal(TokenKind.Method, KindOf(editor, "darken"));
+        Assert.Equal(TokenKind.Field, KindOf(editor, "$side"));
+        LineComment(window, editor, "    padding: math.div(24px, 2);\n", "    // padding: math.div(24px, 2);\n");
+
+        editor = Open(window, "theme.less", Less);
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "// The theme's colours."));
+        Assert.Equal(TokenKind.Field, KindOf(editor, "@accent"));
+        Assert.Equal(TokenKind.Number, KindOf(editor, "#3b82f6"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "@import"));
+        Assert.Equal(TokenKind.String, KindOf(editor, "\"base.less\""));
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "/* A frame round a card. */"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, ".framed"));
+        Assert.Equal(TokenKind.Field, KindOf(editor, "@width"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "border"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, ".card"));
+        Assert.Equal(TokenKind.Keyword, KindOf(editor, "padding"));
+        Assert.Equal(TokenKind.Number, KindOf(editor, "12px"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, "&:hover"));
+        Assert.Equal(TokenKind.Method, KindOf(editor, "darken"));
+        LineComment(window, editor, "    padding: 12px;\n", "    // padding: 12px;\n");
+
+        editor = Open(window, "Main.paml", Paml);
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "<!-- The main window. -->"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, "<Window"));
+        Assert.Equal(TokenKind.AttributeName, KindOf(editor, "xmlns"));
+        Assert.Equal(TokenKind.AttributeValue, KindOf(editor, "\"Hello\""));
+        Assert.Equal(TokenKind.Entity, KindOf(editor, "&amp;"));
+        Assert.Equal(TokenKind.Tag, KindOf(editor, "</Window>"));
+        LineComment(window, editor, "  <TextBlock Text=\"Hello\" />\n", "  <!--<TextBlock Text=\"Hello\" />-->\n");
+        // A line begun inside the window's start tag, over two lines, goes in a level under the tag, not under its attribute.
+        Ui.PlaceAfter(editor, "areas\">");
+        Ui.Press(window, "ENTER");
+        Assert.Contains("areas\">\n  \n  <TextBlock", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+
+        // Comment with Line Comment on a line writes the language's comment there, and takes it off again.
+        static void LineComment(MainWindow window, CodeEditor editor, string line, string commented)
+        {
+            string text = editor.Document.Snapshot.ToString();
+            editor.Focus();
+            editor.Selections = SelectionSet.Single(text.IndexOf(line, StringComparison.Ordinal) + 6);
+            Ui.Run(window, EditorActions.ToggleLineComment);
+            Assert.Contains(commented, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Assert.Equal(TokenKind.Comment, KindOf(editor, commented.Trim()));
+            Ui.Run(window, EditorActions.ToggleLineComment);
+            Assert.Equal(text, editor.Document.Snapshot.ToString());
+        }
     }
 
     [AvaloniaFact]
