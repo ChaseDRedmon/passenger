@@ -102,8 +102,10 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Assert.Equal("console.warn", editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line));
 
         editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "\nlet broken = ;\n")]);
-        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the statement that is not JavaScript");
-        Marker broken = document.Markers.First(m => m.Kind == MarkerKind.Error);
+        int semicolon = editor.Document.Snapshot.ToString().LastIndexOf(" = ;", StringComparison.Ordinal) + " = ".Length;
+        // The text before's marks (console. lacked its member) stay, carried, until TypeScript has read the text now.
+        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error && m.Range.Start == semicolon), "the squiggle under the statement that is not JavaScript");
+        Marker broken = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Error);
         Assert.StartsWith("TS1109: Expression expected", broken.Message, StringComparison.Ordinal);
         Assert.Equal(";", editor.Document.Snapshot.GetText(broken.Range.Start, Math.Max(1, broken.Range.Length)));
 

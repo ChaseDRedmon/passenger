@@ -647,11 +647,13 @@ public sealed class WebLanguages : IAsyncDisposable
         {
             Configuration = section => Section(kind, section),
             Content = kind is WebServerKind.Json or WebServerKind.Yaml ? Schemas.ContentAsync : null,
-            // Neither names the version its pushes answer: the Dockerfile server's checks each text, the YAML server's the latest after 200 ms.
+            // None names the version its pushes answer: the Dockerfile server's checks each text, the YAML server's the latest
+            // after 200 ms, TypeScript's 200 ms at the least after a change or a request (its delayer), pushing only past nothing.
             Pushes = kind switch
             {
                 WebServerKind.Dockerfile => new PushPace(EachText: true, TimeSpan.Zero),
                 WebServerKind.Yaml => new PushPace(EachText: false, TimeSpan.FromMilliseconds(200)),
+                WebServerKind.TypeScript => new PushPace(EachText: false, TimeSpan.FromMilliseconds(200), QuietWhenClean: true),
                 _ => PushPace.Latest,
             },
         };

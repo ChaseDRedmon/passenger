@@ -21,12 +21,12 @@ public sealed record ServerStart(ProcessStartInfo Process, string Folder, string
     public PushPace Pushes { get; init; } = PushPace.Latest;
 }
 
-/// <summary>How a server that pushes a document's diagnostics without naming the version they are for answers the texts
-/// it is sent, so each push is told the version it answers as it arrives (<see cref="LspDocument.Pushed"/>): once for
-/// each text that changed, in order (<see cref="EachText"/>, the Dockerfile server's), or for the latest text once it
-/// has rested <see cref="Rest"/> (a debounce, the YAML server's 200 ms), a push before then answering no text known;
-/// else (<see cref="Latest"/>) for the latest text sent when it arrived.</summary>
-public sealed record PushPace(bool EachText, TimeSpan Rest)
+/// <summary>How a server that pushes a document's diagnostics without naming their version answers the texts it is sent,
+/// so each push is told the version it answers as it arrives (<see cref="LspDocument.Pushed"/>): each text that changed, in
+/// order (<see cref="EachText"/>, the Dockerfile server's), or the latest once it has rested <see cref="Rest"/> (a debounce,
+/// YAML's and TypeScript's), one before answering no text known, but a clean one where the server then pushes nothing for a
+/// clean text (<see cref="QuietWhenClean"/>, TypeScript's); else (<see cref="Latest"/>) the latest sent.</summary>
+public sealed record PushPace(bool EachText, TimeSpan Rest, bool QuietWhenClean = false)
 {
     public static readonly PushPace Latest = new(false, TimeSpan.Zero);
 }

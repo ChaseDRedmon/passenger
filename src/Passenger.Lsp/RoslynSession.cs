@@ -256,7 +256,7 @@ public sealed class LspDocument : IDisposable
     private bool closed;
 
     /// <summary>The diagnostics a server that pushes them last sent, with the version they answer (told as they came; null
-    /// before any came).</summary>
+    /// before any came, or for a push that answers the text whenever it is read).</summary>
     private (IReadOnlyList<Diagnostic> Diagnostics, int? Version) pushed = ([], null);
 
     /// <summary>The version of the text last sent (opened, or changed) and when it was sent; and, for a server that pushes
@@ -301,13 +301,19 @@ public sealed class LspDocument : IDisposable
 
     /// <summary>The version a push naming none answers, as it arrives (under the gate): the next a server that pushes once
     /// a text has yet to answer (the latest sent for the last, which changes since left as it was); for a debouncing one
-    /// the latest sent, once it has rested, else none; else the latest sent.</summary>
-    private int Answered()
+    /// the latest sent, once it has rested, else none, but null (the text whenever it is read) for a clean push from one
+    /// that pushes nothing for a clean text after it, so it is never kept from clearing what the text before showed; else
+    /// the latest sent.</summary>
+    private int? Answered(bool clean)
     {
         PushPace pace = session.Pushes;
         if (pace.EachText)
         {
             return unanswered.TryDequeue(out int version) && unanswered.Count > 0 ? version : sent;
+        }
+        if (clean && pace.QuietWhenClean)
+        {
+            return null;
         }
         return System.Diagnostics.Stopwatch.GetElapsedTime(sentAt) >= pace.Rest ? sent : NoVersion;
     }
@@ -329,7 +335,7 @@ public sealed class LspDocument : IDisposable
     {
         lock (gate)
         {
-            pushed = (published.Diagnostics, published.Version ?? Answered());
+            pushed = (published.Diagnostics, published.Version ?? Answered(published.Diagnostics.Count == 0));
         }
         DiagnosticsPushed?.Invoke(this, EventArgs.Empty);
     }
