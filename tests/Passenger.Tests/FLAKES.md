@@ -14,6 +14,15 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   already exists", every test of the class failing in its fixture. Its gallery and XamlEditingTests' (new with #476's XAML
   localization) made their WPF apps at once, each finding the pack missing from the run's feed before copying it. Neither
   race in the IDE: **the test**'s check-then-copy, now under a lock (9fdcdcca).
+- `BuildRunTests`' `With_hot_reload_edits_reach_the_running_program_a_signature_change_restarts_it_and_it_ends_with_the_window`,
+  CI Linux, release run 40127831310 (07a817ff): the same "the status bar says \"Hot Reload: dotnet watch applied the
+  changes\"" as release run 40088071944 below, with the 3 s the run follows dotnet watch's words doubled (0f450eb7). That
+  entry misread the cause: dotnet watch said the restart within a call of the program's after "changes applied", and a
+  window a frame behind took both in one batch of the Run window's text, which it read by the first of dotnet watch's
+  words the batch held, however long it followed them; a window held from drawing fails so on the Mac (and in the Ubuntu
+  VM dotnet watch once told the apply after the restart). **A race in the IDE**: dotnet watch's words are read a line at
+  a time in the order it said them, a restart standing, and followed until the next save or the run's end rather than for
+  a fixed time (36dfa8d7).
 - `StuckEvaluationTests`' `An_evaluation_spinning_in_a_finally_block_runs_to_its_end_once_let_out`, the Mac with 24 busy
   processes on 12 cores, once in 17 runs: "Expected: 0, Actual: null" (#472). The platform layer inside the debugger's own
   libraries reaps a launched program with waitpid as it sees it end, so the adapter's own waitpid, run late, found no child
