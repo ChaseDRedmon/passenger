@@ -245,7 +245,8 @@ public sealed class LogsTests : IDisposable
             TestProjects.Console());
         File.WriteAllText(Path.Combine(folder, "Program.cs"), "System.Console.WriteLine(\"total 6\");\n");
         Restore.Run(folder);
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        // No C# language server: the debugger's trace is what is read, and a run asks nothing of the server.
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.ApplySettings(window.Settings with { TraceProtocols = true });
         try
