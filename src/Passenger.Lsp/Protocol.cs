@@ -337,8 +337,8 @@ public sealed class Diagnostic
 public sealed record DocumentDiagnosticParams(TextDocumentIdentifier TextDocument, string? Identifier = null, string? PreviousResultId = null);
 
 /// <summary>A workspace diagnostics request for one source, with the result each document last had, so documents that
-/// have not changed come back as unchanged.</summary>
-public sealed record WorkspaceDiagnosticParams(string? Identifier, IReadOnlyList<PreviousResultId> PreviousResultIds);
+/// have not changed come back as unchanged; its reports streamed as <c>$/progress</c> of the token as they are found.</summary>
+public sealed record WorkspaceDiagnosticParams(string? Identifier, IReadOnlyList<PreviousResultId> PreviousResultIds, string? PartialResultToken = null);
 
 public sealed record PreviousResultId(string Uri, string Value);
 

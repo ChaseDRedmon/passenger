@@ -37,6 +37,7 @@ public sealed class LanguageServer : IAsyncDisposable
     private readonly Dictionary<string, (int Left, TaskCompletionSource Spent)> refusing = [];
     private readonly Timer watch;
     private long requests;
+    private long partialResults;
     private long checkedAt;
     private int checking;
     private volatile bool hung;
@@ -222,12 +223,41 @@ public sealed class LanguageServer : IAsyncDisposable
         Notify("workspace/didChangeConfiguration", new { settings = new { } });
     }
 
-    /// <summary>Every document's diagnostics from one source, as the solution-wide analysis has them; a document unchanged
-    /// since the result id given for it comes back as unchanged, with no items.</summary>
-    public async Task<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> WorkspaceDiagnosticsAsync(string? source, IReadOnlyList<PreviousResultId> previous, CancellationToken cancel = default) =>
-        // Roslyn holds this pull open until something changes, so how long it waits says nothing of the server, and it is
-        // no work in flight for a test's quiet wait, which would otherwise wait out its limit on every settle.
-        (await InvokeAsync<WorkspaceDiagnosticReport>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel, inFlight: false))?.Items ?? [];
+    /// <summary>Every document's diagnostics from one source, as the solution-wide analysis has them, each report given to
+    /// <paramref name="streamed"/> as the server sends it: Roslyn sends what it found, then holds the pull open until the
+    /// source's next change, which an earlier pull may already have taken, so what the answer alone would bring could wait
+    /// for another edit. The answer's own reports are given back; none is given to <paramref name="streamed"/> after it.</summary>
+    public async Task<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> WorkspaceDiagnosticsAsync(string? source, IReadOnlyList<PreviousResultId> previous,
+        Action<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> streamed, CancellationToken cancel = default)
+    {
+        string token = $"passenger-workspace-diagnostic-{Interlocked.Increment(ref partialResults)}";
+        client.Partials[token] = value =>
+        {
+            if (value.Deserialize<WorkspaceDiagnosticReport>(Json.Options) is { Items.Count: > 0 } report)
+            {
+                streamed(report.Items);
+            }
+        };
+        try
+        {
+            // How long it is held says nothing of the server, and it is no work in flight for a test's quiet wait.
+            return (await InvokeAsync<WorkspaceDiagnosticReport>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous, token), cancel, inFlight: false))?.Items ?? [];
+        }
+        finally
+        {
+            // The answer is read apart from the server's other messages: those it sent before it are handled first.
+            await HandledSoFarAsync().ConfigureAwait(false);
+            client.Partials.TryRemove(token, out _);
+        }
+    }
+
+    /// <summary>Done once every message the server sent before now has been handled, in the order they are (one at a time).</summary>
+    private Task HandledSoFarAsync()
+    {
+        TaskCompletionSource handled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        (rpc.SynchronizationContext ?? throw new InvalidOperationException("The server's messages have no order to wait in")).Post(_ => handled.SetResult(), null);
+        return handled.Task;
+    }
 
     /// <summary>An option's value: one changed while running, else Passenger's own, else null for the server's default.</summary>
     private object? Option(string name)
@@ -812,6 +842,9 @@ public sealed class LanguageServer : IAsyncDisposable
         private readonly List<string?> diagnosticSources = [];
         private readonly List<string?> workspaceSources = [];
 
+        /// <summary>What takes each partial result of a request under way, by the token it was asked with.</summary>
+        public System.Collections.Concurrent.ConcurrentDictionary<string, Action<JsonElement>> Partials { get; } = new(StringComparer.Ordinal);
+
         public IReadOnlyList<string?> WorkspaceDiagnosticSources
         {
             get
@@ -1033,6 +1066,17 @@ public sealed class LanguageServer : IAsyncDisposable
             if (WorkProgress.From(progress) is { } work)
             {
                 Owner?.Progressed?.Invoke(Owner, work);
+            }
+        }
+
+        /// <summary>A request's partial result, which the server's own progress sends with its token and value in order
+        /// rather than named as work done progress names them; one no request under way asked for is dropped.</summary>
+        [JsonRpcMethod("$/progress")]
+        public void Progress(JsonElement partialToken, JsonElement partialValue)
+        {
+            if (partialToken.ValueKind == JsonValueKind.String && partialToken.GetString() is { } token && Partials.TryGetValue(token, out Action<JsonElement>? take))
+            {
+                take(partialValue);
             }
         }
 

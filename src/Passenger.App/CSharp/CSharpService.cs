@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
 using Avalonia.Threading;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
@@ -342,8 +343,8 @@ public sealed class CSharpService : IAsyncDisposable
     }
 
     /// <summary>Pulls the workspace's diagnostics from every source the server has for them, each in a loop of its own:
-    /// Roslyn holds a pull open until something changed since the results it is given, so each answer is the next
-    /// change. Only the first round is background work a screenshot waits for.</summary>
+    /// Roslyn sends what changed since the results it is given and holds the pull open until the source's next change, so
+    /// each pull is the next change. Only the first round is background work a screenshot waits for.</summary>
     private void StartAnalysis()
     {
         analysing?.Cancel();
@@ -360,11 +361,13 @@ public sealed class CSharpService : IAsyncDisposable
     }
 
     /// <summary>One source's pulls, each asked again as the last answers, until the analysis is turned off or the session
-    /// ends (a server started again is analysed afresh once it has loaded). A pull the server refuses or cuts short (Roslyn
-    /// cancels one a change made stale) is asked again after a pause that grows while it keeps refusing.</summary>
+    /// ends (a server started again is analysed afresh once it has loaded), each pull's reports listed as the server sends
+    /// them rather than as it answers. A pull the server refuses or cuts short (Roslyn cancels one a change made stale) is
+    /// asked again after a pause that grows while it keeps refusing.</summary>
     private async Task AnalyseAsync(RoslynSession running, string? source, CancellationToken cancel)
     {
         bool first = true;
+        bool listed = false;
         TimeSpan pause = RefusedPull;
         BackgroundWork.Begin();
         unanswered++;
@@ -376,59 +379,60 @@ public sealed class CSharpService : IAsyncDisposable
                     .Where(r => r.Key.Source == source && r.Value.Previous is not null)
                     .Select(r => r.Value.Previous!)];
                 DateTime asked = DateTime.UtcNow;
-                IReadOnlyList<WorkspaceDocumentDiagnosticReport> reports;
+                Channel<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> streamed = Channel.CreateUnbounded<IReadOnlyList<WorkspaceDocumentDiagnosticReport>>(
+                    new UnboundedChannelOptions { SingleReader = true });
+                Task<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> pull = running.Server.WorkspaceDiagnosticsAsync(source, previous, reports => streamed.Writer.TryWrite(reports), cancel);
+                IReadOnlyList<WorkspaceDocumentDiagnosticReport> answered = [];
+                LanguageServerFailed? refused = null;
+                int changed = 0;
                 try
                 {
-                    reports = await running.Server.WorkspaceDiagnosticsAsync(source, previous, cancel);
+                    // Roslyn sends what a pull found and holds it open until the next change, which an earlier pull may have taken.
+                    Task<bool> more = streamed.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
+                    while (await Task.WhenAny(pull, more) == more)
+                    {
+                        changed += await TakeAsync(Drain(streamed.Reader));
+                        more = streamed.Reader.WaitToReadAsync(CancellationToken.None).AsTask();
+                    }
+                    answered = await pull;
                 }
                 catch (LanguageServerFailed failed) when (!running.Server.HasExited)
                 {
-                    IdeErrors.Write($"Solution-wide analysis ({source ?? "every source"}) asks again in {pause.TotalSeconds:0} s: {failed.Message}");
+                    refused = failed;
+                }
+                finally
+                {
+                    streamed.Writer.TryComplete();
+                    if (!pull.IsCompleted)
+                    {
+                        // Left as the analysis ended: its end is nobody's to hear.
+                        _ = pull.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    }
+                }
+                // What a pull sent before it answered or failed is the server's word as much as its answer.
+                changed += await TakeAsync([.. Drain(streamed.Reader), .. answered]);
+                cancel.ThrowIfCancellationRequested();
+                if (refused is not null)
+                {
+                    IdeErrors.Write($"Solution-wide analysis ({source ?? "every source"}) asks again in {pause.TotalSeconds:0} s: {refused.Message}");
                     await Task.Delay(pause, cancel);
                     pause = TimeSpan.FromTicks(Math.Min(pause.Ticks * 2, RefusedPullsAtMost.Ticks));
                     continue;
                 }
                 pause = RefusedPull;
-                if (cancel.IsCancellationRequested)
-                {
-                    return;
-                }
-                List<WorkspaceDocumentDiagnosticReport> changed = [.. reports.Where(r => r.Kind != "unchanged")];
-                List<WorkspaceReport> placed = changed.Count == 0 ? [] : await BackgroundWork.Run(() => Placed(changed), cancel);
-                if (cancel.IsCancellationRequested)
-                {
-                    return;
-                }
-                HashSet<string> files = new(PathNames.Comparer);
-                foreach (WorkspaceReport report in placed)
-                {
-                    if (!solutionReports.ContainsKey((source, report.Uri)))
-                    {
-                        if (!reportsOf.TryGetValue(report.Path, out List<(string? Source, string Uri)>? keys))
-                        {
-                            reportsOf[report.Path] = keys = [];
-                        }
-                        keys.Add((source, report.Uri));
-                    }
-                    solutionReports[(source, report.Uri)] = report;
-                    files.Add(report.Path);
-                }
-                foreach (string path in files)
-                {
-                    Merge(path);
-                }
-                if (files.Count > 0 || first)
-                {
-                    SolutionProblemsChanged?.Invoke(this, first ? null : files);
-                }
                 if (first)
                 {
+                    if (!listed)
+                    {
+                        SolutionProblemsChanged?.Invoke(this, null);
+                        listed = true;
+                    }
                     first = false;
                     BackgroundWork.End();
                     unanswered--;
                 }
                 // A source with nothing to hold a pull open on answers at once: it is asked again only now and then.
-                if (changed.Count == 0 && DateTime.UtcNow - asked < TimeSpan.FromSeconds(1))
+                if (changed == 0 && DateTime.UtcNow - asked < TimeSpan.FromSeconds(1))
                 {
                     await Task.Delay(TimeSpan.FromSeconds(2), cancel);
                 }
@@ -450,6 +454,50 @@ public sealed class CSharpService : IAsyncDisposable
                 unanswered--;
             }
         }
+
+        // The reports that changed placed off the UI thread and merged into each file's problems, which are said: how many.
+        async Task<int> TakeAsync(List<WorkspaceDocumentDiagnosticReport> reports)
+        {
+            List<WorkspaceDocumentDiagnosticReport> changed = [.. reports.Where(r => r.Kind != "unchanged")];
+            if (changed.Count == 0)
+            {
+                return 0;
+            }
+            List<WorkspaceReport> placed = await BackgroundWork.Run(() => Placed(changed), cancel);
+            cancel.ThrowIfCancellationRequested();
+            HashSet<string> files = new(PathNames.Comparer);
+            foreach (WorkspaceReport report in placed)
+            {
+                if (!solutionReports.ContainsKey((source, report.Uri)))
+                {
+                    if (!reportsOf.TryGetValue(report.Path, out List<(string? Source, string Uri)>? keys))
+                    {
+                        reportsOf[report.Path] = keys = [];
+                    }
+                    keys.Add((source, report.Uri));
+                }
+                solutionReports[(source, report.Uri)] = report;
+                files.Add(report.Path);
+            }
+            foreach (string path in files)
+            {
+                Merge(path);
+            }
+            SolutionProblemsChanged?.Invoke(this, listed ? files : null);
+            listed = true;
+            return changed.Count;
+        }
+    }
+
+    /// <summary>Every batch of reports a pull has streamed so far, as one list.</summary>
+    private static List<WorkspaceDocumentDiagnosticReport> Drain(ChannelReader<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> streamed)
+    {
+        List<WorkspaceDocumentDiagnosticReport> all = [];
+        while (streamed.TryRead(out IReadOnlyList<WorkspaceDocumentDiagnosticReport>? batch))
+        {
+            all.AddRange(batch);
+        }
+        return all;
     }
 
     /// <summary>Starts the server on the workspace's solution, or with none its projects: what the Explorer and the build
