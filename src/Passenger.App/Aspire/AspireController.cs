@@ -315,18 +315,9 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 {
                     throw new LaunchException("The AppHost ended before a service could be profiled");
                 }
-                (string service, DateTime at) = await profiled.ProfileAsked.Task;
-                TimeSpan limit = Waits.Of(ProfileLimit);
-                TimeSpan left = limit - (DateTime.UtcNow - at);
-                Task winner;
-                try
-                {
-                    winner = await Task.WhenAny(profiled.ProfileStarted.Task, profiled.Runner.Ended).WaitAsync(left > TimeSpan.Zero ? left : TimeSpan.Zero, starting.Token);
-                }
-                catch (TimeoutException)
-                {
-                    throw new LaunchException($"{service} did not start under the profiler within {limit.TotalSeconds:0.##} s of its AppHost asking for it");
-                }
+                string service = await profiled.ProfileAsked.Task;
+                // The start's landing or its limit falling due, whichever came first where it came (ClaimsProfile), however late this looks.
+                Task winner = await Task.WhenAny(profiled.ProfileStarted.Task, profiled.Runner.Ended).WaitAsync(starting.Token);
                 if (!ReferenceEquals(winner, profiled.ProfileStarted.Task))
                 {
                     throw new LaunchException($"The AppHost ended before {service} could be profiled");
@@ -816,7 +807,9 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     }
 
     /// <summary>Whether this start is the one Profile of its configuration records: the first asked for of its run's AppHosts,
-    /// or of the service Profile chose; claimed, its ask's time noted.</summary>
+    /// or of the service Profile chose; claimed, the profile's time limit counts from now and falls due on its own timer, so
+    /// a start that lands after it is past it however late Profile's start looks again (a look that measured the limit then
+    /// took a start that had landed before it, however late, for one in time).</summary>
     private bool ClaimsProfile(AspireAppRun app, AspireProjectLaunch request)
     {
         string path = PathNames.Canonical(request.ProjectPath);
@@ -828,7 +821,12 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             return false;
         }
         app.ProfileClaimed = true;
-        app.ProfileAsked.TrySetResult((name ?? Path.GetFileNameWithoutExtension(path), DateTime.UtcNow));
+        string service = name ?? Path.GetFileNameWithoutExtension(path);
+        TimeSpan limit = Waits.Of(ProfileLimit);
+        app.ProfileAsked.TrySetResult(service);
+        _ = Task.Delay(limit, app.Lifetime.Token).ContinueWith(_ => app.ProfileStarted.TrySetResult(
+            $"{service} did not start under the profiler within {limit.TotalSeconds:0.##} s of its AppHost asking for it"),
+            CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         return true;
     }
 
@@ -1295,9 +1293,8 @@ public sealed class AspireAppRun : ServiceRun
     internal Dictionary<string, DateTime> Rebuilt { get; } = new(PathNames.Comparer);
     internal TaskCompletionSource<string?> ProfileStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    /// <summary>DCP's request to start the service Profile records: its name, and when it was asked, from which the profile's
-    /// time limit counts.</summary>
-    internal TaskCompletionSource<(string Service, DateTime Asked)> ProfileAsked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>DCP's request to start the service Profile records, by its name; the profile's time limit counts from it.</summary>
+    internal TaskCompletionSource<string> ProfileAsked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IReadOnlyList<string> KnownContainerIds { get; internal set; } = [];
     internal AspireInteractions? Interactions { get; set; }
 
