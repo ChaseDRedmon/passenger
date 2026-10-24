@@ -1047,8 +1047,10 @@ public partial class ManagedDebugger
         }
         // A process that has exited is the runtime's to tear down: nothing below may call into it.
         bool exited = _exited.IsSet;
+        // Only a let-go runs held threads off: an exited program's throw when asked their id, failing the disconnect.
+        bool runsOff = letGo && !exited;
         // The threads the runtime holds inside its handling of a breakpoint or a step's end, run off it before the detach.
-        List<int> inDispatch = [.. _deferredEvents.Concat(_behindStep).Select(DispatchThread).OfType<int>()];
+        List<int> inDispatch = runsOff ? [.. _deferredEvents.Concat(_behindStep).Select(DispatchThread).OfType<int>()] : [];
         if (_stopShown && _stoppedInDispatch is int stopped)
         {
             inDispatch.Insert(0, stopped);
@@ -1164,7 +1166,7 @@ public partial class ManagedDebugger
         // then let the processor exit once the lock is released.
         while (_runtimeEventChannel.Reader.TryRead(out CorDebugManagedCallbackEventArgs? unhandled))
         {
-            if (DispatchThread(unhandled) is int thread)
+            if (runsOff && DispatchThread(unhandled) is int thread)
             {
                 inDispatch.Add(thread);
             }
