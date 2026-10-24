@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Avalonia.Input.Platform;
 using Passenger.App.CSharp;
 using Passenger.App.Editors;
@@ -468,8 +469,10 @@ public partial class MainWindow
 }
 
 /// <summary>The platform's Trash (the Recycle Bin on Windows), where a deleted file can still be found.</summary>
-public static class Trash
+public static partial class Trash
 {
+    private const string ObjC = "/usr/lib/libobjc.A.dylib";
+
     /// <summary>A folder to use as the Trash instead of the platform's (tests, which leave the person's alone). The
     /// process's, as the system's Trash is every window's.</summary>
     public static string? Folder { get; set; }
@@ -493,7 +496,12 @@ public static class Trash
             MoveToFreedesktopTrash(path);
             return;
         }
-        string bin = Folder ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".Trash");
+        if (OperatingSystem.IsMacOS() && Folder is null)
+        {
+            MoveToMacTrash(path);
+            return;
+        }
+        string bin = Folder ?? throw new PlatformNotSupportedException("Passenger knows no Trash on this system");
         Directory.CreateDirectory(bin);
         string name = Path.GetFileName(path);
         string target = Path.Combine(bin, name);
@@ -503,6 +511,35 @@ public static class Trash
             target = Path.Combine(bin, $"{Path.GetFileNameWithoutExtension(name)} {DateTime.Now:HH-mm-ss-fff}{Path.GetExtension(name)}");
         }
         MoveTo(path, target);
+    }
+
+    /// <summary>Foundation, where NSFileManager is: the runtime's own native library loads it today, which nothing promises.</summary>
+    private static readonly Lazy<nint> Foundation = new(() => NativeLibrary.Load("/System/Library/Frameworks/Foundation.framework/Foundation"));
+
+    /// <summary>The Trash as Finder fills it, through NSFileManager: it records where the item was, so Finder's Put Back
+    /// returns it, and an item on another volume goes to that volume's own Trash rather than across. What the system
+    /// refuses is an IOException in its own words.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("macos")]
+    private static void MoveToMacTrash(string path)
+    {
+        _ = Foundation.Value;
+        // Its own pool, so what the calls autorelease goes now on any thread, with or without AppKit's run loop.
+        nint pool = Send(Class("NSAutoreleasePool"), Selector("new"));
+        try
+        {
+            nint url = Send(Class("NSURL"), Selector("fileURLWithPath:"), Send(Class("NSString"), Selector("stringWithUTF8String:"), path));
+            nint manager = Send(Class("NSFileManager"), Selector("defaultManager"));
+            nint error = 0;
+            if (!Send(manager, Selector("trashItemAtURL:resultingItemURL:error:"), url, 0, ref error))
+            {
+                string? said = error == 0 ? null : Marshal.PtrToStringUTF8(Send(Send(error, Selector("localizedDescription")), Selector("UTF8String")));
+                throw new IOException(said ?? $"The Trash refused {Path.GetFileName(path)}");
+            }
+        }
+        finally
+        {
+            Send(pool, Selector("drain"));
+        }
     }
 
     /// <summary>The freedesktop.org Trash in the person's data folder (~/.local/share/Trash), as Linux's file managers
@@ -563,4 +600,24 @@ public static class Trash
             File.Move(path, target);
         }
     }
+
+    [LibraryImport(ObjC, EntryPoint = "objc_getClass", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial nint Class(string name);
+
+    [LibraryImport(ObjC, EntryPoint = "sel_registerName", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial nint Selector(string name);
+
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static partial nint Send(nint receiver, nint selector);
+
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static partial nint Send(nint receiver, nint selector, nint argument);
+
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial nint Send(nint receiver, nint selector, string argument);
+
+    /// <summary>A message answering a BOOL, its last argument where an NSError is put (left as it was if none is).</summary>
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.U1)]
+    private static partial bool Send(nint receiver, nint selector, nint argument, nint second, ref nint error);
 }
