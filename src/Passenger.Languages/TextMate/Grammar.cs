@@ -179,7 +179,8 @@ internal sealed partial class Grammar
 
         /// <summary>A class of every character past one, <c>[^\x{00}-\x{7F}]</c>: Onigwrap's Oniguruma reads it inside
         /// another class (Less's identifiers, <c>[[-\w][^\x{00}-\x{7F}]]</c>) as every character, so a Less variable
-        /// took the rest of its line and never ended; the range past it reads the same everywhere.</summary>
+        /// took the rest of its line and never ended; the range past it reads the same everywhere. Oniguruma's own fault in
+        /// UTF-16 (not_code_range_buf underflows at U+0000), reported with its fix as aikawayataro/Onigwrap#16.</summary>
         [GeneratedRegex(@"\[\^\\x\{0+\}-\\x\{([0-9A-Fa-f]{1,5})\}\]")]
         private static partial Regex PastCharacter();
 
