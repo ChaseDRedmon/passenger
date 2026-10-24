@@ -241,20 +241,25 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
     [AvaloniaFact]
     public void A_typing_pause_lists_again_only_the_open_files_problems_however_many_the_solution_has()
     {
-        (long few, int fewListed) = UiBytesPerPause(warnings: 1);
-        (long many, int manyListed) = UiBytesPerPause(warnings: 200);
+        (long few, int fewListed, int fewBlinked) = UiBytesPerPause(warnings: 1);
+        (long many, int manyListed, int manyBlinked) = UiBytesPerPause(warnings: 200);
         int more = manyListed - fewListed;
         long each = (many - few) / more;
+        string blinks = $"the caret's blink drew in {manyBlinked} and {fewBlinked} of each case's {PauseKeys} pauses";
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"A typing pause allocated {many:N0} bytes on the UI thread with {manyListed} problems in the solution, {few:N0} with {fewListed}: {each} bytes a problem.");
+            $"A typing pause allocated {many:N0} bytes on the UI thread with {manyListed} problems in the solution, {few:N0} with {fewListed}: {each} bytes a problem ({blinks}).");
         Assert.True(each < 8,
-            $"A typing pause allocated {many / 1024:N0} KB on the UI thread with {manyListed} problems in the solution, {few / 1024:N0} KB with {fewListed}: {each} bytes for each problem, which the window listed again");
+            $"A typing pause allocated {many / 1024:N0} KB on the UI thread with {manyListed} problems in the solution, {few / 1024:N0} KB with {fewListed}: {each} bytes for each problem, which the window listed again ({blinks})");
     }
 
-    /// <summary>What a key typed in an open file and its pause allocate on the UI thread (the least of a few), with solution-wide
-    /// analysis on, the Solution tab shown and twenty files nobody has open each with <paramref name="warnings"/> warnings;
-    /// and how many problems the solution has.</summary>
-    private (long Bytes, int Listed) UiBytesPerPause(int warnings)
+    /// <summary>What a key typed in an open file and its pause allocate on the UI thread (the least of a few, of those whose
+    /// pause drew no blink of the caret where any did not: a pause past its 530 ms draws the editor again whatever it lists),
+    /// with solution-wide analysis on, the Solution tab shown and twenty files nobody has open each with
+    /// <paramref name="warnings"/> warnings; how many problems the solution has, and in how many pauses the caret blinked.</summary>
+    /// <summary>The keys each case of a typing pause's cost types.</summary>
+    private const int PauseKeys = 5;
+
+    private (long Bytes, int Listed, int Blinked) UiBytesPerPause(int warnings)
     {
         const int Files = 20;
         for (int i = 0; i < Files; i++)
@@ -289,13 +294,24 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Settle();
 
         long least = long.MaxValue;
-        const int Keys = 5;
-        for (int i = 1; i <= Keys; i++)
+        long leastUnblinked = long.MaxValue;
+        int blinked = 0;
+        for (int i = 1; i <= PauseKeys; i++)
         {
+            long blinks = editor.Blinks;
             long before = GC.GetAllocatedBytesForCurrentThread();
             window.KeyTextInput("1");
             Ui.Settle();
-            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            least = Math.Min(least, allocated);
+            if (editor.Blinks == blinks)
+            {
+                leastUnblinked = Math.Min(leastUnblinked, allocated);
+            }
+            else
+            {
+                blinked++;
+            }
             // The open file's warning moved with the key, as the Solution tab lists it once the pause's pull landed.
             Problem moved = Assert.Single(problems.SolutionProblems!, p => p.Path == typed);
             Assert.True(moved.Position == new TextPosition(4, 27 + i), $"After {i} keys the open file's warning is listed at {moved.Where}, not Typed.cs:5:{28 + i}");
@@ -303,7 +319,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         }
         Assert.Equal(listed, problems.SolutionProblems!.Count);
         window.Close();
-        return (least, listed);
+        return (leastUnblinked == long.MaxValue ? least : leastUnblinked, listed, blinked);
     }
 
     /// <summary>Roslyn's compiler ends a line at each break in Separated.cs's comment, as its language server does, where the

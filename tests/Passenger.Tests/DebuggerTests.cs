@@ -1343,7 +1343,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Assert.True(text.Length <= Passenger.App.ToolWindows.OutputView.DefaultLimitKb * 1024, $"The console kept {text.Length} characters");
             // A batch a frame at most, however many writes the program made and however many events the debugger sent.
             Assert.True(grew.Count <= span / 16 + 10, $"The console took the output in {grew.Count} pieces over {span:0} ms, more than one a frame");
-            Assert.True(whilePrinting < Math.Max(500, 20 * atRest),
+            Assert.True(whilePrinting < Math.Max(500 * TestRun.TimeScale, 20 * atRest),
                 $"A key waited up to {whilePrinting:0} ms while the program printed, against {atRest:0} ms at rest");
         }
         finally
