@@ -22,6 +22,12 @@ public sealed partial class SuspendedLaunch : IDisposable
     private readonly Process? process;
     private bool resumed;
 
+    /// <summary>On macOS, a kqueue told of the program's exit with its status, which the system keeps for it whoever reaps
+    /// it: the runtime's platform layer in the debugger's own libraries (dbgshim's, and the DAC's that mscordbi waits on
+    /// the program through) reaps it with waitpid as it sees it end, so a waitpid of ours that comes after (a busy machine
+    /// runs its thread late) finds no child, and the exit code is lost. -1 where there is none.</summary>
+    private int exitQueue = -1;
+
     private SuspendedLaunch(int processId, nint resumeHandle, Process? process, Stream input, Stream output, Stream error)
     {
         ProcessId = processId;
@@ -126,7 +132,11 @@ public sealed partial class SuspendedLaunch : IDisposable
                     Close(savedErr);
                 }
             }
-            return new SuspendedLaunch(processId, resume, null, Stream(parentIn, FileAccess.Write), Stream(parentOut, FileAccess.Read), Stream(parentErr, FileAccess.Read));
+            return new SuspendedLaunch(processId, resume, null, Stream(parentIn, FileAccess.Write), Stream(parentOut, FileAccess.Read), Stream(parentErr, FileAccess.Read))
+            {
+                // Watched while it is held before its first instruction, so its exit cannot come first.
+                exitQueue = OperatingSystem.IsMacOS() ? WatchExit(processId) : -1,
+            };
         }
         catch
         {
@@ -219,19 +229,71 @@ public sealed partial class SuspendedLaunch : IDisposable
                 return null;
             }
         }
+        if (OperatingSystem.IsMacOS() && exitQueue >= 0 && ExitStatus() is int told)
+        {
+            // Its status read, it is reaped unless the platform layer has reaped it already.
+            while (WaitPid(ProcessId, out _, NoHang) == -1 && Marshal.GetLastPInvokeError() == Interrupted)
+            {
+            }
+            return Decoded(told);
+        }
         int status;
         int result;
         do
         {
             result = WaitPid(ProcessId, out status, 0);
         }
-        while (result == -1 && Marshal.GetLastPInvokeError() == 4); // EINTR
-        if (result != ProcessId)
-        {
-            return null;
-        }
+        while (result == -1 && Marshal.GetLastPInvokeError() == Interrupted);
+        return result == ProcessId ? Decoded(status) : null;
+    }
+
+    /// <summary>An exit code as a shell tells it from a wait's status: the code, or 128 and the signal that ended it.</summary>
+    private static int Decoded(int status)
+    {
         int signal = status & 0x7f;
         return signal == 0 ? (status >> 8) & 0xff : 128 + signal;
+    }
+
+    /// <summary>A kqueue watching a process for its exit and status, or -1 when the system would not watch it.</summary>
+    [SupportedOSPlatform("macos")]
+    private static int WatchExit(int processId)
+    {
+        int queue = KQueue();
+        if (queue < 0)
+        {
+            return -1;
+        }
+        KernelEvent watch = new() { Ident = (nuint)processId, Filter = ProcessFilter, Flags = EventAdd | EventOneShot, FilterFlags = NoteExit | NoteExitStatus };
+        if (KEvent(queue, ref watch, 1, out _, 0, 0) < 0)
+        {
+            Close(queue);
+            return -1;
+        }
+        return queue;
+    }
+
+    /// <summary>Waits for the watched program's exit: the status the system kept for it, or null when the watch failed.</summary>
+    [SupportedOSPlatform("macos")]
+    private int? ExitStatus()
+    {
+        KernelEvent none = default;
+        try
+        {
+            while (true)
+            {
+                int told = KEvent(exitQueue, ref none, 0, out KernelEvent exit, 1, 0);
+                if (told == -1 && Marshal.GetLastPInvokeError() == Interrupted)
+                {
+                    continue;
+                }
+                return told == 1 && (exit.Flags & EventError) == 0 && (exit.FilterFlags & NoteExit) != 0 ? (int)exit.Data : null;
+            }
+        }
+        finally
+        {
+            Close(exitQueue);
+            exitQueue = -1;
+        }
     }
 
     public void Kill()
@@ -332,6 +394,35 @@ public sealed partial class SuspendedLaunch : IDisposable
 
     [LibraryImport("libc", EntryPoint = "close", SetLastError = true)]
     private static partial int Close(int descriptor);
+
+    private const int Interrupted = 4; // EINTR
+    private const int NoHang = 1; // WNOHANG
+
+    /// <summary>macOS's struct kevent.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KernelEvent
+    {
+        public nuint Ident;
+        public short Filter;
+        public ushort Flags;
+        public uint FilterFlags;
+        public nint Data;
+        public nint UserData;
+    }
+
+    private const short ProcessFilter = -5; // EVFILT_PROC
+    private const ushort EventAdd = 0x0001; // EV_ADD
+    private const ushort EventOneShot = 0x0010; // EV_ONESHOT
+    private const ushort EventError = 0x4000; // EV_ERROR
+    private const uint NoteExit = 0x80000000; // NOTE_EXIT
+    private const uint NoteExitStatus = 0x04000000; // NOTE_EXITSTATUS: the exit's status in Data, for a child
+
+    [LibraryImport("libc", EntryPoint = "kqueue", SetLastError = true)]
+    private static partial int KQueue();
+
+    /// <summary>kevent with one change and one event at most, and no timeout (0: wait for good).</summary>
+    [LibraryImport("libc", EntryPoint = "kevent", SetLastError = true)]
+    private static partial int KEvent(int queue, ref KernelEvent change, int changes, out KernelEvent told, int events, nint timeout);
 
     [LibraryImport("libc", EntryPoint = "waitpid", SetLastError = true)]
     private static partial int WaitPid(int processId, out int status, int options);
