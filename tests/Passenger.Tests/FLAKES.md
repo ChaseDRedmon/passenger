@@ -10,6 +10,16 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-24
 
+- `StuckEvaluationTests`' `An_evaluation_spinning_in_a_finally_block_runs_to_its_end_once_let_out`, the Mac with 24 busy
+  processes on 12 cores, once in 17 runs: "Expected: 0, Actual: null" (#472). The platform layer inside the debugger's own
+  libraries reaps a launched program with waitpid as it sees it end, so the adapter's own waitpid, run late, found no child
+  and the end was told with no exit code; a wait held a second after the end fails so every time. **A race in the IDE**: on
+  macOS the launch watches the program's exit with a kqueue, whose status the system keeps whoever reaps it (532ae553).
+- `AttachTests`' `A_program_held_at_its_start_runs_on_when_its_attach_ends_before_taking_hold_of_it`, the Mac with three
+  test processes at once: "The program held at its start was left held when its attach ended before it took hold" (#471).
+  The session's end asked the runtime to let go once, before a runtime started late had opened its diagnostic port ("it has
+  no diagnostic port open", or a stale socket of the same pid refusing), and a program a shell execs a second late fails so
+  every time. **A race in the IDE**: the release waits for the port while the program is starting (7ffb94f1).
 - `LiveTreeTests`' `A_debugged_avalonia_app_shows_its_controls_where_each_value_and_style_comes_from_and_the_control_clicked_in_it`,
   CI Windows x64, release run 40096586191 (eed64d22): Go to Source's click opened no file ("Expected: …\MainWindow.axaml,
   Actual: null"). The app's inspector took the adorner layer its window makes for the first outline (Save's) as its
