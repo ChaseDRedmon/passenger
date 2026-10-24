@@ -72,9 +72,10 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
     /// <c>{x:Static p:Resources.…}</c>: Thanks is warned of, and only it; Welcome's card says its neutral and French values;
     /// Go to Declaration offers the generated property and each language's entry, and goes to the French one; completion
     /// after <c>p:Resources.</c> offers the keys with their neutral text, not the class's private fields; the fix asks the
-    /// French value and adds the entry as the file writes its others, the warning going, and one Undo takes it out again. An
-    /// agent's diagnostics lists the warning, its code_actions the fix first, apply_code_action adds the value it names, and
-    /// its definition reaches the property and both entries, from a positional read and from one named Member.</summary>
+    /// French value and adds the entry as the file writes its others, the warning going, and one Undo takes it out again; the
+    /// code-behind's C# read of Thanks is warned of alike. An agent's diagnostics lists the warning, its code_actions the fix
+    /// first, apply_code_action adds the value it names, and its definition reaches the property and both entries, from a
+    /// positional read and from one named Member.</summary>
     [AvaloniaTheory]
     [InlineData("Avalonia")]
     [InlineData("WPF")]
@@ -84,7 +85,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         string view = dialect == "Avalonia" ? "GreetingView.axaml" : "GreetingView.xaml";
         string french = app.PathOf("Properties/Resources.fr.resx");
         string written = File.ReadAllText(french);
-        MainWindow window = app.Open(app.PathOf(view), languageServer: false);
+        MainWindow window = app.Open(app.PathOf(view));
         window.Confirm = (_, _, _) => Task.FromResult(true);
         try
         {
@@ -139,6 +140,13 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
             Ui.Run(window, EditorActions.Undo);
             Ui.WaitFor(() => File.ReadAllText(french) == written, () => $"undo to take the entry back out ({window.Status}): {File.ReadAllText(french)}");
             Ui.WaitFor(() => Untranslated(window).Count == 1, "the warning to come back once undo took the entry away");
+
+            // The code-behind reads Thanks in C#, whose help reads the same files and warns of it alike.
+            window.OpenFile(app.PathOf(view + ".cs"));
+            Ui.WaitFor(() => Untranslated(window).SetEquals(["'Thanks' has no French translation (Resources.fr.resx)"]),
+                () => $"the code-behind's read of Thanks to be warned of as the view's is: {string.Join("; ", Untranslated(window))}");
+            window.OpenFile(app.PathOf(view));
+            Ui.Settle();
 
             Passenger.App.Mcp.PassengerTools agent = new(window);
             IReadOnlyList<Passenger.App.Mcp.Finding> findings = Ui.Await(agent.Diagnostics(view), "an agent's diagnostics of the view");
@@ -199,7 +207,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
                 </UserControl>
 
                 """);
-            File.WriteAllText(app.PathOf("GreetingView.axaml.cs"), "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class GreetingView : UserControl\n{\n}\n");
+            File.WriteAllText(app.PathOf("GreetingView.axaml.cs"), "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class GreetingView : UserControl\n{\n    public static string Said => Properties.Resources.Thanks;\n}\n");
             return;
         }
         File.WriteAllText(app.PathOf("GreetingView.xaml"), """
@@ -215,7 +223,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
             </UserControl>
 
             """);
-        File.WriteAllText(app.PathOf("GreetingView.xaml.cs"), "using System.Windows.Controls;\n\nnamespace Gallery;\n\npublic partial class GreetingView : UserControl\n{\n}\n");
+        File.WriteAllText(app.PathOf("GreetingView.xaml.cs"), "using System.Windows.Controls;\n\nnamespace Gallery;\n\npublic partial class GreetingView : UserControl\n{\n    public static string Said => Properties.Resources.Thanks;\n}\n");
     }
 
     /// <summary>The main file shown again with its text as written, in one edit, and the keys in it.</summary>
