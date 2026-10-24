@@ -10,6 +10,12 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-24
 
+- `ProblemsTests`' `A_typing_pause_lists_again_only_the_open_files_problems_however_many_the_solution_has`, CI Linux,
+  release run 40088071944 (7bb6516d), both attempts: "A typing pause allocated 192 KB on the UI thread with 4002 problems
+  in the solution, 157 KB with 22: 8 bytes for each problem" (then 210 against 178), as once under load on the Mac (#431).
+  The window lists nothing again: the larger solution's server answers later, so its pauses outlast more 530 ms blinks of
+  the caret, each a frame of the editor (20 to 25 KB), the whole gap. Neither race: **the test** counted the blinks; a
+  pause's cost is now taken less what its blinks drew, as a blink costs at rest (`Ui.BlinkBytes`, f4051d8b).
 - `BuildRunTests`' `With_hot_reload_edits_reach_the_running_program_a_signature_change_restarts_it_and_it_ends_with_the_window`,
   CI Linux, release run 40088071944 (7bb6516d): "Waited 120 s for the status bar to say dotnet watch restarts the program
   … the status bar says \"Hot Reload: dotnet watch applied the changes\"". dotnet watch did restart it, but its words came
