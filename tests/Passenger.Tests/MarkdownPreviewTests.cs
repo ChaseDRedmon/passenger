@@ -220,10 +220,14 @@ public sealed class MarkdownPreviewTests
 
         // Split Right: each group its own preview of the one file, the closed split's let go with it.
         WeakReference<MarkdownPreview> closed = SplitAndClose(window);
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        Assert.False(closed.TryGetTarget(out _), "The closed split's preview is still alive, held by the file it showed or the window");
+        // Collected once the frames and jobs queued as it closed have run, as a leak never is.
+        Ui.WaitFor(() =>
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            return !closed.TryGetTarget(out _);
+        }, "the closed split's preview to be let go (still alive, it is held by the file it showed or the window)", TimeSpan.FromSeconds(10));
         group = Assert.Single(window.EditorArea.Groups);
 
         // The toggle hides it, the editor taking the group whole; another file shows no toggle.
