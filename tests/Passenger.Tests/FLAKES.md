@@ -10,6 +10,19 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-24
 
+- `ProblemsTests`' `Solution_wide_analysis_goes_on_following_edits_after_the_server_refuses_a_pull`, CI macOS, release
+  run 40127831310 (07a817ff): "Waited 120 s for the broken caller's error". Roslyn works out a workspace pull's reports,
+  then holds it open until its source's next change, and the IDE took no partial results: the edit came while the pull
+  before it was still working out the old state, so that pull's hold took the change and closed with nothing new, and the
+  next pull, which found the caller's error, was held with it until another edit. With 150 more files in the project, so
+  that pull takes 3 s, the Mac failed so 4 times in 4. **A race in the IDE**: each report is listed as Roslyn streams it
+  (69795db4).
+- `AspireStandInTests`' `Profile_of_an_AppHost_gives_up_on_a_service_past_its_time_saying_so`, CI macOS, release run
+  40127831310 (07a817ff): "Profile's time limit was said as " with nothing after it, Profile having answered that it was
+  profiling apiservice. The limit was measured by the wall clock when Profile's start looked again after DCP's ask, so a
+  look that came after the service had reached the profiler (a second after the ask here) took it for one in time; why the
+  look came that late on CI is not traced (0.3 to 9 ms in 27 runs on the Mac, under load too), and a look held back 1.5 s
+  fails so every time. **A race in the IDE**: the limit falls due on a timer of its own from the ask (50ce6ce4).
 - `WpfXamlTests`' fixture, CI Linux, release run 40127831310 (07a817ff): "The file '…/feed/packages/microsoft.windowsdesktop.app.ref…nupkg'
   already exists", every test of the class failing in its fixture. Its gallery and XamlEditingTests' (new with #476's XAML
   localization) made their WPF apps at once, each finding the pack missing from the run's feed before copying it. Neither
