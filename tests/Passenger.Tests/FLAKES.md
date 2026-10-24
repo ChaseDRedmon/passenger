@@ -10,6 +10,14 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-24
 
+- `LiveTreeTests`' `A_debugged_avalonia_app_shows_its_controls_where_each_value_and_style_comes_from_and_the_control_clicked_in_it`,
+  CI Windows x64, release run 40096586191 (eed64d22): Go to Source's click opened no file ("Expected: …\MainWindow.axaml,
+  Actual: null"). The app's inspector took the adorner layer its window makes for the first outline (Save's) as its
+  controls changing, so 300 ms on the window asked for the tree and Delete's details again, and details shown again
+  rebuilt the Go to Source link: the press went to the old link and the release to its copy. Traced on the Mac, that layer
+  was the only change told; with the inspector's 300 ms stretched to 1.5 s and the release held 2.5 s, the Mac and the
+  Windows VM failed as CI did. **A race in the IDE**: the same details again leave the window as it is, and the inspector
+  tells no change for its own adorner layer (d5c649ff).
 - `ProblemsTests`' `A_typing_pause_lists_again_only_the_open_files_problems_however_many_the_solution_has`, CI Linux,
   release run 40088071944 (7bb6516d), both attempts: "A typing pause allocated 192 KB on the UI thread with 4002 problems
   in the solution, 157 KB with 22: 8 bytes for each problem" (then 210 against 178), as once under load on the Mac (#431).
