@@ -101,6 +101,8 @@ referenced projects twice).
   and each look `just themes` writes); Fluent's keys are mapped once in `Theme/FluentKeys.axaml`. UiRulesTests fails on a
   colour or non-zero CornerRadius written outside `Theme/` (but the content's own) and on an unmapped Fluent key.
 - **A malformed flag or environment value is fatal**, never a silent default (`LaunchOptions.cs`).
+- **A warning is fixed at its cause.** Turning it off (NoWarn, a pragma, a lowered severity, a suppression) or moving
+  the line it checks (a raised budget or limit) does not count as fixing it; neither does an analyzer's baseline.
 - **Work off the UI thread that changes what is drawn goes through `BackgroundWork`** (`Run`, and `Debounce` rather than
   a `DispatcherTimer`), so screenshots and tests wait for it; one that mustn't hold them says why in a comment.
 - **One threading rule.** Controls, documents, the window's `ProjectSession` and its parts, controllers and views belong

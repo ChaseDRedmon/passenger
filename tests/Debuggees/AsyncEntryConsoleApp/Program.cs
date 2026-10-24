@@ -5,5 +5,6 @@ internal class Program
 	{
 		var test = 4;
 		await Task.Delay(10);
+		Console.WriteLine(test);
 	}
 }

@@ -220,6 +220,7 @@ static class Interpreter
 		Pair<int>[,] pairGrid = new Pair<int>[2, 2];
 		Bumper.Work(new Bumped());
 		Console.WriteLine("interpreter");
+		Console.WriteLine($"interpreter read {myInt}, {myUInt}, {minusOne}, {wide}, {counter.Count} and {price}");
 	}
 }
 
