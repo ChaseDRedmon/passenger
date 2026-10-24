@@ -1211,6 +1211,11 @@ public sealed partial class CodeAssist
             {
                 hoverCard.AddCode(described);
             }
+            // A localized string's: each language's value, as C#'s card says it.
+            if (await XamlLocalizationHoverAsync(xaml, offset) is { } languages && !cancel.IsCancellationRequested)
+            {
+                hoverCard.AddText(languages);
+            }
         }
         else if (MSBuildCurrent is { } msbuild)
         {

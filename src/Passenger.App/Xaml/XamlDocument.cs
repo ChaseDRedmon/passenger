@@ -4,6 +4,7 @@ using Passenger.Editor;
 using Passenger.Text;
 using Passenger.Xaml;
 using Passenger.Xaml.Features;
+using Passenger.Xaml.Localization;
 using Passenger.Xaml.Projects;
 using Passenger.Xaml.Syntax;
 
@@ -11,7 +12,8 @@ namespace Passenger.App.Xaml;
 
 /// <summary>One open XAML file's share of its project's XAML: its text read (off the UI thread, once per version) against
 /// the project as it stands, for completion and the rest as it is typed, and its problems marked once typing pauses,
-/// with the XAML compiler's from the last build on their lines until those lines change. The project's load may still be
+/// with the XAML compiler's from the last build on their lines until those lines change, and its localized strings a language
+/// lacks (<see cref="XamlLocalization"/>), the .resx and XLIFF files read as the editor has them. The project's load may still be
 /// under way as the file opens; what is asked meanwhile waits for it, and a file of a project whose XAML Passenger does
 /// not read (neither Avalonia's nor WPF's) answers nothing.</summary>
 public sealed class XamlDocument : IDisposable
@@ -24,7 +26,13 @@ public sealed class XamlDocument : IDisposable
     private (int Version, XamlProject Project, XamlFile File)? last;
     private IReadOnlyList<Marker> live = [];
     private List<Marker> built = [];
+    private IReadOnlyList<(TextRange Range, ResourceGap Gap)> gaps = [];
     private bool disposed;
+
+    /// <summary>Whether a check is due that has not begun (the text, its project or a .resx it reads changed), and the one
+    /// under way, which an agent's call waits for.</summary>
+    private bool due = true;
+    private Task checking = Task.CompletedTask;
 
     internal XamlDocument(XamlService service, OpenDocument document, XamlLoading loading)
     {
@@ -52,6 +60,31 @@ public sealed class XamlDocument : IDisposable
 
     /// <summary>The problems last found in the file, each with its fix when it has one.</summary>
     public IReadOnlyList<XamlDiagnostic> Diagnostics { get; private set; } = [];
+
+    /// <summary>The localized keys its last check found a language lacks, where each is read in the text as it stands.</summary>
+    internal IReadOnlyList<(TextRange Range, ResourceGap Gap)> Gaps => gaps;
+
+    /// <summary>Whether its last check found it reads localized strings, so a .resx or XLIFF file's change checks it again.</summary>
+    internal bool ReadsLocalized { get; private set; }
+
+    /// <summary>The file checked again as it stands, as typing pausing checks it (a language's file it reads was written).</summary>
+    internal void Recheck()
+    {
+        due = true;
+        analysing.Restart();
+    }
+
+    /// <summary>The file's check as it stands: run now where one is due, else the one under way waited for, so what it found
+    /// (an agent's fixes on it) is the text's.</summary>
+    internal Task CheckedAsync()
+    {
+        if (due && !disposed)
+        {
+            analysing.Stop();
+            return AnalyseAsync();
+        }
+        return checking;
+    }
 
     /// <summary>The file read as it stands, against the project as it stands: the last read when neither changed since;
     /// null for a project whose XAML Passenger does not read.</summary>
@@ -99,10 +132,13 @@ public sealed class XamlDocument : IDisposable
 
     /// <summary>The file checked as it stands, its markers replaced by what is found, unless it changed meanwhile; a check
     /// that fails is reported, as nothing awaits it (a Debounce's work).</summary>
-    private async Task AnalyseAsync()
+    private Task AnalyseAsync() => checking = CheckedOrReportedAsync();
+
+    private async Task CheckedOrReportedAsync()
     {
         try
         {
+            due = false;
             await CheckAsync();
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -125,12 +161,19 @@ public sealed class XamlDocument : IDisposable
         {
             service.Summarised(this);
         }
-        IReadOnlyList<XamlDiagnostic> found = await BackgroundWork.Run(() => XamlDiagnostics.Of(file));
+        Func<string, TextSnapshot?> open = service.OpenSnapshots();
+        (IReadOnlyList<XamlDiagnostic> found, bool localizes) = await BackgroundWork.Run(() =>
+        {
+            IReadOnlyList<LocalizedStatic> reads = XamlLocalization.Reads(file);
+            return ((IReadOnlyList<XamlDiagnostic>)[.. XamlDiagnostics.Of(file), .. XamlLocalization.Findings(reads, open)], reads.Count > 0);
+        });
         if (disposed || Document.Text.Version != version)
         {
             return;
         }
         Diagnostics = found;
+        ReadsLocalized = localizes;
+        gaps = [.. found.Where(d => d.Gap is not null).Select(d => (d.Range, d.Gap!))];
         live = [.. found.Select(d => new Marker(d.Range, d.Severity == XamlSeverity.Error ? MarkerKind.Error : MarkerKind.Warning, d.Message))];
         Show();
         IReadOnlyList<ColourUse> colours = await BackgroundWork.Run(() => Colours.InXaml(file, file.Variant));
@@ -188,6 +231,8 @@ public sealed class XamlDocument : IDisposable
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
         live = [.. live.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
+        gaps = [.. gaps.Select(g => (TextEditing.MapRange(g.Range, e.Edits), g.Gap))];
+        due = true;
         if (built.Count > 0)
         {
             DropEditedLines(e);
@@ -218,7 +263,7 @@ public sealed class XamlDocument : IDisposable
     internal void ProjectChanged()
     {
         last = null;
-        analysing.Restart();
+        Recheck();
     }
 
     /// <summary>The project is being loaded again (its project file or restore changed).</summary>
@@ -226,7 +271,7 @@ public sealed class XamlDocument : IDisposable
     {
         Loading = reloading;
         last = null;
-        analysing.Restart();
+        Recheck();
     }
 
     public void Dispose()

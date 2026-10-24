@@ -83,6 +83,8 @@ public sealed class ProjectSession : IAsyncDisposable
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, () => Workspace, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
         Containers = new Containers.FolderContainers(folder, setup.Engine());
         Vcs.Work = setup.Work;
+        // A XAML file's localized strings read from the .resx and XLIFF files as the editor has them.
+        Xaml.Snapshots = () => ConfigurationFiles.Snapshots(setup.Editors.Documents);
         Debug = new DebugController(setup.Editors, setup.Views.Debug)
         {
             RunInTerminal = setup.RunForDebugger,

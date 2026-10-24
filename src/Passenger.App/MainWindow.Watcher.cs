@@ -79,6 +79,7 @@ public partial class MainWindow
         if (changes.Lost || changes.Paths.Any(Passenger.Xaml.Localization.ResourceFiles.Holds))
         {
             session.CSharp?.LocalizationChanged();
+            session.Xaml.LocalizationChanged();
         }
         PackageSourcesChanged(changes);
         session.Tests.Finder.FolderChanged(changes);

@@ -190,7 +190,7 @@ public sealed class SourceTypes
                     case PropertyDeclarationSyntax property:
                         bool writable = property.AccessorList?.Accessors.Any(a => a.IsKind(SyntaxKind.SetAccessorDeclaration) && IsAccessible(a.Modifiers, inherit: true)) == true;
                         members.Add(new ClrMember(type, property.Identifier.Text, MemberKind.Property, Reference(property.Type, inside), isStatic, visible, writable,
-                            attributes: memberAttributes, place: Place(property.Identifier)));
+                            attributes: memberAttributes, place: Place(property.Identifier), constant: isStatic ? Given(property) : null));
                         break;
                     case FieldDeclarationSyntax field:
                         bool readOnly = field.Modifiers.Any(SyntaxKind.ReadOnlyKeyword) || field.Modifiers.Any(SyntaxKind.ConstKeyword);
@@ -243,6 +243,28 @@ public sealed class SourceTypes
             TypeRef? baseType = bases.Count > 0 ? bases[0] : type.Kind == ClrTypeKind.Struct ? TypeRef.Named("System.ValueType") : null;
             return new ClrTypeDetails(baseType, [.. bases.Skip(1)], attributes, members, isAbstract, isStaticType, IsVisible(typed.Modifiers, type.IsNested),
                 !anyConstructor || defaultConstructor, generics);
+        }
+
+        /// <summary>The string a static property's getter first gives a call or a constructor, as a class a .resx generates
+        /// writes its key (<c>ResourceManager.GetString("Welcome", …)</c>, Arcade's <c>GetResourceString("Welcome")</c>) and its
+        /// ResourceManager's name (<c>new ResourceManager("App.Properties.Resources", …)</c>); null for none.</summary>
+        private static string? Given(PropertyDeclarationSyntax property)
+        {
+            SyntaxNode? getter = (SyntaxNode?)property.ExpressionBody ?? property.AccessorList?.Accessors.FirstOrDefault(a => a.IsKind(SyntaxKind.GetAccessorDeclaration));
+            foreach (SyntaxNode node in getter?.DescendantNodesAndSelf() ?? [])
+            {
+                ArgumentListSyntax? arguments = node switch
+                {
+                    InvocationExpressionSyntax call => call.ArgumentList,
+                    BaseObjectCreationExpressionSyntax made => made.ArgumentList,
+                    _ => null,
+                };
+                if (arguments?.Arguments is [{ Expression: LiteralExpressionSyntax literal }, ..] && literal.IsKind(SyntaxKind.StringLiteralExpression))
+                {
+                    return literal.Token.ValueText;
+                }
+            }
+            return null;
         }
 
         /// <summary>An Avalonia property's field declared by its untyped base (<c>AvaloniaProperty</c>) takes the property

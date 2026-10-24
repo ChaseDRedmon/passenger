@@ -130,7 +130,8 @@ public sealed class ClrMember
     /// <summary>Where source declares it; null for metadata.</summary>
     public SourcePlace? Place { get; }
 
-    /// <summary>A constant field's value (an enum member's).</summary>
+    /// <summary>A constant field's value (an enum member's); for a static property of source, the string its getter first gives
+    /// a call or a constructor (a generated resource class's key, its ResourceManager's name).</summary>
     public object? Constant { get; }
 
     public bool Has(string attribute) => Attributes.Any(a => a.ShortName == attribute);

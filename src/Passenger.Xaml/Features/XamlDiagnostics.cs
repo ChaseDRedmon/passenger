@@ -1,5 +1,6 @@
 using Passenger.Text;
 using Passenger.Xaml.Dialects;
+using Passenger.Xaml.Localization;
 using Passenger.Xaml.Metadata;
 using Passenger.Xaml.Syntax;
 
@@ -16,6 +17,10 @@ public sealed record XamlDiagnostic(TextRange Range, XamlSeverity Severity, stri
 {
     /// <summary>What puts it right (a theme variant's missing key added), each a quick fix.</summary>
     public IReadOnlyList<XamlFix> Fixes { get; init; } = [];
+
+    /// <summary>For a localized string a language lacks (<see cref="XamlLocalization"/>), the key and the file to give it in,
+    /// whose fix, Passenger's own as C#'s is, asks its value.</summary>
+    public ResourceGap? Gap { get; init; }
 }
 
 /// <summary>A quick fix: its title, the file it changes, and its edits made from that file's text as it is when the fix

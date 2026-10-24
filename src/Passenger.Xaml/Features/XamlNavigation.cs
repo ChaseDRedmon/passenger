@@ -226,7 +226,7 @@ public static class XamlNavigation
                 return ElementNamed(file, argument.Value, argument.ValueRange);
             case "Type" when argument.Key is null && file.ResolveType(element, argument.Value) is { } type:
                 return new XamlSymbol(argument.ValueRange, type.Name, [TypeTarget(type)]);
-            case "Static" when argument.Key is null:
+            case "Static" when argument.Key is null or "Member":
                 int dot = argument.Value.LastIndexOf('.');
                 if (dot > 0 && file.ResolveType(element, argument.Value[..dot]) is { } owner)
                 {

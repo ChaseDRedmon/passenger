@@ -19,7 +19,9 @@ namespace Passenger.Tests;
 /// makes) and WPF's (one <c>dotnet new wpf</c> makes): Reformat Code by Rider's XAML code style and the file's
 /// .editorconfig, Extract Resource and Extract Style, the fixes that create a binding's property or command in its view
 /// model (the MVVM Toolkit's way where the project has it, stood in by its attributes' names) and a missing converter's
-/// class and resource, and Surround With's elements.</summary>
+/// class and resource, and Surround With's elements; and a generated resource class's strings read through <c>{x:Static}</c>
+/// (#476), known as C# knows them: each language's value on the card, Go to Declaration to each file's entry, the keys
+/// completed, and a key a language lacks warned of with the fix that adds it, for the window and an agent alike.</summary>
 public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGallery>, IClassFixture<XamlEditingTests.WpfGallery>
 {
     private readonly AvaloniaGallery avalonia;
@@ -64,6 +66,156 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         PutBack(window, app, dialect, written);
         Reformat(window, app, dialect);
         window.Close();
+    }
+
+    /// <summary>A Designer class over a neutral Resources.resx and a French one lacking Thanks, read by a view through
+    /// <c>{x:Static p:Resources.…}</c>: Thanks is warned of, and only it; Welcome's card says its neutral and French values;
+    /// Go to Declaration offers the generated property and each language's entry, and goes to the French one; completion
+    /// after <c>p:Resources.</c> offers the keys with their neutral text, not the class's private fields; the fix asks the
+    /// French value and adds the entry as the file writes its others, the warning going, and one Undo takes it out again. An
+    /// agent's diagnostics lists the warning, its code_actions the fix first, apply_code_action adds the value it names, and
+    /// its definition reaches the property and both entries, from a positional read and from one named Member.</summary>
+    [AvaloniaTheory]
+    [InlineData("Avalonia")]
+    [InlineData("WPF")]
+    public void A_generated_resource_class_s_strings_in_xaml_have_their_languages_and_a_missing_one_is_added(string dialect)
+    {
+        SharedProject app = App(dialect);
+        string view = dialect == "Avalonia" ? "GreetingView.axaml" : "GreetingView.xaml";
+        string french = app.PathOf("Properties/Resources.fr.resx");
+        string written = File.ReadAllText(french);
+        MainWindow window = app.Open(app.PathOf(view), languageServer: false);
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            Ui.WaitFor(() => Untranslated(window).SetEquals(["'Thanks' has no French translation (Resources.fr.resx)"]),
+                () => $"the key French lacks, and only it, to be warned of: {string.Join("; ", Untranslated(window))}");
+
+            Ui.PlaceAfter(editor, "Resources.Wel");
+            Ui.Run(window, AppActions.QuickDocumentation);
+            Ui.WaitFor(() => window.Assist.HoverText?.Contains("fr: ", StringComparison.Ordinal) == true, () => $"Welcome's card to say its languages: {window.Assist.HoverText}");
+            Assert.Equal("string Resources.Welcome\n'Welcome' (Resources):\nneutral: Welcome!\nfr: Bienvenue", window.Assist.HoverText);
+            Ui.Press(window, "ESCAPE");
+
+            Ui.Run(window, AppActions.GoToDeclaration);
+            Ui.WaitFor(() => window.Assist.Offered.Count == 3, () => $"the property and each file's entry to be offered ({window.Status}): {string.Join("; ", window.Assist.Offered)}");
+            Assert.Equal(["Resources.Welcome", "neutral: Resources.resx", "fr: Resources.fr.resx"], window.Assist.Offered);
+            Ui.Press(window, "DOWN");
+            Ui.Press(window, "DOWN");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.EditorArea.Active?.Name == "Resources.fr.resx", "the French entry to open");
+            CodeEditor opened = window.EditorArea.CodeEditor;
+            Assert.Contains("<data name=\"Welcome\"", opened.Document.Snapshot.GetLineText(opened.CaretPosition.Line), StringComparison.Ordinal);
+            // Closed, so the fix below writes the file rather than editing its tab.
+            Ui.Run(window, AppActions.CloseTab);
+
+            window.OpenFile(app.PathOf(view));
+            Ui.Settle();
+            editor = window.EditorArea.CodeEditor;
+            Ui.PlaceAfter(editor, "{x:Static p:Resources.");
+            Ui.Run(window, AppActions.Complete);
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Welcome"), "the class's keys to be offered after p:Resources.");
+            Assert.Contains(("Thanks", "Thank you"), window.Assist.CompletionDetails);
+            Assert.Contains(("Welcome", "Welcome!"), window.Assist.CompletionDetails);
+            Assert.DoesNotContain("resourceMan", window.Assist.CompletionLabels);
+            Ui.Press(window, "ESCAPE");
+
+            Ui.PlaceAfter(editor, "Resources.Tha");
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Contains("Add 'Thanks' to Resources.fr.resx…"), () => $"the fix to be offered: {string.Join("; ", window.Assist.Offered)}");
+            Assert.Equal("Add 'Thanks' to Resources.fr.resx…", window.Assist.Offered[0]);
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the fix to ask for the French value");
+            ConfirmDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<ConfirmDialog>()));
+            dialog.KeyTextInput("Merci");
+            Ui.Press(dialog, "ENTER");
+            Ui.Settle();
+            string entry = "  <data name=\"Thanks\" xml:space=\"preserve\">\n    <value>Merci</value>\n  </data>\n";
+            Ui.WaitFor(() => File.ReadAllText(french) == written.Replace("</root>", entry + "</root>", StringComparison.Ordinal),
+                () => $"the entry to be added after the file's last, as it writes them: {File.ReadAllText(french)}");
+            Ui.WaitFor(() => Untranslated(window).Count == 0, () => $"the warning to go once French gives the key: {string.Join("; ", Untranslated(window))}");
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.WaitFor(() => File.ReadAllText(french) == written, () => $"undo to take the entry back out ({window.Status}): {File.ReadAllText(french)}");
+            Ui.WaitFor(() => Untranslated(window).Count == 1, "the warning to come back once undo took the entry away");
+
+            Passenger.App.Mcp.PassengerTools agent = new(window);
+            IReadOnlyList<Passenger.App.Mcp.Finding> findings = Ui.Await(agent.Diagnostics(view), "an agent's diagnostics of the view");
+            Passenger.App.Mcp.Finding missing = Assert.Single(findings, f => f.Message.Contains("translation", StringComparison.Ordinal));
+            Assert.Equal(("warning", "'Thanks' has no French translation (Resources.fr.resx)"), (missing.Severity, missing.Message));
+            IReadOnlyList<string> actions = Ui.Await(agent.CodeActions(view, missing.Line, missing.Column + 2), "the code actions an agent asks for");
+            Assert.Equal("Add 'Thanks' to Resources.fr.resx… [quickfix]", actions[0]);
+            string applied = Ui.Await(agent.ApplyCodeAction(view, missing.Line, missing.Column + 2, "Add 'Thanks' to Resources.fr.resx…", name: "Merci beaucoup"),
+                "the agent's fix made");
+            Assert.Equal("Added 'Thanks' to Resources.fr.resx", applied);
+            Assert.Contains("<value>Merci beaucoup</value>", File.ReadAllText(french), StringComparison.Ordinal);
+            Ui.WaitFor(() => Untranslated(window).Count == 0, () => $"the warning to go once the agent gave the key: {string.Join("; ", Untranslated(window))}");
+
+            // Welcome read positionally and as x:Static's Member.
+            string text = File.ReadAllText(app.PathOf(view));
+            foreach (string read in (string[])["{x:Static p:Resources.Welcome}", "{x:Static Member=p:Resources.Welcome}"])
+            {
+                int at = text.IndexOf(read, StringComparison.Ordinal) + read.IndexOf(".Welcome", StringComparison.Ordinal) + 2;
+                int line = text[..at].Count(c => c == '\n') + 1;
+                IReadOnlyList<Passenger.App.Mcp.Place> places = Ui.Await(agent.Definition(view, line, at - text.LastIndexOf('\n', at - 1)), $"an agent's definition of Welcome in {read}");
+                Assert.Equal(["Properties/Resources.Designer.cs", "Properties/Resources.resx", "Properties/Resources.fr.resx"], [.. places.Select(p => p.Path)]);
+                Assert.Contains("static string Welcome", places[0].Text, StringComparison.Ordinal);
+                Assert.All(places.Skip(1), p => Assert.Contains("<data name=\"Welcome\"", p.Text, StringComparison.Ordinal));
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>The warnings of the shown file that a language lacks a localized key.</summary>
+    private static HashSet<string> Untranslated(MainWindow window) => [.. window.EditorArea.Active!.Markers
+        .Where(m => m.Kind == MarkerKind.Warning && m.Message.Contains(" translat", StringComparison.Ordinal)).Select(m => m.Message)];
+
+    /// <summary>A Designer class over a neutral Resources.resx and a French one lacking a key, and a view reading two of its
+    /// strings through <c>{x:Static}</c>: WPF's class public, as PublicResXFileCodeGenerator writes it, Avalonia's internal.</summary>
+    private static void Localize(SharedProject app, string dialect)
+    {
+        Directory.CreateDirectory(app.PathOf("Properties"));
+        string designer = LocalizationTests.Project.Designer.Replace("Shop.", "Gallery.", StringComparison.Ordinal);
+        File.WriteAllText(app.PathOf("Properties/Resources.Designer.cs"), dialect == "Avalonia" ? designer
+            : designer.Replace("internal class Resources", "public class Resources", StringComparison.Ordinal).Replace("internal static", "public static", StringComparison.Ordinal));
+        File.WriteAllText(app.PathOf("Properties/Resources.resx"), LocalizationTests.Project.Resx(oneLine: false, ("Thanks", "Thank you"), ("Welcome", "Welcome!")));
+        File.WriteAllText(app.PathOf("Properties/Resources.fr.resx"), LocalizationTests.Project.Resx(oneLine: false, ("Welcome", "Bienvenue")));
+        if (dialect == "Avalonia")
+        {
+            File.WriteAllText(app.PathOf("GreetingView.axaml"), """
+                <UserControl xmlns="https://github.com/avaloniaui"
+                             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                             xmlns:p="using:Gallery.Properties"
+                             x:Class="Gallery.GreetingView">
+                    <StackPanel>
+                        <TextBlock Text="{x:Static p:Resources.Welcome}" />
+                        <TextBlock Text="{x:Static p:Resources.Thanks}" />
+                        <TextBlock Text="{x:Static Member=p:Resources.Welcome}" />
+                    </StackPanel>
+                </UserControl>
+
+                """);
+            File.WriteAllText(app.PathOf("GreetingView.axaml.cs"), "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class GreetingView : UserControl\n{\n}\n");
+            return;
+        }
+        File.WriteAllText(app.PathOf("GreetingView.xaml"), """
+            <UserControl x:Class="Gallery.GreetingView"
+                         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                         xmlns:p="clr-namespace:Gallery.Properties">
+                <StackPanel>
+                    <TextBlock Text="{x:Static p:Resources.Welcome}" />
+                    <TextBlock Text="{x:Static p:Resources.Thanks}" />
+                    <TextBlock Text="{x:Static Member=p:Resources.Welcome}" />
+                </StackPanel>
+            </UserControl>
+
+            """);
+        File.WriteAllText(app.PathOf("GreetingView.xaml.cs"), "using System.Windows.Controls;\n\nnamespace Gallery;\n\npublic partial class GreetingView : UserControl\n{\n}\n");
     }
 
     /// <summary>The main file shown again with its text as written, in one edit, and the keys in it.</summary>
@@ -544,9 +696,10 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
         """;
 
-    /// <summary><see cref="XamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit's fields and a
-    /// till view whose view model uses its partial properties: never built, since without the toolkit's generators
-    /// Avalonia's compiler finds none of the properties they make, so XamlTests' own gallery, which it builds, has neither.</summary>
+    /// <summary><see cref="XamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit's fields, a till
+    /// view whose view model uses its partial properties and a greeting view of a Designer class's strings: never built, since
+    /// without the toolkit's generators Avalonia's compiler finds none of the properties they make, so XamlTests' own gallery,
+    /// which it builds, has neither.</summary>
     public sealed class AvaloniaGallery : SharedProject
     {
         public AvaloniaGallery()
@@ -584,12 +737,14 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
                     """);
                 File.WriteAllText(PathOf("ShopView.axaml.cs"), "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class ShopView : UserControl\n{\n}\n");
+                Localize(this, "Avalonia");
             }, Folder);
             Prepare();
         }
     }
 
-    /// <summary><see cref="WpfXamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit.</summary>
+    /// <summary><see cref="WpfXamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit, and a greeting
+    /// view of a Designer class's strings.</summary>
     public sealed class WpfGallery : SharedProject
     {
         public WpfGallery()
@@ -616,6 +771,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
                     """);
                 File.WriteAllText(PathOf("ShopView.xaml.cs"), "using System.Windows.Controls;\n\nnamespace Gallery;\n\npublic partial class ShopView : UserControl\n{\n}\n");
+                Localize(this, "WPF");
             }, Folder);
             Prepare();
         }

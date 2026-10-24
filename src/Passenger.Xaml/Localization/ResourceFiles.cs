@@ -67,6 +67,47 @@ public sealed record ResourceSet(string BasePath, IReadOnlyList<ResourceFile> Fi
         }
         return (files[0], files[0].Entry(key), false);
     }
+
+    /// <summary>Each language its files have that lacks a key: the file to give it in, and whether it is there untranslated (an
+    /// XLIFF unit still new); what C#'s and XAML's warnings say.</summary>
+    public IEnumerable<ResourceGap> Lacking(string key)
+    {
+        foreach (string culture in Cultures)
+        {
+            (ResourceFile file, ResourceEntry? entry, bool translated) = In(culture, key);
+            if (!translated)
+            {
+                yield return new ResourceGap(key, BasePath, file, culture, entry is not null);
+            }
+        }
+    }
+
+    /// <summary>What a key's card says of each language, the neutral file's first: its value, or that it has none, is not
+    /// translated yet or wants review. C#'s card and XAML's say it alike.</summary>
+    public IReadOnlyList<string> Languages(string key)
+    {
+        List<string> lines = [];
+        if (Neutral is { } neutral)
+        {
+            lines.Add(neutral.Entry(key) is { } given ? $"neutral: {given.Value}" : $"neutral: none ({neutral.Name})");
+        }
+        foreach (string culture in Cultures)
+        {
+            (ResourceFile file, ResourceEntry? entry, bool translated) = In(culture, key);
+            lines.Add(translated ? $"{culture}: {entry!.Value}" + (entry.State is { } state && state.StartsWith("needs-review", StringComparison.Ordinal) ? " (needs review)" : string.Empty)
+                : entry is not null ? $"{culture}: not translated yet ({file.Name})"
+                : $"{culture}: none ({file.Name})");
+        }
+        return lines;
+    }
+}
+
+/// <summary>A key a language of a resource lacks: the key, the resource's base path, the file to give it in, the culture,
+/// and whether the file has it untranslated (an XLIFF unit still new); what a warning says and its fix gives.</summary>
+public sealed record ResourceGap(string Key, string BasePath, ResourceFile File, string Culture, bool Untranslated)
+{
+    /// <summary>The warning's words, in C# and XAML alike.</summary>
+    public string Message => Untranslated ? $"'{Key}' is not translated to {File.Language} yet ({File.Name})" : $"'{Key}' has no {File.Language} translation ({File.Name})";
 }
 
 /// <summary>A resource's files found and read, the one reading of them shared by the C# localizers' help and XAML's: where a
@@ -114,6 +155,20 @@ public static class ResourceFiles
             }
         }
         return new ResourceSet(basePath, [.. files.OrderBy(f => f.Culture, StringComparer.OrdinalIgnoreCase).ThenBy(f => f.Format)]);
+    }
+
+    /// <summary>A resource's files: those at the base paths beside the code that names it (a Designer file's .resx) first, else
+    /// those MSBuild embeds under the name ResourceManager looks it up by, under its project's folder; null where none are.</summary>
+    public static ResourceSet? Find(IEnumerable<string> beside, string projectFolder, string rootNamespace, string name, Func<string, TextSnapshot?>? open = null)
+    {
+        foreach (string basePath in beside.Concat(Named(projectFolder, rootNamespace, name)))
+        {
+            if (Of(basePath, open) is { Files.Count: > 0 } set)
+            {
+                return set;
+            }
+        }
+        return null;
     }
 
     /// <summary>The base paths, under a project's folder, of the resources MSBuild embeds by a name (<c>Shop.Pages.Home</c>): a

@@ -1,10 +1,12 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Passenger.App.Workspace;
+using Passenger.App.Xaml;
 using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Roslyn.Extension;
 using Passenger.Text;
+using Passenger.Xaml;
 using Passenger.Xaml.Features;
 using Passenger.Xaml.Localization;
 
@@ -14,7 +16,8 @@ namespace Passenger.App.CSharp;
 /// <c>IHtmlLocalizer&lt;T&gt;</c>'s keys, a generated resource class's properties, in C# and in Razor) and the .resx and XLIFF
 /// files that give them (<see cref="ResourceFiles"/>): a key's hover card says each language's value, Go to Declaration goes
 /// to each file's entry, completion in a localizer's string offers the resource's keys, and a key a language lacks is
-/// warned of (<see cref="CSharpDocument.LocalizationFindingsAsync"/>) with Passenger's own fix, which asks the value and adds it.</summary>
+/// warned of (<see cref="CSharpDocument.LocalizationFindingsAsync"/>) with Passenger's own fix, which asks the value and adds it.
+/// XAML's <c>{x:Static p:Resources.Key}</c> of a generated class (<see cref="XamlLocalization"/>) has the same card, entries and fix.</summary>
 public sealed partial class CodeAssist
 {
     /// <summary>The key read at an offset of a C# or Razor file, with its resource and that resource's files; null elsewhere,
@@ -55,21 +58,13 @@ public sealed partial class CodeAssist
         {
             return $"'{read.Key}' ({resource.Type}): no .resx gives {resource.Name}";
         }
-        // The files' name where it is not the type's (a resource under another name, a Designer class's .resx).
-        List<string> lines = [$"'{read.Key}' ({(set.Name == resource.Type ? resource.Type : $"{resource.Type}, {set.Name}")}):"];
-        if (set.Neutral is { } neutral)
-        {
-            lines.Add(neutral.Entry(read.Key) is { } given ? $"neutral: {given.Value}" : $"neutral: none ({neutral.Name})");
-        }
-        foreach (string culture in set.Cultures)
-        {
-            (ResourceFile file, ResourceEntry? entry, bool translated) = set.In(culture, read.Key);
-            lines.Add(translated ? $"{culture}: {entry!.Value}" + (entry.State is { } state && state.StartsWith("needs-review", StringComparison.Ordinal) ? " (needs review)" : string.Empty)
-                : entry is not null ? $"{culture}: not translated yet ({file.Name})"
-                : $"{culture}: none ({file.Name})");
-        }
-        return string.Join('\n', lines);
+        return LocalizationCard(read.Key, resource.Type, set);
     }
+
+    /// <summary>A localized key's card: the key and its type (with the files' name where it is not the type's: a resource under
+    /// another name, a Designer class's .resx), then each language's value; C#'s and XAML's alike.</summary>
+    private static string LocalizationCard(string key, string type, ResourceSet set) =>
+        string.Join('\n', [$"'{key}' ({(set.Name == type ? type : $"{type}, {set.Name}")}):", .. set.Languages(key)]);
 
     /// <summary>Where Go to Declaration goes from a localized key: each file's entry of it (a .resx's <c>&lt;data name&gt;</c>,
     /// an XLIFF unit's id), named by its language, at the editor's lines, and for a generated class's property whether the
@@ -156,22 +151,66 @@ public sealed partial class CodeAssist
         return items.Count == 0 ? null : (start, items, caret < end ? asked.GetText(caret, end - caret) : string.Empty);
     }
 
-    /// <summary>A line up to the caret that ends inside a string given to an indexer or to GetString.</summary>
-    private static readonly System.Text.RegularExpressions.Regex IndexerString = new(@"(\[|GetString\()\s*""[^""]*$");
-
-    /// <summary>The fixes of a C# or Razor file's warnings, on an offset's line, that a language lacks a localized key
-    /// (<see cref="CSharpDocument.LocalizationMissingOn"/>), Passenger's own and listed first: its value asked for and given in
-    /// that language's file (a .resx's new entry, an XLIFF unit's target), one command of global undo, worked out again as it
-    /// is chosen and refused once the file gives the key.</summary>
-    public IReadOnlyList<EditorFix> LocalizationFixes(OpenDocument file, int offset)
+    /// <summary>The localized string a XAML file reads at an offset (an <c>{x:Static}</c> of a generated class's property), and its
+    /// resource's files, read off the UI thread with the open ones as the editor has them; null elsewhere.</summary>
+    private async Task<(LocalizedStatic Read, ResourceSet? Set)?> XamlLocalizedAtAsync(XamlFile file, int offset)
     {
-        if (service()?.For(file) is not { Lsp: { } lsp } features)
+        Func<string, TextSnapshot?> open = ConfigurationFiles.Snapshots(editors.Documents);
+        return await BackgroundWork.Run(() => XamlLocalization.At(file, offset) is { } read ? (read, read.SetOf(open)) : ((LocalizedStatic, ResourceSet?)?)null);
+    }
+
+    /// <summary>What the hover card says of a XAML file's localized string, beside what the name is: each language's value, as
+    /// C#'s card says it; that no file gives the resource where none is found.</summary>
+    private async Task<string?> XamlLocalizationHoverAsync(XamlDocument xaml, int offset)
+    {
+        if (await xaml.FileAsync() is not { } file || await XamlLocalizedAtAsync(file, offset) is not ({ } read, var set))
+        {
+            return null;
+        }
+        return set is null ? $"'{read.Key}' ({read.Type.Name}): no .resx gives {read.Manager}" : LocalizationCard(read.Key, read.Type.Name, set);
+    }
+
+    /// <summary>Where Go to Declaration goes from a XAML file's localized string beyond the generated property: each file's entry
+    /// of its key, named by its language; none elsewhere. Shared with the agents' definition.</summary>
+    internal async Task<IReadOnlyList<XamlTarget>> XamlLocalizedTargetsAsync(XamlFile file, int offset)
+    {
+        if (await XamlLocalizedAtAsync(file, offset) is not ({ } read, { } set))
         {
             return [];
         }
+        return [.. set.Files.Select(f => (File: f, Entry: f.Entry(read.Key))).Where(f => f.Entry is not null)
+            .Select(f => new XamlTarget(XamlTargetKind.File, $"{(f.File.Culture.Length == 0 ? "neutral" : f.File.Culture)}: {f.File.Name}")
+            {
+                Path = f.File.Path,
+                Range = TextRange.FromBounds(f.Entry!.NameStart, f.Entry.NameEnd),
+            })];
+    }
+
+    /// <summary>A line up to the caret that ends inside a string given to an indexer or to GetString.</summary>
+    private static readonly System.Text.RegularExpressions.Regex IndexerString = new(@"(\[|GetString\()\s*""[^""]*$");
+
+    /// <summary>The fixes of a C#, Razor or XAML file's warnings, on an offset's line, that a language lacks a localized key
+    /// (<see cref="LackingKeys"/>), Passenger's own and listed first: its value asked for and given in that language's file (a
+    /// .resx's new entry, an XLIFF unit's target), one command of global undo, worked out again as it is chosen and refused
+    /// once the file gives the key.</summary>
+    public IReadOnlyList<EditorFix> LocalizationFixes(OpenDocument file, int offset) =>
         // The line's warnings, the one the caret is on first.
-        return [.. features.LocalizationMissingOn(lsp.PositionOf(offset).Line).OrderBy(m => m.Range.Start <= offset && offset <= m.Range.End ? 0 : 1)
+        [.. LackingKeys(file, offset).OrderBy(m => m.Range.Start <= offset && offset <= m.Range.End ? 0 : 1)
             .DistinctBy(m => (m.Key, m.File)).Select(m => TranslationFix(file, m.Range, m.Key, m.File, m.Culture, m.Base, m.Untranslated))];
+
+    /// <summary>The keys a file's warnings say a language lacks, on an offset's line (any line for null): a C# or Razor file's as
+    /// its last pull placed them (<see cref="CSharpDocument.LocalizationMissingOn"/>), a XAML file's as its last check found them
+    /// (<see cref="XamlDocument.Gaps"/>), each where it is read in the text as it stands.</summary>
+    private IReadOnlyList<(TextRange Range, string Key, string File, string Culture, string Base, bool Untranslated)> LackingKeys(OpenDocument file, int? offset)
+    {
+        if (XamlOf(file) is { } xaml)
+        {
+            TextSnapshot text = file.Text.Snapshot;
+            int? line = offset is { } at ? text.GetLineFromOffset(Math.Min(at, text.Length)) : null;
+            return [.. xaml.Gaps.Where(g => line is not { } on || g.Range.Start <= text.Length && text.GetLineFromOffset(g.Range.Start) == on)
+                .Select(g => (g.Range, g.Gap.Key, g.Gap.File.Path, g.Gap.Culture, g.Gap.BasePath, g.Gap.Untranslated))];
+        }
+        return service()?.For(file) is { Lsp: { } lsp } features ? features.LocalizationMissingOn(offset is { } served ? lsp.PositionOf(served).Line : null) : [];
     }
 
     private EditorFix TranslationFix(OpenDocument file, TextRange range, string key, string target, string culture, string basePath, bool untranslated)
@@ -179,7 +218,7 @@ public sealed partial class CodeAssist
         string name = Path.GetFileName(target);
         return new(untranslated ? $"Translate '{key}' in {name}…" : $"Add '{key}' to {name}…", "a key a language lacks", range, string.Empty)
         {
-            Again = _ => service()?.For(file)?.LocalizationMissingOn(null).FirstOrDefault(m => m.Key == key && m.File == target) is { } now
+            Again = _ => LackingKeys(file, null).FirstOrDefault(m => m.Key == key && m.File == target) is { } now
                 ? TranslationFix(file, now.Range, key, target, culture, basePath, now.Untranslated) : null,
             Asks = new ValueAsked($"'{key}' in {ResourceFiles.LanguageOf(culture)}, kept in {name}", false, (value, _) => TranslateAsync(file, key, target, culture, basePath, value)),
         };
@@ -224,6 +263,7 @@ public sealed partial class CodeAssist
             return RefactorOutcome.Refused(refused);
         }
         service()?.For(file)?.RefreshDiagnostics();
+        XamlOf(file)?.Recheck();
         return new RefactorOutcome($"Added '{key}' to {name}", null, [new RefactoredFile(target, "changed", [])], []);
     }
 }

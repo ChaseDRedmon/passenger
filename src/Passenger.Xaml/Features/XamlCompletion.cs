@@ -1,4 +1,5 @@
 using Passenger.Xaml.Dialects;
+using Passenger.Xaml.Localization;
 using Passenger.Xaml.Metadata;
 using Passenger.Xaml.Syntax;
 
@@ -934,7 +935,8 @@ public static class XamlCompletion
         return new XamlCompletionList(last, items);
     }
 
-    /// <summary><c>{x:Static}</c>: types before the dot, then a type's static members (its enum's members).</summary>
+    /// <summary><c>{x:Static}</c>: types before the dot, then a type's static members (its enum's members, a generated resource
+    /// class's keys with their text).</summary>
     private static XamlCompletionList? Statics(XamlFile file, XmlElement element, int start, int offset)
     {
         string typed = file.Text[start..offset];
@@ -947,7 +949,9 @@ public static class XamlCompletion
         {
             return null;
         }
-        return new XamlCompletionList(start + dot + 1, [.. type.Members.Where(m => m.IsStatic && m.Kind is MemberKind.Property or MemberKind.Field)
-            .Select(m => new XamlItem(m.Name, type.Kind == ClrTypeKind.Enum ? XamlItemKind.EnumValue : XamlItemKind.Member, m.Name, m.Type.Display))]);
+        // A class a .resx generates offers its keys with their neutral text, as C#'s localizer keys are offered.
+        Func<ClrMember, string?> texts = XamlLocalization.TextsOf(file, type);
+        return new XamlCompletionList(start + dot + 1, [.. type.Members.Where(m => m.IsStatic && m.IsPublic && m.Kind is MemberKind.Property or MemberKind.Field)
+            .Select(m => new XamlItem(m.Name, type.Kind == ClrTypeKind.Enum ? XamlItemKind.EnumValue : XamlItemKind.Member, m.Name, texts(m) ?? m.Type.Display))]);
     }
 }

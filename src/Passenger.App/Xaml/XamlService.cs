@@ -47,6 +47,27 @@ public sealed class XamlService : IDisposable
     /// stand-in of a test's.</summary>
     public ILibraryFiles LibraryFiles { get; set; } = new SourceLink();
 
+    /// <summary>The open files' texts as the editor has them now, each a snapshot any thread reads, for the .resx and XLIFF
+    /// files a XAML file's localized strings are read from off the UI thread; none open without it.</summary>
+    public Func<Func<string, TextSnapshot?>>? Snapshots { get; set; }
+
+    /// <summary>The open files' texts as the editor has them now (<see cref="Snapshots"/>), taken on the UI thread.</summary>
+    internal Func<string, TextSnapshot?> OpenSnapshots()
+    {
+        UiThread.Check();
+        return Snapshots?.Invoke() ?? (_ => null);
+    }
+
+    /// <summary>A .resx or XLIFF file changed: each open XAML file that reads localized strings is checked again; no other.</summary>
+    public void LocalizationChanged()
+    {
+        UiThread.Check();
+        foreach (XamlDocument document in documents.Values.Where(d => d.ReadsLocalized))
+        {
+            document.Recheck();
+        }
+    }
+
     /// <summary>Whether a path is a XAML file Passenger reads, by its extension.</summary>
     public static bool IsXaml(string path) => Path.GetExtension(path).ToLowerInvariant() is ".axaml" or ".paml" or ".xaml";
 

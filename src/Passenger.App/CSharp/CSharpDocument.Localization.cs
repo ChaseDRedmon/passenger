@@ -33,29 +33,7 @@ internal sealed record Localized(IReadOnlyList<LocalizedKey> Keys, IReadOnlyList
     {
         string folder = PathNames.Canonical(Path.GetDirectoryName(resource.Project)!);
         IEnumerable<string> beside = resource.Beside.Select(b => Path.Combine(PathNames.Canonical(Path.GetDirectoryName(b)!), Path.GetFileName(b)));
-        foreach (string basePath in beside.Concat(ResourceFiles.Named(folder, resource.RootNamespace, resource.Name)))
-        {
-            if (ResourceFiles.Of(basePath, open) is { Files.Count: > 0 } set)
-            {
-                return set;
-            }
-        }
-        return null;
-    }
-
-    /// <summary>Each language a resource's files have that a key read lacks: the file to give it in, the culture, and whether
-    /// it is there untranslated (an XLIFF unit still new). A generated class's key its neutral file lacks is left alone, as
-    /// its build gives no property for it.</summary>
-    public static IEnumerable<(ResourceFile File, string Culture, bool Untranslated)> Missing(ResourceSet set, string key)
-    {
-        foreach (string culture in set.Cultures)
-        {
-            (ResourceFile file, ResourceEntry? entry, bool translated) = set.In(culture, key);
-            if (!translated)
-            {
-                yield return (file, culture, entry is not null);
-            }
-        }
+        return ResourceFiles.Find(beside, folder, resource.RootNamespace, resource.Name, open);
     }
 }
 
@@ -137,21 +115,21 @@ public sealed partial class CSharpDocument
             {
                 continue;
             }
-            foreach ((ResourceFile file, string culture, bool untranslated) in Localized.Missing(set, read.Key))
+            foreach (ResourceGap gap in set.Lacking(read.Key))
             {
                 found.Add(new Diagnostic
                 {
                     Range = new LspRange(new LspPosition(read.At.Line, read.At.Character), new LspPosition(read.End.Line, read.End.Character)),
                     Severity = 2,
                     Source = LocalizationDiagnosticSource,
-                    Message = untranslated ? $"'{read.Key}' is not translated to {file.Language} yet ({file.Name})" : $"'{read.Key}' has no {file.Language} translation ({file.Name})",
+                    Message = gap.Message,
                     Data = JsonSerializer.SerializeToElement(new Dictionary<string, string>
                     {
-                        ["key"] = read.Key,
-                        ["file"] = file.Path,
-                        ["culture"] = culture,
-                        ["base"] = set.BasePath,
-                        ["untranslated"] = untranslated ? "true" : "false",
+                        ["key"] = gap.Key,
+                        ["file"] = gap.File.Path,
+                        ["culture"] = gap.Culture,
+                        ["base"] = gap.BasePath,
+                        ["untranslated"] = gap.Untranslated ? "true" : "false",
                     }),
                 });
             }

@@ -296,7 +296,8 @@ public sealed partial class PassengerTools
         await XamlSymbolAt(xaml, offset) is { } symbol ? XamlNavigation.Describe(xaml.File, symbol) : "Nothing is known about this position";
 
     /// <summary>Where Go to Declaration goes from a XAML name: the project's source or XAML, a library's type decompiled (read
-    /// only), the theme's XAML from its Source Link; why not, where none of the places can be had.</summary>
+    /// only), the theme's XAML from its Source Link, a localized string's entry in each language's file; why not, where none of
+    /// the places can be had.</summary>
     private async Task<IReadOnlyList<Place>> XamlDefinition(XamlServed xaml, int offset, CancellationToken cancel)
     {
         if (await XamlSymbolAt(xaml, offset) is not { } symbol)
@@ -305,7 +306,7 @@ public sealed partial class PassengerTools
         }
         List<(string Path, TextPosition Position)> places = [];
         List<string> unreached = [];
-        foreach (XamlTarget target in symbol.Targets)
+        foreach (XamlTarget target in (IReadOnlyList<XamlTarget>)[.. symbol.Targets, .. await window.Assist.XamlLocalizedTargetsAsync(xaml.File, offset)])
         {
             ((string Path, TextPosition Position)? place, string? said) = await window.Assist.XamlPlaceAsync(target, xaml.File);
             if (place is { } found)
@@ -435,6 +436,8 @@ public sealed partial class PassengerTools
     /// with the places the new resource or style may go.</summary>
     private async Task<IReadOnlyList<XamlAction>> XamlActions(XamlServed xaml, int offset)
     {
+        // Passenger's own fixes (a translation a language lacks) stand on the file's check of the text as the agent wrote it.
+        await xaml.Xaml.CheckedAsync();
         List<XamlAction> offered = [.. window.Assist.OwnFixes(xaml.Document, offset).Select(f => new XamlAction(f.Title, "quickfix", [], f))];
         XamlFile file = xaml.File;
         IReadOnlyList<XamlDiagnostic> found = await BackgroundWork.Run(() => XamlDiagnostics.Of(file));
@@ -473,7 +476,7 @@ public sealed partial class PassengerTools
         switch (chosen.Made)
         {
             case EditorFix fix:
-                return await ApplyOwnFix(xaml.Document, fix);
+                return await ApplyOwnFix(xaml.Document, fix, value: name);
             case XamlFix fix:
                 IReadOnlyList<XamlFileChange> changes = [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others];
                 refused = window.Assist.ApplyFileChanges(fix.Title, changes);

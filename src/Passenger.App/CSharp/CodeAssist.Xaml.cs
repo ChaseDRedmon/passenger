@@ -151,14 +151,15 @@ public sealed partial class CodeAssist
         return (file, symbol);
     }
 
-    /// <summary>Go to Declaration in XAML: straight to the one place a name leads, or the places to choose from.</summary>
+    /// <summary>Go to Declaration in XAML: straight to the one place a name leads, or the places to choose from (a localized
+    /// string's generated property and each language's entry of its key).</summary>
     private async Task XamlGoTo(XamlDocument xaml, int offset)
     {
         if (await XamlSymbolAt(xaml, offset, "Cannot find a declaration to go to") is not { } found)
         {
             return;
         }
-        IReadOnlyList<XamlTarget> targets = found.Symbol.Targets;
+        IReadOnlyList<XamlTarget> targets = [.. found.Symbol.Targets, .. await XamlLocalizedTargetsAsync(found.File, offset)];
         if (targets.Count == 1)
         {
             await Arrive(targets[0], found.File);
