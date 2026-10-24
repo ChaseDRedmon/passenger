@@ -207,6 +207,10 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
         Passenger.App.Aspire.Protocol.Resource cache = new() { Name = "cache", DisplayName = "cache", Uid = "cache", ResourceType = "Container", State = "Running" };
         cache.Commands.Add(new Passenger.App.Aspire.Protocol.ResourceCommand { Name = "resource-restart", DisplayName = "Restart", State = Passenger.App.Aspire.Protocol.ResourceCommandState.Enabled });
         resources.PushResource(cache);
+        // Named once workspace lists it, as an agent learns of a resource its AppHost adds as it runs.
+        Assert.True(await Waiting.UntilAsync(async () => (await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray()
+            .Any(app => app.GetProperty("resources").EnumerateArray().Any(resource => resource.GetProperty("name").GetString() == "cache")),
+            TimeSpan.FromSeconds(30), Cancel), $"workspace never listed the cache the AppHost added.{Said()}");
         JsonElement ran = await Call(client, "run", new() { ["resource"] = "cache", ["waitSeconds"] = 10 });
         string status = ran.GetProperty("status").GetString()!;
         Assert.True(ran.GetProperty("stillRunning").GetBoolean() && status.StartsWith($"cache of {StandInAppHost.Configuration} is up\nResources of {StandInAppHost.Configuration}:\n", StringComparison.Ordinal)
