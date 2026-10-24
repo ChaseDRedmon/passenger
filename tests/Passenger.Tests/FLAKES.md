@@ -10,6 +10,15 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-24
 
+- `XamlTests`' `A_project_that_takes_avalonia_while_its_xaml_is_open_gets_its_xaml_help_once_the_restore_lands`, CI Linux,
+  release run 40138434633 (4265c9fd): "Waited 180 s for Avalonia's controls offered after a tag's '<' once the project
+  references it". A project file's own PackageReference makes its XAML Avalonia's before a restore, so Linux, hearing the
+  project file at once, read the project within the test's settle with none of Avalonia's types, and the wait for the
+  restore's read passed on that read; the restore's assets were heard inside the watcher's 150 ms gather as dotnet restore
+  exited, so the '<' typed next took its list from it (x: types alone), and the restore's read, landing after, left the
+  list so. With the project file's read awaited before the restore and the restore's change held 1 s, the Mac failed so 3
+  times in 3. **A race in the IDE**: a XAML list made from the project as it was is asked again once the project is read
+  anew (bafbd202).
 - `ProblemsTests`' `Solution_wide_analysis_goes_on_following_edits_after_the_server_refuses_a_pull`, CI macOS, release
   run 40127831310 (07a817ff): "Waited 120 s for the broken caller's error". Roslyn works out a workspace pull's reports,
   then holds it open until its source's next change, and the IDE took no partial results: the edit came while the pull
