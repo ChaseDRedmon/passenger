@@ -10,6 +10,14 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-24
 
+- `BuildRunTests`' `With_hot_reload_edits_reach_the_running_program_a_signature_change_restarts_it_and_it_ends_with_the_window`,
+  CI Linux, release run 40088071944 (7bb6516d): "Waited 120 s for the status bar to say dotnet watch restarts the program
+  … the status bar says \"Hot Reload: dotnet watch applied the changes\"". dotnet watch did restart it, but its words came
+  past the 3 s the run follows them after its first (a person's window, 10 s). Neither race: **the test** run's shortened
+  wait, unscaled; it is 3 s times the time scale (0f450eb7).
+- `DebuggerTests`' `Debugging_a_program_that_prints_100000_coloured_lines_leaves_the_console_free_of_colour_codes_and_the_window_responsive`,
+  the same run: "A key waited up to 512 ms while the program printed, against 2 ms at rest". **The test**'s 500 ms limit,
+  unscaled on a runner whose time scale is 2; it is 500 ms times the scale (0f450eb7).
 - `TablesTests`' `A_workbook_shows_each_sheet_with_its_numbers_formatted_as_Excel_shows_them_and_is_never_written` and
   `A_sheets_read_that_lands_after_a_later_sheet_was_chosen_never_replaces_the_sheet_chosen_last`, CI on every system
   40061362941 (ea3902a7): "Unable to cast object of type 'Avalonia.Controls.PathIcon' to type 'System.String'". The tests
