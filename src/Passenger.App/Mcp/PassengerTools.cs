@@ -249,6 +249,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             return aspire;
         }
+        if (await LocalizedDefinition(served, offset, cancel) is { } localized)
+        {
+            return localized;
+        }
         switch (served)
         {
             case XamlServed xaml:

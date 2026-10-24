@@ -7,6 +7,7 @@ using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Xaml.Localization;
 
 namespace Passenger.App.CSharp;
 
@@ -1068,6 +1069,41 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>A settings file, user secrets or launch profile changed: each open file that warned of a key nothing gave, or
     /// that reads configuration, pulls its diagnostics again; no other file.</summary>
     internal void ConfigurationChanged() => Each(document => document.ConfigurationChanged());
+
+    /// <summary>The open files' texts as the editor has them now, each a snapshot any thread reads, for the resource files read
+    /// off the UI thread; none open without a session.</summary>
+    public Func<Func<string, TextSnapshot?>>? Snapshots { get; init; }
+
+    /// <summary>A .resx or XLIFF file changed: each open file that reads localized strings, or was warned of one a language
+    /// lacks, pulls its diagnostics again; no other file.</summary>
+    internal void LocalizationChanged() => Each(document => document.LocalizationChanged());
+
+    /// <summary>The localized strings a C# or Razor file reads, asked of Passenger's extension for the code as the server holds it,
+    /// each key's resource with its files found and read off the UI thread (<see cref="ResourceFiles"/>), open ones as the
+    /// editor has them; null without the server.</summary>
+    internal async Task<Localized?> LocalizedAsync(string path, CancellationToken cancel)
+    {
+        if (session is not { } roslyn)
+        {
+            return null;
+        }
+        Roslyn.Extension.LocalizedReadsFound found;
+        try
+        {
+            found = await roslyn.ExtensionAsync<Roslyn.Extension.LocalizedReadsFound>(Roslyn.Extension.Handlers.LocalizedReads, new Roslyn.Extension.LocalizedReadsRequest(path), cancel);
+        }
+        catch (LanguageServerFailed)
+        {
+            return null;
+        }
+        if (found.Keys.Count == 0)
+        {
+            return new Localized([], [], []);
+        }
+        Func<string, TextSnapshot?> open = Snapshots?.Invoke() ?? (_ => null);
+        IReadOnlyList<ResourceSet?> sets = await BackgroundWork.Run(() => (IReadOnlyList<ResourceSet?>)[.. found.Resources.Select(r => Localized.SetOf(r, open))], cancel);
+        return new Localized(found.Keys, found.Resources, sets);
+    }
 
     /// <summary>The connection strings the open compose files' .NET services read that their environments do not set (the
     /// session's <see cref="Containers.EngineChecks.Gaps"/>), whose reads in the code are marked too; none without a session.</summary>

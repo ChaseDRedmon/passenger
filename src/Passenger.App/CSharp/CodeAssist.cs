@@ -657,6 +657,12 @@ public sealed partial class CodeAssist
             {
                 named = (configured.Start, configured.Items);
             }
+            // A localizer's string offers its resource's keys, ahead of the server's.
+            (int Start, IReadOnlyList<CompletionItem> Items, string Tail)? localized = web is null ? await LocalizedCompletionAsync(lsp, asked, caret, cancel.Token) : null;
+            if (localized is { } keys)
+            {
+                named = (keys.Start, keys.Items);
+            }
             (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token, incomplete);
             IReadOnlyList<CompletionItem> served = list?.Items ?? [];
             if (named is { } own)
@@ -692,7 +698,7 @@ public sealed partial class CodeAssist
             open = new Completion([.. named?.Items ?? [], .. served, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
                 list?.ItemDefaults?.CommitCharacters ?? [], list?.IsIncomplete ?? false)
             {
-                Tail = settings is { } settled ? settled.Tail : web is not null ? Tail(asked, served, caret) : string.Empty,
+                Tail = settings is { } settled ? settled.Tail : localized is { } read ? read.Tail : web is not null ? Tail(asked, served, caret) : string.Empty,
                 Lead = web is not null && start < caret && caret <= asked.Length ? asked.GetText(start, caret - start) : string.Empty,
             };
             Filter();
@@ -1241,6 +1247,15 @@ public sealed partial class CodeAssist
                 return;
             }
             hoverCard.AddText(configured);
+        }
+        // A localized key's: each language's value.
+        if (debuggerValue is null && XamlCurrent is null && MSBuildCurrent is null && await LocalizationHoverAsync(offset, cancel.Token) is { } localized)
+        {
+            if (cancel.IsCancellationRequested)
+            {
+                return;
+            }
+            hoverCard.AddText(localized);
         }
         if ((hoverCard.IsEmpty && values is null) || completion.IsVisible)
         {
@@ -1939,7 +1954,7 @@ public sealed partial class CodeAssist
         }
         try
         {
-            if (await AspireGoTo(lsp, offset) || await ConfigurationGoTo(lsp, offset))
+            if (await AspireGoTo(lsp, offset) || await ConfigurationGoTo(lsp, offset) || await LocalizationGoTo(lsp, offset))
             {
                 return;
             }

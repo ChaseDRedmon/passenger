@@ -10,7 +10,7 @@ namespace Passenger.App;
 /// <summary>A project's configuration as the window follows it: Manage User Secrets on a project (the Solution view's row, Find
 /// Action on the file shown's project), which gives it a UserSecretsId where it has none and opens its secrets.json, made when
 /// missing; and a settings file, user secrets or launch profile saved, after which the open C# files' reads of keys nothing
-/// gave are looked at again.</summary>
+/// gave are looked at again, as their reads of localized keys are after a .resx or XLIFF file is saved.</summary>
 public partial class MainWindow
 {
     private void AddConfiguration()
@@ -27,6 +27,10 @@ public partial class MainWindow
                 || Path.GetFileName(document.Path).Equals("launchSettings.json", StringComparison.OrdinalIgnoreCase))
             {
                 document.Saved += (_, _) => session.CSharp?.ConfigurationChanged();
+            }
+            else if (Passenger.Xaml.Localization.ResourceFiles.Holds(document.Path))
+            {
+                document.Saved += (_, _) => session.CSharp?.LocalizationChanged();
             }
         };
     }

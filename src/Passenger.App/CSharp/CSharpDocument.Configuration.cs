@@ -16,33 +16,8 @@ public sealed partial class CSharpDocument
     /// so a file that reads none asks Passenger's extension nothing. A read's receiver is configuration by one of these.</summary>
     private static readonly string[] ConfigurationWords = ["Configuration", "GetSection", "GetRequiredSection"];
 
-    /// <summary>Whether the file's text names configuration's API, so it may read a key nothing gives: its text looked through
-    /// a piece at a time, never copied whole.</summary>
-    internal bool MayReadConfiguration
-    {
-        get
-        {
-            TextSnapshot text = document.Text.Snapshot;
-            bool found = false;
-            string carry = string.Empty;
-            text.VisitChunks(0, text.Length, chunk =>
-            {
-                if (found)
-                {
-                    return;
-                }
-                ReadOnlySpan<char> piece = chunk.Span;
-                // A word split between two pieces is found where the end of one meets the start of the next.
-                string seam = carry + new string(piece[..Math.Min(piece.Length, 24)]);
-                foreach (string word in ConfigurationWords)
-                {
-                    found |= piece.Contains(word, StringComparison.Ordinal) || seam.Contains(word, StringComparison.Ordinal);
-                }
-                carry = piece.Length >= 24 ? new string(piece[^24..]) : (carry + new string(piece))[^Math.Min(24, carry.Length + piece.Length)..];
-            });
-            return found;
-        }
-    }
+    /// <summary>Whether the file's text names configuration's API, so it may read a key nothing gives.</summary>
+    internal bool MayReadConfiguration => Holds(ConfigurationWords);
 
     /// <summary>A settings file, user secrets or launch profile changed: pulled again when the file was warned of a key or may
     /// read one.</summary>

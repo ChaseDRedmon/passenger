@@ -28,12 +28,13 @@ public static class Handlers
     public const string AspireParameters = "Passenger.Roslyn.Extension.AspireParameters";
     public const string ConnectionReads = "Passenger.Roslyn.Extension.ConnectionReads";
     public const string WebRoutes = "Passenger.Roslyn.Extension.WebRoutes";
+    public const string LocalizedReads = "Passenger.Roslyn.Extension.LocalizedReads";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
         DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
-        AspireRename, AspireParameters, ConnectionReads, WebRoutes,
+        AspireRename, AspireParameters, ConnectionReads, WebRoutes, LocalizedReads,
     ];
 }
 
@@ -164,6 +165,44 @@ public sealed record ConnectionRead(
 public sealed record ConnectionReadsFound(
     [property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads,
     [property: JsonPropertyName("keys")] IReadOnlyList<ConfigurationKey>? Keys = null);
+
+/// <summary>A C# or Razor file whose localized strings are asked for, by its path.</summary>
+public sealed record LocalizedReadsRequest([property: JsonPropertyName("path")] string Path);
+
+/// <summary>A resource whose strings code reads, as its files are found: the name ResourceManager looks it up by
+/// (<c>Shop.Pages.Home</c>), what reads it (<see cref="LocalizedKinds"/>), the type as the code names it, the project whose
+/// .resx files it is and that project's root namespace (which MSBuild names them under), and the files' base paths beside the
+/// code (<c>Folder/Name</c>, no culture or extension) that name it whatever their folder: a .cs file's of its type's name, by
+/// MSBuild's DependentUpon convention, and a generated class's .resx beside its Designer file.</summary>
+public sealed record LocalizedResource(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("project")] string Project,
+    [property: JsonPropertyName("rootNamespace")] string RootNamespace,
+    [property: JsonPropertyName("beside")] IReadOnlyList<string> Beside);
+
+/// <summary>What reads a resource's strings: a localizer of a type (<c>IStringLocalizer&lt;T&gt;</c>, <c>IHtmlLocalizer&lt;T&gt;</c>),
+/// which shows the key itself where no file gives it, or a class a .resx generates, whose neutral file gives every key.</summary>
+public static class LocalizedKinds
+{
+    public const string Localizer = "localizer";
+    public const string Class = "class";
+}
+
+/// <summary>A key a file reads, of the resource at <paramref name="Resource"/> in the answer's list, and where it is written: a
+/// string's characters, a generated property's name (<paramref name="Exact"/>), else the whole expression giving it.</summary>
+public sealed record LocalizedKey(
+    [property: JsonPropertyName("key")] string Key,
+    [property: JsonPropertyName("resource")] int Resource,
+    [property: JsonPropertyName("at")] Place At,
+    [property: JsonPropertyName("end")] Place End,
+    [property: JsonPropertyName("exact")] bool Exact);
+
+/// <summary>The keys a file reads, each where it is read, and the resources they are of.</summary>
+public sealed record LocalizedReadsFound(
+    [property: JsonPropertyName("keys")] IReadOnlyList<LocalizedKey> Keys,
+    [property: JsonPropertyName("resources")] IReadOnlyList<LocalizedResource> Resources);
 
 /// <summary>The projects whose web routes are asked for, by their project files' paths; none asks for every project's.</summary>
 public sealed record RoutesRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);

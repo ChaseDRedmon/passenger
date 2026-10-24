@@ -68,6 +68,17 @@ public static partial class ConfigurationFiles
         return path => texts.TryGetValue(path, out Passenger.Text.TextSnapshot? text) ? text.ToString() : Disk(path);
     }
 
+    /// <summary>The open files' texts as the editor has them now, each a snapshot any thread reads; null for a file not open.</summary>
+    public static Func<string, Passenger.Text.TextSnapshot?> Snapshots(IEnumerable<OpenDocument> open)
+    {
+        Dictionary<string, Passenger.Text.TextSnapshot> texts = new(PathNames.Comparer);
+        foreach (OpenDocument document in open.Where(d => d.HoldsText))
+        {
+            texts[document.Path] = document.Text.Snapshot;
+        }
+        return path => texts.GetValueOrDefault(path);
+    }
+
     /// <summary>A file's text from the disk; null for one that is not there or does not read.</summary>
     public static string? Disk(string path)
     {

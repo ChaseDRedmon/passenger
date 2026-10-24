@@ -189,13 +189,26 @@ public sealed partial class PassengerTools
             && await CodeAssist.AspireDeclarationAsync(csharp.Lsp, offset, ServerPlaces.Texts(Editors)) is { } place
             ? await PlacesOf([place], cancel) : null;
 
+    /// <summary>A localized key's Go to Declaration in a C# or Razor file, as the window's goes: each language's entry of it, a
+    /// generated class's property as the server declares it first; null elsewhere, for the server's own.</summary>
+    private async Task<IReadOnlyList<Place>?> LocalizedDefinition(Served served, int offset, CancellationToken cancel)
+    {
+        if (served is not ServerServed { Web: null } code || await window.Assist.LocalizedDeclarationsAsync(code.Document, offset) is not { } found)
+        {
+            return null;
+        }
+        IReadOnlyList<Place> declared = found.Generated ? await Places(await code.Lsp.DefinitionAsync(offset), cancel) : [];
+        return [.. declared, .. await PlacesOf([.. found.Places.Select(p => (p.Path, p.Position))], cancel)];
+    }
+
     /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, a file reading what an open compose
-    /// file's service lacks or one that may read configuration too, so the fixes Passenger offers on Aspire's, Compose's and
-    /// a configuration key's warnings stand on the text as the agent wrote it, not on a pull still to come.</summary>
+    /// file's service lacks or one that may read configuration or localized strings too, so the fixes Passenger offers on
+    /// Aspire's, Compose's, a configuration key's and a translation's warnings stand on the text as the agent wrote it, not
+    /// on a pull still to come.</summary>
     private async Task AspireMarked(Served served, CancellationToken cancel)
     {
         if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { } csharp
-            && (csharp.AspireRole != Aspire.AspireRole.None || csharp.ReadsForCompose || csharp.MayReadConfiguration))
+            && (csharp.AspireRole != Aspire.AspireRole.None || csharp.ReadsForCompose || csharp.MayReadConfiguration || csharp.MayLocalize))
         {
             await csharp.PullNowAsync(cancel);
         }

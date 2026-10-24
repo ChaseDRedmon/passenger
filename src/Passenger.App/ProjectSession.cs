@@ -775,6 +775,7 @@ public sealed class ProjectSession : IAsyncDisposable
                 ComposeGaps = () => Web?.Checks.Gaps ?? [],
                 ConfigurationOf = ConfigurationOf,
                 Texts = () => ConfigurationFiles.Reader(setup.Editors.Documents),
+                Snapshots = () => ConfigurationFiles.Snapshots(setup.Editors.Documents),
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharpService started = CSharp;

@@ -75,6 +75,11 @@ public partial class MainWindow
         {
             session.CSharp?.ConfigurationChanged();
         }
+        // A .resx or XLIFF file written: the reads of localized keys are looked at again.
+        if (changes.Lost || changes.Paths.Any(Passenger.Xaml.Localization.ResourceFiles.Holds))
+        {
+            session.CSharp?.LocalizationChanged();
+        }
         PackageSourcesChanged(changes);
         session.Tests.Finder.FolderChanged(changes);
         session.Xaml.FilesChanged(changes.Paths.Concat(changes.Restored));

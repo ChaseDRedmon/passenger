@@ -261,10 +261,11 @@ public partial class MainWindow : Window
         // file's name Compose finds undeclared, its declaration, removal or a near name; a service's Aspire warning, the
         // reference its AppHost lacks or the declared name near one no resource has; an AppHost's parameter with no value,
         // the value set in its configuration; a service's read of a connection string its compose file's environment lacks,
-        // the variable set there; a read of a configuration key nothing gives, the key set in appsettings.json or user secrets.
+        // the variable set there; a read of a configuration key nothing gives, the key set in appsettings.json or user secrets; a
+        // localized key a language lacks, its value given in that language's .resx or XLIFF file.
         assist.EditorFixes = (file, offset) => [.. Passenger.App.LiveTree.BindingErrors.Fixes(file, offset, session.FailedBindings.Select(b => b.Failure)),
             .. session.Web?.Checks.Fixes(file, offset) ?? [], .. assist.AspireFixes(file, offset), .. assist.ComposeReadFixes(file, offset), .. MigrationFixes(file, offset),
-            .. assist.ConfigurationFixes(file, offset)];
+            .. assist.ConfigurationFixes(file, offset), .. assist.LocalizationFixes(file, offset)];
         assist.AskValue = AskValueAsync;
         // What a project's configuration is read from, the session's as each call finds it.
         assist.ConfigurationOf = path => session.ConfigurationOf(path);
