@@ -164,13 +164,11 @@ public sealed class TestRun : IDisposable
         AspireCli.Begin(Root);
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
         // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Dap's AdapterEnvironment.EvaluationTimeoutVariable;
-        // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it
-        // made of a save are followed for 3 s, not 10 (as much longer as the run's time scale: CI's Linux runner said the
-        // restart after a signature change past 3 s), and an agent's call that takes a while tells it so every second, not
-        // every 10 s.
+        // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), an agent's hot_reload under dotnet watch
+        // waits 3 s, not 10, after the changes applied for a restart they may still end in (the status bar follows on), and
+        // an agent's call that takes a while tells it so every second, not every 10 s.
         Environment.SetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "3000");
-        Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable,
-            ((int)(3000 * TimeScale)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
         Environment.SetEnvironmentVariable(Passenger.App.Mcp.AgentCall.EveryVariable, "1000");
         // The IDE's own waits on what it started (an Aspire service's start, a restart's wait for it) as long as the run's.
         Environment.SetEnvironmentVariable(Passenger.App.Waits.ScaleVariable, TimeScale.ToString(System.Globalization.CultureInfo.InvariantCulture));

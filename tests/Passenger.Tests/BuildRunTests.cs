@@ -190,14 +190,17 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 
     /// <summary>One program under dotnet watch, never built before: a saved edit changes what it does with no restart; Apply
     /// Hot Reload Changes in the Run window saves and says what dotnet watch made of it; a parameter added with a default,
-    /// which leaves the callers calling the method the update deletes, is said as the restart dotnet watch makes; and the
-    /// program dotnet watch started again, and dotnet watch, end with the window.</summary>
+    /// which leaves the callers calling the method the update deletes, is said as the restart dotnet watch makes, however
+    /// long after the Apply the program calls it and however far the window fell behind; and the program dotnet watch
+    /// started again, and dotnet watch, end with the window.</summary>
     [AvaloniaFact]
     public void With_hot_reload_edits_reach_the_running_program_a_signature_change_restarts_it_and_it_ends_with_the_window()
     {
         string started = Path.Combine(Folder, "program.pid");
+        string asked = Path.Combine(Folder, "asked");
         Write("src/Hello/Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\n"
-            + "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"before the edit\";\n}\n");
+            + $"while (true)\n{{\n    Console.WriteLine(Talk.Say());\n    if (File.Exists(@\"{asked}\"))\n    {{\n        Console.WriteLine(Talk.Later());\n    }}\n    Thread.Sleep(200);\n}}\n\n"
+            + "static class Talk\n{\n    public static string Say() => \"before the edit\";\n\n    public static string Later() => \"asked later\";\n}\n");
         MainWindow window = Open();
         window.ApplySettings(window.Settings with { HotReload = true });
         bool ending = false;
@@ -229,16 +232,35 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             WaitWatched(window, () => window.Status?.Contains("dotnet watch applied the changes", StringComparison.Ordinal) == true, "the status bar to say the changes applied");
 
             // A parameter added with a default leaves the callers as they were, calling the method the update deletes: dotnet
-            // watch applies it, the program's next call fails, and dotnet watch restarts it, which the status bar says last.
-            // The Apply before goes on following dotnet watch's words a while after the first; this one waits for it to end.
+            // watch applies it, and restarts the program when it next calls the method, which the status bar says however
+            // late: here once the Apply has ended.
             WaitWatched(window, () => window.Actions.Work.Of(AppActions.ApplyHotReloadChanges) is null, "the Apply before to end");
             int first = Processes.ReadId(started);
+            at = program.Text.Snapshot.ToString().IndexOf("Later() =>", StringComparison.Ordinal);
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "Later() =>".Length, "Later(int times = 1) =>")]);
+            Assert.True(window.Perform(AppActions.ApplyHotReloadChanges), $"Apply Hot Reload Changes could not run: {window.Status}");
+            WaitWatched(window, () => window.Status?.Contains("dotnet watch applied the changes", StringComparison.Ordinal) == true
+                && window.Actions.Work.Of(AppActions.ApplyHotReloadChanges) is null, "the Apply of a changed signature to end with the changes applied");
+            Write("asked", "");
+            WaitWatched(window, () => window.Status?.Contains("dotnet watch is restarting the application", StringComparison.Ordinal) == true,
+                "the status bar to say dotnet watch restarts the program, which called the method as it was after the Apply had ended", TimeSpan.FromMinutes(1));
+            // dotnet watch watches again once it has loaded the project, after the program has started: an edit before that
+            // is in what it loads, never applied.
+            WaitWatched(window, () => Processes.ReadId(started) is int again && again > 0 && again != first
+                && Output(window) is { } output && output.LastIndexOf("Waiting for changes", StringComparison.Ordinal) > output.LastIndexOf("Restarting application", StringComparison.Ordinal),
+                "dotnet watch to start the program again and watch it", TimeSpan.FromMinutes(1));
+
+            // The window kept from drawing until dotnet watch has started the program again, as a slow machine's falls behind,
+            // reads the restart after the changes applied in one go: the status bar says the restart, which dotnet watch said last.
+            int second = Processes.ReadId(started);
             at = program.Text.Snapshot.ToString().IndexOf("Say() =>", StringComparison.Ordinal);
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "Say() =>".Length, "Say(int times = 1) =>")]);
             Assert.True(window.Perform(AppActions.ApplyHotReloadChanges), $"Apply Hot Reload Changes could not run: {window.Status}");
+            Assert.Equal("Hot Reload: saved for dotnet watch to apply", window.Status);
+            Assert.True(Waiting.Until(() => Processes.ReadId(started) is int again && again > 0 && again != second, TimeSpan.FromMinutes(1)),
+                "dotnet watch did not start the program again, for the signature changed while the window was held");
             WaitWatched(window, () => window.Status?.Contains("dotnet watch is restarting the application", StringComparison.Ordinal) == true,
-                "the status bar to say dotnet watch restarts the program, whose callers still called the method as it was", TimeSpan.FromMinutes(1));
-            WaitWatched(window, () => Processes.ReadId(started) is int again && again > 0 && again != first, "dotnet watch to start the program again", TimeSpan.FromMinutes(1));
+                "the status bar to say dotnet watch restarted the program while the window was held", TimeSpan.FromMinutes(1));
 
             // The program dotnet watch started again, and dotnet watch with it, end with the window.
             ending = true;

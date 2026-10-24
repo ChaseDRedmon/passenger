@@ -37,16 +37,20 @@ public partial class MainWindow
             }
             else
             {
-                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", SaveForWatchAsync);
+                // Done once dotnet watch has said what it made of the save; the status bar follows its later words.
+                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", () => SaveForWatchAsync(TimeSpan.Zero));
             }
         }, _ => session.Debug.Running.Count > 0 ? null
             : session.Debug.HotReload is not null || session.Debug.IsDebugging ? session.Debug.WhyNotApply()
             : buildRun.WatchesHotReload ? null
             : buildRun.IsRunning ? "This program runs without Hot Reload: Run it with Hot Reload on (Settings, Hot Reload), or Debug it"
             : "Nothing runs: Debug the program, or Run it with Hot Reload on (Settings, Hot Reload)", ("Run", 0, 9));
+        // What dotnet watch says from now is of the save, not of the one followed.
+        Editors.Opened += (_, document) => document.Saved += (_, _) => UnfollowWatch();
     }
 
-    /// <summary>The words dotnet watch says an apply came to with, what each means, and what it came to.</summary>
+    /// <summary>The words dotnet watch says an apply came to with, on a line of its own that begins "dotnet watch" (as Run
+    /// starts it, its emojis suppressed), what each means, and what it came to.</summary>
     private static readonly (string Words, string Said, HotReloadResult Result)[] WatchSays =
     [
         ("changes applied", "Hot Reload: dotnet watch applied the changes", HotReloadResult.Applied),
@@ -62,52 +66,95 @@ public partial class MainWindow
     /// <summary>The variable that gives <see cref="WatchSaysLater"/> in milliseconds (the tests' run, shorter).</summary>
     public const string WatchSaysLaterVariable = "PASSENGER_WATCH_LATER_MS";
 
-    /// <summary>How long dotnet watch's later words are followed once it has said what it made of a save: changes it applied
-    /// can still end in a restart, when the program calls a method the update deleted (one whose signature changed). 10 s,
-    /// or what <see cref="WatchSaysLaterVariable"/> gives; a value there that is no whole number of milliseconds above 0 is
-    /// fatal, as a malformed flag is (Program checks it before the window opens).</summary>
+    /// <summary>How long an agent's answer waits, once dotnet watch has applied the changes, for the restart they can still
+    /// end in when the program next calls a method the update deleted (one whose signature changed); the status bar follows
+    /// on whatever the answer. 10 s, or what <see cref="WatchSaysLaterVariable"/> gives; a value there that is no whole number
+    /// of milliseconds above 0 is fatal, as a malformed flag is (Program checks it before the window opens).</summary>
     internal static TimeSpan WatchSaysLater => Environment.GetEnvironmentVariable(WatchSaysLaterVariable) is { Length: > 0 } given
         ? int.TryParse(given, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int milliseconds) && milliseconds > 0
             ? TimeSpan.FromMilliseconds(milliseconds)
             : throw new FormatException($"{WatchSaysLaterVariable} takes a whole number of milliseconds above 0, not '{given}'")
         : TimeSpan.FromSeconds(10);
 
-    /// <summary>A program under dotnet watch takes edits as their files are saved: they are saved, and what dotnet watch
-    /// says of them (in the Run window) is said in the status bar, its last word standing, which is the answer (null when
-    /// it said nothing of them).</summary>
-    internal async Task<HotReloadOutcome?> SaveForWatchAsync()
+    /// <summary>Ends following what dotnet watch says of the last save made for it; null when none is followed.</summary>
+    private Action? unfollowWatch;
+
+    private void UnfollowWatch()
     {
+        Action? unfollow = unfollowWatch;
+        unfollowWatch = null;
+        unfollow?.Invoke();
+    }
+
+    /// <summary>A program under dotnet watch takes edits as their files are saved: they are saved, and what dotnet watch says
+    /// of them, a line at a time in the Run window, is said in the status bar however late (its last word, or a restart,
+    /// standing) until the next save or the run's end, as a changed signature restarts the program only at its next call.
+    /// The answer comes once dotnet watch has said what it made of them, <paramref name="later"/> after an apply unless a
+    /// restart comes sooner; null if it said nothing of them in 30 s or before the following ended.</summary>
+    internal async Task<HotReloadOutcome?> SaveForWatchAsync(TimeSpan later)
+    {
+        UnfollowWatch();
+        // Before the following begins, which this save would end.
+        Editors.SaveAll();
+        status.Text = "Hot Reload: saved for dotnet watch to apply";
+        ProjectSession current = session;
+        ProcessRunner run = current.Runner;
         TaskCompletionSource said = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource settled = new(TaskCreationOptions.RunContinuationsAsynchronously);
         HotReloadOutcome? last = null;
-        EventHandler<string> heard = (_, text) =>
+        EventHandler<string> heard = (_, line) =>
         {
-            foreach ((string words, string meaning, HotReloadResult result) in WatchSays)
+            // A restart said stands: dotnet watch can tell the apply before it after it, the program having called the
+            // deleted method first.
+            if (session != current || WatchMeant(line) is not { } meant
+                || (last?.Result == HotReloadResult.RestartNeeded && meant.Result == HotReloadResult.Applied))
             {
-                if (text.Contains(words, StringComparison.Ordinal))
-                {
-                    // dotnet watch writes the compiler's errors in the Run window.
-                    Say(meaning, result == HotReloadResult.Errors ? StatusPlace.Window(Dock, ToolWindowIds.Run) : null);
-                    last = new HotReloadOutcome(result, meaning);
-                    said.TrySetResult();
-                    return;
-                }
+                return;
+            }
+            // Words meaning what the last meant keep its words: "Restarting application" after the reason for it.
+            string words = last?.Result == meant.Result ? last.Said : meant.Said;
+            // dotnet watch writes the compiler's errors in the Run window.
+            Say(words, meant.Result == HotReloadResult.Errors ? StatusPlace.Window(Dock, ToolWindowIds.Run) : null);
+            last = new HotReloadOutcome(meant.Result, words);
+            said.TrySetResult();
+            if (meant.Result != HotReloadResult.Applied)
+            {
+                settled.TrySetResult();
             }
         };
-        Bottom.Run.Written += heard;
-        try
+        EventHandler<int> ended = (_, _) => UnfollowWatch();
+        run.Line += heard;
+        run.Exited += ended;
+        unfollowWatch = () =>
         {
-            Editors.SaveAll();
-            status.Text = "Hot Reload: saved for dotnet watch to apply";
-            if (await Task.WhenAny(said.Task, Task.Delay(TimeSpan.FromSeconds(30))) == said.Task)
-            {
-                await Task.Delay(WatchSaysLater);
-            }
-        }
-        finally
+            run.Line -= heard;
+            run.Exited -= ended;
+            // An answer still waiting is what dotnet watch had said by then.
+            said.TrySetResult();
+            settled.TrySetResult();
+        };
+        if (await Task.WhenAny(said.Task, Task.Delay(TimeSpan.FromSeconds(30))) == said.Task && later > TimeSpan.Zero)
         {
-            Bottom.Run.Written -= heard;
+            await Task.WhenAny(settled.Task, Task.Delay(later));
         }
         return last;
+    }
+
+    /// <summary>What a line of dotnet watch's says an apply came to, or null: the program's own lines are never its.</summary>
+    private static (string Said, HotReloadResult Result)? WatchMeant(string line)
+    {
+        if (!line.StartsWith("dotnet watch", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        foreach ((string words, string meaning, HotReloadResult result) in WatchSays)
+        {
+            if (line.Contains(words, StringComparison.Ordinal))
+            {
+                return (meaning, result);
+            }
+        }
+        return null;
     }
 
     /// <summary>Whether Apply Hot Reload Changes goes to dotnet watch: what Run runs with Hot Reload, nothing being debugged.</summary>
@@ -183,6 +230,7 @@ public partial class MainWindow
 
     private void BindHotReload(ProjectSession next)
     {
+        UnfollowWatch();
         DebugController debugger = next.Debug;
         debugger.Applied += (_, outcome) =>
         {

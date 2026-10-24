@@ -49,7 +49,8 @@ public sealed class ProcessRunner : IDisposable
     /// <summary>Lets go of the console, its process stopped first: nothing more it reads is taken as its lines.</summary>
     public void Dispose() => console.Written -= OnWritten;
 
-    /// <summary>A whole line of output, for whoever reads it (the build's error list); UI thread.</summary>
+    /// <summary>A whole line of output, for whoever reads it (the build's error list, dotnet watch's words of a save); UI
+    /// thread.</summary>
     public event EventHandler<string>? Line;
 
     /// <summary>The process ended, with its exit code; UI thread.</summary>
@@ -474,21 +475,26 @@ public sealed class ProcessRunner : IDisposable
             UiThread.Post(() => OutputReceived?.Invoke(this, output));
         });
 
+    /// <summary>The longest line told whole; a longer one is told in pieces, so what a program writes with no line end
+    /// is never held whole, nor copied again with each batch, while someone listens.</summary>
+    private const int LongestLine = 16 * 1024;
+
+    /// <summary>Tells each line a batch ends, at '\n' or a lone '\r' (the console has made "\r\n" one '\n').</summary>
     private void Lines(string text)
     {
-        partialLine.Append(text);
-        string lines = partialLine.ToString();
-        int end = lines.LastIndexOf('\n');
-        if (end < 0)
+        ReadOnlySpan<char> rest = text;
+        while (rest.Length > 0)
         {
-            return;
+            int end = rest.IndexOfAny('\n', '\r');
+            int taken = Math.Min(end < 0 ? rest.Length : end, LongestLine - partialLine.Length);
+            partialLine.Append(rest[..taken]);
+            if (taken == end || partialLine.Length == LongestLine)
+            {
+                Line?.Invoke(this, partialLine.ToString());
+                partialLine.Clear();
+            }
+            rest = rest[(taken == end ? taken + 1 : taken)..];
         }
-        foreach (string line in lines[..end].Split('\n'))
-        {
-            Line?.Invoke(this, line);
-        }
-        partialLine.Clear();
-        partialLine.Append(lines, end + 1, lines.Length - end - 1);
     }
 }
 
