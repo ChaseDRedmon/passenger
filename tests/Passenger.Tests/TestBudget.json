@@ -1,5 +1,5 @@
 {
-  "shardMinutes": 28,
+  "shardMinutes": 32,
   "classSeconds": 60,
   "classes": {
     "CodeAssistTests": 480,

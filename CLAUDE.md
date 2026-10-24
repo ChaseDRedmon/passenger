@@ -350,7 +350,7 @@ languageServer: false)`).
 
 **Runs.** `just test` deals the classes outside Alone to N processes by `TestTimes.json` (each with its own run folder;
 the container classes in one lane), then the Alone classes in one. CI deals each system's suite to four shards the same
-way; a shard over `TestBudget.json`'s 28 minutes fails, a class over its seconds warns, and `just test-times RUN` rewrites
+way; a shard over `TestBudget.json`'s 32 minutes fails (macOS's runners vary ±10%; a fifth macOS shard would queue behind the disk image), a class over its seconds warns, and `just test-times RUN` rewrites
 the times. The run sets its nice value to 0; a test needing an MSBuild node waits for `Processes.MSBuildNodesCounted` or
 skips saying why. The VMs run a filter on a commit: Windows on Arm, `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (no
 Node.js; it can't see dot folders), and Ubuntu 26.04 ARM64, `vm-test-linux.sh NAME FILTER`.
