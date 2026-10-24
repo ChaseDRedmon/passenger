@@ -34,16 +34,27 @@ public partial class MainWindow
             outline = [];
             outlined = null;
             ShowBreadcrumbs();
-            outlineAgain.Restart();
+            OutlineLater();
         };
         Editors.CaretMoved += (_, _) => ShowBreadcrumbs();
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) =>
         {
             if (Editors.Active == document)
             {
-                outlineAgain.Restart();
+                OutlineLater();
             }
         };
+    }
+
+    /// <summary>Asks for the outline once editing pauses, when a language server has the file shown: a file no server has
+    /// gives none, and a pause waited out for nothing held every key's background work with it (a screenshot's, a test's).
+    /// A server that takes the file later asks at once (<see cref="OutlineWhenUnseen"/>).</summary>
+    private void OutlineLater()
+    {
+        if (Editors.Active is { } document && session.CSharp?.For(document)?.Lsp is not null)
+        {
+            outlineAgain?.Restart();
+        }
     }
 
     /// <summary>Asks for the outline again as the language server's state changes (the files connected, the projects

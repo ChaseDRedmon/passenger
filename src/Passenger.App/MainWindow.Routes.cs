@@ -54,7 +54,10 @@ public partial class MainWindow
                     {
                         document.RouteMarks = [];
                     }
-                    routesLater.Restart();
+                    if (ReadsRoutes)
+                    {
+                        routesLater.Restart();
+                    }
                 }
             };
             ShowRouteMarks(document);
@@ -79,12 +82,17 @@ public partial class MainWindow
     /// file open that could declare one (<paramref name="opening"/> one now, which the open files may not list yet).</summary>
     private void WantRoutes(bool opening = false)
     {
-        if (session.Routes.Wants && (opening || Dock.IsShown(ToolWindowIds.Endpoints) || Dock.IsShown(ToolWindowIds.Requests) || requestsAsked
+        if (ReadsRoutes && session.Routes.Wants && (opening || Dock.IsShown(ToolWindowIds.Endpoints) || Dock.IsShown(ToolWindowIds.Requests) || requestsAsked
             || Editors.Documents.Any(d => IsRouteSource(d.Path))))
         {
             routesLater?.Restart();
         }
     }
+
+    /// <summary>Whether the language server can read routes now. Until it can, a pause before a read would be waited out
+    /// for nothing (and hold a screenshot or a test with it): what is due stays due, and the server's being ready reads it
+    /// (<see cref="RoutesServerChanged"/>).</summary>
+    private bool ReadsRoutes => session.CSharp is { IsReady: true, Session: not null };
 
     /// <summary>A new session: its routes are its own, none shown until read.</summary>
     private void ForgetRoutes(ProjectSession next)

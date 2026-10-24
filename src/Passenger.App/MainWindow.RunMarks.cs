@@ -85,21 +85,28 @@ public partial class MainWindow
         document.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? session.AspireFiles.AppHostOf(document.Path) : null;
 
     /// <summary>The run configurations or the language server changed: the AppHosts of the open files whose resources were
-    /// never read (or, with <paramref name="again"/>, every one, the server being another) are read once typing pauses.</summary>
+    /// never read (or, with <paramref name="again"/>, every one, the server being another) are read once typing pauses, and
+    /// the marks of the open files that can have one shown again; with none open, no pause is waited out for nothing.</summary>
     private void ReadOpenAspireMarks(bool again)
     {
         if (again)
         {
             aspireRunMarks.Clear();
         }
+        bool marked = false;
         foreach (OpenDocument document in Editors.Documents)
         {
-            if (AspireAppHostOf(document) is { } appHost && !aspireRunMarks.ContainsKey(appHost))
+            string? appHost = AspireAppHostOf(document);
+            if (appHost is not null && !aspireRunMarks.ContainsKey(appHost))
             {
                 aspireMarksToRead.Add(appHost);
             }
+            marked |= appHost is not null || document.RunMarks.Count > 0 || IsRunFile(document.Path);
         }
-        runMarksLater?.Restart();
+        if (marked || aspireMarksToRead.Count > 0)
+        {
+            runMarksLater?.Restart();
+        }
     }
 
     /// <summary>The marks as the open files' texts stand, then each AppHost waiting to be read, one at a time, by one read
