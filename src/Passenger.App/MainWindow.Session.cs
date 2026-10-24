@@ -156,6 +156,8 @@ public partial class MainWindow
     /// found from code, what the store kept of the folder, and the folder among the recent ones.</summary>
     private void Begin(string folder, string? named)
     {
+        // Begun, the folder is the session's: kept as opening, a Close Solution after would leave the window holding it.
+        opening = null;
         WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(folder, named);
         // The projects as MSBuild last evaluated them, from the folder's cache, before any is evaluated again.
         ProjectSession opened = ProjectSession.Open(Setup(), folder, named, withSolution, keepsWorkspace ? Store().Project(folder) : null);

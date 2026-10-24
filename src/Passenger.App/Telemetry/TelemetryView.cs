@@ -263,7 +263,7 @@ public sealed class TelemetryView : IDisposable
                     {
                         return;
                     }
-                    IReadOnlyList<AspireTrace> found = resource is null ? all : [.. all.Where(trace => trace.Spans.Any(span => TelemetrySource.Of(span.Source ?? string.Empty, resource)))];
+                    IReadOnlyList<AspireTrace> found = resource is null ? all : [.. all.Where(trace => trace.Spans.Any(span => TelemetrySource.Of(span.Service, span.Source, resource)))];
                     traces = found;
                     AspireTrace? chosen = SelectedTrace;
                     RunRows.Put(traceItems, Keyed(found, trace => trace.TraceId));
@@ -384,7 +384,7 @@ public sealed class TelemetryView : IDisposable
             }
             foreach (AspireStructuredLog log in batch.Added)
             {
-                if (resource is null || TelemetrySource.Of(log.ResourceName ?? string.Empty, resource))
+                if (resource is null || TelemetrySource.Of(log.ServiceName, log.ResourceName, resource))
                 {
                     RunItem<AspireStructuredLog> item = new(log.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture), log);
                     logItems.Add(item);

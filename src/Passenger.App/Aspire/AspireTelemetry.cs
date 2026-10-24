@@ -33,7 +33,7 @@ public static class AspireTelemetry
         {
             List<AspireStructuredLog> added = [];
             List<AspireStructuredLog> evicted = [];
-            foreach ((JsonElement row, string resource) in Records(envelope, "resourceLogs", "scopeLogs", "logRecords"))
+            foreach ((JsonElement row, string resource, string service) in Records(envelope, "resourceLogs", "scopeLogs", "logRecords"))
             {
                 Dictionary<string, string?> attributes = Attributes(row);
                 (JsonElement data, int size) = Masked(new
@@ -41,6 +41,7 @@ public static class AspireTelemetry
                     timestamp = Timestamp(row, "timeUnixNano"),
                     severity = AspireJson.String(row, "severityText") ?? "Unknown",
                     resourceName = resource,
+                    serviceName = service,
                     message = row.TryGetProperty("body", out JsonElement body) ? AnyText(AnyValue(body)) : null,
                     traceId = Identity(row, "traceId", 32, required: false),
                     spanId = Identity(row, "spanId", 16, required: false),
@@ -112,7 +113,7 @@ public static class AspireTelemetry
         RecentTraces traces = new();
         return ReadAsync(baseUri, dashboardApiKey, follow ? "spans" : requestedTraceId is null ? "traces" : $"traces/{requestedTraceId.ToLowerInvariant()}", envelope =>
         {
-            foreach ((JsonElement row, string resource) in Records(envelope, "resourceSpans", "scopeSpans", "spans"))
+            foreach ((JsonElement row, string resource, string service) in Records(envelope, "resourceSpans", "scopeSpans", "spans"))
             {
                 string traceId = Identity(row, "traceId", 32, required: true)!;
                 string spanId = Identity(row, "spanId", 16, required: true)!;
@@ -131,6 +132,7 @@ public static class AspireTelemetry
                     parentSpanId = Identity(row, "parentSpanId", 16, required: false),
                     name = AspireJson.String(row, "name"),
                     source = resource,
+                    service,
                     startTime = Timestamp(row, "startTimeUnixNano"),
                     endTime = Timestamp(row, "endTimeUnixNano"),
                     startTimeUnixNano = start.ToString(CultureInfo.InvariantCulture),
@@ -426,7 +428,9 @@ public static class AspireTelemetry
         }
     }
 
-    private static IEnumerable<(JsonElement Row, string Resource)> Records(JsonElement envelope, string resources, string scopes, string records)
+    /// <summary>Each record of an envelope with its resource as the dashboard names it (its service's name, then its instance
+    /// after a dash) and its service's name alone, which a sibling's name with a dash in it can never be mistaken for.</summary>
+    private static IEnumerable<(JsonElement Row, string Resource, string Service)> Records(JsonElement envelope, string resources, string scopes, string records)
     {
         foreach (JsonElement group in AspireJson.Array(envelope, resources, required: true))
         {
@@ -450,7 +454,7 @@ public static class AspireTelemetry
                     {
                         throw new InvalidDataException("Aspire telemetry record exceeded 1 MiB.");
                     }
-                    yield return (AspireJson.Object(row), identity);
+                    yield return (AspireJson.Object(row), identity, name);
                 }
             }
         }

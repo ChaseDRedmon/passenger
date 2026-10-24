@@ -171,7 +171,7 @@ public partial class MainWindow
         try
         {
             AspireSelection? resource = aim.Resource ?? One((await ReadAspireResourcesAsync(app.Configuration.Project)).Select(r => new AspireSelection(app.Configuration.Project, r)),
-                s => s.Resource.Name == aim.Name || s.Resource.DisplayName == aim.Name || s.Resource.Name.StartsWith(aim.Name + "-", StringComparison.Ordinal));
+                s => s.Resource.IsNamed(aim.Name));
             return resource is null ? Told($"{aim.Name} is not one resource of {app.Name}")
                 : await RestartAspireServiceAsync(current, resource, debugging: id == AppActions.ServiceDebug);
         }

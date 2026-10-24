@@ -123,6 +123,11 @@ public sealed class PackageManager
             return (false, false);
         }
         running = process;
+        // A Stop that came as it started found nothing to end.
+        if (stopped)
+        {
+            ChildProcesses.Kill(process);
+        }
         bool fileInUse = false;
         try
         {

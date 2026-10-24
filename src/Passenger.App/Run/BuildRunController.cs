@@ -878,7 +878,7 @@ public sealed partial class BuildRunController
                     }
                 }
                 // Once, before any AppHost starts, as a container run's certificate is checked before its services come up.
-                HttpsChoice https = await CertificateAsync(chosen.Name, session.Aspire.ServingHttps(configuration), Path.GetDirectoryName(configuration.Project)!,
+                HttpsChoice https = await CertificateAsync(chosen.Name, await session.Aspire.ServingHttpsAsync(configuration), Path.GetDirectoryName(configuration.Project)!,
                     ContainerPlans.StateOf(parts.StateFolder(), session.Folder ?? Path.GetDirectoryName(configuration.Project)!), export: false, work);
                 if (session.IsEnded || work.IsStopped)
                 {

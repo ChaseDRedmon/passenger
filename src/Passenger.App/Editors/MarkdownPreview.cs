@@ -352,6 +352,13 @@ public sealed class MarkdownPreview : ScrollViewer
             return null;
         }
         string relative = Uri.UnescapeDataString(written.Split('?', 2)[0]);
+        string rest = relative.TrimStart('/');
+        // A rest still rooted (a drive, or a share's \\host) names nothing of the folder's, and resolving it would reach
+        // that host before anything could check where it is.
+        if (Path.IsPathRooted(rest) || rest.StartsWith('\\'))
+        {
+            return null;
+        }
         string? from = relative.StartsWith('/') ? area.Root() : Path.GetDirectoryName(document.Path);
         if (from is null)
         {
@@ -359,7 +366,7 @@ public sealed class MarkdownPreview : ScrollViewer
         }
         try
         {
-            return PathNames.Canonical(Path.Combine(from, relative.TrimStart('/')));
+            return PathNames.Canonical(Path.Combine(from, rest));
         }
         catch (Exception error) when (error is ArgumentException or IOException or NotSupportedException)
         {

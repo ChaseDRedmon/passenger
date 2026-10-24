@@ -242,21 +242,36 @@ public sealed class ProjectWindowsTests : ProjectWindowsFolders
     }
 
     /// <summary>A solution the system hands a running Passenger (the Finder's Open, a drop on the Dock's icon) opens from the
-    /// window in front, a second window whose solution was closed as much as the first.</summary>
+    /// window in front, a second window whose solution was closed as much as the first; and a folder an agent asks Passenger
+    /// to open (AppSocket's open, a new window from the one in front) opens there too, whatever folder it had before.</summary>
     [AvaloniaFact]
     public void A_solution_the_system_hands_Passenger_opens_from_a_second_window_in_front_whose_solution_was_closed()
     {
-        MainWindow first = Started(LaunchOptions.Empty with { Folder = alpha });
-        MainWindow second = InNewWindow(first, beta);
-        Assert.Null(second.CloseSolution());
-        PassengerApp.BringForward(second);
-        Ui.Settle();
-        Assert.Equal(second, PassengerApp.Front);
+        string gamma = TestFolders.Create("gamma-");
+        try
+        {
+            MainWindow first = Started(LaunchOptions.Empty with { Folder = alpha });
+            MainWindow second = InNewWindow(first, beta);
+            Assert.Null(second.CloseSolution());
+            PassengerApp.BringForward(second);
+            Ui.Settle();
+            Assert.Equal(second, PassengerApp.Front);
 
-        PassengerApp.OpenFromSystem([beta]);
-        Ui.WaitFor(() => second.Folder == PathNames.Canonical(beta), "the solution handed to Passenger to open in the window in front, which had nothing open");
-        Assert.Equal([first, second], PassengerApp.Windows);
-        PassengerApp.Quit();
+            PassengerApp.OpenProject(gamma, OpenTarget.NewWindow, second);
+            Ui.WaitFor(() => PassengerApp.Windows.Any(w => w.Folder == PathNames.Canonical(gamma)), "the folder an agent asked for to open");
+            Assert.True(second.Folder == PathNames.Canonical(gamma) && PassengerApp.Windows.Count == 2,
+                $"The folder an agent asked for opened in a window of its own ({PassengerApp.Windows.Count} windows), not the empty one in front");
+
+            Assert.Null(second.CloseSolution());
+            PassengerApp.OpenFromSystem([beta]);
+            Ui.WaitFor(() => second.Folder == PathNames.Canonical(beta), "the solution handed to Passenger to open in the window in front, which had nothing open");
+            Assert.Equal([first, second], PassengerApp.Windows);
+            PassengerApp.Quit();
+        }
+        finally
+        {
+            TestFolders.Delete(gamma);
+        }
     }
 
     /// <summary>Quitting, a window holding a read-only file's changes asks what to do with them: Cancel keeps every window

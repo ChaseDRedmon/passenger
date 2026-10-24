@@ -494,7 +494,7 @@ public partial class MainWindow
         }
         string name = ((IRunService)service).Name;
         AspireSelection selected = new(app.Configuration.Project, One(resources, candidate => candidate.Source is { } source && PathNames.Same(source, service.Project)
-                && (candidate.DisplayName == name || candidate.Name == name || candidate.Name.StartsWith(name + "-", StringComparison.Ordinal)))
+                && candidate.IsNamed(name))
             ?? throw new InvalidOperationException($"{name} is not one resource of {app.Configuration.Name}"));
         AspireResource resource = selected.Resource;
         if (!build)

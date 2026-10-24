@@ -254,7 +254,7 @@ public sealed partial class MigrationsController(MigrationsParts parts)
 
     /// <summary>Whether the window, shown, lists the migrations by itself now: once for each choice, while nothing it shows
     /// stops dotnet ef and nothing else runs.</summary>
-    public bool WantsListing => !Listed && !tried && running is null && Startup is not null && Gaps.All(g => !g.Blocks);
+    public bool WantsListing => !Listed && !tried && running is null && Startup is not null && gapsLanded == gapsAsked && Gaps.All(g => !g.Blocks);
 
     /// <summary>Whether the window listed by itself for the choices as they are, however it ended.</summary>
     private bool tried;
@@ -299,12 +299,32 @@ public sealed partial class MigrationsController(MigrationsParts parts)
         return false;
     }
 
-    /// <summary>The gaps as the restore and the tool stand, found again without running anything.</summary>
-    private void FindGaps()
+    /// <summary>The gaps as the restore and the tool stand, found again without running anything: read off the UI thread (a
+    /// project.assets.json runs to megabytes, and every build and evaluation asks again), told once they land while no
+    /// later look was asked for.</summary>
+    private void FindGaps() => BackgroundWork.Track(FindGapsAsync());
+
+    private int gapsAsked;
+    private int gapsLanded;
+
+    private async Task FindGapsAsync()
     {
-        Gaps = Startup is { } startup && EfRestore.Of(startup.Path) is { } restore
+        int asked = ++gapsAsked;
+        if (Startup is not { } startup)
+        {
+            Gaps = [];
+            gapsLanded = asked;
+            return;
+        }
+        IReadOnlyList<EfGap> found = await BackgroundWork.Run(() => EfRestore.Of(startup.Path) is { } restore
             ? EfGaps.Before(EfTools.Find(startup.Folder), restore, startup.Name)
-            : [];
+            : (IReadOnlyList<EfGap>)[]);
+        if (asked == gapsAsked && Startup == startup)
+        {
+            Gaps = found;
+            gapsLanded = asked;
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>Lists the chosen project's contexts and the chosen context's migrations, with which the database has: built
@@ -530,7 +550,8 @@ public sealed partial class MigrationsController(MigrationsParts parts)
             work.Dispose();
             if (session == parts.Session())
             {
-                FindGaps();
+                // Awaited, so what the command answers (an agent's ide_action reads the window) has the gaps as they now stand.
+                await FindGapsAsync();
                 Changed?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -765,7 +786,8 @@ public sealed partial class MigrationsController(MigrationsParts parts)
             work.Dispose();
             if (session == parts.Session())
             {
-                FindGaps();
+                // Awaited, so what the command answers (an agent's ide_action reads the window) has the gaps as they now stand.
+                await FindGapsAsync();
                 Changed?.Invoke(this, EventArgs.Empty);
             }
         }

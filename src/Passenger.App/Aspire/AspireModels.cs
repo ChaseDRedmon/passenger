@@ -24,6 +24,15 @@ public sealed class AspireResource(JsonElement data)
     public string? HealthStatus => AspireJson.String(Data, "healthStatus");
     public string? Source => AspireJson.String(Data, "source");
 
+    /// <summary>Whether it is the resource a name means: its own name, its display name, or the name with DCP's suffix after
+    /// a dash, never a sibling whose name begins with the name and a dash (api and api-worker).</summary>
+    public bool IsNamed(string? name) => name is not null && (Name == name || DisplayName == name || IsNameWithSuffix(Name, name));
+
+    /// <summary>Whether a resource's name is a name with DCP's suffix, one token with no dash of its own, after a dash.</summary>
+    public static bool IsNameWithSuffix(string resourceName, string name) =>
+        resourceName.Length > name.Length + 1 && resourceName.StartsWith(name + "-", StringComparison.Ordinal)
+        && resourceName.IndexOf('-', name.Length + 1) < 0;
+
     /// <summary>Whether it is a .NET project its AppHost runs (a service of its run, which the service actions reach), not a
     /// container, an executable, a parameter or an external resource.</summary>
     public bool IsProject => AspireJson.String(Data, "resourceType") == "Project" && Source is { } source && Path.IsPathFullyQualified(source);
@@ -64,6 +73,9 @@ public sealed class AspireStructuredLog(JsonElement data)
 
     /// <summary>The resource that logged it, read once.</summary>
     public string? ResourceName => resourceName ??= AspireJson.String(Data, "resourceName");
+
+    /// <summary>The service that logged it, by its name alone (no instance), as <see cref="ResourceName"/> begins.</summary>
+    public string? ServiceName => AspireJson.String(Data, "serviceName");
     public string Message => AspireJson.String(Data, "message") ?? string.Empty;
     public string? TraceId => AspireJson.String(Data, "traceId");
     public string? SpanId => AspireJson.String(Data, "spanId");
@@ -94,6 +106,9 @@ public sealed class AspireSpan(JsonElement data)
         }
     }
     public string? Source => AspireJson.String(Data, "source");
+
+    /// <summary>The service whose span it is, by its name alone (no instance), as <see cref="Source"/> begins.</summary>
+    public string? Service => AspireJson.String(Data, "service");
     public override string ToString() => $"{Source} · {AspireJson.String(Data, "name")} · {AspireJson.Duration(Data)} · {AspireJson.String(Data, "status")}";
 }
 

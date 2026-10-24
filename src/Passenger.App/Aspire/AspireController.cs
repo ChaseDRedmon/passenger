@@ -164,7 +164,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         AspireResourceRun[] named = matching.Where(service => processId is int pid
             ? service.ProcessId == pid && (service.ResourceName is null || service.ResourceName == selection.Resource.Name
-                || selection.Resource.Name.StartsWith(service.ResourceName + "-", StringComparison.Ordinal) || service.ResourceName == selection.Resource.DisplayName)
+                || AspireResource.IsNameWithSuffix(selection.Resource.Name, service.ResourceName) || service.ResourceName == selection.Resource.DisplayName)
             : service.ResourceName == selection.Resource.Name).Take(2).ToArray();
         if (named.Length != 1)
         {
@@ -229,18 +229,22 @@ public sealed partial class AspireController(ProjectSession workspace, string st
 
     /// <summary>The AppHosts of an Aspire configuration (it and those it links) that serve HTTPS on this machine, by name, as
     /// their launch profiles say: what the development certificate is checked for before any of them starts. Throws a
-    /// <see cref="LaunchException"/> for a single-file AppHost's profile that does not read.</summary>
-    public IReadOnlyList<string> ServingHttps(RunConfiguration configuration) =>
-        [.. new[] { configuration }.Concat(configuration.LinkedAppHosts
+    /// <see cref="LaunchException"/> for a single-file AppHost's profile that does not read. The configurations are the
+    /// window's, the profiles read off its thread.</summary>
+    public async Task<IReadOnlyList<string>> ServingHttpsAsync(RunConfiguration configuration)
+    {
+        RunConfiguration[] candidates = [.. new[] { configuration }.Concat(configuration.LinkedAppHosts
             .Select(path => workspace.Configurations.All.FirstOrDefault(candidate => candidate.Aspire && PathNames.Same(candidate.Project, path)))
-            .OfType<RunConfiguration>())
+            .OfType<RunConfiguration>())];
+        return await BackgroundWork.Run(() => (IReadOnlyList<string>)[.. candidates
             .Where(candidate => (Path.GetExtension(candidate.Project).Equals(".cs", StringComparison.OrdinalIgnoreCase)
                 ? ReadFileProfile(candidate, Path.GetDirectoryName(candidate.Project)!) : candidate).Environment
                 .Where(variable => AppHostAddresses.Contains(variable.Key))
                 .SelectMany(variable => variable.Value.Split(';'))
                 .Any(url => Uri.TryCreate(url.Trim(), UriKind.Absolute, out Uri? uri) && uri.Scheme == "https"
                     && (uri.IsLoopback || uri.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))))
-            .Select(candidate => Path.GetFileNameWithoutExtension(candidate.Project))];
+            .Select(candidate => Path.GetFileNameWithoutExtension(candidate.Project))]);
+    }
 
     /// <summary>Starts an Aspire configuration's AppHosts, each built first as it says, and once each is connected to answers
     /// null, else why not. <paramref name="https"/> is how its HTTPS is served, as the start worked out before: over HTTP, the
@@ -1455,7 +1459,7 @@ public sealed class AspireAppRun : ServiceRun
 
     /// <summary>The name of the service a resource is that the run left unstarted (<see cref="IsLeftUnstarted"/>), or null.</summary>
     public string? UnstartedName(AspireResource resource) => resource.State == "FailedToStart" ? unstarted.FirstOrDefault(name =>
-        resource.Name == name || resource.DisplayName == name || resource.Name.StartsWith(name + "-", StringComparison.Ordinal)) : null;
+        resource.IsNamed(name)) : null;
 
     /// <summary>A resource's state as Passenger says it, the window's rows and Details and an agent's answers alike:
     /// <see cref="NotStarted"/> for one the run left unstarted, else DCP's own.</summary>

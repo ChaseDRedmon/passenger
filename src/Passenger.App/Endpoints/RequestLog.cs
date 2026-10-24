@@ -96,13 +96,15 @@ public sealed class RequestLog
 
     private readonly ConcurrentQueue<(WebEvent Told, string From, string? Project)> heard = new();
     private readonly List<LiveRequest> requests = [];
-    private readonly Dictionary<string, LiveRequest> byTrace = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, LiveRequest> byRequest = new(StringComparer.Ordinal);
+    /// <summary>Requests by the program that served them and their activity's root id, and by that program and their own id:
+    /// a request one service makes of another carries its trace on, so a root id alone names a request in each.</summary>
+    private readonly Dictionary<(string From, string Id), LiveRequest> byTrace = [];
+    private readonly Dictionary<(string From, string Id), LiveRequest> byRequest = [];
 
-    /// <summary>A request by its own id, else by its activity's root id.</summary>
-    private LiveRequest? Of(string request, string trace) =>
-        request.Length > 0 && byRequest.TryGetValue(request, out LiveRequest? found) ? found
-        : trace.Length > 0 && byTrace.TryGetValue(trace, out LiveRequest? traced) ? traced
+    /// <summary>A program's request by its own id, else by its activity's root id.</summary>
+    private LiveRequest? Of(string from, string request, string trace) =>
+        request.Length > 0 && byRequest.TryGetValue((from, request), out LiveRequest? found) ? found
+        : trace.Length > 0 && byTrace.TryGetValue((from, trace), out LiveRequest? traced) ? traced
         : null;
     private readonly Func<string, string, string?, WebRoute?> routeOf;
     private int posted;
@@ -217,37 +219,37 @@ public sealed class RequestLog
                 came.Add(request);
                 if (began.Trace.Length > 0)
                 {
-                    byTrace[began.Trace] = request;
+                    byTrace[(from, began.Trace)] = request;
                 }
                 if (began.Request.Length > 0)
                 {
-                    byRequest[began.Request] = request;
+                    byRequest[(from, began.Request)] = request;
                 }
                 if (requests.Count > Most)
                 {
                     LiveRequest oldest = requests[0];
-                    if (byTrace.TryGetValue(oldest.Trace, out LiveRequest? traced) && traced == oldest)
+                    if (byTrace.TryGetValue((oldest.From, oldest.Trace), out LiveRequest? traced) && traced == oldest)
                     {
-                        byTrace.Remove(oldest.Trace);
+                        byTrace.Remove((oldest.From, oldest.Trace));
                     }
-                    if (byRequest.TryGetValue(oldest.Request, out LiveRequest? named) && named == oldest)
+                    if (byRequest.TryGetValue((oldest.From, oldest.Request), out LiveRequest? named) && named == oldest)
                     {
-                        byRequest.Remove(oldest.Request);
+                        byRequest.Remove((oldest.From, oldest.Request));
                     }
                     requests.RemoveAt(0);
                     went.Add(oldest);
                 }
                 return;
-            case RequestEnded ended when Of(ended.Request, ended.Trace) is { } done:
+            case RequestEnded ended when Of(from, ended.Request, ended.Trace) is { } done:
                 done.Status = ended.Status;
                 done.Milliseconds = (ended.At - done.Began).TotalMilliseconds;
                 changed.Add(done);
                 return;
-            case RequestFailed failed when Of(failed.Request, failed.Trace) is { } broke:
+            case RequestFailed failed when Of(from, failed.Request, failed.Trace) is { } broke:
                 broke.Error = failed.Error;
                 changed.Add(broke);
                 return;
-            case CommandRan ran when byTrace.TryGetValue(ran.Trace, out LiveRequest? issuer):
+            case CommandRan ran when byTrace.TryGetValue((from, ran.Trace), out LiveRequest? issuer):
                 LiveCommand command = new(ran.Id, ran.Text, ran.Milliseconds, ran.Rows, ran.Error);
                 if (!issuer.ByText.TryGetValue(ran.Text, out List<LiveCommand>? same))
                 {
@@ -267,12 +269,12 @@ public sealed class RequestLog
                 }
                 changed.Add(issuer);
                 return;
-            case CommandRead read when byTrace.TryGetValue(read.Trace, out LiveRequest? reader)
+            case CommandRead read when byTrace.TryGetValue((from, read.Trace), out LiveRequest? reader)
                 && reader.Commands.LastOrDefault(c => c.Id == read.Id) is { } readCommand:
                 readCommand.Reads = read.Reads;
                 changed.Add(reader);
                 return;
-            case CommandLogged log when byTrace.TryGetValue(log.Trace, out LiveRequest? logger):
+            case CommandLogged log when byTrace.TryGetValue((from, log.Trace), out LiveRequest? logger):
                 if (logger.Commands.FirstOrDefault(c => c.Parameters is null && Logs(log.Message, c.Text)) is { } unnamed)
                 {
                     unnamed.Parameters = CommandParameters.Of(log.Message);

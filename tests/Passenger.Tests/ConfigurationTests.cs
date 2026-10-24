@@ -67,6 +67,12 @@ public sealed class ConfigurationTests : IClassFixture<ConfigurationTests.Projec
             Ui.Press(window, "ENTER");
             Ui.Settle();
             Assert.Contains("\"Mail\": {\"Port\": 0,", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+            // A comment begun above a key (a lone '/' so far) leaves the key read as ever: its card comes, the window never stuck.
+            Ui.PlaceAfter(editor, "\"Payments\": {");
+            Ui.Type(window, "SLASH", "/");
+            card = Hover(window, "\"Region\"");
+            Assert.True(card.Contains("Payments:Region: string", StringComparison.Ordinal), $"Region's card below a lone '/': {card}");
         }
         finally
         {

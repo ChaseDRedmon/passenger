@@ -114,6 +114,13 @@ public sealed record JsonSpot(IReadOnlyList<string> Path, bool AtName, int Start
                         spot = Here(frames, literal, at, caret, text);
                         holding = spot is null ? -2 : frames.Count;
                     }
+                    // A character that ends a literal but means nothing here (a lone '/', a ':' or ',' outside what takes
+                    // one) is passed over as nothing, or the walk would stand on it for good.
+                    if (at == literal)
+                    {
+                        at++;
+                        continue;
+                    }
                     if (top is not null)
                     {
                         top.State = State.After;
