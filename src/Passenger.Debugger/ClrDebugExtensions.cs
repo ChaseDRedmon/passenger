@@ -60,6 +60,8 @@ public static class ClrDebugExtensions
         IntPtr unregisterToken = IntPtr.Zero;
         RuntimeStartup startup = new(pid, log);
         GCHandle startupHandle = GCHandle.Alloc(startup);
+        // Closed after the registration's end, once the runtime has its own end of the FIFO or will never open it.
+        using StartupPipe? pipe = StartupPipe.Watch(pid);
         try
         {
             unsafe
@@ -70,7 +72,8 @@ public static class ClrDebugExtensions
                     throw new InvalidOperationException($"dbgshim could not watch for its runtime to start: {Described(registerHr)}", Marshal.GetExceptionForHR(registerHr));
                 }
             }
-            log?.Invoke($"Registered for the runtime's start in process {pid}");
+            pipe?.StopWatching();
+            log?.Invoke($"Registered for the runtime's start in process {pid}" + (pipe is null ? "" : pipe.Held ? ", its startup pipe held" : ", its startup pipe not found"));
 
             if (resume is not null)
             {
