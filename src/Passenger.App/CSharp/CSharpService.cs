@@ -509,10 +509,11 @@ public sealed class CSharpService : IAsyncDisposable
         documents.Clear();
         RoslynSession? ending = session;
         Unhook();
-        // Kept only once its projects loaded cleanly: load problems it said, a window taking it up would never hear.
-        if (warm is not null && ending is { IsLoaded: true } && !ending.Server.HasExited && loadProblems.Count == 0 && batch.Count == 0)
+        // Kept once its projects loaded, with the problems they loaded with, which the window taking it up hears from it;
+        // never in a load under way, whose problems are still coming.
+        if (warm is not null && ending is { IsLoaded: true } && !ending.Server.HasExited && batch.Count == 0)
         {
-            return new ValueTask(warm.Keep(ending));
+            return new ValueTask(warm.Keep(ending, ProjectProblems));
         }
         // Not held: the window's end waits for it with no UI thread to come back to (MainWindow.Ended).
         return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(() => ending.DisposeAsync().AsTask()));
@@ -560,8 +561,9 @@ public sealed class CSharpService : IAsyncDisposable
             string loading = solution is not null ? Path.GetFileName(solution) : Plural.Of(projects.Length, "project");
             if (warm?.Take(opening.Folder, solution, projects, options) is { } taken)
             {
-                started = taken;
+                started = taken.Session;
                 Hear(started.Server);
+                HearKept(taken.Problems);
                 // What it asks for from now on is this window's to answer.
                 if (started.Fed)
                 {
@@ -791,6 +793,29 @@ public sealed class CSharpService : IAsyncDisposable
                 batchSaid = 0;
                 break;
         }
+    }
+
+    /// <summary>The problems a server taken up warm loaded its projects with, heard as its load reported them: in Problems,
+    /// and said in the status bar as its batch's end said them.</summary>
+    private void HearKept(IReadOnlyList<ProjectLoadProblem> problems)
+    {
+        if (problems.Count == 0)
+        {
+            return;
+        }
+        foreach (ProjectLoadProblem problem in problems)
+        {
+            if (!loadProblems.TryGetValue(problem.Project, out List<ProjectLoadProblem>? listed))
+            {
+                loadProblems[problem.Project] = listed = [];
+            }
+            listed.Add(problem);
+            batch.Add(problem);
+        }
+        ProjectProblemsChanged?.Invoke(this, EventArgs.Empty);
+        SayLoadProblems();
+        batch.Clear();
+        batchSaid = 0;
     }
 
     /// <summary>The status bar's word on the batch's load problems: the first error, else the first warning, by project and

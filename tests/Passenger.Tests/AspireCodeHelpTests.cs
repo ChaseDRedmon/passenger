@@ -48,7 +48,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     [AvaloniaFact]
     public void A_service_s_connection_string_or_discovered_service_goes_to_the_AppHost_line_declaring_it()
     {
-        project.Write("Api/Program.cs", Project.Service.Replace("builder.Build().Run();",
+        project.Rewrite("Api/Program.cs", Project.Service.Replace("builder.Build().Run();",
             "var keyed = builder.Configuration[\"ConnectionStrings:connected\"];\nvar section = builder.Configuration.GetSection(\"services:worker:http:0\");\nbuilder.Build().Run();", StringComparison.Ordinal));
         MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
         try
@@ -88,7 +88,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     [AvaloniaFact]
     public void Renaming_a_resource_renames_it_in_the_AppHost_and_the_services_that_read_it_and_one_undo_takes_it_back()
     {
-        project.Write("Worker/Program.cs", Project.Worker.Replace("builder.Build().Run();",
+        project.Rewrite("Worker/Program.cs", Project.Worker.Replace("builder.Build().Run();",
             "var store = builder.Configuration[\"ConnectionStrings:connected\"];\nbuilder.Build().Run();", StringComparison.Ordinal));
         string[] files = ["Host/Program.cs", "Api/Program.cs", "Worker/Program.cs"];
         Dictionary<string, string> before = files.ToDictionary(f => f, f => File.ReadAllText(project.PathOf(f)));
@@ -332,11 +332,11 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     {
         if (mutation)
         {
-            project.Write("Host/Program.cs", Project.Host.Replace("builder.Build().Run();", "builder.Services.Clear();\nbuilder.Build().Run();", StringComparison.Ordinal));
+            project.Rewrite("Host/Program.cs", Project.Host.Replace("builder.Build().Run();", "builder.Services.Clear();\nbuilder.Build().Run();", StringComparison.Ordinal));
         }
         else
         {
-            project.Write("OtherHost/Program.cs", Project.Host);
+            project.Rewrite("OtherHost/Program.cs", Project.Host);
         }
         MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
         Ui.Settle();
@@ -348,7 +348,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     [AvaloniaFact]
     public void Configuration_resources_share_the_semantic_graph_for_generic_and_reordered_named_constant_AddProject_calls()
     {
-        project.Write("Host/Program.cs", Project.Host.Replace("var worker = builder.AddProject<Projects.Worker>(\"worker\");", """
+        project.Rewrite("Host/Program.cs", Project.Host.Replace("var worker = builder.AddProject<Projects.Worker>(\"worker\");", """
             const string WorkerName = "worker";
             const string WorkerProject = "../Worker/Worker.csproj";
             builder.AddProject(projectPath: WorkerProject, name: WorkerName).WithReference(api);

@@ -3,18 +3,22 @@ using Passenger.Lsp;
 
 namespace Passenger.App.CSharp;
 
-/// <summary>A language server a window leaves running as it closes (its projects loaded without a problem), for the next
-/// window that opens the same solution or projects with the same options to take up, loaded and warm, rather than start
-/// and load its own: what a test class gives its windows on one project (<see cref="MainWindow.WarmServer"/>). One no
-/// window takes is ended by the next one kept, by <see cref="Drop"/> or with the holder. The IDE's windows have none.</summary>
+/// <summary>A language server a window leaves running as it closes (its projects loaded), for the next window that opens
+/// the same solution or projects with the same options to take up, loaded and warm, rather than start and load its own:
+/// what a test class gives its windows on one project (<see cref="MainWindow.WarmServer"/>). The problems its projects
+/// loaded with go with it, for the window that takes it up to hear as one that loaded them would. One no window takes is
+/// ended by the next one kept, by <see cref="Drop"/> or with the holder. The IDE's windows have none.</summary>
 public sealed class WarmServer : IAsyncDisposable
 {
     private readonly Lock gate = new();
     private RoslynSession? kept;
+    private IReadOnlyList<ProjectLoadProblem> keptProblems = [];
 
-    /// <summary>The server kept, if it loaded what a window opens with the options it would start one with, and is still
-    /// running; it is the window's from then on. One that does not match stays until another is kept or it is dropped.</summary>
-    internal RoslynSession? Take(string folder, string? solution, IReadOnlyList<string> projects, IReadOnlyDictionary<string, object?> options)
+    /// <summary>The server kept, with the problems its projects loaded with, if it loaded what a window opens with the
+    /// options it would start one with, and is still running; it is the window's from then on. One that does not match stays
+    /// until another is kept or it is dropped.</summary>
+    internal (RoslynSession Session, IReadOnlyList<ProjectLoadProblem> Problems)? Take(string folder, string? solution, IReadOnlyList<string> projects,
+        IReadOnlyDictionary<string, object?> options)
     {
         lock (gate)
         {
@@ -24,18 +28,20 @@ public sealed class WarmServer : IAsyncDisposable
                 return null;
             }
             kept = null;
-            return session;
+            return (session, keptProblems);
         }
     }
 
-    /// <summary>Keeps a window's server for the next window, ending the one kept before, which no window took.</summary>
-    internal Task Keep(RoslynSession session)
+    /// <summary>Keeps a window's server, and the problems its projects loaded with, for the next window, ending the one
+    /// kept before, which no window took.</summary>
+    internal Task Keep(RoslynSession session, IReadOnlyList<ProjectLoadProblem> problems)
     {
         RoslynSession? before;
         lock (gate)
         {
             before = kept;
             kept = session;
+            keptProblems = problems;
         }
         return before is null || before == session ? Task.CompletedTask : Task.Run(() => before.DisposeAsync().AsTask());
     }

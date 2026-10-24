@@ -95,6 +95,25 @@ public abstract class SharedProject : IDisposable
         return path;
     }
 
+    /// <summary>Rewrites one of the project's own files for a test: the warm server is kept once it holds the file as
+    /// written, read through its own watcher as it reads a file changed on disk (<see cref="WarmServer.HoldsAsync"/>), and
+    /// ended if it does not within <see cref="Rereading"/>; <see cref="Reset"/> puts the file back for the next test. A file
+    /// the project does not have goes through <see cref="Write"/>.</summary>
+    public string Rewrite(string name, string text)
+    {
+        string path = Path.GetFullPath(PathOf(name));
+        if (!written.ContainsKey(path))
+        {
+            throw new ArgumentException($"{name} is no file of the project as written: Write adds it", nameof(name));
+        }
+        File.WriteAllText(path, text);
+        if (!Task.Run(() => Server.HoldsAsync(new Dictionary<string, string>(StringComparer.Ordinal) { [path] = text }, Rereading.Scaled())).GetAwaiter().GetResult())
+        {
+            Drop();
+        }
+        return path;
+    }
+
     /// <summary>The project as written for the test about to run: what a test before it changed on disk written back with
     /// the time it was written at (a moment after a build since, which the next build then compiles again), what it added
     /// removed. The shared server is ended if a file came or went, or one it holds no document of changed (a project file);
