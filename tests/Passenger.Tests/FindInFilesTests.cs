@@ -1,11 +1,14 @@
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 using Avalonia.VisualTree;
 using Passenger.App;
+using Passenger.App.Explorer;
 using Passenger.App.Navigation;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -360,6 +363,70 @@ public sealed class FindInFilesTests : IDisposable
             Ui.Press(window, "Escape");
         }
         window.Close();
+    }
+
+    /// <summary>The Explorer dims what Find in Files, Go to File and the watcher pass over, one list for both (#474): each
+    /// of its names, and a packages folder NuGet restored into, in packages.config's layout or the global folder's; Git's
+    /// store is not listed at all. A JavaScript monorepo's packages of source are searched, offered and shown as code. The
+    /// Explorer had a list of its own, which left TestResults, .hg and .svn undimmed though no search looked in them.</summary>
+    [AvaloniaFact]
+    public void The_explorer_dims_what_find_in_files_and_go_to_file_pass_over_and_a_monorepos_packages_of_source_are_searched_and_shown_as_code()
+    {
+        string root = PathNames.Canonical(folder);
+        string[] passed = [.. IgnoredFolders.Names.Where(name => name != ".git").Append("packages")];
+        foreach (string name in passed)
+        {
+            TestFolders.Write(folder, $"{name}/needle.ts", "// needle\n");
+        }
+        TestFolders.Write(folder, "packages/Newtonsoft.Json.13.0.1/Newtonsoft.Json.13.0.1.nupkg", "");
+        TestFolders.Write(folder, "packages/Newtonsoft.Json.13.0.1/needle.ts", "// needle\n");
+        TestFolders.Write(folder, "tools/packages/newtonsoft.json/13.0.1/.nupkg.metadata", "{ }\n");
+        TestFolders.Write(folder, "tools/packages/newtonsoft.json/13.0.1/needle.ts", "// needle\n");
+        TestFolders.Write(folder, "web/packages/ui/package.json", "{ \"name\": \"ui\" }\n");
+        TestFolders.Write(folder, "web/packages/ui/src/needle.ts", "// needle\n");
+        TestGit.Run(folder, "init", "-q", "-b", "main");
+        string source = Path.Combine("web", "packages", "ui", "src", "needle.ts");
+        MainWindow window = Open();
+        try
+        {
+            ExplorerTree tree = window.ExplorerView.Tree;
+            Assert.DoesNotContain(tree.Rows, row => row.Name == ".git");
+            foreach (string name in passed)
+            {
+                ExplorerNode row = tree.Rows.Single(r => r.Path == Path.Combine(root, name));
+                Assert.True(row.IsDimmed, $"The Explorer shows {name} as the person's code, though Find in Files and Go to File pass over it");
+            }
+            ExplorerNode restored = tree.Reveal(Path.Combine(root, "tools", "packages", "newtonsoft.json", "13.0.1", "needle.ts"))!;
+            Ui.Settle();
+            Assert.True(restored.IsDimmed && tree.Rows.Single(r => r.Path == Path.Combine(root, "tools", "packages")).IsDimmed,
+                "The Explorer shows a packages folder of the global folder's layout as code, though the walks pass over it");
+            ExplorerNode code = tree.Reveal(Path.Combine(root, source))!;
+            Ui.Settle();
+            string[] dimmed = [.. tree.Rows.Where(r => r.IsDimmed && r.Path is { } path && (PathNames.IsUnder(path, Path.Combine(root, "web")) || path == Path.Combine(root, "web"))).Select(r => r.Name)];
+            Assert.True(!code.IsDimmed && dimmed.Length == 0, $"The Explorer dims [{string.Join(", ", dimmed)}] of a monorepo's packages, which are its source");
+
+            FindInFilesPopup popup = window.ShowFindInFiles(replace: false)!;
+            Search(popup, "needle");
+            string[] found = [.. popup.Matches.Select(m => Path.GetRelativePath(root, m.Path)).Distinct()];
+            Assert.True(found.SequenceEqual([source]), $"Find in Files found needle in [{string.Join(", ", found)}], where the monorepo's packages alone are the person's code");
+            Ui.Press(window, "ESCAPE");
+
+            Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
+            window.KeyTextInput("needle");
+            Ui.Settle();
+            ListBox results = window.Popup!.FindControl<ListBox>("Results")!;
+            string[] offered = [.. results.Items.OfType<FileHit>().Select(hit => hit.RelativePath)];
+            Assert.True(offered.SequenceEqual([source]), $"Go to File offers [{string.Join(", ", offered)}] for needle, where the monorepo's packages alone are the person's code");
+            Ui.Press(window, "ESCAPE");
+
+            // The watcher follows the monorepo's packages as the walk does.
+            TestFolders.Write(folder, "web/packages/ui/src/later.ts", "// later\n");
+            Ui.WaitFor(() => window.FileIndex.Files.Contains(Path.Combine("web", "packages", "ui", "src", "later.ts")), "the file made in the monorepo's packages in Go to File");
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     /// <summary>Whether a line draws = and > as the font's own glyphs for them, not a ligature's.</summary>

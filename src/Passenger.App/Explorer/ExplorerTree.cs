@@ -28,11 +28,9 @@ public enum NodeKind
 public sealed class ExplorerTree
 {
     /// <summary>Never listed: version control's own store, which nobody edits by hand (and the system's own files,
-    /// <see cref="PathNames.IsSystemFile"/>).</summary>
+    /// <see cref="PathNames.IsSystemFile"/>). The other folders the walks pass over are listed dimmed, as Rider marks
+    /// excluded folders (<see cref="IgnoredFolders"/>).</summary>
     private const string GitStore = ".git";
-
-    /// <summary>Listed but dimmed, as Rider marks excluded folders: build output and dependencies.</summary>
-    private static readonly HashSet<string> Excluded = ["bin", "obj", "artifacts", "node_modules", ".vs", ".idea"];
 
     private IReadOnlyDictionary<string, Vcs.ChangeKind> changes = new Dictionary<string, Vcs.ChangeKind>();
 
@@ -511,7 +509,7 @@ public sealed class ExplorerTree
 
     /// <summary>What a project holds at one place in it (its top, or a folder of it), read as it is now: once evaluated,
     /// the files it holds there; until then, or when it could not be, the files on disk there.</summary>
-    private List<ExplorerNode> HeldIn(ProjectModel given, string relative, int depth)
+    private List<ExplorerNode> HeldIn(ProjectModel given, string relative, int depth, bool dimmed = false)
     {
         ProjectModel project = Current(given);
         ProjectFiles? files = FilesOf(project);
@@ -519,24 +517,24 @@ public sealed class ExplorerTree
         if (files is null)
         {
             string folder = relative.Length == 0 ? project.Folder : Path.Combine(project.Folder, relative.Replace('/', Path.DirectorySeparatorChar));
-            return Contents(folder, depth, dimmed: false, skip: relative.Length == 0 ? project.Path : null, nesting, given);
+            return Contents(folder, depth, dimmed, skip: relative.Length == 0 ? project.Path : null, nesting, given);
         }
-        return Held(given, files, relative, depth, nesting);
+        return Held(given, files, relative, depth, nesting, dimmed);
     }
 
     /// <summary>A folder of an evaluated project: what the project holds in it, by where each file shows (a linked file at
-    /// its Link), whether or not the folder is on disk.</summary>
-    private ExplorerNode HeldFolder(ProjectModel given, string path, string relative, int depth) =>
-        new(NodeKind.Folder, Path.GetFileName(relative), path, depth, false, node => HeldIn(given, relative, node.Depth + 1));
+    /// its Link), whether or not the folder is on disk; dimmed, with all it holds, where the folder's walks pass over it.</summary>
+    private ExplorerNode HeldFolder(ProjectModel given, string path, string relative, int depth, bool dimmed) =>
+        new(NodeKind.Folder, Path.GetFileName(relative), path, depth, dimmed || IgnoredFolders.Is(path), node => HeldIn(given, relative, node.Depth + 1, node.IsDimmed));
 
     /// <summary>What an evaluated project holds at one place in it: its folders, then its files, each by name, a file's
     /// dependents nested under it; a folder on disk with nothing in it at all shows too, as one just made does.</summary>
-    private List<ExplorerNode> Held(ProjectModel given, ProjectFiles files, string relative, int depth, Nesting nesting)
+    private List<ExplorerNode> Held(ProjectModel given, ProjectFiles files, string relative, int depth, Nesting nesting, bool dimmed)
     {
         List<ExplorerNode> nodes = [.. files.FoldersIn(relative)
             .Order(StringComparer.OrdinalIgnoreCase)
             .Select(name => relative.Length == 0 ? name : $"{relative}/{name}")
-            .Select(inner => HeldFolder(given, files.PathOf(inner), inner, depth))];
+            .Select(inner => HeldFolder(given, files.PathOf(inner), inner, depth, dimmed))];
         List<(string Name, string Path)> held = [.. files.FilesIn(relative)
             .Where(f => !FileText.IsSaving(f.Name))
             .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)];
@@ -546,9 +544,9 @@ public sealed class ExplorerTree
         {
             List<string> nested = [.. nestedUnder[path]];
             nodes.Add(nested.Count == 0
-                ? new ExplorerNode(NodeKind.File, name, path, depth, false, null)
-                : new ExplorerNode(NodeKind.File, name, path, depth, false, node =>
-                    [.. nested.Select(n => new ExplorerNode(NodeKind.File, Path.GetFileName(n), n, node.Depth + 1, false, null))])
+                ? new ExplorerNode(NodeKind.File, name, path, depth, dimmed, null)
+                : new ExplorerNode(NodeKind.File, name, path, depth, dimmed, node =>
+                    [.. nested.Select(n => new ExplorerNode(NodeKind.File, Path.GetFileName(n), n, node.Depth + 1, dimmed, null))])
                 {
                     Nested = string.Join('/', nested.Select(Path.GetFileName)),
                 });
@@ -583,9 +581,10 @@ public sealed class ExplorerTree
             if (entry is DirectoryInfo)
             {
                 // A project's folder reads what it holds when opened, so it shows the project as evaluated once it is.
-                nodes.Add(within is not null && !Excluded.Contains(entry.Name)
-                    ? HeldFolder(within, entry.FullName, Path.GetRelativePath(within.Folder, entry.FullName).Replace('\\', '/'), depth)
-                    : Folder(entry.FullName, depth, dimmed || Excluded.Contains(entry.Name), nesting));
+                bool passed = IgnoredFolders.Is(entry.FullName);
+                nodes.Add(within is not null && !passed
+                    ? HeldFolder(within, entry.FullName, Path.GetRelativePath(within.Folder, entry.FullName).Replace('\\', '/'), depth, dimmed)
+                    : Folder(entry.FullName, depth, dimmed || passed, nesting));
             }
             else if (!parents.ContainsKey(entry.FullName))
             {

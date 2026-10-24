@@ -353,12 +353,12 @@ public sealed class FolderWatcher : IDisposable
         string[]? parts = Parts(path);
         return parts is null ? path == folder
             : parts[0] == ".git" ? parts.Length == 1 || parts[1] == "refs"
-            : !parts.Any(IgnoredFolders.Contains) || HoldsRestores(parts);
+            : !IgnoredFolders.AnyOf(folder, parts) || HoldsRestores(parts);
     }
 
     /// <summary>Whether a folder of build output is where a restore writes its assets, or above it to see that made: a
     /// project's obj itself, and UseArtifactsOutput's artifacts, artifacts/obj and artifacts/obj/Project.</summary>
-    private static bool HoldsRestores(string[] parts)
+    private bool HoldsRestores(string[] parts)
     {
         int output = parts switch
         {
@@ -367,7 +367,7 @@ public sealed class FolderWatcher : IDisposable
             [.., "artifacts"] or [.., "obj"] => 1,
             _ => 0,
         };
-        return output > 0 && !parts[..^output].Any(IgnoredFolders.Contains);
+        return output > 0 && !IgnoredFolders.AnyOf(folder, parts.AsSpan(..^output));
     }
 
     /// <summary>The restore assets in a folder just made, or in the build output folders that hold them under it.</summary>
@@ -423,7 +423,7 @@ public sealed class FolderWatcher : IDisposable
         bool restore = !inGit && IsRestore(parts);
         // A passed-over folder itself, come or gone, is the folder above it changing (the Explorer lists it, dimmed);
         // what changes in it is never followed.
-        if (!inGit && !restore && parts.Any(IgnoredFolders.Contains) && !(created && !parts[..^1].Any(IgnoredFolders.Contains)))
+        if (!inGit && !restore && IgnoredFolders.AnyOf(folder, parts) && !(created && !IgnoredFolders.AnyOf(folder, parts.AsSpan(..^1))))
         {
             return;
         }

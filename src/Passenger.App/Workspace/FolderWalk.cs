@@ -25,6 +25,9 @@ public static class FolderWalk
 
     /// <summary>Whether the walk from <paramref name="root"/> enters a folder under it: none of the names between them is one
     /// passed over, though a link led to it.</summary>
-    private static bool Enters(string root, string folder, bool built) =>
-        Path.GetRelativePath(root, folder).Split(Path.DirectorySeparatorChar).All(name => !IgnoredFolders.Contains(name) && !(built && name.StartsWith('.')));
+    private static bool Enters(string root, string folder, bool built)
+    {
+        string[] names = Path.GetRelativePath(root, folder).Split(Path.DirectorySeparatorChar);
+        return !IgnoredFolders.AnyOf(root, names) && !(built && names.Any(name => name.StartsWith('.')));
+    }
 }

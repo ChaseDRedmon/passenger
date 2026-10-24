@@ -337,7 +337,7 @@ public partial class MainWindow
             return [];
         }
         return Directory.EnumerateFiles(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, MaxRecursionDepth = 6 })
-            .Where(HttpFile.Is).Where(p => !Path.GetRelativePath(folder, p).Split(Path.DirectorySeparatorChar).SkipLast(1).Any(IgnoredFolders.Contains))
+            .Where(HttpFile.Is).Where(p => !IgnoredFolders.AnyOf(folder, Path.GetRelativePath(folder, p).Split(Path.DirectorySeparatorChar).AsSpan(..^1)))
             .Select(PathNames.Canonical);
     }
 

@@ -54,7 +54,7 @@ public sealed class AspireFiles(ProjectSession session)
             HashSet<string> listed = new(PathNames.Comparer);
             foreach (string relative in files)
             {
-                if (IsSource(relative))
+                if (IsSource(root, relative))
                 {
                     string path = Path.Join(root, relative);
                     listed.Add(path);
@@ -81,7 +81,7 @@ public sealed class AspireFiles(ProjectSession session)
         {
             return;
         }
-        string[] sources = [.. paths.Where(path => IsSource(Path.GetRelativePath(root, path)))];
+        string[] sources = [.. paths.Where(path => IsSource(root, Path.GetRelativePath(root, path)))];
         if (sources.Length == 0 && !every)
         {
             return;
@@ -172,14 +172,14 @@ public sealed class AspireFiles(ProjectSession session)
 
     /// <summary>Whether a file, by its path from the folder, is a C# file a single-file AppHost may be: not under a hidden
     /// folder or one every walk passes over, as a walk for what projects build passes over them.</summary>
-    private static bool IsSource(string relative)
+    private static bool IsSource(string root, string relative)
     {
         if (!relative.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || Path.IsPathRooted(relative))
         {
             return false;
         }
         string[] names = relative.Split(Path.DirectorySeparatorChar);
-        return names[..^1].All(name => !name.StartsWith('.') && !IgnoredFolders.Contains(name));
+        return names[..^1].All(name => !name.StartsWith('.')) && !IgnoredFolders.AnyOf(root, names.AsSpan(..^1));
     }
 
     /// <summary>Whether a file is a single-file AppHost; null when it could not be read, which keeps what was read before.</summary>
