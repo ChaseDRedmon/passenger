@@ -14,23 +14,36 @@ namespace Passenger.Tests;
 /// <summary>Run configurations as Rider's Edit Configurations makes them: one added in the dialog runs with what was
 /// typed there and is there when the folder opens again; a generated one is changed in place, its changes kept with the
 /// folder over its launch profile or written to it, or copied to be the person's own; one removed is gone for good. The
-/// dialog opens from the Run menu's action and the toolbar's chooser.</summary>
+/// dialog opens from the Run menu's action and the toolbar's chooser. A test that runs Hello takes a restored folder
+/// (<see cref="Restored"/>); the rest open one no restore reached, as a fresh clone opens, since they build nothing.</summary>
 public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder;
+    private readonly RestoredFolders folders;
     private readonly string settings = TestFolders.Create("settings-");
-    private readonly string project;
+    private string folder = TestFolders.Create("configs-");
+    private string project;
 
     public RunConfigurationsTests(RestoredFolders folders)
     {
-        string made = string.Empty;
-        TestFolders.Prepare(() => made = folders.Take("configs-", root =>
-        {
-            TestFolders.Write(root, "Hello/Hello.csproj", TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
-            TestFolders.Write(root, "Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}\");\n");
-            return Path.Combine(root, "Hello");
-        }), settings);
-        folder = made;
+        this.folders = folders;
+        Hello(folder);
+        project = PathNames.Canonical(Path.Combine(folder, "Hello"));
+    }
+
+    /// <summary>Hello's project and its program, which says its variable, arguments and folder; the folder to restore.</summary>
+    private static string Hello(string root)
+    {
+        TestFolders.Write(root, "Hello/Hello.csproj", TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
+        TestFolders.Write(root, "Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}\");\n");
+        return Path.Combine(root, "Hello");
+    }
+
+    /// <summary>The test's folder made one of the class's restored ones, for a test that builds and runs Hello, before
+    /// anything else of the test uses it.</summary>
+    private void Restored()
+    {
+        TestFolders.Delete(folder);
+        folder = folders.Take("configs-", Hello);
         project = PathNames.Canonical(Path.Combine(folder, "Hello"));
     }
 
@@ -99,6 +112,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     [AvaloniaFact]
     public void A_configuration_added_in_the_dialog_runs_with_what_was_typed_and_is_there_when_the_folder_opens_again()
     {
+        Restored();
         MainWindow window = Keeping();
         Assert.Equal(["Hello"], Names(window));
 
@@ -163,6 +177,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     [AvaloniaFact]
     public void A_generated_configuration_copied_is_the_persons_own_and_the_generated_one_stays_as_its_launch_profile_makes_it()
     {
+        Restored();
         Write("Hello/Properties/launchSettings.json", """
             {
               // Comments and trailing commas, as Visual Studio writes them.
@@ -236,6 +251,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     [AvaloniaFact]
     public void A_generated_configurations_arguments_changed_in_place_are_run_kept_with_the_folder_and_stay_over_its_launch_profile_as_it_changes()
     {
+        Restored();
         Write("Hello/Properties/launchSettings.json", Greet("Hi"));
         MainWindow window = Keeping();
         RunConfigurationsDialog dialog = window.ShowRunConfigurations();
@@ -453,6 +469,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     [AvaloniaFact]
     public void Use_external_console_chosen_in_the_dialog_runs_the_program_in_the_terminal_and_is_kept_with_the_configuration()
     {
+        Restored();
         MainWindow window = Keeping();
         RunConfigurationsDialog dialog = window.ShowRunConfigurations();
         Assert.Equal("Hello", dialog.Chosen?.Name);
@@ -499,6 +516,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     [AvaloniaFact]
     public void A_launch_profiles_browser_shows_under_open_browser_and_a_copy_with_it_turned_off_opens_none()
     {
+        Restored();
         // The port held until each run's program, waiting at a gate, is let listen there; it listens until let go.
         using HeldPort held = new();
         int port = held.Port;
