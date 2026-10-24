@@ -9,5 +9,7 @@
     <!-- Their lock files say they take no packages, so CI fails one that gains one unseen (the repo's own, Directory.Build.props). -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+    <!-- A local assigned and never read is one the debugger shows them: no warning of it in every build. -->
+    <NoWarn>$(NoWarn);CS0219</NoWarn>
   </PropertyGroup>
 </Project>
