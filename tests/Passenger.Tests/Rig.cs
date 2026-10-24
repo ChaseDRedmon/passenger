@@ -760,7 +760,28 @@ public static class Ui
         }
     }
 
-    private static bool Settled(DateTime limit) => Waiting.Until(() =>
+    /// <summary>What a blink of the caret allocates on the UI thread with the IDE at rest, the least of three: its frame of
+    /// the editor, about 25 KB, which a wait draws whatever the IDE did whenever it outlasts the blink's 530 ms, so a measure
+    /// of what a key costs takes out the blinks its wait drew (a slower server's longer wait draws more of them).</summary>
+    public static long BlinkBytes(CodeEditor editor)
+    {
+        Settle();
+        TimeSpan limit = SettleLimit.Scaled();
+        long least = long.MaxValue;
+        for (int i = 0; i < 3; i++)
+        {
+            long blinks = editor.Blinks;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            if (!Settled(DateTime.UtcNow + limit, () => editor.Blinks > blinks))
+            {
+                throw new TimeoutException($"The caret did not blink with the IDE at rest within {limit.TotalSeconds} s (it blinks only in a focused editor). Still busy:\n{Busy()}");
+            }
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+        return least;
+    }
+
+    private static bool Settled(DateTime limit, Func<bool>? also = null) => Waiting.Until(() =>
     {
         Dispatcher.UIThread.RunJobs();
         AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
@@ -771,7 +792,7 @@ public static class Ui
             return false;
         }
         Draw();
-        return BackgroundWork.Pending == 0 && Passenger.Core.InFlight.Count == 0;
+        return BackgroundWork.Pending == 0 && Passenger.Core.InFlight.Count == 0 && (also is null || also());
     }, limit - DateTime.UtcNow, every: TimeSpan.FromMilliseconds(2), scaled: false);
 
     /// <summary>Runs what the window has queued (its layout among it) and draws until what that laid out is drawn

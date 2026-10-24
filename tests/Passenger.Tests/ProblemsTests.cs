@@ -241,25 +241,26 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
     [AvaloniaFact]
     public void A_typing_pause_lists_again_only_the_open_files_problems_however_many_the_solution_has()
     {
-        (long few, int fewListed, int fewBlinked) = UiBytesPerPause(warnings: 1);
-        (long many, int manyListed, int manyBlinked) = UiBytesPerPause(warnings: 200);
+        (long few, int fewListed, int fewBlinked, long fewBlink) = UiBytesPerPause(warnings: 1);
+        (long many, int manyListed, int manyBlinked, long manyBlink) = UiBytesPerPause(warnings: 200);
         int more = manyListed - fewListed;
         long each = (many - few) / more;
-        string blinks = $"the caret's blink drew in {manyBlinked} and {fewBlinked} of each case's {PauseKeys} pauses";
+        string blinks = $"less the caret's {manyBlinked} and {fewBlinked} blinks in each case's {PauseKeys} pauses, {manyBlink:N0} and {fewBlink:N0} bytes each";
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"A typing pause allocated {many:N0} bytes on the UI thread with {manyListed} problems in the solution, {few:N0} with {fewListed}: {each} bytes a problem ({blinks}).");
+            $"A typing pause allocated {many:N0} bytes on the UI thread with {manyListed} problems in the solution, {few:N0} with {fewListed} ({blinks}): {each} bytes a problem.");
         Assert.True(each < 8,
-            $"A typing pause allocated {many / 1024:N0} KB on the UI thread with {manyListed} problems in the solution, {few / 1024:N0} KB with {fewListed}: {each} bytes for each problem, which the window listed again ({blinks})");
+            $"A typing pause allocated {many / 1024:N0} KB on the UI thread with {manyListed} problems in the solution, {few / 1024:N0} KB with {fewListed} ({blinks}): {each} bytes for each problem, which the window listed again");
     }
 
-    /// <summary>What a key typed in an open file and its pause allocate on the UI thread (the least of a few, of those whose
-    /// pause drew no blink of the caret where any did not: a pause past its 530 ms draws the editor again whatever it lists),
-    /// with solution-wide analysis on, the Solution tab shown and twenty files nobody has open each with
-    /// <paramref name="warnings"/> warnings; how many problems the solution has, and in how many pauses the caret blinked.</summary>
     /// <summary>The keys each case of a typing pause's cost types.</summary>
     private const int PauseKeys = 5;
 
-    private (long Bytes, int Listed, int Blinked) UiBytesPerPause(int warnings)
+    /// <summary>What a key typed in an open file and its pause allocate on the UI thread, less what the caret's blinks drew
+    /// in it (<see cref="Ui.BlinkBytes"/>: the larger solution's server answers later, so its pauses outlast more blinks),
+    /// the least of a few, with solution-wide analysis on, the Solution tab shown and twenty files nobody has open each with
+    /// <paramref name="warnings"/> warnings; how many problems the solution has, how many blinks were taken out, and what
+    /// each cost.</summary>
+    private (long Bytes, int Listed, int Blinked, long Blink) UiBytesPerPause(int warnings)
     {
         const int Files = 20;
         for (int i = 0; i < Files; i++)
@@ -291,10 +292,9 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
         editor.Selections = SelectionSet.Single(Typed.IndexOf("= 1", StringComparison.Ordinal) + 3);
         editor.Focus();
-        Ui.Settle();
+        long blink = Ui.BlinkBytes(editor);
 
         long least = long.MaxValue;
-        long leastUnblinked = long.MaxValue;
         int blinked = 0;
         for (int i = 1; i <= PauseKeys; i++)
         {
@@ -303,15 +303,9 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
             window.KeyTextInput("1");
             Ui.Settle();
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            least = Math.Min(least, allocated);
-            if (editor.Blinks == blinks)
-            {
-                leastUnblinked = Math.Min(leastUnblinked, allocated);
-            }
-            else
-            {
-                blinked++;
-            }
+            int drew = (int)(editor.Blinks - blinks);
+            blinked += drew;
+            least = Math.Min(least, allocated - (drew * blink));
             // The open file's warning moved with the key, as the Solution tab lists it once the pause's pull landed.
             Problem moved = Assert.Single(problems.SolutionProblems!, p => p.Path == typed);
             Assert.True(moved.Position == new TextPosition(4, 27 + i), $"After {i} keys the open file's warning is listed at {moved.Where}, not Typed.cs:5:{28 + i}");
@@ -319,7 +313,7 @@ public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
         }
         Assert.Equal(listed, problems.SolutionProblems!.Count);
         window.Close();
-        return (leastUnblinked == long.MaxValue ? least : leastUnblinked, listed, blinked);
+        return (least, listed, blinked, blink);
     }
 
     /// <summary>Roslyn's compiler ends a line at each break in Separated.cs's comment, as its language server does, where the
