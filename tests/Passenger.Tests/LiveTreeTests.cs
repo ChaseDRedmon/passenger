@@ -71,9 +71,12 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal("TextBlock.title (Application.Styles)", size.Detail);
         Assert.Equal((Path.Combine(folder, "App.axaml"), Line("App.axaml", "Property=\"FontSize\"")), (PathNames.Canonical(size.Place!.File), size.Place.Line));
 
-        // Go to source lands on the element in its XAML.
+        // Go to source lands on the element in its XAML, its link kept as the tree is asked again (a copy loses a click on it).
         Choose(window, "Delete");
-        Ui.Click(tree.GoToSource!);
+        Button link = tree.GoToSource!;
+        Ui.Click(tree.GetLogicalDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) is "Refresh"));
+        Assert.True(tree.GoToSource == link, "Refresh swapped Delete's Go to Source link for a copy, so a click on it pressed as the app answered would do nothing");
+        Ui.Click(link);
         string xaml = Path.Combine(folder, "MainWindow.axaml");
         int deleteLine = Line("MainWindow.axaml", "x:Name=\"Delete\"") - 1;
         Assert.Equal(xaml, window.EditorArea.Active?.Path);

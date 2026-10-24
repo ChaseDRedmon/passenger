@@ -162,6 +162,10 @@ internal sealed class Inspector
     /// <summary>Whether a visual is the inspector's own (Select Element's outline), which the tree leaves out.</summary>
     public bool IsOwn(Visual visual) => picker.IsOwn(visual);
 
+    /// <summary>What the tree leaves out: the inspector's own, and an adorner layer holding nothing of the app's (the one a
+    /// window makes for the first outline), whose coming is no change in the app's controls either.</summary>
+    private bool LeftOut(Visual visual) => IsOwn(visual) || (visual is AdornerLayer layer && layer.Children.All(c => IsOwn(c)));
+
     private AppTree Tree(Request request)
     {
         watched = true;
@@ -241,8 +245,7 @@ internal sealed class Inspector
         List<Element> children = [];
         foreach (Visual child in visual.GetVisualChildren())
         {
-            // An adorner layer holding nothing of the app's: the one the outline of the element chosen made.
-            if (!IsOwn(child) && !(child is AdornerLayer layer && layer.Children.All(c => IsOwn(c))))
+            if (!LeftOut(child))
             {
                 children.Add(Node(child, top, look, inside));
             }
@@ -292,7 +295,7 @@ internal sealed class Inspector
     /// <summary>A control came or went: Passenger, if it has the tree, hears once that it changed, a moment after the last.</summary>
     private void Changed(object? sender)
     {
-        if ((sender is Visual visual && IsOwn(visual)) || !watched || told)
+        if ((sender is Visual visual && LeftOut(visual)) || !watched || told)
         {
             return;
         }

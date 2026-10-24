@@ -287,9 +287,16 @@ public sealed class LiveTreeView : DockPanel
         return true;
     }
 
-    /// <summary>Shows the chosen control's details, or why there are none, or nothing.</summary>
+    /// <summary>Shows the chosen control's details, or why there are none, or nothing. The same details again (the tree asked
+    /// again as the app's other controls come and go) leave what is shown as it is, so a link or row under the person's
+    /// pointer is never swapped for its copy between press and release, which would lose the click.</summary>
     public void ShowDetails(ElementDetails? details, string? problem)
     {
+        if (details is not null && Details is not null && Same(details, Details))
+        {
+            Details = details;
+            return;
+        }
         Details = details;
         heading.Children.Clear();
         styles.Children.Clear();
@@ -674,6 +681,16 @@ public sealed class LiveTreeView : DockPanel
     }
 
     private static string Number(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    /// <summary>Whether two looks at a control found the same: every value alike, their lists item by item (a record compares
+    /// its lists by reference).</summary>
+    private static bool Same(ElementDetails a, ElementDetails b) =>
+        a with { Classes = b.Classes, PseudoClasses = b.PseudoClasses, Properties = b.Properties, Styles = b.Styles } == b
+        && a.Classes.SequenceEqual(b.Classes)
+        && a.PseudoClasses.SequenceEqual(b.PseudoClasses)
+        && a.Properties.SequenceEqual(b.Properties)
+        && a.Styles.Count == b.Styles.Count
+        && a.Styles.Zip(b.Styles).All(s => s.First with { Setters = s.Second.Setters } == s.Second && s.First.Setters.SequenceEqual(s.Second.Setters));
 
     /// <summary>A place in XAML as the window writes it: the file's name and the line, or the file alone for its root.</summary>
     public static string Placed(SourcePlace place) =>
