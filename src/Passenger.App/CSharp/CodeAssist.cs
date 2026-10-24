@@ -1057,6 +1057,7 @@ public sealed partial class CodeAssist
         describing?.Cancel();
         open = null;
         xamlOffered.Clear();
+        xamlAsked = null;
         msbuildOffered.Clear();
         completion.IsVisible = false;
         itemCard.IsVisible = false;

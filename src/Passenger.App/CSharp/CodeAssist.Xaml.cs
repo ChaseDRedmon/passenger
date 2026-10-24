@@ -21,6 +21,10 @@ public sealed partial class CodeAssist
     /// <summary>The characters beyond a name's that narrow the open XAML list rather than close it.</summary>
     private string xamlWordCharacters = string.Empty;
 
+    /// <summary>The XAML file, its text's version and the caret its last list was asked at, until that list closes (one that
+    /// found nothing stays), so a list made from the project as it was is asked again once the project is read anew.</summary>
+    private (XamlDocument Xaml, int Version, int Caret)? xamlAsked;
+
     /// <summary>The window's XAML, for a XAML file shown.</summary>
     public Func<XamlService?>? Xaml { get; set; }
 
@@ -82,6 +86,8 @@ public sealed partial class CodeAssist
         completing = cancel;
         int caret = Editor.Selections.Primary.Caret;
         TextDocument asked = Editor.Document;
+        (XamlDocument, int, int) at = (xaml, asked.Version, caret);
+        xamlAsked = at;
         try
         {
             XamlCompletionList? list = await xaml.CompleteAsync(caret, cancel.Token);
@@ -92,6 +98,8 @@ public sealed partial class CodeAssist
             if (list is null || list.Items.Count == 0)
             {
                 CloseCompletion();
+                // Nothing, perhaps for want of the types a restore landing now brings: asked again once the project is read anew.
+                xamlAsked = at;
                 return;
             }
             xamlOffered.Clear();
@@ -109,6 +117,22 @@ public sealed partial class CodeAssist
         catch (OperationCanceledException)
         {
             // Typed on: the list is asked for again.
+        }
+    }
+
+    /// <summary>A XAML project was read anew (its restore landed, a file it reads was written): a list shown in one of its
+    /// files, or asked there and found empty at the caret as it still stands, was made from the project as it was, so it is
+    /// asked again of the project as it is (a tag's '&lt;' typed as the restore that brings Avalonia's controls lands).</summary>
+    internal void XamlProjectRead(XamlProject project)
+    {
+        if (xamlAsked is not (XamlDocument xaml, int version, int caret) || XamlCurrent != xaml
+            || !Passenger.Core.PathNames.Same(xaml.Loading.ProjectPath, project.Inputs.ProjectPath))
+        {
+            return;
+        }
+        if (completion.IsVisible || (Editor.Document.Version == version && Editor.Selections.Primary.Caret == caret))
+        {
+            _ = StartCompletion(null);
         }
     }
 

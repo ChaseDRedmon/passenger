@@ -274,6 +274,13 @@ public partial class MainWindow
                 status.Text = message;
             }
         };
+        next.Xaml.ProjectChanged += (_, project) =>
+        {
+            if (session == next)
+            {
+                assist.XamlProjectRead(project);
+            }
+        };
         next.MSBuild.Message += (_, message) =>
         {
             if (session == next)

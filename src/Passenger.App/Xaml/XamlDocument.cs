@@ -87,14 +87,23 @@ public sealed class XamlDocument : IDisposable
     }
 
     /// <summary>The file read as it stands, against the project as it stands: the last read when neither changed since;
-    /// null for a project whose XAML Passenger does not read.</summary>
+    /// null for a project whose XAML Passenger does not read. A read of the project begun anew while the last was awaited
+    /// (its restore landed) is awaited in turn, never its builder taken before it has loaded.</summary>
     public async Task<XamlFile?> FileAsync()
     {
         TextSnapshot text = Document.Text.Snapshot;
         int version = Document.Text.Version;
         string path = Document.Path;
         string? variant = Avalonia.Application.Current?.ActualThemeVariant.Key?.ToString();
-        if (await Loading.Loaded is null || await Loading.Builder is not { } builder)
+        XamlLoading loading;
+        XamlProjectBuilder? builder;
+        do
+        {
+            loading = Loading;
+            builder = await loading.Loaded is null ? null : await loading.Builder;
+        }
+        while (loading != Loading && !disposed);
+        if (builder is null)
         {
             return null;
         }

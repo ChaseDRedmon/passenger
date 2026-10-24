@@ -500,11 +500,17 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
             // Avalonia added, as NuGet's window or dotnet add package adds it, and restored.
             File.WriteAllText(project, $"{Plain}  <ItemGroup>\n    <PackageReference Include=\"Avalonia\" Version=\"{AvaloniaApp.Version}\" />\n  </ItemGroup>\n</Project>\n");
             Ui.Settle();
-            Restore.Run(folder);
-            Ui.WaitFor(() => xaml.IsLoaded, "the project's XAML read as Avalonia's once the package it now references was restored", TimeSpan.FromSeconds(30));
+            // A tag begun before the restore lands: its list (nothing, or the project file's read without Avalonia's types,
+            // as the watcher heard it in time) is of the project as it was, and is asked again once the restore is read.
             CodeEditor editor = window.EditorArea.CodeEditor;
             Ui.PlaceAfter(editor, "<TextBlock Text=\"Later\" />");
             window.KeyTextInput("\n        ");
+            window.KeyTextInput("<");
+            Restore.Run(folder);
+            Ui.WaitFor(() => xaml.IsLoaded, "the project's XAML read as Avalonia's once the package it now references was restored", TimeSpan.FromSeconds(30));
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered, once the restore was read, after a tag's '<' typed before it landed");
+            Ui.Press(window, "ESCAPE");
+            Ui.Press(window, "BACK_SPACE");
             window.KeyTextInput("<");
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<' once the project references it");
             window.Close();
