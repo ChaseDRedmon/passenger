@@ -495,9 +495,11 @@ static class Locks
 
 // A stop at which an evaluation spins in a finally block until another thread, paused with the program, lets it out once
 // it has spun 5 s, longer than the tests give an evaluation: the runtime puts an abort off until the block is left, by
-// then after the program has gone on.
+// then after the program has gone on. That thread is in its loop by the stop, past the initialization of every type the
+// evaluation uses (Finally's statics, Stopwatch): paused inside one, it would hold the evaluation short of its finally.
 static class Finally
 {
+	static readonly ManualResetEventSlim Looping = new();
 	static long spinningSince;
 	static int letOut;
 	public static int Turns;
@@ -529,11 +531,13 @@ static class Finally
 			Stopwatch waited = Stopwatch.StartNew();
 			while (!SpunLongEnough() && waited.Elapsed < TimeSpan.FromSeconds(60))
 			{
+				Looping.Set();
 				Thread.Sleep(20);
 			}
 			Volatile.Write(ref letOut, 1);
 		});
 		freer.Start();
+		Looping.Wait();
 		Console.WriteLine("a finally next"); // stop before an evaluation spins in a finally block
 		freer.Join();
 		Console.WriteLine($"let out, {Turns} turns"); // stop once the evaluation has been let out
