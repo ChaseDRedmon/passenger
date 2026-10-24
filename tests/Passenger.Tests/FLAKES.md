@@ -8,6 +8,15 @@ pattern shows. A **race in the IDE** is fixed in the IDE; waiting longer or tryi
 To add one: a line under its date, newest first, naming the test, the run, the cause in a sentence and the commit
 that fixed it, in one of the forms below. A failure not yet understood goes in only once it is.
 
+## 2026-10-24
+
+- `TablesTests`' `A_workbook_shows_each_sheet_with_its_numbers_formatted_as_Excel_shows_them_and_is_never_written` and
+  `A_sheets_read_that_lands_after_a_later_sheet_was_chosen_never_replaces_the_sheet_chosen_last`, CI on every system
+  40061362941 (ea3902a7): "Unable to cast object of type 'Avalonia.Controls.PathIcon' to type 'System.String'". The tests
+  found a sheet's tab among the editor group's toggles by casting each one's content to text, and #451 gave every group
+  the Markdown preview's toggle (hidden but for a Markdown file), whose content is its icon. No race: **the test**, which
+  reads a tab's words as text only where they are (0c03034e).
+
 ## 2026-10-23
 
 - `LiveTreeTests`' `A_debugged_avalonia_app_shows_its_controls_where_each_value_and_style_comes_from_and_the_control_clicked_in_it`,
