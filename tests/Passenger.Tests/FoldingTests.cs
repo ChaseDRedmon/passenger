@@ -327,9 +327,9 @@ public sealed class FoldingTests : IDisposable
 
     /// <summary>Every key moves the regions below it, and the parse it makes brings them again: the window moves region by
     /// region the run of them the key reaches and shifts the runs below whole, and keeps them when the parse finds the same.
-    /// A key typed above 2,000 doc comments allocates on the UI thread under 4 bytes for each more than above the same
-    /// lines as plain comments, where a moved copy of every region (24 bytes) was made each key, and before that mapped,
-    /// sorted and copied again by the editor, and twice more as each parse landed. A region folded below keeps its fold.</summary>
+    /// The least of twenty keys above 2,000 doc comments allocates on the UI thread under 4 bytes for each more than above
+    /// plain comments, where a moved copy of every region (24 bytes) was made each key, and before that mapped, sorted and
+    /// copied again by the editor, and twice more as each parse landed. A region folded below keeps its fold.</summary>
     [AvaloniaFact]
     public void Typing_above_two_thousand_regions_moves_them_on_the_UI_thread_without_copying_each_again_and_again()
     {
@@ -338,13 +338,15 @@ public sealed class FoldingTests : IDisposable
         int more = regions - plainRegions;
         Assert.True(more >= 2000, $"The doc comments made {more} regions more than the plain comments");
         long each = (folding - plain) / more;
-        TestContext.Current.TestOutputHelper?.WriteLine($"A key allocated {folding:N0} bytes on the UI thread above {regions} regions, {plain:N0} above {plainRegions}: {each} bytes a region.");
+        TestContext.Current.TestOutputHelper?.WriteLine($"A key allocated at least {folding:N0} bytes on the UI thread above {regions} regions, {plain:N0} above {plainRegions}: {each} bytes a region.");
         Assert.True(each < 4,
-            $"A key allocated {folding / 1024:N0} KB on the UI thread above {regions} regions, {plain / 1024:N0} KB above {plainRegions}: {each} bytes for each region, which the window copied");
+            $"A key allocated at least {folding / 1024:N0} KB on the UI thread above {regions} regions, {plain / 1024:N0} KB above {plainRegions}: {each} bytes for each region, which the window copied");
     }
 
-    /// <summary>What a key typed in a method at the top of a file allocates on the UI thread, its parse landing included,
-    /// with 2,000 members below it under doc comments or plain ones, the last of them folded; and the file's regions.</summary>
+    /// <summary>The least of twenty keys typed in a method at the top of a file allocates on the UI thread, its parse landing
+    /// included, with 2,000 members below under doc comments or plain ones, the last folded; and the file's regions. What
+    /// else lands in a key's wait goes into some keys alone (the caret's blink draws the editor again, 28 KB, in a wait past
+    /// its 530 ms, as a busy runner's are), what the key costs for each region into every one.</summary>
     private (long Bytes, int Regions) UiBytesPerKey(bool doc)
     {
         string comment = doc ? "///" : "// ";
@@ -376,19 +378,19 @@ public sealed class FoldingTests : IDisposable
         editor.ScrollTo(default);
         Ui.Settle();
         const int Keys = 20;
-        long bytes = 0;
+        long least = long.MaxValue;
         for (int i = 0; i < Keys; i++)
         {
             long before = GC.GetAllocatedBytesForCurrentThread();
             window.KeyTextInput("1");
             Ui.Settle();
-            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
         }
         FoldRegion folded = Assert.Single(document.FoldRegions, r => r.Folded);
         Assert.True(folded.Start == last + Keys, $"The folded method's region starts at {folded.Start} after the keys, not on its signature's end at {last + Keys}");
         int regions = document.FoldRegions.Count;
         window.Close();
-        return (bytes / Keys, regions);
+        return (least, regions);
     }
 
     /// <summary>The open file carries its regions through a key in runs, moving region by region only those the key reaches
