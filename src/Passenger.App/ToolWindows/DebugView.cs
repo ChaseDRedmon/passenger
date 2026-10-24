@@ -105,7 +105,8 @@ public sealed class DebugView : DockPanel
         split.Children.Add(framesPane);
         split.Children.Add(divider);
         split.Children.Add(variablesPane);
-        placeholder = new TextBlock { Text = "Not debugging. Debug starts with Alt+F5.", Classes = { "emptyText" } };
+        placeholder = new TextBlock { Classes = { "emptyText" } };
+        ActionTips.SetWords(placeholder, AppActions.Debug, keys => keys is null ? "Not debugging." : $"Not debugging. Debug starts with {keys}.");
         debugger = new Panel { Children = { split, placeholder } };
 
         debuggerTab = new ToggleButton { Content = "Debugger", Classes = { "panelTab" }, IsChecked = true };

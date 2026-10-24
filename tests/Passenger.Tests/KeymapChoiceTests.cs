@@ -151,6 +151,35 @@ public sealed class KeymapChoiceTests : IDisposable
         }
     }
 
+    /// <summary>The Debug window's empty text names the key that starts Debug in the keymap in force: Visual Studio's, none in
+    /// VS Code's (which binds it to no key), and one the person sets there, as each is chosen.</summary>
+    [AvaloniaFact]
+    public void The_Debug_windows_empty_text_names_the_key_that_starts_Debug_in_the_keymap_in_force()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.Perform(AppActions.ShowDebug);
+            Ui.Settle();
+            string Said() => window.DebugWindow.GetVisualDescendants().OfType<TextBlock>()
+                .Single(t => t.Classes.Contains("emptyText") && t.Text?.StartsWith("Not debugging", StringComparison.Ordinal) == true).Text!;
+            Assert.Equal($"Not debugging. Debug starts with {Shortcut.Parse("alt F5").Display()}.", Said());
+
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
+            Ui.Settle();
+            Assert.Equal("Not debugging.", Said());
+
+            window.ApplySettings(window.Settings with { VSCodeShortcuts = new() { [AppActions.Debug] = ["shift F9"] } });
+            Ui.Settle();
+            Assert.Equal($"Not debugging. Debug starts with {Shortcut.Parse("shift F9").Display()}.", Said());
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void No_key_of_either_keymap_is_shown_on_two_actions_or_begins_a_chord_another_action_has()
     {
