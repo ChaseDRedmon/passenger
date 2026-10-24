@@ -112,8 +112,19 @@ public partial class MainWindow : Window
         AddMarkdownPreview();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
-        // A Structure window not built yet asks for the file shown as it is.
-        Editors.ActiveChanged += (_, _) => structure?.Invalidate();
+        // A Structure window not built yet asks for the file shown as it is; a C# file's outline waits out the pause, as the
+        // path's does, and another file's is asked for at once.
+        Editors.ActiveChanged += (_, _) =>
+        {
+            if (Editors.Active is { } shown && session.CSharp?.For(shown) is not null)
+            {
+                structure?.Invalidate();
+            }
+            else
+            {
+                structure?.FollowActive();
+            }
+        };
         Editors.CaretMoved += (_, _) => structure?.FollowCaret();
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) =>
         {

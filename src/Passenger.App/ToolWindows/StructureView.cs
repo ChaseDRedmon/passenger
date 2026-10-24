@@ -84,11 +84,30 @@ public sealed class StructureView : DockPanel
     /// <summary>What the window shows: the active file, its language server document, the caret's line.</summary>
     public void Follow(Func<(string Path, LspDocument? Lsp, int CaretLine)?> active) => source = active;
 
-    /// <summary>The file changed, or another is active: while the window is shown the outline is asked again once things
-    /// settle; a hidden one asks as it is shown.</summary>
+    /// <summary>The file changed, or a C# file is shown: while the window is shown the outline is asked again once typing
+    /// pauses; a hidden one asks as it is shown.</summary>
     public void Invalidate()
     {
         if (shown)
+        {
+            settle.Restart();
+        }
+    }
+
+    /// <summary>Another file is active: a shown window asks for its outline at once once its server has the file, the pause
+    /// being for typing's keys; a file its server has yet to connect is asked for once things settle.</summary>
+    public void FollowActive()
+    {
+        if (!shown)
+        {
+            return;
+        }
+        if (source?.Invoke() is { Lsp: not null })
+        {
+            settle.Stop();
+            _ = Refresh();
+        }
+        else
         {
             settle.Restart();
         }
