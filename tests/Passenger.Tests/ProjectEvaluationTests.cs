@@ -246,15 +246,20 @@ public sealed class ProjectEvaluationTests : IDisposable
         window.Show();
         window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
         window.OpenFile(Path.Combine(folder, "App", "Program.cs"));
-        Ui.Settle();
-        Assert.True(window.CSharpService?.Session is not null, "No language server started");
         // The order the server took them in, as its log says it finished (or failed) each: unrestored, they load with errors.
-        string log = Ui.Shared(Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{window.CSharpService!.Session!.Server.ProcessId}.log").Single());
+        // What is checked is the log once it tells of all four, not the file's analysis and colours that follow the load.
+        string[] projects = ["App", "Core", "Reports", "Admin"];
+        string log = string.Empty;
+        Ui.PumpUntil(() => window.CSharpService?.Session is { } session && (log = ServerLog(session.Server.ProcessId)) is var read
+            && projects.All(p => read.Contains(Path.Combine(p, p + ".csproj"), StringComparison.Ordinal)), "the language server's log to tell of the solution's four projects");
         int At(string project) => log.IndexOf(Path.Combine(project, project + ".csproj"), StringComparison.Ordinal) is >= 0 and var at ? at
             : throw new InvalidOperationException($"The language server's log says nothing of {project}:\n{log}");
         Assert.True(Math.Max(At("App"), At("Core")) < Math.Min(At("Reports"), At("Admin")),
             $"The language server took up another project before the file shown's, and the one it references:\n{log}");
         window.Close();
+
+        static string ServerLog(int process) => Directory.Exists(Passenger.App.CSharp.CSharpService.LogFolder)
+            && Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{process}.log").SingleOrDefault() is { } path ? Ui.Shared(path) : string.Empty;
     }
 
     /// <summary>A window on the solution with no C# language server: the Solution view's projects are the project host's
