@@ -12,30 +12,17 @@ namespace Passenger.Tests;
 /// Dockerfile through theirs, MSBuild files through Passenger's own evaluation, and saying plainly what a language lacks.
 /// Its Passengers are processes of their own, so it runs beside the window tests (<see cref="Beside"/>).</summary>
 [Collection(Beside.Name)]
-public sealed class McpLanguagesTests : McpRig
+public sealed class McpLanguagesTests(McpLanguagesTests.Restored restored) : McpRig, IClassFixture<McpLanguagesTests.Restored>
 {
+    /// <summary>The user secrets of the Aspire test's AppHost, the run's own.</summary>
+    private const string AspireSecretsId = "passenger-mcp-aspire-host";
+
     /// <summary>Avalonia's XAML, and a library type it names decompiled once across sessions, another version's decompiled
     /// files unused for months pruned.</summary>
     [Fact]
     public async Task An_agent_reads_navigates_renames_and_refactors_avalonia_xaml_through_passengers_own_xaml_and_a_library_type_decompiled_once()
     {
-        string gallery = Made("mcpaxaml-", made =>
-        {
-            File.WriteAllText(Path.Combine(made, "Gallery.csproj"), AvaloniaApp.HeadlessProject());
-            Directory.CreateDirectory(Path.Combine(made, "ViewModels"));
-            Directory.CreateDirectory(Path.Combine(made, "Styles"));
-            File.WriteAllText(Path.Combine(made, "ViewModels", "MainViewModel.cs"), XamlTests.Gallery.MainViewModel);
-            File.WriteAllText(Path.Combine(made, "Styles", "Palette.axaml"), XamlTests.Gallery.Palette);
-            File.WriteAllText(Path.Combine(made, "App.axaml"), XamlTests.Gallery.AppXaml);
-            File.WriteAllText(Path.Combine(made, "App.axaml.cs"),
-                "using Avalonia;\nusing Avalonia.Markup.Xaml;\n\nnamespace Gallery;\n\npublic partial class App : Application\n{\n    public override void Initialize() => AvaloniaXamlLoader.Load(this);\n}\n");
-            File.WriteAllText(Path.Combine(made, "Program.cs"), "namespace Gallery;\n\npublic static class Program\n{\n    public static void Main()\n    {\n    }\n}\n");
-            // The gallery's window, with a caption bound to a property its view model lacks.
-            File.WriteAllText(Path.Combine(made, "MainWindow.axaml"), XamlTests.Gallery.Window.Replace(
-                "<TextBlock Text=\"{Binding #Go.Content}\" />", "<TextBlock Text=\"{Binding #Go.Content}\" />\n        <TextBlock Text=\"{Binding Subtitle}\" />", StringComparison.Ordinal));
-            File.WriteAllText(Path.Combine(made, "MainWindow.axaml.cs"), XamlTests.Gallery.CodeBehind);
-            Restore.Run(made);
-        });
+        string gallery = Taken("mcpaxaml-");
         // Another version's decompiled files, which no session has used for two months.
         string stale = Path.Combine(OwnState, "MetadataAsSource", "Decompiled", "Avalonia.Controls", "0123456789abcdef");
         Directory.CreateDirectory(stale);
@@ -117,16 +104,8 @@ public sealed class McpLanguagesTests : McpRig
     [Fact]
     public async Task An_agent_goes_to_sets_and_renames_aspire_resources_as_the_window_does()
     {
-        const string secretsId = "passenger-mcp-aspire-host";
-        string secrets = Path.Combine(TestRun.UserSecrets, secretsId, "secrets.json");
-        string shop = Made("mcpaspire-", made =>
-        {
-            AspireCodeHelpTests.Project.WriteTo(made, secretsId);
-            File.WriteAllText(Path.Combine(made, "Host", "Program.cs"), AspireCodeHelpTests.Project.Host.Replace("builder.Build().Run();",
-                "var password = builder.AddParameter(\"password\", secret: true);\nbuilder.Build().Run();", StringComparison.Ordinal));
-            AspireApp.UseFeed(made);
-            Restore.Run(PathNames.Canonical(made));
-        });
+        string secrets = Path.Combine(TestRun.UserSecrets, AspireSecretsId, "secrets.json");
+        string shop = Taken("mcpaspire-");
         Directory.CreateDirectory(Path.GetDirectoryName(secrets)!);
         File.Delete(secrets);
         try
@@ -163,11 +142,7 @@ public sealed class McpLanguagesTests : McpRig
     [Fact]
     public async Task An_agent_reads_navigates_renames_and_refactors_wpf_xaml_through_passengers_own_xaml()
     {
-        string gallery = Made("mcpwxaml-", made =>
-        {
-            WpfXamlTests.Gallery.Make(made);
-            Restore.Run(made);
-        });
+        string gallery = Taken("mcpwxaml-");
         await using McpClient client = await Start(["--mcp", gallery]);
         string window = File.ReadAllText(Path.Combine(gallery, "MainWindow.xaml"));
 
@@ -307,7 +282,8 @@ public sealed class McpLanguagesTests : McpRig
                 + "    <Product>$(Company) Shop</Product>\n  </PropertyGroup>\n  <Target Name=\"Greet\" AfterTargets=\"Build\">\n    <Message Text=\"$(Product)\" />\n  </Target>\n"
                 + "  <Target Name=\"Wave\" DependsOnTargets=\"Greet\" />\n</Project>\n");
         });
-        await using McpClient client = await Start(["--mcp", shop]);
+        // MSBuild files' help is Passenger's own evaluation, which asks nothing of C#'s server.
+        await using McpClient client = await Start(["--mcp", shop], languageServer: false);
         string project = File.ReadAllText(Path.Combine(shop, "Shop.csproj"));
 
         // A property's value as evaluated, and where it was set: in the Directory.Build.props the SDK imports.
@@ -350,11 +326,7 @@ public sealed class McpLanguagesTests : McpRig
     [Fact]
     public async Task An_agent_lists_a_web_apps_routes_read_from_its_code()
     {
-        string shop = Made("mcproutes-", made =>
-        {
-            WebRoutesTests.WriteShop(made, 5557);
-            Restore.Run(made);
-        });
+        string shop = Taken("mcproutes-");
         await using McpClient client = await Start(["--mcp", shop]);
 
         Assert.False((await Call(client, "workspace")).TryGetProperty("routes", out JsonElement unasked) && unasked.ValueKind != JsonValueKind.Null,
@@ -373,13 +345,105 @@ public sealed class McpLanguagesTests : McpRig
         Assert.Equal(("Orders.Update", "Order"), (order.GetProperty("handler").GetString(), order.GetProperty("body").GetString()));
     }
 
-    /// <summary>A folder of the test's own, written (and restored) by <paramref name="write"/>, removed with the class.</summary>
+    /// <summary>A folder of the test's own, written by <paramref name="write"/>, removed with the test.</summary>
     private string Made(string name, Action<string> write)
     {
         string made = PathNames.Canonical(TestFolders.Create(name));
         DeleteAtEnd(made);
         TestFolders.Prepare(() => write(made), made);
         return made;
+    }
+
+    /// <summary>The test's own restored folder (<see cref="Restored"/>), removed with the test.</summary>
+    private string Taken(string name)
+    {
+        string taken = restored.Take(name);
+        DeleteAtEnd(taken);
+        return taken;
+    }
+
+    /// <summary>The class's restored folders, Avalonia's and WPF's galleries, the Aspire AppHost and its service, and the web
+    /// app of routes, each written as its test needs it: all four are restored at once as the first test takes one, rather
+    /// than each test's in its turn. Each test takes its own; those no test took go with the class.</summary>
+    public sealed class Restored : IDisposable
+    {
+        private readonly Dictionary<string, string> folders = new(StringComparer.Ordinal);
+        private readonly HashSet<string> taken = new(StringComparer.Ordinal);
+
+        public string Take(string name)
+        {
+            if (folders.Count == 0)
+            {
+                (string Name, Action<string> Write)[] kinds = [("mcpaxaml-", Avalonia), ("mcpaspire-", Aspire), ("mcpwxaml-", Wpf), ("mcproutes-", Routes)];
+                try
+                {
+                    foreach ((string kind, Action<string> write) in kinds)
+                    {
+                        string folder = PathNames.Canonical(TestFolders.Unowned(kind));
+                        folders[kind] = folder;
+                        write(folder);
+                    }
+                    Task.Run(() => Task.WhenAll(folders.Values.Select(Restore.RunAsync))).GetAwaiter().GetResult();
+                }
+                catch
+                {
+                    foreach (string folder in folders.Values)
+                    {
+                        TestFolders.Delete(folder);
+                    }
+                    folders.Clear();
+                    throw;
+                }
+            }
+            taken.Add(name);
+            return folders[name];
+        }
+
+        public void Dispose()
+        {
+            foreach ((string kind, string folder) in folders)
+            {
+                if (!taken.Contains(kind))
+                {
+                    TestFolders.Delete(folder);
+                }
+            }
+        }
+
+        private static void Avalonia(string made)
+        {
+            File.WriteAllText(Path.Combine(made, "Gallery.csproj"), AvaloniaApp.HeadlessProject());
+            Directory.CreateDirectory(Path.Combine(made, "ViewModels"));
+            Directory.CreateDirectory(Path.Combine(made, "Styles"));
+            File.WriteAllText(Path.Combine(made, "ViewModels", "MainViewModel.cs"), XamlTests.Gallery.MainViewModel);
+            File.WriteAllText(Path.Combine(made, "Styles", "Palette.axaml"), XamlTests.Gallery.Palette);
+            File.WriteAllText(Path.Combine(made, "App.axaml"), XamlTests.Gallery.AppXaml);
+            File.WriteAllText(Path.Combine(made, "App.axaml.cs"),
+                "using Avalonia;\nusing Avalonia.Markup.Xaml;\n\nnamespace Gallery;\n\npublic partial class App : Application\n{\n    public override void Initialize() => AvaloniaXamlLoader.Load(this);\n}\n");
+            File.WriteAllText(Path.Combine(made, "Program.cs"), "namespace Gallery;\n\npublic static class Program\n{\n    public static void Main()\n    {\n    }\n}\n");
+            // The gallery's window, with a caption bound to a property its view model lacks.
+            File.WriteAllText(Path.Combine(made, "MainWindow.axaml"), XamlTests.Gallery.Window.Replace(
+                "<TextBlock Text=\"{Binding #Go.Content}\" />", "<TextBlock Text=\"{Binding #Go.Content}\" />\n        <TextBlock Text=\"{Binding Subtitle}\" />", StringComparison.Ordinal));
+            File.WriteAllText(Path.Combine(made, "MainWindow.axaml.cs"), XamlTests.Gallery.CodeBehind);
+        }
+
+        private static void Aspire(string made)
+        {
+            AspireCodeHelpTests.Project.WriteTo(made, AspireSecretsId);
+            File.WriteAllText(Path.Combine(made, "Host", "Program.cs"), AspireCodeHelpTests.Project.Host.Replace("builder.Build().Run();",
+                "var password = builder.AddParameter(\"password\", secret: true);\nbuilder.Build().Run();", StringComparison.Ordinal));
+            AspireApp.UseFeed(made);
+        }
+
+        private static void Wpf(string made)
+        {
+            WpfXamlTests.Gallery.Make(made);
+        }
+
+        private static void Routes(string made)
+        {
+            WebRoutesTests.WriteShop(made, 5557);
+        }
     }
 
     /// <summary>A tool's path, line and column (from 1) just after the first <paramref name="after"/> in a file's text.</summary>
