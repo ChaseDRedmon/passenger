@@ -620,11 +620,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
-        "Runs a configuration as Run does, built first when it says so, and waits for it to end or an Avalonia or WPF app's " +
-        "UI to be up. Returns its output so far and its exit code once it has one; a run refused (one running, a failed build " +
-        "with its errors) is an error. A terminal configuration runs in a Terminal tab (terminal_run types into it); a container " +
-        "configuration answers once its services are up, with each one's state. With resource, that one alone, its " +
-        "configuration started if no run has it.")]
+        "Runs a configuration as Run does, built first when it says so, and waits for it to end, an Avalonia or WPF app's " +
+        "UI or an AppHost's resources to be up. Returns its output so far and its exit code once it has one; a run refused (one " +
+        "running, a failed build with its errors) is an error. A terminal configuration runs in a Terminal tab (terminal_run " +
+        "types into it); a container configuration answers once its services are up, with each one's state. With resource, " +
+        "that one alone, its configuration started if no run has it.")]
     public Task<RunResult> Run(
         string? configuration = null,
         string? arguments = null,
@@ -670,11 +670,19 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             return new RunResult(true, null, await ServicesAsync(running, cancel), Tail(Session.Runner.Shown(), 200));
         }
         Task<int> ended = builds.RunEnd;
-        AgentCall.Say($"Running {name}: waiting up to {Math.Max(0, waitSeconds)} s for it to end or its UI to be up");
-        // An app with a window never ends by itself: the wait is over once its UI is up, which the app_ tools look at.
         LiveTree.LiveApp? app = Session.RunApp;
-        await When(() => ended.IsCompleted || app is { State: not LiveTree.LiveAppState.Waiting }, TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel,
-            Ends(ended), app is null ? _ => () => { } : On(h => app.StateChanged += h, h => app.StateChanged -= h));
+        if (Session.Configurations.Chosen is { } host && Session.Aspire.IsAspire(host) && Session.Aspire.FindApp(host.Project) is { } aspireApp)
+        {
+            AgentCall.Say($"Running {name}: waiting up to {Math.Max(0, waitSeconds)} s for it to end or its resources to be up");
+            await AppHostUpAsync(aspireApp, TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
+        }
+        else
+        {
+            AgentCall.Say($"Running {name}: waiting up to {Math.Max(0, waitSeconds)} s for it to end or its UI to be up");
+            // An app with a window never ends by itself: the wait is over once its UI is up, which the app_ tools look at.
+            await When(() => ended.IsCompleted || app is { State: not LiveTree.LiveAppState.Waiting }, TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel,
+                Ends(ended), app is null ? _ => () => { } : On(h => app.StateChanged += h, h => app.StateChanged -= h));
+        }
         int? code = ended.IsCompletedSuccessfully ? ended.Result : null;
         string output = Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(Session.Runner.Shown(), 200);
         string status = code is int exit ? BuildRunController.RunEnded(name, exit)

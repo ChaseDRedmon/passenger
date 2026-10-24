@@ -216,18 +216,19 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
         Assert.Empty(resources.Errors);
     }
 
-    /// <summary>The stand-in AppHost run by the agent from its Aspire configuration, up once its Passenger lists it with its
-    /// resource from the stand-in resource service.</summary>
+    /// <summary>The stand-in AppHost run by the agent from its Aspire configuration, which run answers once the AppHost is
+    /// up: its Passenger lists it with its resource from the stand-in resource service, running, as the answer comes.</summary>
     private async Task Running(McpClient client, string host)
     {
         Assert.True(await Waiting.UntilAsync(async () => (await Call(client, "workspace")).GetProperty("runConfigurations").EnumerateArray()
             .Any(item => item.GetString() == StandInAppHost.Configuration), TimeSpan.FromMinutes(2), Cancel),
             $"The stand-in AppHost's Aspire configuration was not found.{Said()}");
-        await Call(client, "run", new() { ["configuration"] = StandInAppHost.Configuration });
-        Assert.True(await Waiting.UntilAsync(async () => (await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray()
-            .Any(app => PathNames.Same(app.GetProperty("appHostPath").GetString()!, host)
-                && app.GetProperty("resources").EnumerateArray().Any(resource => resource.GetProperty("name").GetString() == "api-owned-instance")),
-            TimeSpan.FromMinutes(2), Cancel), $"The stand-in AppHost did not come up with its resource.{Said()}");
+        JsonElement ran = await Call(client, "run", new() { ["configuration"] = StandInAppHost.Configuration });
+        Assert.True(ran.GetProperty("stillRunning").GetBoolean(), $"run of the stand-in AppHost answered: {ran}");
+        JsonElement workspace = await Call(client, "workspace");
+        Assert.True(workspace.GetProperty("aspireApps").EnumerateArray().Any(app => PathNames.Same(app.GetProperty("appHostPath").GetString()!, host)
+            && app.GetProperty("resources").EnumerateArray().Any(resource => resource.GetProperty("name").GetString() == "api-owned-instance")),
+            $"run of the stand-in AppHost answered before the AppHost was up with its resource: {workspace}{Said()}");
     }
 
     /// <summary>One structured log of the API, its body a boolean and its attributes an integer, an authorization header and

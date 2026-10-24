@@ -93,6 +93,30 @@ public sealed partial class PassengerTools
         return snapshot;
     }
 
+    /// <summary>Waits until the AppHost an agent's run started is up, as a container configuration's run waits for its services:
+    /// its resource service has listed its resources and each shown one is up, has ended or was left unstarted; or until the
+    /// AppHost ends or the limit passes. It never ends by itself nor shows a UI, so a run that waited for either waited it all.
+    /// An AppHost that lists no resource waits the limit, as one whose resources have yet to come.</summary>
+    private async Task AppHostUpAsync(AspireAppRun app, TimeSpan limit, CancellationToken cancel)
+    {
+        if (limit <= TimeSpan.Zero)
+        {
+            return;
+        }
+        try
+        {
+            await window.FollowAspireAsync(Session, app, resources => Task.FromResult(resources.Count > 0 && resources
+                .Where(shown => !(shown.Data.TryGetProperty("isHidden", out JsonElement hidden) && hidden.ValueKind == JsonValueKind.True))
+                .All(resource => StandingOf(app, resource) is { } standing && (standing.IsUp || standing.HasEnded) || app.IsLeftUnstarted(resource)) ? resources : null),
+                limit, $"{app.Name} is not up yet", cancel);
+        }
+        catch (Exception unsettled) when (unsettled is TimeoutException or InvalidOperationException or IOException
+            || unsettled is OperationCanceledException && !cancel.IsCancellationRequested)
+        {
+            // The time is up, the AppHost ended or its resource stream did: the run answers as it stands.
+        }
+    }
+
     /// <summary>What an agent's run of a resource answers once the resource is up or has ended, or waitSeconds have passed,
     /// following its AppHost's resource stream as it goes, in the shape a compose service's run answers
     /// (<see cref="ResourceAnswer"/>): how it and its AppHost's other resources stand, and its own console. A start that
