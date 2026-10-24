@@ -15,8 +15,8 @@ namespace Passenger.Tests;
 /// <summary>An Avalonia app's frames, layout and rendering in the profiler, and Avalonia's renderer debug overlays from the
 /// Run and Debug windows: tests/Debuggees/FramesApp, written into a folder of its own with a project file on the tests' own
 /// Avalonia, headless, whose SlowPanel spins 30 ms in each measure ("--frames N" measures it again N times and ends the app;
-/// "slow N" typed into its console does the same and leaves it running). Profiled and debugged through the window, so run
-/// alone.</summary>
+/// "slow N" typed into its console does the same and leaves it running, "stall MS" spins one measure that long, "listened"
+/// says whether its layout is listened to). Profiled and debugged through the window, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDisposable
 {
@@ -24,16 +24,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
 
     public AvaloniaFramesTests(RestoredFolders folders)
     {
-        folder = PathNames.Canonical(folders.Take("frames-", made =>
-        {
-            foreach (string file in Directory.GetFiles(Debuggees.Source("FramesApp")))
-            {
-                File.Copy(file, Path.Combine(made, Path.GetFileName(file)));
-            }
-            string project = Path.Combine(made, "FramesApp.csproj");
-            File.WriteAllText(project, AvaloniaApp.HeadlessProject());
-            return project;
-        }));
+        folder = PathNames.Canonical(folders.Take("frames-", made => AvaloniaApp.Debuggee(made, "FramesApp")));
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -113,12 +104,15 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         Ui.Launched(window, window.AttachProfilerAsync(), "the profiler to attach to the debugged app");
         Assert.True(window.Profiling is { Attached: true }, "The profiler did not attach to the debugged app");
         OutputView console = window.BottomPanel.Debug.Console;
-        Type(window, console, "slow 5");
+        Ui.TypeToDebugged(window, "slow 5");
         Ui.WaitFor(() =>
         {
             console.Flush();
             return console.Document.Snapshot.ToString().Contains("measured 5 times", StringComparison.Ordinal);
         }, "the app to measure its slow panel five times");
+        Ui.TypeToDebugged(window, "listened");
+        Ui.WaitFor(() => Said(console, "layout listened") is not null, "the app to say whether its layout is listened to");
+        Assert.Equal("layout listened: activities True, meters True", Said(console, "layout listened"));
         SnapshotRead read = Ui.Await(window.SnapshotAsync(), "the attached run's snapshot", TimeSpan.FromMinutes(2));
         Assert.True(read.Snapshot is not null, read.Message);
         Assert.True(window.Debugger.IsDebugging, "The debugged app ended with the profiler's snapshot");
@@ -134,8 +128,24 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         Ui.WaitFor(() => window.LiveTree.Details?.Name == "Slow", "the Live Visual Tree to choose the slow panel");
         Assert.Equal(Xaml, window.EditorArea.Active?.Path);
 
+        // Attached again and stopped in the middle of a layout, the app lays out as before: the end let go of the layout the
+        // recording had under way, whose own end it no longer hears.
+        Ui.Launched(window, window.AttachProfilerAsync(), "the profiler to attach to the debugged app again");
+        Ui.TypeToDebugged(window, "stall 6000");
+        Ui.WaitFor(() => Said(console, "measuring, stalled") is not null, "the app to begin a long layout");
+        SnapshotRead stalled = Ui.Await(window.SnapshotAsync(), "the snapshot taken mid-layout", TimeSpan.FromMinutes(2));
+        Assert.True(stalled.Snapshot is not null, stalled.Message);
+        Ui.TypeToDebugged(window, "slow 1");
+        Ui.WaitFor(() => Said(console, "measured 1 times") is not null, "the app's UI thread to lay out again once the profiler had gone");
+
+        // Nothing in the app listens to its layout any more.
+        Ui.TypeToDebugged(window, "listened");
+        Ui.WaitFor(() => Said(console, "layout listened", 1) is not null, "the app to say again whether its layout is listened to");
+        Assert.True(Said(console, "layout listened", 1) == "layout listened: activities False, meters False",
+            $"The app's frames were still recorded once the profiler's session had ended: {Said(console, "layout listened", 1)}");
+
         // The Debug window's toggle sets an overlay on the app's window, read back from its renderer.
-        DebugView debug = window.BottomPanel.Debug;
+        DebugModel debug = window.BottomPanel.Debug;
         Assert.True(debug.Overlays.IsVisible, "The Debug window has no overlay toggle while an inspected app is debugged");
         Toggle(window, "debug", debug.Overlays, "LayoutTimeGraph");
         Assert.Equal(["LayoutTimeGraph"], Shown(window.LiveApp!));
@@ -191,13 +201,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         Ui.Settle();
         Avalonia.Controls.ListBoxItem item = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(frames.Table).OfType<Avalonia.Controls.ListBoxItem>()
             .First(i => i.DataContext == row);
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        for (int click = 0; click < 2; click++)
-        {
-            window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-            window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        }
-        Ui.Settle();
+        Ui.DoubleClick(item);
     }
 
     /// <summary>The overlays the app's main window shows, read back from its renderer by the inspector.</summary>
@@ -209,37 +213,21 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
     {
         window.ShowToolWindow(toolWindow);
         Ui.Settle();
-        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(button);
         Assert.True(button.Menu is not null, "The overlay toggle opened no menu");
         string before = window.Status ?? string.Empty;
         button.Choose(overlay);
         Ui.WaitFor(() => window.Status != before && window.Status?.Contains("shows", StringComparison.Ordinal) == true, $"the app to say it shows what was chosen ({window.Status})");
     }
 
-    /// <summary>A line typed into a console, which sends it to the program's input.</summary>
-    private static void Type(MainWindow window, OutputView console, string text)
+    /// <summary>The line of a console beginning so, the first or a later one, or null while it has not come.</summary>
+    private static string? Said(OutputView console, string start, int skipped = 0)
     {
-        window.ShowToolWindow("debug");
-        window.BottomPanel.Debug.ShowTab(console: true);
-        Ui.Settle();
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(inside, Avalonia.Input.MouseButton.Left);
-        window.KeyTextInput(text);
-        Ui.Press(window, "ENTER");
+        console.Flush();
+        return console.Document.Snapshot.ToString().Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith(start, StringComparison.Ordinal)).Skip(skipped).FirstOrDefault();
     }
 
-    private MainWindow Opened()
-    {
-        MainWindow window = new() { Width = 1400, Height = 900 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900, languageServer: false);
 
     /// <summary>The line (from one) of MainWindow.axaml holding some text, so a test names what it means rather than a number.</summary>
     private int Line(string text) => Array.FindIndex(File.ReadAllLines(Xaml), l => l.Contains(text, StringComparison.Ordinal)) + 1;

@@ -33,7 +33,7 @@ public partial class MainWindow
             }
         };
         // macOS has Settings in the application menu, as Rider's there.
-        actions!.Add(new IdeAction(AppActions.ShowSettings, "Settings...", "IDE", _ => ShowSettings())
+        actions!.Add(new IdeAction(AppActions.ShowSettings, "Settings…", "IDE", _ => ShowSettings())
         {
             Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("File", 3, 0)],
         });
@@ -69,8 +69,17 @@ public partial class MainWindow
     {
         AppSettings before = settings;
         settings = next;
+        Keymap keymap = keys.Keymap;
         keys.Keymap = AppActions.Keymap();
         keys.Reset();
+        if (!ReferenceEquals(keymap, keys.Keymap))
+        {
+            Dock.FollowKeys();
+            foreach (Avalonia.Visual within in (Avalonia.Visual[])[this, .. OwnedWindows])
+            {
+                ActionTips.Follow(within);
+            }
+        }
         if (menuBar is not null)
         {
             BuildMenuBar();
@@ -81,25 +90,23 @@ public partial class MainWindow
         }
         FollowViewSettings(before, next);
         FollowTitleBar(next);
+        FollowMainMenu(next);
         Explorer.NestFiles = next.NestFiles;
         assist.Templates = CSharp.TemplateSet.Of(next);
         assist.XamlFormat = next.XamlFormat;
-        terminal!.View.FontSize = next.TerminalFontSize;
-        foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
+        if (terminal is { } panel)
+        {
+            FollowTerminalSettings(panel, next, before);
+        }
+        foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, .. Bottom.Debug.Consoles])
         {
             console.Limit = next.ConsoleBufferKb * 1024;
-        }
-        if (next.TerminalShell is { } shell && Run.CommandLine.Split(shell) is { Count: > 0 } parts)
-        {
-            terminal.Shell = (parts[0], [.. parts.Skip(1)]);
-        }
-        else if (before.TerminalShell is not null)
-        {
-            terminal.Shell = null;
         }
         ApplyAnalysis();
         session.Web?.UseNode(next.NodeInterpreter);
         session.Web?.UseTools();
+        session.Web?.UseDockerHub(next.DockerHubTags);
+        session.Web?.Checks.UseBuildKit(next.BuildKitChecks);
         ListenForAgents(next.McpServer);
         FollowAgentFolders(before, next);
         WatchUpdates(next.CheckForUpdates);
@@ -113,11 +120,6 @@ public partial class MainWindow
         _ = dialog.ShowDialog(this);
         return dialog;
     }
-
-    private void OnSettingsClicked(object? sender, RoutedEventArgs e) => ShowSettings();
-
-    /// <summary>The toolbar's magnifier: Search Everywhere, as its shortcut opens it.</summary>
-    private void OnSearchClicked(object? sender, RoutedEventArgs e) => Request(AppActions.GoToEverything);
 
     private static void ApplyTo(CodeEditor editor, AppSettings with)
     {

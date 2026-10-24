@@ -20,25 +20,10 @@ namespace Passenger.Tests;
 /// <summary>Rider's View, Active Editor, through the window: Soft-Wrap (a Markdown or text file opens wrapped, as Settings'
 /// masks say), each row from a word, the line's later rows from its indent, its number beside its first row only, and
 /// every key, click and mark finding the row it is on; Show Whitespaces' dots and arrows; and Increase, Decrease and Reset
-/// Font Size and Cmd+wheel (Ctrl+wheel elsewhere) changing the font Settings keeps.</summary>
-[Collection(Alone.Name)]
-public sealed class ActiveEditorTests : IDisposable
+/// Font Size and Cmd+wheel (Ctrl+wheel elsewhere) changing the font Settings keeps. What a key costs in a long wrapped
+/// file is ActiveEditorResponsivenessTests'.</summary>
+public sealed class ActiveEditorTests : ActiveEditorFolders
 {
-    /// <summary>Sixty words of six letters, a space between each: a line that wraps in any editor this wide.</summary>
-    private static readonly string Words = string.Join(' ', Enumerable.Range(0, 60).Select(i => $"word{i:00}"));
-
-    private static readonly string Notes = "# Notes\n\n" + Words + "\n\n    " + Words + "\nlast\n        a " + new string('x', 400) + "\n"
-        + string.Join(' ', Enumerable.Range(0, 60).Select(i => $"café{i:00}")) + "\n";
-
-    private readonly string folder = TestFolders.Create("active-editor-");
-    private readonly string settings = TestFolders.Create("active-editor-settings-");
-
-    public void Dispose()
-    {
-        TestFolders.Delete(folder);
-        TestFolders.Delete(settings);
-    }
-
     [AvaloniaFact]
     public void A_Markdown_file_opens_wrapped_at_the_editors_width_each_row_from_a_word_and_its_number_by_its_first_row_only()
     {
@@ -304,7 +289,8 @@ public sealed class ActiveEditorTests : IDisposable
         Assert.Equal(Token(window, "Passenger.Editor.BreakpointLine"), Ui.Pixel(window, tinted));
 
         // The method's chevron is on its signature's row, below the comment's rows: a click there folds the method, and
-        // the class's brace comes up to the row after the signature.
+        // the class's brace comes up to the row after the signature, where a click puts the caret. The rows are the six
+        // lines left showing and the comment's rows after its first; the folded sum's rows are none of them.
         Point chevron = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Folding, 3), window)!.Value;
         window.MouseDown(chevron, MouseButton.Left);
         window.MouseUp(chevron, MouseButton.Left);
@@ -312,6 +298,12 @@ public sealed class ActiveEditorTests : IDisposable
         FoldRegion folded = Assert.Single(editor.FoldRegions, r => r.Folded);
         Assert.Equal(3, text.GetLineFromOffset(folded.Start));
         Assert.Equal(At(editor, text.GetLine(3).Start).Y + editor.LineHeight, At(editor, text.GetLine(8).Start).Y, 1);
+        Assert.Equal(6 + commentRows - 1, editor.RowsShown);
+        Point brace = editor.TranslatePoint(editor.PointOf(text.GetLine(8).Start) + new Point(2, editor.LineHeight / 2), window)!.Value;
+        window.MouseDown(brace, MouseButton.Left);
+        window.MouseUp(brace, MouseButton.Left);
+        Ui.Settle();
+        Assert.Equal(8, editor.CaretPosition.Line);
 
         // A click in the folding column beside a wrapped line's second row folds nothing.
         double secondRow = editor.PointOf(RowStarts(editor, comment)[0]).Y + (editor.LineHeight / 2);
@@ -414,7 +406,13 @@ public sealed class ActiveEditorTests : IDisposable
         Assert.Equal(15, again.EditorArea.CodeEditor.FontSize);
         again.Close();
     }
+}
 
+/// <summary>A key in a long soft-wrapped file costs the line it changed, never a wrap of the whole file, and about what it
+/// costs with soft wrap off. Held to times, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class ActiveEditorResponsivenessTests : ActiveEditorFolders
+{
     /// <summary>Twenty thousand lines of prose, each wrapping onto rows: a key costs the line it changed, never a wrap of the
     /// whole file, and about what it costs with soft wrap off.</summary>
     [AvaloniaFact]
@@ -461,12 +459,145 @@ public sealed class ActiveEditorTests : IDisposable
         Assert.True(soft <= (3 * plain) + 1, $"A key took {soft:F2} ms soft-wrapped, against {plain:F2} ms with soft wrap off.");
     }
 
+    /// <summary>An open C# file has folds, which the file carries through each key before the editor hears of the key: with
+    /// soft wrap on, a key in a file of 2,000 members, a wrapped comment over each, wraps the line it changed and no more, as
+    /// in a file of 20, and allocates on the UI thread what a key there does, give or take 16 KB: the rows asked for as the
+    /// folds moved wrapped the whole file again, and the editor once more; then each key still copied the wraps of every
+    /// line, made the rows of every wrapped line again and moved every region.</summary>
+    [AvaloniaFact]
+    public void A_key_in_an_open_soft_wrapped_file_with_folds_wraps_only_its_line_however_long_the_file()
+    {
+        (long smallWrapped, long smallBytes, _) = SoftWrappedKeys("Few.cs", 20);
+        (long largeWrapped, long largeBytes, long wrapAll) = SoftWrappedKeys("Many.cs", 2000);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"A key wrapped {smallWrapped} characters in 20 members and {largeWrapped} in 2,000, allocating {smallBytes / 1024:N0} KB and {largeBytes / 1024:N0} KB on the UI thread; wrapping the larger file's lines allocates {wrapAll / 1024:N0} KB.");
+        Assert.True(largeWrapped <= smallWrapped, $"A key in 2,000 members wrapped {largeWrapped} characters, more than the {smallWrapped} it wraps in 20: it wrapped the file again");
+        Assert.True(largeBytes <= smallBytes + (16 * 1024),
+            $"A key in 2,000 members allocated {largeBytes / 1024:N0} KB on the UI thread, {(largeBytes - smallBytes) / 1024:N0} KB more than in 20: it copied what every line or region has");
+    }
+
+    /// <summary>A frame of lines with hints, a parameter's name before each argument, allocates on the UI thread about what
+    /// a frame of the same lines naming their arguments in their text does (#441): each hinted line's hints were made again
+    /// at every frame, a list, an array and a closure for each, and its text drawn whole once for each piece between them;
+    /// now a row's hints are kept while the text and its hints stand, and each run of its text is drawn once.</summary>
+    [AvaloniaFact]
+    public void A_frame_of_hinted_lines_allocates_about_what_one_of_the_same_lines_naming_their_arguments_does()
+    {
+        MainWindow window = new() { Width = 1100, Height = 800, StartsLanguageServer = false };
+        window.Show();
+        (long named, _) = Frames(named: true);
+        (long hinted, string hintedFile) = Frames(named: false);
+        TestContext.Current.TestOutputHelper?.WriteLine($"A frame of 60 calls allocated {named / 1024} KB on the UI thread naming their arguments, {hinted / 1024} KB with them as hints");
+        Assert.True(hinted <= named + (32 * 1024),
+            $"A frame of 60 calls with two hints each allocated {hinted / 1024} KB on the UI thread, against {named / 1024} KB for the same calls naming their arguments: each line's hints were made again, or its text drawn once for each piece");
+        window.Close();
+
+        // The least a frame drawing the editor again over a file of calls allocated on the UI thread, of a few: the calls
+        // naming their arguments, or their names as hints before them.
+        (long Bytes, string File) Frames(bool named)
+        {
+            StringBuilder text = new("static class Calls\n{\n    public static int Of(int width, int height) => width * height;\n\n    public static void Run()\n    {\n");
+            for (int i = 0; i < 60; i++)
+            {
+                text.Append(named ? FormattableString.Invariant($"        Of(width: {i}, height: {i + 1});\n") : FormattableString.Invariant($"        Of({i}, {i + 1});\n"));
+            }
+            string source = text.Append("    }\n}\n").ToString();
+            string path = Path.Combine(folder, named ? "Named.cs" : "Hinted.cs");
+            File.WriteAllText(path, source);
+            window.OpenFile(path);
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            if (!named)
+            {
+                List<InlayHint> hints = [];
+                for (int i = 0; i < 60; i++)
+                {
+                    int call = source.IndexOf($"Of({i}, ", StringComparison.Ordinal);
+                    hints.Add(new InlayHint(call + 3, "width:", PadRight: true));
+                    hints.Add(new InlayHint(source.IndexOf(", ", call, StringComparison.Ordinal) + 2, "height:", PadRight: true));
+                }
+                editor.SetInlayHints(hints);
+                Ui.Settle();
+                Assert.Equal(120, editor.InlayHints.Count);
+            }
+            long least = long.MaxValue;
+            for (int i = 0; i < 5; i++)
+            {
+                editor.InvalidateVisual();
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            return (least, path);
+        }
+    }
+}
+
+/// <summary>The folders an Active Editor test writes its files and keeps its settings in, its texts, and the helpers that
+/// open, click and measure them.</summary>
+public abstract class ActiveEditorFolders : IDisposable
+{
+    /// <summary>Sixty words of six letters, a space between each: a line that wraps in any editor this wide.</summary>
+    protected static readonly string Words = string.Join(' ', Enumerable.Range(0, 60).Select(i => $"word{i:00}"));
+
+    protected static readonly string Notes = "# Notes\n\n" + Words + "\n\n    " + Words + "\nlast\n        a " + new string('x', 400) + "\n"
+        + string.Join(' ', Enumerable.Range(0, 60).Select(i => $"café{i:00}")) + "\n";
+
+    protected readonly string folder = TestFolders.Create("active-editor-");
+    protected readonly string settings = TestFolders.Create("active-editor-settings-");
+
+    public void Dispose()
+    {
+        TestFolders.Delete(folder);
+        TestFolders.Delete(settings);
+    }
+
+    /// <summary>What a key typed at the top of an open C# file of members, each under a comment that wraps, costs with soft
+    /// wrap on: the characters it wrapped and the bytes it allocated on the UI thread, its parse landing included, each key's
+    /// average; and the bytes turning soft wrap on allocated, which wraps every line.</summary>
+    protected (long Wrapped, long Bytes, long WrapAll) SoftWrappedKeys(string name, int members)
+    {
+        StringBuilder text = new("class Many\n{\n    int Typed()\n    {\n        int value = 1;\n        return value;\n    }\n\n");
+        for (int i = 0; i < members; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    // {Words}\n    int Member{i}()\n    {{\n        return {i};\n    }}\n\n");
+        }
+        text.Append("}\n");
+        string source = text.ToString();
+        MainWindow window = Open(name, source);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.FoldsFound && document.FoldRegions.Count > members, "the file's regions");
+        editor.Selections = SelectionSet.Single(source.IndexOf("= 1;", StringComparison.Ordinal) + 2);
+        editor.Focus();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Ui.Run(window, AppActions.SoftWrap);
+        long wrapAll = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(document.SoftWrap && editor.RowsShown > source.Count(c => c == '\n') + members, "Soft wrap did not wrap the comments.");
+        const int Keys = 10;
+        long wrapped = editor.CharactersWrapped;
+        long bytes = 0;
+        for (int i = 0; i < Keys; i++)
+        {
+            before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("1");
+            Ui.Settle();
+            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        wrapped = editor.CharactersWrapped - wrapped;
+        Assert.Contains("int value = 11111111111;", document.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+        return (wrapped / Keys, bytes / Keys, wrapAll);
+    }
+
     /// <summary>Keys typing, deleting and moving through rows, which leave the text as it was: six edits of the caret's line
     /// and six moves.</summary>
-    private static readonly string[] Timed = ["x", "y", "LEFT", "RIGHT", "DOWN", "UP", "BACK_SPACE", "BACK_SPACE", "meta RIGHT", "meta LEFT", "z", "BACK_SPACE"];
+    protected static readonly string[] Timed = ["x", "y", "LEFT", "RIGHT", "DOWN", "UP", "BACK_SPACE", "BACK_SPACE", "meta RIGHT", "meta LEFT", "z", "BACK_SPACE"];
 
     /// <summary>The timed keys at an offset, each timed.</summary>
-    private static void Keys(EditorRig rig, int offset, List<double> times)
+    protected static void Keys(EditorRig rig, int offset, List<double> times)
     {
         rig.PlaceCaret(offset);
         Ui.Settle();
@@ -485,13 +616,13 @@ public sealed class ActiveEditorTests : IDisposable
         }
     }
 
-    private static double Median(List<double> times)
+    protected static double Median(List<double> times)
     {
         List<double> sorted = [.. times.Order()];
         return sorted[sorted.Count / 2];
     }
 
-    private MainWindow Open(string name, string text)
+    protected MainWindow Open(string name, string text)
     {
         string path = Path.Combine(folder, name);
         File.WriteAllText(path, text);
@@ -504,15 +635,15 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>Where an offset's caret is drawn in the content, the scroll counted out: its row's top and its x.</summary>
-    private static Point At(CodeEditor editor, int offset) => editor.PointOf(offset) + editor.ScrollOffset;
+    protected static Point At(CodeEditor editor, int offset) => editor.PointOf(offset) + editor.ScrollOffset;
 
-    private static Point Caret(CodeEditor editor) => At(editor, editor.Selections.Primary.Caret);
+    protected static Point Caret(CodeEditor editor) => At(editor, editor.Selections.Primary.Caret);
 
-    private static double CharWidth(CodeEditor editor, int offset) => At(editor, offset + 1).X - At(editor, offset).X;
+    protected static double CharWidth(CodeEditor editor, int offset) => At(editor, offset + 1).X - At(editor, offset).X;
 
     /// <summary>The offsets a line's rows after its first start at: where a character is drawn a row below the one before.
     /// Read with no caret on the line, whose place there would be the end of the row before.</summary>
-    private static List<int> RowStarts(CodeEditor editor, LineSpan line)
+    protected static List<int> RowStarts(CodeEditor editor, LineSpan line)
     {
         List<int> starts = [];
         for (int offset = line.Start + 1; offset < line.End; offset++)
@@ -526,10 +657,10 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>The right edge of the view's text, where the vertical scrollbar begins.</summary>
-    private static double TextEdge(CodeEditor editor) =>
+    protected static double TextEdge(CodeEditor editor) =>
         editor.GetVisualChildren().OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Vertical).Bounds.Left;
 
-    private static void Click(MainWindow window, CodeEditor editor, Point inEditor)
+    protected static void Click(MainWindow window, CodeEditor editor, Point inEditor)
     {
         Point at = editor.TranslatePoint(inEditor, window)!.Value;
         window.MouseDown(at, MouseButton.Left);
@@ -538,7 +669,7 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>The middle of a space's dot, as Show Whitespaces draws it, in the window.</summary>
-    private static Point SpaceDot(MainWindow window, CodeEditor editor, int offset)
+    protected static Point SpaceDot(MainWindow window, CodeEditor editor, int offset)
     {
         double middle = Math.Floor(editor.PointOf(offset).Y + (editor.LineHeight / 2));
         double x = Math.Round(((editor.PointOf(offset).X + editor.PointOf(offset + 1).X) / 2) - 1);
@@ -546,7 +677,7 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>A point on a tab's arrow's shaft, halfway across the tab.</summary>
-    private static Point TabShaft(MainWindow window, CodeEditor editor, int offset)
+    protected static Point TabShaft(MainWindow window, CodeEditor editor, int offset)
     {
         double middle = Math.Floor(editor.PointOf(offset).Y + (editor.LineHeight / 2));
         double x = (editor.PointOf(offset).X + editor.PointOf(offset + 1).X) / 2;
@@ -555,7 +686,7 @@ public sealed class ActiveEditorTests : IDisposable
 
     /// <summary>The colours drawn in the gutter beside the row an offset is on, from the gutter's left to the change bars:
     /// its ground alone where nothing is drawn there.</summary>
-    private static HashSet<Color> GutterBeside(MainWindow window, CodeEditor editor, int offset)
+    protected static HashSet<Color> GutterBeside(MainWindow window, CodeEditor editor, int offset)
     {
         double top = editor.PointOf(offset).Y;
         double right = editor.GutterColumnPoint(GutterColumn.Changes, 0).X - 3;
@@ -582,7 +713,7 @@ public sealed class ActiveEditorTests : IDisposable
         return colours;
     }
 
-    private static Color Token(MainWindow window, string key) =>
+    protected static Color Token(MainWindow window, string key) =>
         Application.Current!.TryFindResource(key, window.ActualThemeVariant, out object? brush) && brush is ISolidColorBrush solid
             ? solid.Color
             : throw new InvalidOperationException($"The {window.ActualThemeVariant} theme has no {key}");

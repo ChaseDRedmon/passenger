@@ -15,16 +15,16 @@ public partial class MainWindow
 {
     private void AddHistoryActions()
     {
-        Add(AppActions.CompareWithRevision, "Compare with Revision...", context => _ = ShowCompareWithRevisionAsync(Target(context, fileOnly: true)!), 3, fileOnly: true);
-        Add(AppActions.CompareWithBranch, "Compare with Branch or Tag...", context => _ = ShowCompareWithBranchAsync(Target(context, fileOnly: true)!), 4, fileOnly: true);
+        Add(AppActions.CompareWithRevision, "Compare with Revision…", context => _ = ShowCompareWithRevisionAsync(Target(context, fileOnly: true)!), 3, fileOnly: true);
+        Add(AppActions.CompareWithBranch, "Compare with Branch or Tag…", context => _ = ShowCompareWithBranchAsync(Target(context, fileOnly: true)!), 4, fileOnly: true);
         Add(AppActions.ShowHistory, "Show History", context => _ = ShowHistoryAsync(Target(context, fileOnly: false)!), 5, fileOnly: false);
-        actions!.Add(new IdeAction(AppActions.ShowHistoryForSelection, "Show History for Selection...", "Git", context =>
+        actions!.Add(new IdeAction(AppActions.ShowHistoryForSelection, "Show History for Selection…", "Git", context =>
         {
             (int first, int last) = SelectedLines(context.Editor);
             _ = ShowSelectionHistoryAsync(context.File!.Path, first, last);
         })
         {
-            WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : NeedsFile(context)),
+            WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : Refusals.NeedsFile(context)),
             Menus = [new MenuPlace("Git", 2, 6)],
         });
 
@@ -36,11 +36,15 @@ public partial class MainWindow
             });
     }
 
-    /// <summary>What a file action runs on: the Explorer's one chosen row while the Explorer has the keys (a project's or
-    /// the solution's folder for theirs), else the file shown.</summary>
+    /// <summary>What a file action runs on: the Explorer's row its menu opened on, or its one chosen row while the Explorer
+    /// has the keys (a project's or the solution's folder for theirs), else the file shown.</summary>
     private static string? Target(ActionContext context, bool fileOnly)
     {
-        if (context.ToolWindow?.Id != "explorer")
+        if (context.ExplorerRow is { } row)
+        {
+            return Target(row, fileOnly);
+        }
+        if (context.ToolWindow?.Id != ToolWindowIds.Explorer)
         {
             return context.File?.Path;
         }
@@ -57,7 +61,7 @@ public partial class MainWindow
 
     private static string? WhyNoTarget(ActionContext context, bool fileOnly) =>
         Target(context, fileOnly) is not null ? null
-        : context.ToolWindow?.Id != "explorer" ? NoFile
+        : context.ToolWindow?.Id != ToolWindowIds.Explorer ? Refusals.NoFile
         : fileOnly ? "Choose a file in the Explorer" : "Choose a file or folder in the Explorer";
 
     /// <summary>The lines a selection covers (the caret's alone with none), less the line it ends at the start of.</summary>
@@ -79,7 +83,7 @@ public partial class MainWindow
             return null;
         }
         // Its commits are read as its tab is first shown, which a screenshot and a test wait for.
-        ShowToolWindow("git");
+        ShowToolWindow(ToolWindowIds.Git);
         return GitWindow.ShowHistory(scope, Path.GetFileName(Path.TrimEndingDirectorySeparator(scope.Path)));
     }
 
@@ -91,7 +95,7 @@ public partial class MainWindow
         {
             return null;
         }
-        ShowToolWindow("git");
+        ShowToolWindow(ToolWindowIds.Git);
         string lines = first == last ? $"line {first + 1}" : $"lines {first + 1}–{last + 1}";
         return GitWindow.ShowHistory(scope, $"{Path.GetFileName(path)}, {lines}");
     }
@@ -223,26 +227,5 @@ public partial class MainWindow
         TextSnapshot text = mine.Snapshot;
         FileDiff diff = await BackgroundWork.Run(() => FileDiff.Compare(theirs, text));
         return OpenLocalDiff(path, open, mine, diff, version);
-    }
-
-    /// <summary>The Explorer's Git items for a row: what it acts on is the row's file or folder.</summary>
-    private async Task ExplorerGitAsync(ExplorerAction action, ExplorerNode node)
-    {
-        if (Target(node, fileOnly: action != ExplorerAction.ShowHistory) is not { } path)
-        {
-            return;
-        }
-        switch (action)
-        {
-            case ExplorerAction.ShowHistory:
-                await ShowHistoryAsync(path);
-                break;
-            case ExplorerAction.CompareWithBranch:
-                await ShowCompareWithBranchAsync(path);
-                break;
-            case ExplorerAction.CompareWithRevision:
-                await ShowCompareWithRevisionAsync(path);
-                break;
-        }
     }
 }

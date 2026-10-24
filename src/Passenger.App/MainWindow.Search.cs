@@ -45,12 +45,13 @@ public partial class MainWindow
         };
         popup.ReplaceRequested += async (_, asked) =>
         {
-            int files = asked.Matches.Select(m => m.Path).Distinct().Count();
-            string what = $"{asked.Matches.Count} match{(asked.Matches.Count == 1 ? "" : "es")} in {files} file{(files == 1 ? "" : "s")}";
+            string what = FilesReplaced.Count(asked.Matches);
             if (await Confirm("Replace in Files", $"Replace {what} with '{asked.Replacement}'? An open file's change can be undone there; a closed file is written.", "Replace All"))
             {
-                IReadOnlyList<string> converted = ReplaceInFiles(asked.Query, asked.Replacement, [.. asked.Matches.Select(m => m.Path).Distinct()]);
-                status.Text = string.Join("; ", [$"Replaced {what}", .. converted]);
+                FilesReplaced done = ReplaceInFiles(asked.Query, asked.Replacement, [.. asked.Matches.Select(m => m.Path).Distinct()]);
+                IReadOnlyList<SearchMatch> replaced = done.Replaced(asked.Matches);
+                string? refused = done.NotReplaced(Path.GetFileName);
+                status.Text = string.Join("; ", [replaced.Count > 0 ? $"Replaced {FilesReplaced.Count(replaced)}" : "Nothing replaced", .. done.Converted, .. refused is null ? [] : new[] { refused }]);
                 await popup.SearchAsync();
             }
         };
@@ -100,7 +101,7 @@ public partial class MainWindow
                     return kept with { Kind = SearchScopeKind.Solution };
             }
         }
-        string name = rows.Count == 1 ? rows[0].Name : $"{rows[0].Name} and {rows.Count - 1} more item(s)";
+        string name = rows.Count == 1 ? rows[0].Name : $"{rows[0].Name} and {Plural.Of(rows.Count - 1, "more item")}";
         session.ChosenScope = (name, files, folders);
         return kept with { Kind = SearchScopeKind.Scope, Named = name };
     }
@@ -188,14 +189,21 @@ public partial class MainWindow
 
     /// <summary>Replaces a query's matches in these files: an open one as one undoable step changing only its matches,
     /// so its carets, folds and breakpoints stay put; a closed one written in its own encoding, or as UTF-8 when that
-    /// cannot hold the replacement, which is said of each such file in what this returns.</summary>
-    public IReadOnlyList<string> ReplaceInFiles(SearchQuery query, string replacement, IReadOnlyList<string> paths)
+    /// cannot hold the replacement, said of each such file. A closed file the system refuses to write (read-only, access
+    /// denied, held by another program) is left as it was and named with why, and the rest are replaced all the same.</summary>
+    public FilesReplaced ReplaceInFiles(SearchQuery query, string replacement, IReadOnlyList<string> paths)
     {
         List<string> converted = [];
+        List<(string Path, string Why)> refused = [];
         foreach (string path in paths)
         {
             if (Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open)
             {
+                if (!open.HoldsText)
+                {
+                    // A preview's or a workbook's tab holds no text of the file's to replace in, and its bytes are no text.
+                    continue;
+                }
                 IReadOnlyList<TextEdit> edits = FileSearch.Replacements(open.Text.Snapshot, query, replacement);
                 if (edits.Count > 0)
                 {
@@ -203,17 +211,31 @@ public partial class MainWindow
                     open.Text.Edit(edits, open.Selections, TextEditing.MapThrough(open.Selections, edits));
                     open.Text.BreakUndoGroup();
                 }
+                continue;
             }
-            else if (FileText.Load(path) is { } file)
+            try
             {
-                string after = FileSearch.ReplaceAll(file.Text, query, replacement);
-                if (after != file.Text && FileText.Save(path, after, file.Encoding, file.HasBom, file.CrBreaks).Converted is { } note)
+                if (FileText.Load(path) is { } file)
                 {
-                    converted.Add(note);
+                    string after = FileSearch.ReplaceAll(file.Text, query, replacement);
+                    if (after != file.Text && FileText.Save(path, after, file.Encoding, file.HasBom, file.CrBreaks).Converted is { } note)
+                    {
+                        converted.Add(note);
+                    }
                 }
             }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                refused.Add((path, error switch
+                {
+                    ReadOnlyFileException => "read-only",
+                    UnauthorizedAccessException => "access denied",
+                    FileNotFoundException or DirectoryNotFoundException => "gone",
+                    _ => error.Message,
+                }));
+            }
         }
-        return converted;
+        return new FilesReplaced(converted, refused);
     }
 
     /// <summary>Recent Files (Ctrl+,): the files opened last, the latest first, narrowed as a name is typed; a file
@@ -231,7 +253,7 @@ public partial class MainWindow
                 listed = listed.Where(p => FuzzyMatch.Score(query.Trim(), Path.GetFileName(p)) is not null);
             }
             return Task.FromResult<IReadOnlyList<Navigation.SymbolRow>>([.. listed.Select(p => new Navigation.SymbolRow(
-                Path.GetFileName(p), null, root.Length > 0 && PathNames.IsUnder(p, root) ? Path.GetDirectoryName(Path.GetRelativePath(root, p)) : Path.GetDirectoryName(p),
+                Path.GetFileName(p), null, Path.GetDirectoryName(PathNames.Shown(p, root)),
                 Navigation.SymbolRow.FileKind, p, new TextPosition(0, 0)))]);
         }, option: ("Show edited only", editedOnly));
         popup.OptionChanged += (_, on) => edited = on;
@@ -253,12 +275,13 @@ public partial class MainWindow
 
     private Task<IReadOnlyList<SearchMatch>> SearchFiles(SearchQuery query, SearchScope scope, CancellationToken cancellation)
     {
-        Dictionary<string, TextSnapshot> open = Editors.Documents.ToDictionary(d => d.Path, d => d.Text.Snapshot);
+        // A preview's or a workbook's tab holds no text, so its file is searched as a closed one is, and passed over as binary.
+        Dictionary<string, TextSnapshot> open = Editors.Documents.Where(d => d.HoldsText).ToDictionary(d => d.Path, d => d.Text.Snapshot);
         return FileSearch.FindAsync(session.Index.Root ?? Folder!, session.Index.Files, Place(scope), query, open, cancellation);
     }
 
     /// <summary>A file's text for the preview: the editor's when it is open.</summary>
     private TextSnapshot? TextOf(string path) =>
-        Editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot
+        Editors.Documents.FirstOrDefault(d => d.Path == path && d.HoldsText)?.Text.Snapshot
         ?? (FileSearch.Read(path) is { } text ? TextSnapshot.From(text) : null);
 }

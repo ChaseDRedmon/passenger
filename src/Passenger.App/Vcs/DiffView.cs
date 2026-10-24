@@ -13,7 +13,7 @@ namespace Passenger.App.Vcs;
 /// between them, the words that changed inside its lines marked stronger, the two kept level as either scrolls. A band's
 /// arrow puts that change back, as Rider's does; F7 and Shift+F7 go to the next and previous difference; the toolbar's
 /// Settings (Ctrl+Shift+D, Cmd+Shift+D on the Mac) chooses how differences are highlighted, by words at first.</summary>
-public sealed class DiffView : DockPanel
+public sealed class DiffView : DockPanel, IOwnKeys
 {
     /// <summary>How long editing pauses before the differences are worked out again.</summary>
     private static readonly TimeSpan RediffDelay = TimeSpan.FromMilliseconds(120);
@@ -60,7 +60,7 @@ public sealed class DiffView : DockPanel
 
         count = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
         count.Bind(TextBlock.ForegroundProperty, count.GetResourceObservable("Passenger.TextMuted"));
-        settings = Tool("Icon.Settings", $"Settings ({(OperatingSystem.IsMacOS() ? "⌘⇧D" : "Ctrl+Shift+D")})", ShowSettings);
+        settings = ToolButtons.Of("Icon.Settings", $"Settings ({(OperatingSystem.IsMacOS() ? "⌘⇧D" : "Ctrl+Shift+D")})", ShowSettings);
         settings[DockProperty] = Dock.Right;
         settings.Margin = new Thickness(0, 0, 6, 0);
         settings.VerticalAlignment = VerticalAlignment.Center;
@@ -73,8 +73,8 @@ public sealed class DiffView : DockPanel
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                Tool("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
-                Tool("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
+                ToolButtons.Of("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
+                ToolButtons.Of("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
                 new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) },
                 count,
             },
@@ -101,14 +101,13 @@ public sealed class DiffView : DockPanel
         };
         AddHandler(KeyDownEvent, (_, e) =>
         {
-            if (e.Key == Key.F7 && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
+            if (IsStep(e))
             {
                 Step(e.KeyModifiers == KeyModifiers.Shift ? -1 : 1);
                 e.Handled = true;
             }
-            else if (e.Key == Key.D && e.KeyModifiers == ((OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control) | KeyModifiers.Shift))
+            else if (IsSettings(e))
             {
-                // Rider's Diff.ShowSettingsPopup.
                 ShowSettings();
                 e.Handled = true;
             }
@@ -122,6 +121,15 @@ public sealed class DiffView : DockPanel
 
     /// <summary>The file's side.</summary>
     public CodeEditor Right { get; }
+
+    /// <summary>F7 and Shift+F7, Rider's next and previous difference there, ahead of Smart Step Into's Shift+F7 everywhere
+    /// else, and Rider's Diff.ShowSettingsPopup.</summary>
+    public bool TakesKey(KeyEventArgs e) => IsStep(e) || IsSettings(e);
+
+    private static bool IsStep(KeyEventArgs e) => e.Key == Key.F7 && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift;
+
+    private static bool IsSettings(KeyEventArgs e) =>
+        e.Key == Key.D && e.KeyModifiers == ((OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control) | KeyModifiers.Shift);
 
     public bool IsEditable { get; }
 
@@ -304,15 +312,6 @@ public sealed class DiffView : DockPanel
         label.Bind(TextBlock.ForegroundProperty, label.GetResourceObservable("Passenger.TextMuted"));
         Grid.SetColumn(label, column);
         return label;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
     }
 
     /// <summary>The strip between the sides: each difference a band from its lines on the left to its lines on the

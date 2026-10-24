@@ -1,19 +1,19 @@
 using System.Diagnostics;
 using System.Xml;
 using Microsoft.Build.Construction;
-using Microsoft.Build.Definition;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Evaluation.Context;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Framework;
+using Passenger.Core;
 
 namespace Passenger.Host;
 
 /// <summary>One project evaluated for the code help in its MSBuild files: the open files' text read in place of the disk's
 /// (each put in the evaluation's own collection under its path, so the project and whatever imports it read it), a
 /// multi-targeted project's first framework evaluated, and what the evaluation knows read out (properties and where each
-/// was set, items, targets, imports, the errors and warnings it logged). Answers are kept while what they read holds and
-/// the texts are the same, so asking again after a pause with nothing typed costs nothing.</summary>
+/// was set, items, targets, imports, the errors and warnings it logged). Answers are kept while the files they read and the
+/// folders their wildcards walked hold and the texts are the same, so asking again with nothing typed costs a look at those.</summary>
 internal static class Inspection
 {
     /// <summary>How many includes an item type or an element lists, and the longest value kept: enough to show, never the
@@ -26,8 +26,6 @@ internal static class Inspection
 
     private static readonly List<(string Key, ProjectInsight Insight)> Cache = [];
 
-    private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
     public static ProjectInsight Run(InspectParams asked, CancellationToken cancel)
     {
         string key = Key(asked);
@@ -38,7 +36,8 @@ internal static class Inspection
             {
                 (string Key, ProjectInsight Insight) kept = Cache[found];
                 Cache.RemoveAt(found);
-                if (kept.Insight.Inputs.All(Stamps.Holds))
+                // The folders at once: each is a read of the folder, thousands of them for a large project.
+                if (kept.Insight.Inputs.All(Stamps.Holds) && kept.Insight.Folders.AsParallel().All(Stamps.Holds))
                 {
                     Cache.Add(kept);
                     return kept.Insight;
@@ -90,10 +89,12 @@ internal static class Inspection
             // An open file whose XML does not read: evaluated from the disk's text, every place in it would be another text's.
             return Failed(asked, file, problems, began);
         }
+        // Stamped before they are read: a file come or gone once evaluation has begun changes the stamps too.
+        IReadOnlyList<Stamp> walked = Evaluation.Walked(Path.GetDirectoryName(asked.Project)!);
         List<Project> loaded = [];
         try
         {
-            Project project = Load(asked.Project, collection, context, global, null);
+            Project project = Evaluation.Load(asked.Project, collection, context, global, null);
             loaded.Add(project);
             string? framework = null;
             if (project.GetPropertyValue("TargetFramework").Length == 0
@@ -101,10 +102,10 @@ internal static class Inspection
             {
                 cancel.ThrowIfCancellationRequested();
                 framework = first;
-                project = Load(asked.Project, collection, context, global, first);
+                project = Evaluation.Load(asked.Project, collection, context, global, first);
                 loaded.Add(project);
             }
-            return Read(project, framework, file, [.. problems, .. logged.Found], Stopwatch.GetElapsedTime(began).TotalSeconds);
+            return Read(project, framework, file, walked, [.. problems, .. logged.Found], Stopwatch.GetElapsedTime(began).TotalSeconds);
         }
         catch (Exception error) when (error is InvalidProjectFileException or IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         {
@@ -134,25 +135,11 @@ internal static class Inspection
     {
         Project = asked.Project,
         Diagnostics = diagnostics,
-        Inputs = [file, .. asked.Texts.Keys.Where(p => !p.Equals(asked.Project, PathComparison)).Select(Stamps.File)],
+        // The files the failure names among them, so a fix to one is evaluated.
+        Inputs = [file, .. asked.Texts.Keys.Concat(diagnostics.Select(d => d.File)).Where(p => p.Length > 0 && !PathNames.Same(p, asked.Project)).Select(Stamps.File)
+            .Concat(Evaluation.LookedFor(asked.Project, null)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
         Seconds = Stopwatch.GetElapsedTime(began).TotalSeconds,
     };
-
-    private static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
-    {
-        Dictionary<string, string> global = new(properties, StringComparer.OrdinalIgnoreCase);
-        if (framework is not null)
-        {
-            global["TargetFramework"] = framework;
-        }
-        return WindowsTargeting.Load(given => Project.FromFile(path, new ProjectOptions
-        {
-            GlobalProperties = given,
-            ProjectCollection = collection,
-            EvaluationContext = context,
-            LoadSettings = Evaluation.Settings,
-        }), global, collection);
-    }
 
     /// <summary>An exception's place and words: MSBuild's own for a project that does not load, the reader's for XML that
     /// does not read.</summary>
@@ -164,10 +151,10 @@ internal static class Inspection
         _ => new InsightDiagnostic(true, null, error.Message, path, 0, 0),
     };
 
-    private static ProjectInsight Read(Project project, string? framework, Stamp file, List<InsightDiagnostic> diagnostics, double seconds)
+    private static ProjectInsight Read(Project project, string? framework, Stamp file, IReadOnlyList<Stamp> walked, List<InsightDiagnostic> diagnostics, double seconds)
     {
         List<string> roots = [.. Evaluation.OutsideRoots(project)];
-        bool Installed(string path) => roots.Any(root => path.StartsWith(root, PathComparison));
+        bool Installed(string path) => roots.Any(root => path.StartsWith(root, PathNames.Comparison));
         FileTable files = new();
         List<InsightProperty> properties = [];
         foreach (ProjectProperty property in project.Properties)
@@ -267,7 +254,8 @@ internal static class Inspection
             Imports = imports,
             Frameworks = frameworks,
             Installed = roots,
-            Inputs = [file, .. project.Imports.Select(i => i.ImportedProject.FullPath).Distinct(StringComparer.Ordinal).Where(i => !Installed(i)).Select(Stamps.File)],
+            Inputs = Evaluation.Inputs(file, [project], roots, Evaluation.LookedFor(project.FullPath, project)),
+            Folders = Evaluation.Folders(project.FullPath, walked, Evaluation.Items([project]).Select(i => i.Path)),
             Files = files.Paths,
             Seconds = seconds,
         };

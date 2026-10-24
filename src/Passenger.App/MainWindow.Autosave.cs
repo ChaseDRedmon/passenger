@@ -1,6 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Editor;
@@ -10,7 +8,8 @@ namespace Passenger.App;
 /// <summary>Rider's autosave: an edit is never lost and closing never asks. Every changed file is saved before the
 /// window closes (quitting included) or another folder opens, and, each as Settings says, when the focus goes to
 /// another program or to the terminal and once the IDE has been idle a while. Nor is a character the file's encoding
-/// cannot hold: the file is saved as UTF-8 instead, and the status bar says so.</summary>
+/// cannot hold: the file is saved as UTF-8 instead, and the status bar says so. A file whose folder another program moved
+/// or deleted is never written back there but by the person's Save, which the status bar says.</summary>
 public partial class MainWindow
 {
     private readonly DispatcherTimer idleSave = new();
@@ -28,18 +27,9 @@ public partial class MainWindow
                 Autosave();
             }
         };
-        // Leaving Passenger saves; going to one of its own windows (a dialog, Settings, a diff) does not, as in Rider.
-        Deactivated += (_, _) => Dispatcher.UIThread.Post(() =>
-        {
-            if (!OwnWindowActive())
-            {
-                SaveOnLeaving();
-            }
-        }, DispatcherPriority.Background);
-        terminal!.View.GotFocus += (_, _) => SaveOnLeaving();
-        // Any key or click is activity, which the idle wait starts again from.
-        AddHandler(KeyDownEvent, (_, _) => RestartIdleSave(), RoutingStrategies.Tunnel, handledEventsToo: true);
-        AddHandler(PointerPressedEvent, (_, _) => RestartIdleSave(), RoutingStrategies.Tunnel, handledEventsToo: true);
+        // Leaving Passenger from any of its windows saves (OnLeft), and so does going to its terminal (MakeTerminal); going to
+        // one of its own (a dialog, Settings, a diff) does not, as in Rider. Any key or click in them is activity, which the
+        // idle wait starts again from (OnActivity).
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) => RestartIdleSave();
         Editors.Opened += (_, document) =>
         {
@@ -78,38 +68,47 @@ public partial class MainWindow
     /// it writable or close without it (<see cref="CloseUnsavedAsync"/>).</summary>
     protected override void OnClosing(WindowClosingEventArgs e)
     {
-        bool quit = quitWhenDecided || e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
+        // Passenger's quit (File, Exit; Restart to Update) and the system's (the application menu's Quit) keep each solution.
+        bool quit = PassengerApp.Quitting || e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
         if (Autosaves && !(Editors.SaveAll(new HashSet<OpenDocument>(conflicted.Concat(leftUnsaved))) && conflicted.Count == 0))
         {
             e.Cancel = true;
             _ = CloseUnsavedAsync(quit);
             return;
         }
-        // The application menu's Quit and the system's shutdown close every window, each keeping its solution to reopen.
         quitting = quit;
         base.OnClosing(e);
     }
 
-    /// <summary>File, Save (the file shown) or Save All: each changed file first gets what Settings ask of a save, Rider's
-    /// actions on save (Run eslint --fix on save, then Prettier's Run on save), which Rider runs on an explicit save and
-    /// never on autosave, each one undoable edit.</summary>
+    /// <summary>File, Save (the file shown as it is pressed) or Save All: each changed file first gets what Settings ask of
+    /// a save, Rider's actions on save (Run eslint --fix on save, then Prettier's Run on save), which Rider runs on an
+    /// explicit save and never on autosave, each one undoable edit. The files are saved whatever came of those.</summary>
     private async Task SaveExplicitly(bool all)
     {
-        List<OpenDocument> saving = all ? [.. Editors.Documents.Where(d => d.IsModified)] : Editors.Active is { IsModified: true } shown ? [shown] : [];
+        OpenDocument? pressed = all ? null : Editors.Active;
+        List<OpenDocument> saving = all ? [.. Editors.Documents.Where(d => d.IsModified)] : pressed is { IsModified: true } ? [pressed] : [];
         BackgroundWork.Begin();
         try
         {
-            foreach (OpenDocument document in saving)
+            foreach (OpenDocument document in saving.Where(d => Editors.Documents.Contains(d)).ToList())
             {
-                await assist.BeforeSave(document);
+                try
+                {
+                    await assist.BeforeSave(document);
+                }
+                catch (Exception error)
+                {
+                    // The save goes on without what failed, which IDE Internal Errors shows.
+                    IdeErrors.Report(error);
+                }
             }
             if (all)
             {
-                Editors.SaveAll();
+                Editors.SaveAll(asked: true);
             }
-            else
+            else if (pressed is not null)
             {
-                Editors.SaveActive();
+                Editors.SaveAsked(pressed);
             }
         }
         finally

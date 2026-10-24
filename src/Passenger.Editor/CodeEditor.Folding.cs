@@ -35,9 +35,10 @@ public sealed partial class CodeEditor
             return;
         }
         HideFoldPreview();
-        folds = InOrder(regions) ? regions : [.. regions.OrderBy(r => r.Start)];
+        folds = regions is FoldList || InOrder(regions) ? regions : [.. regions.OrderBy(r => r.Start)];
         InvalidateVisual();
         UpdateScrollBars();
+        ScrollWithinRows();
         FollowInputMethod();
     }
 
@@ -156,6 +157,8 @@ public sealed partial class CodeEditor
             SetSelections(selections.With(s => IsHidden(text.GetLineFromOffset(s.Caret)) ? Selection.At(HeaderEnd(text, s.Caret)) : s), reveal: true);
         }
         UpdateScrollBars();
+        // A caret left showing moves nothing, so the view may stand below the rows folding left (Collapse All).
+        ScrollWithinRows();
         InvalidateVisual();
         FollowInputMethod();
         FoldsToggled?.Invoke(this, folds);
@@ -172,6 +175,44 @@ public sealed partial class CodeEditor
             line = map.Hidden[k].First - 1;
         }
         return text.GetLine(Math.Max(0, line)).End;
+    }
+
+    /// <summary>The regions in text an edit moved whole (the line a moved line stepped over) carried along with it, rather
+    /// than collapsed where it was taken out, so a method stepped over stays folded; the rest carried through the edits as
+    /// the host carries them, and the host told.</summary>
+    private void FollowMoves(IReadOnlyList<FoldRegion> before, EditPlan plan)
+    {
+        if (plan.Moved.Count == 0 || !before.Any(r => r.Folded && MovedBy(plan.Moved, r) is not null))
+        {
+            return;
+        }
+        FoldRegion[] carried = new FoldRegion[before.Count];
+        for (int i = 0; i < carried.Length; i++)
+        {
+            FoldRegion region = before[i];
+            carried[i] = MovedBy(plan.Moved, region) is int by
+                ? region with { Start = region.Start + by, End = region.End + by }
+                : region with
+                {
+                    Start = TextEditing.MapOffset(region.Start, plan.Edits, afterInsertions: true),
+                    End = TextEditing.MapOffset(region.End, plan.Edits, afterInsertions: true),
+                };
+        }
+        SetFoldRegions(carried);
+        FoldsToggled?.Invoke(this, folds);
+    }
+
+    /// <summary>How far a region moved, when it lies in text an edit moved whole.</summary>
+    private static int? MovedBy(IReadOnlyList<TextMove> moves, FoldRegion region)
+    {
+        foreach (TextMove move in moves)
+        {
+            if (region.Start >= move.From && region.End <= move.From + move.Length)
+            {
+                return move.To - move.From;
+            }
+        }
+        return null;
     }
 
     /// <summary>Unfolds whatever hides a caret, as Rider does for a caret that goes into folded code.</summary>
@@ -429,7 +470,8 @@ public sealed partial class CodeEditor
 
     /// <summary>The folded regions of one text in its lines: the folded lines as ranges in order with the lines folded
     /// before each, and the widest folded region starting on each line, whose placeholder ends it. Made for each change
-    /// to the text, so it reads only the folded regions; the others' lines are found when one is drawn or asked for.</summary>
+    /// to the text, so it reads only the folded regions (of a <see cref="FoldList"/>, passing over its runs with none); the
+    /// others' lines are found when one is drawn or asked for.</summary>
     private sealed class FoldLines
     {
         public FoldLines(TextSnapshot text, IReadOnlyList<FoldRegion> folds)
@@ -437,7 +479,8 @@ public sealed partial class CodeEditor
             Text = text;
             Folds = folds;
             List<(int First, int Last)> ranges = [];
-            for (int i = 0; i < folds.Count; i++)
+            FoldList? runs = folds as FoldList;
+            for (int i = runs?.NextFolded(0) ?? 0; i < folds.Count; i = runs?.NextFolded(i + 1) ?? i + 1)
             {
                 FoldRegion region = folds[i];
                 if (!region.Folded)
@@ -445,19 +488,16 @@ public sealed partial class CodeEditor
                     continue;
                 }
                 int start = StartLineOf(text, region);
-                if (start == int.MaxValue)
+                int first = start + 1;
+                int last = EndLineOf(text, region);
+                // A region that hides nothing (its lines deleted, waiting for the regions found again) shows no placeholder.
+                if (start == int.MaxValue || last < first)
                 {
                     continue;
                 }
                 if (!Placeholders.TryGetValue(start, out int widest) || region.End > folds[widest].End)
                 {
                     Placeholders[start] = i;
-                }
-                int first = start + 1;
-                int last = EndLineOf(text, region);
-                if (last < first)
-                {
-                    continue;
                 }
                 if (ranges.Count > 0 && first <= ranges[^1].Last + 1)
                 {

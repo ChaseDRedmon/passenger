@@ -10,19 +10,22 @@ namespace Passenger.Lsp;
 public sealed class LanguageSession : IAsyncDisposable, IDocumentHost
 {
     /// <summary>The open documents by their canonical path, as a server may spell a URI its own way.</summary>
-    private readonly Dictionary<string, LspDocument> documents = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, LspDocument> documents = new(PathNames.Comparer);
 
-    private LanguageSession(LanguageServer server)
+    private LanguageSession(LanguageServer server, PushPace pushes)
     {
         Server = server;
+        Pushes = pushes;
         server.DiagnosticsPublished += OnPublished;
     }
 
     public LanguageServer Server { get; }
 
+    public PushPace Pushes { get; }
+
     /// <summary>Starts a server and initializes it; cancelled or failed, it leaves no process behind.</summary>
     public static async Task<LanguageSession> StartAsync(ServerStart start, CancellationToken cancel = default) =>
-        new(await LanguageServer.StartAsync(start, cancel).ConfigureAwait(false));
+        new(await LanguageServer.StartAsync(start, cancel).ConfigureAwait(false), start.Pushes);
 
     /// <summary>Starts following a document open in an editor, in a language the server answers for: it is sent its text,
     /// then every change to it, in order.</summary>

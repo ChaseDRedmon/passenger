@@ -19,9 +19,17 @@ public static class WorkspaceEdits
     /// <summary>Every open document followed from now, for a request about to be sent; disposed once its answer is applied.</summary>
     public static Asked Track(EditorArea editors) => new(editors.Documents.ToDictionary(d => d, d => new ChangeTracker(d.Text)));
 
+    /// <summary>Each file's text as a server's answer was made for it: an open file's as it was when the request was sent
+    /// (<paramref name="asked"/>), else as the editor or the disk has it now (<see cref="ServerPlaces.Texts"/>).</summary>
+    public static Func<string, TextSnapshot?> Answered(EditorArea editors, Asked? asked)
+    {
+        Func<string, TextSnapshot?> now = ServerPlaces.Texts(editors);
+        return path => asked?.Trackers.FirstOrDefault(t => t.Key.Path == path).Value?.Snapshot ?? now(path);
+    }
+
     /// <summary>How long after a file changes on disk the language server may still hold it as it was: it reads a file
     /// not open again only once its own watcher hears of the change.</summary>
-    internal static readonly TimeSpan Catching = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan Catching = TimeSpan.FromSeconds(2);
 
     /// <summary>Why an edit the language server worked out must not be applied to the files not open it changes, found
     /// before any is written: one written on disk since the request was sent (<paramref name="since"/>) or a moment before
@@ -242,10 +250,12 @@ public static class WorkspaceEdits
         {
             bool overwrite = resource.Option("overwrite");
             bool ignored = !overwrite && resource.Option("ignoreIfExists");
-            // A new name differing only in case is the same file on macOS and Windows, not one already there.
-            bool taken = resource.To is { } to && Exists(to) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase);
+            // A new name differing only in case is the same file on macOS and Windows, not one already there; on Linux it is another.
+            bool taken = resource.To is { } to && Exists(to) && !PathNames.Same(to, resource.Path);
             switch (resource.Kind)
             {
+                case "create" when overwrite && FileText.IsReadOnly(resource.Path):
+                    return $"{Path.GetFileName(resource.Path)} is read-only";
                 case "create" when Exists(resource.Path) && !overwrite && !ignored:
                 case "rename" when taken && !ignored && (!overwrite || Directory.Exists(resource.To)):
                     return $"{Path.GetFileName(resource.To ?? resource.Path)} is already there";
@@ -280,12 +290,16 @@ public static class WorkspaceEdits
         switch (resource.Kind)
         {
             case "create" when !exists || resource.Option("overwrite"):
-                Directory.CreateDirectory(Path.GetDirectoryName(resource.Path)!);
-                File.WriteAllText(resource.Path, string.Empty);
+            {
+                // Written as a save writes, in the charset its .editorconfig names: what an overwrite replaced is given
+                // to Local History, and a read-only file is refused.
+                FileEncoding charset = EditorConfig.For(resource.Path).Charset ?? FileEncoding.Utf8;
+                FileText.Save(resource.Path, string.Empty, charset.Encoding, charset.Bom);
                 editors.Documents.FirstOrDefault(d => d.Path == resource.Path)?.Reload(overUnsaved: true);
                 break;
+            }
             case "rename" when resource.To is { } to:
-                if ((File.Exists(to) || Directory.Exists(to)) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase))
+                if ((File.Exists(to) || Directory.Exists(to)) && !PathNames.Same(to, resource.Path))
                 {
                     // Ignored, as its options ask: the refusal stopped every other rename onto something there.
                     if (!resource.Option("overwrite") || Directory.Exists(to))
@@ -324,8 +338,10 @@ public static class WorkspaceEdits
     }
 
     /// <summary>What an edit does to each file, as a refactoring's answer names them: made, moved or deleted, else changed,
-    /// with the lines (from one, of the text it was made for) its edits start on. A file made and then filled is one made.</summary>
-    public static IReadOnlyList<RefactoredFile> Files(JsonElement edit)
+    /// with the lines (from one) its edits start on, as the editor counts those of the text it was made for, which
+    /// <paramref name="texts"/> gives (<see cref="Answered"/>), so found before it is applied. A file made and then filled is
+    /// one made.</summary>
+    public static IReadOnlyList<RefactoredFile> Files(JsonElement edit, Func<string, TextSnapshot?> texts)
     {
         List<RefactoredFile> files = [];
         HashSet<string> made = new(StringComparer.Ordinal);
@@ -347,7 +363,8 @@ public static class WorkspaceEdits
             {
                 continue;
             }
-            IReadOnlyList<int> lines = [.. change.Edits.Select(e => e.Range.Start.Line + 1).Distinct().Order()];
+            TextSnapshot? text = texts(path);
+            IReadOnlyList<int> lines = [.. change.Edits.Select(e => ServerPlaces.PositionOf(text, e.Range.Start).Line + 1).Distinct().Order()];
             if (files.FindIndex(f => f.Path == path && f.Change == "changed") is int at and >= 0)
             {
                 files[at] = files[at] with { Lines = [.. files[at].Lines.Concat(lines).Distinct().Order()] };
@@ -384,7 +401,7 @@ public sealed record RefactorOutcome(string Said, string? Problem, IReadOnlyList
 }
 
 /// <summary>A file a refactoring changed: created, changed, moved (to <paramref name="To"/>) or deleted, with the lines its
-/// edits start on, from one, in the text as it was.</summary>
+/// edits start on, from one, as the editor counts the text as it was.</summary>
 public sealed record RefactoredFile(string Path, string Change, IReadOnlyList<int> Lines, string? To = null);
 
 /// <summary>A workspace edit that could not be made, and why: a file it renames onto is there already, one it renames

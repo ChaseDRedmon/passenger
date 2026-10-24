@@ -16,21 +16,31 @@ namespace Passenger.App.Debugging;
 
 /// <summary>The debugger in the IDE: the breakpoints in the gutter, a session's stops shown where
 /// they are (the execution line, the Debug window's frames and variables), the stepping actions, and
-/// a value when the pointer rests on an expression while paused. A UI-thread object.</summary>
+/// a value when the pointer rests on an expression while paused. Several programs may be debugged at once, a session and a
+/// tab of the Debug window each: every breakpoint goes to each, and the window shows the chosen tab's, a stop in any program
+/// choosing its tab. A UI-thread object.</summary>
 public sealed class DebugController : IDisposable
 {
+    /// <summary>Rider's words in the console of a program attached to, whose output goes where it always went.</summary>
+    public const string AttachedConsole = "Console output is not available when the debugger is attached to a running process";
+
     private readonly EditorArea editors;
-    private readonly DebugView view;
+    private readonly DebugModel view;
     private readonly List<string> watches = [];
     private readonly Dictionary<OpenDocument, EventHandler<DocumentChangedEventArgs>> following = [];
 
     /// <summary>Where the program stopped, at its built line: shown where that line's code now is.</summary>
     private (string Path, int Line)? executionPoint;
 
-    /// <summary>The session's built lines, from its start to its end: the files' edits since the build.</summary>
-    private BuiltLines? lines;
+    /// <summary>The chosen session's built lines, from its start to its end: the files' edits since the build.</summary>
+    private BuiltLines? lines => chosen?.Lines;
 
-    private (string Expression, string Value)? lastResult;
+    /// <summary>The tab the Debug window shows, whose session the actions act on; null before the first session.</summary>
+    private DebugTab? chosen;
+
+    /// <summary>The last expression the person evaluated (not a watch), as it came out, and the stop it was evaluated at
+    /// (<see cref="shown"/>): listed under the watches while that stop is shown, never evaluated again unasked.</summary>
+    private (int Stop, VariableNode Row)? lastResult;
 
     /// <summary>The frame chosen at the stop shown: its variables are the view's, a hover evaluates in it. None while the
     /// program runs, so nothing asks of a frame the debugger has let go.</summary>
@@ -57,35 +67,42 @@ public sealed class DebugController : IDisposable
     /// gone on is dropped rather than shown over what is now true.</summary>
     private int shown;
 
-    /// <summary>The session's name, as the status bar names it ("Tests", a run configuration's).</summary>
-    private string name = string.Empty;
+    /// <summary>Cancelled as the stop shown goes (the program goes on, another tab is chosen, the folder is left), so what was
+    /// read at it and still shows (a hover card's value) goes with it.</summary>
+    private CancellationTokenSource stopShown = new();
+
+    /// <summary>The chosen session's name, as the status bar names it ("Tests", a run configuration's).</summary>
+    private string name => chosen?.Name ?? string.Empty;
 
     /// <summary>The data breakpoints whose refusal the status bar has said, so it says each once.</summary>
     private readonly HashSet<DataBreakpoint> refusalsTold = [];
 
     /// <summary>Clears the last stop's frames and values a moment after the program goes on, as Rider's views do: a step
     /// that stops again at once replaces them without the panes going blank between.</summary>
-    private readonly DispatcherTimer clearing = new() { Interval = TimeSpan.FromMilliseconds(100) };
+    private readonly Debounce clearing;
 
     /// <summary>Takes this debugger's handlers off the Debug window, which the next session's debugger has from then.</summary>
     private readonly Action letGo;
 
     private bool disposed;
+    private bool ending;
 
     /// <summary>A folder's debugger over the window's editors and Debug window, which it has until it is disposed.</summary>
-    public DebugController(EditorArea editors, DebugView view)
+    public DebugController(EditorArea editors, DebugModel view)
     {
         this.editors = editors;
         this.view = view;
-        clearing.Tick += (_, _) =>
+        // The window's Debug tabs are this folder's from now: the last folder's, ended or ending, are let go.
+        view.ForgetSessions();
+        clearing = new Debounce(TimeSpan.FromMilliseconds(100), () =>
         {
-            clearing.Stop();
             if (Session is not { State: DebugState.Paused })
             {
                 view.ShowFrames([], null, [], null);
                 view.Tree.Show([]);
             }
-        };
+            return Task.CompletedTask;
+        });
         Breakpoints.Changed += (_, path) => UpdateMarks(path);
         Breakpoints.ExceptionsChanged += (_, _) => view.ShowMuted(Breakpoints.Muted);
         EventHandler<string> asked = (_, action) => ActionRequested?.Invoke(this, action);
@@ -94,6 +111,9 @@ public sealed class DebugController : IDisposable
         EventHandler<(string Expression, bool Watch)> evaluated = (_, request) => _ = Evaluate(request.Expression, request.Watch);
         EventHandler<(VariableNode Node, string Value)> set = (_, request) => _ = SetValue(request.Node, request.Value);
         EventHandler<VariableNode> watchData = (_, node) => _ = ToggleDataBreakpointAsync(node);
+        EventHandler<VariableNode> textOpened = (_, node) => TextOpened?.Invoke(this, node.Value);
+        EventHandler<DebugTab> tabChosen = (_, tab) => _ = ChooseAsync(tab);
+        EventHandler<DebugTab> tabClosed = (_, tab) => _ = CloseTabAsync(tab);
         EventHandler<string> unwatched = (_, expression) =>
         {
             watches.Remove(expression);
@@ -105,17 +125,24 @@ public sealed class DebugController : IDisposable
         view.EvaluateRequested += evaluated;
         view.SetValueRequested += set;
         view.DataWatch = DataWatchAsync;
+        view.PlaceOf = PlaceOf;
         view.DataBreakpointRequested += watchData;
+        view.TextOpened += textOpened;
         Breakpoints.DataChanged += (_, _) => TellRefusedData();
         view.WatchRemoved += unwatched;
+        view.SessionChosen += tabChosen;
+        view.SessionClosed += tabClosed;
         letGo = () =>
         {
+            view.SessionChosen -= tabChosen;
+            view.SessionClosed -= tabClosed;
             view.ActionRequested -= asked;
             view.FrameChosen -= framed;
             view.ThreadChosen -= threaded;
             view.EvaluateRequested -= evaluated;
             view.SetValueRequested -= set;
             view.DataBreakpointRequested -= watchData;
+            view.TextOpened -= textOpened;
             view.WatchRemoved -= unwatched;
         };
         view.ShowMuted(Breakpoints.Muted);
@@ -127,8 +154,14 @@ public sealed class DebugController : IDisposable
     {
         UiThread.Check();
         disposed = true;
+        shown++;
         clearing.Stop();
+        NextShown();
         letGo();
+        foreach (DebugTab tab in view.Sessions)
+        {
+            StopFollowing(tab);
+        }
         foreach (OpenDocument document in following.Keys.ToList())
         {
             Detach(document);
@@ -137,25 +170,50 @@ public sealed class DebugController : IDisposable
 
     public BreakpointStore Breakpoints { get; } = new();
 
-    /// <summary>What the session's program has written, as the Debug window's console shows it now, what is on its way to
-    /// it taken in first: what an agent reads of a debugged program, rather than the window's view.</summary>
-    public TextSnapshot Output()
+    /// <summary>What a session's program has written (the chosen one's by default), as its console in the Debug window has it
+    /// now, what is on its way to it taken in first: what an agent reads of a debugged program, rather than the window's view.</summary>
+    public TextSnapshot Output(DebugSession? session = null)
     {
-        view.Console.Flush();
-        return view.Console.Document.Snapshot;
+        OutputView console = (session is null ? chosen : TabOf(session))?.Console ?? view.Console;
+        console.Flush();
+        return console.Document.Snapshot;
     }
 
-    public DebugSession? Session { get; private set; }
+    /// <summary>The chosen tab's session, which the window shows and its actions act on.</summary>
+    public DebugSession? Session => chosen?.Session;
 
-    public bool IsDebugging => Session is { State: not DebugState.Ended };
+    /// <summary>Whether any program is being debugged.</summary>
+    public bool IsDebugging => view.Sessions.Any(t => t.IsLive && t.Session is not null);
+
+    /// <summary>The programs debugged, each with its tab in the Debug window, in the order they started.</summary>
+    public IReadOnlyList<DebugTab> Tabs => view.Sessions;
+
+    /// <summary>The tab the Debug window shows.</summary>
+    public DebugTab? Chosen => chosen;
+
+    /// <summary>The session of the tab a program's name gives (a run configuration's), the last started for it.</summary>
+    public DebugSession? SessionNamed(string name) => view.Sessions.FirstOrDefault(t => t.Name == name)?.Session;
+
+    /// <summary>The tab a session is in, while it has one.</summary>
+    public DebugTab? TabOf(DebugSession session) => view.Sessions.FirstOrDefault(t => t.Session == session);
+
+    /// <summary>The session debugging an inspected app, while its tab is there; null for an app Run or Profile started.</summary>
+    public DebugSession? SessionOf(LiveApp app) => view.Sessions.FirstOrDefault(t => t.App == app)?.Session;
+
+    /// <summary>The apps of the tabs there are, each with its tab, in their order.</summary>
+    public IEnumerable<(DebugTab Tab, LiveApp App)> Apps => view.Sessions.Where(t => t.App is not null).Select(t => (t, t.App!));
 
     /// <summary>The stop the program is paused at as the controller has read it (the stopped thread's frames, the exception
     /// it stopped on described), which the Debug window shows; null while it runs, before the stop is read, and after.</summary>
     public DebugStop? Stop { get; private set; }
 
-    /// <summary>The session's state in the words the status bar is told as it changes (debugging, paused and on what,
-    /// running, ended and how), or null with no session.</summary>
-    public string? Summary => Session is { } session ? Said(session) : null;
+    /// <summary>The chosen session's state in the words the status bar is told as it changes (debugging, paused and on what,
+    /// running, ended and how), and how many programs are debugged and which are paused when there are several; null with
+    /// no session.</summary>
+    public string? Summary => chosen is { Session: not null } tab ? Told(tab) : null;
+
+    /// <summary>A session's state as <see cref="Summary"/> words it, its tab chosen or not.</summary>
+    public string? SummaryOf(DebugSession session) => TabOf(session) is { } tab ? Told(tab) : null;
 
     /// <summary>A toolbar button of the Debug window: an app action for the window to run.</summary>
     public event EventHandler<string>? ActionRequested;
@@ -166,8 +224,16 @@ public sealed class DebugController : IDisposable
     /// <summary>A place to show: a stop, or a frame chosen.</summary>
     public event EventHandler<(string Path, TextPosition Position)>? Navigate;
 
+    /// <summary>An EF Core query's SQL read in Variables or the hover card, to open whole in a read-only editor tab.</summary>
+    public event EventHandler<string>? TextOpened;
+
     /// <summary>The session started, stopped, ran on or ended.</summary>
     public event EventHandler? StateChanged;
+
+    /// <summary>Another tab is chosen, or none is, or a tab came or went: what follows the chosen tab's app looks again.</summary>
+    public event EventHandler? TabsChanged;
+    /// <summary>The native tab chosen in the Debug window changed.</summary>
+    public event EventHandler? SelectionChanged;
 
     /// <summary>Starts a program the debugger asks for in a tab of the Terminal window named for the session (the window's
     /// own), for a configuration that uses the terminal; without it such a program runs in the Console.</summary>
@@ -183,10 +249,10 @@ public sealed class DebugController : IDisposable
     /// as it runs, and edits made while it is paused are applied as it goes on.</summary>
     public Func<bool> HotReloadOn { get; init; } = () => false;
 
-    /// <summary>The session's Hot Reload, while it has one.</summary>
-    public HotReload? HotReload => hotReload is not null && IsDebugging ? hotReload : null;
+    /// <summary>The chosen session's Hot Reload, while it has one.</summary>
+    public HotReload? HotReload => chosen is { HotReload: { } reload, IsLive: true, Session: not null } ? reload : null;
 
-    private HotReload? hotReload;
+    private HotReload? hotReload => chosen?.HotReload;
 
     /// <summary>What the last Apply Changes came to, until the next.</summary>
     public HotReloadOutcome? LastApplied { get; private set; }
@@ -203,12 +269,12 @@ public sealed class DebugController : IDisposable
 
     /// <summary>Why Apply Changes cannot run: nothing debugged, a session without Hot Reload, or one that stopped taking
     /// changes.</summary>
-    public string? WhyNotApply() => !IsDebugging ? NothingDebugged
-        : Session!.State == DebugState.Starting ? StillStarting
+    public string? WhyNotApply() => NotLive()
+        ?? (Session!.State == DebugState.Starting ? StillStarting
         : hotReload is null ? (Session!.Attached
             ? "Hot Reload applies changes to a program the debugger launched, not to one it attached to"
             : "This program was launched with Hot Reload when debugging off (Settings, Hot Reload)")
-        : hotReload.WhyNot;
+        : hotReload.WhyNot);
 
     /// <summary>Rider's Apply Hot Reload Changes: the edits since the launch or the last apply, applied to the program
     /// paused or running. Applied, the files' lines are the program's from now (the built lines forget their edits), their
@@ -222,23 +288,35 @@ public sealed class DebugController : IDisposable
     /// <summary>Apply Changes as the action runs it: an edit that needs a restart restarts the program, as Settings says.</summary>
     public async Task ApplyAndRestartAsync()
     {
+        DebugTab? applied = chosen;
         if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome)
         {
-            await RestartAsked(outcome);
+            await RestartAsked(outcome, applied, SettingsRestart);
         }
     }
 
-    /// <summary>The window's restart for edits Hot Reload cannot apply; declined, those edits are not asked about again until
-    /// the next edit, as dotnet watch's No.</summary>
-    private async Task<bool> RestartAsked(HotReloadOutcome outcome)
+    /// <summary>The window's restart for edits Hot Reload cannot apply: as Settings say, or asked as dotnet watch asks it
+    /// (<see cref="RestartFor"/>, <see cref="RestartRunningFor"/>).</summary>
+    public HotReloadRestart SettingsRestart => (outcome, running) => running ? RestartRunningFor(outcome) : RestartFor(outcome);
+
+    /// <summary>A restart for edits Hot Reload cannot apply to the program of <paramref name="applied"/>'s tab, made as
+    /// <paramref name="restart"/> says, the tab chosen again first should another program's stop have taken the window
+    /// meanwhile (the restart acts on the chosen), while it is still debugged and its folder open; declined, those edits are
+    /// not asked about again until the next edit, as dotnet watch's No.</summary>
+    private async Task<bool> RestartAsked(HotReloadOutcome outcome, DebugTab? applied, HotReloadRestart restart)
     {
-        if (await RestartFor(outcome))
+        if (applied is null || !applied.IsLive || disposed || ending || !view.Sessions.Contains(applied))
+        {
+            return false;
+        }
+        await ChooseAsync(applied);
+        if (applied == chosen && applied.IsLive && !disposed && !ending && await restart(outcome, false))
         {
             return true;
         }
-        if (hotReload is not null)
+        if (applied.HotReload is { } reload)
         {
-            hotReload.Changed = false;
+            reload.Changed = false;
         }
         return false;
     }
@@ -255,25 +333,53 @@ public sealed class DebugController : IDisposable
                 return refused;
             }
             Message?.Invoke(this, "Applying Hot Reload changes…");
-            HotReloadOutcome outcome = await reload.ApplyAsync();
-            if (session != Session || disposed)
+            // The other services of its container run take the changes with it: an edit is applied wherever its code runs.
+            DebugTab applied = chosen!;
+            List<DebugTab> together = applied.Group is { } group
+                ? [.. view.Sessions.Where(t => t != applied && t.Group == group && t is { IsLive: true, HotReload.WhyNot: null, Session: not null })]
+                : [];
+            HotReloadOutcome own = await reload.ApplyAsync();
+            HotReloadOutcome outcome = own;
+            if (together.Count > 0)
+            {
+                List<(string, HotReloadOutcome)> each = [(applied.Name, own)];
+                foreach (DebugTab other in together)
+                {
+                    HotReloadOutcome its = await other.HotReload!.ApplyAsync();
+                    if (its.Result is HotReloadResult.Applied or HotReloadResult.NothingToApply && other.Session is { } taking)
+                    {
+                        List<string> changed = [.. its.Files.Select(PathNames.Canonical)];
+                        foreach (string path in changed)
+                        {
+                            other.Lines?.Reset(path);
+                        }
+                        await taking.SendBreakpointsAgainAsync(changed);
+                    }
+                    each.Add((other.Name, its));
+                }
+                outcome = Together(each);
+            }
+            // The program applied to is its own tab's, whichever tab is chosen now (another program's stop takes the window).
+            if (disposed || applied.Session != session || !applied.IsLive)
             {
                 return outcome;
             }
-            if (outcome.Result is HotReloadResult.Applied or HotReloadResult.NothingToApply)
+            if (own.Result is HotReloadResult.Applied or HotReloadResult.NothingToApply)
             {
-                List<string> files = [.. outcome.Files.Select(PathNames.Canonical)];
+                List<string> files = [.. own.Files.Select(PathNames.Canonical)];
                 // The stop shown keeps its place in the text, then the files' lines are the program's.
-                if (executionPoint is { } point && files.Contains(point.Path))
-                {
-                    executionPoint = (point.Path, Current(point.Path, point.Line));
-                }
+                bool shown = applied == chosen;
+                (string Path, int Line)? shownAt = shown && executionPoint is { } point && files.Contains(point.Path) ? (point.Path, Current(point.Path, point.Line)) : null;
                 foreach (string path in files)
                 {
-                    lines?.Reset(path);
+                    applied.Lines?.Reset(path);
+                }
+                if (shownAt is { } now)
+                {
+                    executionPoint = (now.Path, Built(now.Path, now.Line));
                 }
                 await session.SendBreakpointsAgainAsync(files);
-                if (outcome.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread)
+                if (own.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread && applied == chosen && !disposed)
                 {
                     try
                     {
@@ -287,7 +393,7 @@ public sealed class DebugController : IDisposable
                 UpdateAllMarks();
             }
             LastApplied = outcome;
-            view.Console.Append($"Hot Reload: {outcome.Said}\n", error: outcome.Result is not (HotReloadResult.Applied or HotReloadResult.NothingToApply));
+            applied.Console.Append($"Hot Reload: {outcome.Said}\n", error: outcome.Result is not (HotReloadResult.Applied or HotReloadResult.NothingToApply));
             Message?.Invoke(this, outcome.Said);
             Applied?.Invoke(this, outcome);
             StateChanged?.Invoke(this, EventArgs.Empty);
@@ -299,17 +405,22 @@ public sealed class DebugController : IDisposable
         }
     }
 
-    /// <summary>Launches a plan's program under the debugger (after its build), its output in the Debug window's Console,
-    /// or in a tab of the Terminal window when its configuration uses the terminal. Null once the session is open (the
-    /// program may have ended already), else why it could not.</summary>
-    public Task<string?> StartAsync(Run.LaunchPlan plan)
+    /// <summary>Launches a plan's program under the debugger (after its build), its output in its tab's Console in the Debug
+    /// window, or in a tab of the Terminal window when its configuration uses the terminal, beside any other program
+    /// debugged; the plan's last session, still debugged, is stopped first. With <paramref name="elsewhere"/> the program
+    /// runs on another machine (<see cref="DebugSession.Elsewhere"/>). Null once the session is open (the program may have
+    /// ended already), else why it could not.</summary>
+    public Task<string?> StartAsync(Run.LaunchPlan plan, bool elsewhere = false, AdapterPlace? place = null, LiveApp? app = null)
+        => StartInTabAsync(plan, elsewhere, place, app: app);
+
+    private Task<string?> StartInTabAsync(Run.LaunchPlan plan, bool elsewhere = false, AdapterPlace? place = null, DebugTab? tab = null, LiveApp? app = null)
     {
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = !elsewhere && place is null && plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
             ? arguments => run(plan.Name, arguments)
             : null;
         bool hotReloadOn = HotReloadOn();
-        return OpenAsync((built, log, output, starting) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn, starting), plan.Name,
-            launched: true, inTerminal: inTerminal is not null, hotReloadOn: hotReloadOn);
+        return OpenAsync((built, log, output, starting) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn, starting, elsewhere, place),
+            plan.Name, launched: true, inTerminal: inTerminal is not null, hotReloadOn: hotReloadOn, tab: tab, app: app);
     }
 
     /// <summary>The column a breakpoint asks the debugger for: in Avalonia XAML, its attribute's or its line's first name's
@@ -320,61 +431,175 @@ public sealed class DebugController : IDisposable
         {
             return null;
         }
-        TextSnapshot? text = editors.Documents.FirstOrDefault(d => d.Path == breakpoint.Path)?.Text.Snapshot
-            ?? (File.Exists(breakpoint.Path) ? TextSnapshot.From(File.ReadAllText(breakpoint.Path)) : null);
+        TextSnapshot? text = CSharp.ServerPlaces.TextOf(editors, breakpoint.Path);
         return text is null ? null : XamlBreakpoints.Column(text, breakpoint.Line, breakpoint.Attribute);
     }
 
-    /// <summary>Attaches the debugger to a running .NET process, as Attach to Process does: what it writes goes where it
-    /// always went, as Rider's Console says. Null once the session is open, else why it could not.</summary>
-    public Task<string?> AttachAsync(int processId, string name) =>
-        OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting), name, launched: false);
+    /// <summary>Attaches the debugger to a running .NET process, as Attach to Process does, beside any other program debugged:
+    /// what it writes goes where it always went, as Rider's Console says. With <paramref name="hotReload"/> the program was
+    /// started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so Hot Reload is offered as for a launch (while
+    /// Settings' Hot Reload while debugging is on); with
+    /// <paramref name="elsewhere"/> it runs on another machine, and with <paramref name="place"/> the adapter runs where it
+    /// is (in its container). An inspected <paramref name="app"/> (an Aspire service's) is held by its tab. Null once the
+    /// session is open, else why it could not.</summary>
+    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null, string? group = null,
+        LiveApp? app = null)
+    {
+        bool hotReloadOn = hotReload && HotReloadOn();
+        return OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting, hotReloadOn, elsewhere, place), name,
+            launched: false, hotReloadOn: hotReloadOn, place: place, group: group, app: app);
+    }
 
-    /// <summary>Starts a session, its output in the Console; a program it launched reads what is typed there, as in
-    /// Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the terminal's). The
-    /// session is <see cref="Session"/> from its first moment, as Rider's Stop is there as soon as a session begins: its
-    /// start waits for the program's runtime as long as that takes. A start that failed leaves none.</summary>
-    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Action<DebugSession>, Task<DebugSession>> open, string name, bool launched,
-        bool inTerminal = false, bool hotReloadOn = false)
+    /// <summary>Launches another program in a native tab, with hooks installed before its adapter starts.</summary>
+    public Task<DebugLaunch> StartAdditionalAsync(Run.LaunchPlan plan, CancellationToken cancellation = default, Action<DebugTab>? configure = null)
+        => OpenAdditionalAsync(plan.Name, tab => StartInTabAsync(plan, tab: tab), null, cancellation, configure);
+
+    /// <summary>Attaches another process in a native tab without replacing a sibling session.</summary>
+    public Task<DebugLaunch> AttachAdditionalAsync(int pid, string name, CancellationToken cancellation = default, Action<DebugTab>? configure = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pid);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return OpenAdditionalAsync(name, tab => OpenAsync((built, log, output, starting) =>
+            DebugSession.AttachAsync(pid, Breakpoints, built, log, output, ColumnOf, starting), name, launched: false, tab: tab), pid, cancellation, configure);
+    }
+
+    private async Task<DebugLaunch> OpenAdditionalAsync(string name, Func<DebugTab, Task<string?>> open, int? attachedProcessId,
+        CancellationToken cancellation, Action<DebugTab>? configure)
     {
         UiThread.Check();
-        if (IsDebugging)
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (ending)
         {
-            await StopAsync();
+            throw new InvalidOperationException("The workspace is ending");
         }
-        // Not the last session's while this one starts, nor once it could not: a caller asks Session whether it did.
-        Session = null;
-        hotReload = null;
-        this.name = name;
-        Stop = null;
-        view.Clear();
-        clearing.Stop();
-        executionPoint = null;
-        frame = null;
-        stopException = null;
-        undescribed = null;
-        bindingStop = null;
-        bindingFrame = null;
-        lastResult = null;
-        BuiltLines built = new();
-        lines = built;
+        cancellation.ThrowIfCancellationRequested();
+        DebugTab tab = Place(name, replace: false);
+        Task<string?>? opening = null;
+        try
+        {
+            tab.RestartFor = _ =>
+            {
+                tab.Console.Append("Hot Reload: This resource needs restart; restart it through its owner\n", error: true);
+                return Task.FromResult(false);
+            };
+            configure?.Invoke(tab);
+            cancellation.ThrowIfCancellationRequested();
+            opening = open(tab);
+            if (await opening.WaitAsync(cancellation) is { } failure)
+            {
+                throw new InvalidOperationException(failure);
+            }
+            DebugSession session = tab.Session ?? throw new InvalidOperationException("The debugging session did not start");
+            int processId = await session.ProcessStarted.WaitAsync(Waits.Of(TimeSpan.FromSeconds(30)), cancellation);
+            if (attachedProcessId is int expected && processId != expected)
+            {
+                throw new InvalidOperationException("The debugger attached to a different process");
+            }
+            cancellation.ThrowIfCancellationRequested();
+            if (ending || disposed || tab.OpeningStopped || !view.Sessions.Contains(tab))
+            {
+                throw new InvalidOperationException("The workspace or debugging session ended during launch");
+            }
+            return new DebugLaunch(tab, processId);
+        }
+        catch
+        {
+            tab.OpeningStopped = true;
+            if (opening is not null)
+            {
+                Send(opening);
+            }
+            try
+            {
+                await StopAsync(tab);
+                if (opening is not null)
+                {
+                    // The start ends before its caller hears it was given up, so what the start says of its end is said first.
+                    await ((Task)opening).ConfigureAwait(ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.SuppressThrowing);
+                }
+            }
+            finally
+            {
+                if (tab.Session is { State: not DebugState.Ended } session)
+                {
+                    await session.CloseAsync();
+                }
+                if (tab.Session is null)
+                {
+                    tab.HasEnded = true;
+                    tab.OnStateChanged();
+                }
+            }
+            throw;
+        }
+    }
+
+    /// <summary>Starts a session in a tab of its own, its output in the tab's Console; a program it launched reads what is
+    /// typed there, as in Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the
+    /// terminal's; one whose place follows its output from outside, a container run's service, has that). The tab is chosen,
+    /// and its session <see cref="Session"/> from its first moment, as Rider's Stop is there as soon as a session begins:
+    /// its start waits for the program's runtime as long as that takes. A start that failed leaves its tab ended, with no
+    /// session. Tabs of one <paramref name="group"/> (a container run's services) take Hot Reload's changes together; an
+    /// inspected <paramref name="app"/> is held by its tab.</summary>
+    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Action<DebugSession>, Task<DebugSession>> open, string name, bool launched,
+        bool inTerminal = false, bool hotReloadOn = false, AdapterPlace? place = null, string? group = null, DebugTab? tab = null, LiveApp? app = null)
+    {
+        UiThread.Check();
+        // A start that comes after its folder was left would open in the next folder's Debug window, which is not its own.
+        if (disposed)
+        {
+            return $"Could not debug {name}: its folder was closed";
+        }
+        if (ending)
+        {
+            return "The workspace is ending";
+        }
+        // A program debugged again takes its last session's place, which is let go first.
+        if (tab is null && view.Sessions.FirstOrDefault(t => t.Name == name && t.IsLive) is { } again)
+        {
+            await EndAsync(again);
+            if (disposed)
+            {
+                return $"Could not debug {name}: its folder was closed";
+            }
+        }
+        if (disposed || ending)
+        {
+            return "The workspace ended during launch";
+        }
+        tab ??= Place(name);
+        tab.Group = group ?? tab.Group;
+        tab.App = app ?? tab.App;
+        BuiltLines built = new(path => CSharp.ServerPlaces.TextOf(editors, path));
+        tab.Lines = built;
+        await ChooseAsync(tab);
+        if (disposed || ending || tab.OpeningStopped || !view.Sessions.Contains(tab))
+        {
+            tab.HasEnded = true;
+            tab.OnStateChanged();
+            return $"Debugging {name} ended before launch completed";
+        }
         view.SetState(DebugState.Starting);
         view.ShowDetachable(false);
+        OutputView shown = tab.Console;
         if (inTerminal)
         {
-            view.Console.Append($"{name} runs in the Terminal window, which it reads from and writes to\n");
+            shown.Append($"{name} runs in the Terminal window, which it reads from and writes to\n");
+        }
+        else if (!launched && place?.Output is { } follow)
+        {
+            await FollowAsync(follow, shown, tab);
         }
         else if (!launched)
         {
-            // Rider's words: what a program attached to writes goes where it always went.
-            view.Console.Append("Console output is not available when the debugger is attached to a running process\n");
+            shown.Append($"{AttachedConsole}\n");
         }
         Message?.Invoke(this, $"Debugging {name}");
         DebugSession? starting = null;
         try
         {
-            ConsoleSink console = view.Console.Sink;
-            DebugSession session = await open(built, line => view.Console.Append($"{line}\n"), output =>
+            ConsoleSink console = shown.Sink;
+            DebugSession session = await open(built, line => shown.Append($"{line}\n"), output =>
             {
                 ConsoleStream? stream = output.Category switch
                 {
@@ -387,68 +612,438 @@ public sealed class DebugController : IDisposable
                 {
                     console.Write(output.Output, into);
                 }
+                tab.OnProgramOutput(output);
             }, made =>
             {
                 starting = made;
-                Session = made;
+                tab.Session = made;
+                if (disposed || ending || tab.OpeningStopped || !view.Sessions.Contains(tab))
+                {
+                    // Stopped as its adapter started, before there was a session to stop: its start fails as one stopped.
+                    stoppedStarting.Add(made);
+                    Send(made.CloseAsync());
+                    return;
+                }
+                if (tab == chosen)
+                {
+                    view.Tree.Load = reference => MembersAsync(made, reference);
+                }
                 // The toolbar's Stop shows, and Stop runs, while the debugger waits for the program.
                 StateChanged?.Invoke(this, EventArgs.Empty);
+                tab.OnStateChanged();
             });
-            Session = session;
-            hotReload = hotReloadOn ? new HotReload(session, Server) : null;
-            view.Tree.Load = reference => session.VariablesAsync(reference);
+            if (disposed || ending || tab.OpeningStopped || !view.Sessions.Contains(tab))
+            {
+                await session.CloseAsync();
+                tab.HasEnded = true;
+                tab.OnStateChanged();
+                return $"Debugging {name} ended before launch completed";
+            }
+            tab.HotReload = hotReloadOn ? new HotReload(session, Server, editors) : null;
             if (launched && !inTerminal)
             {
-                view.Console.Input = new ConsoleInput(text => Send(session.InputAsync(text)), () => Send(session.CloseInputAsync()));
+                shown.Input = new ConsoleInput(text => Send(session.InputAsync(text)), () => Send(session.CloseInputAsync()));
             }
-            session.StateChanged += (_, _) => _ = OnStateChanged(session);
-            await OnStateChanged(session);
+            session.StateChanged += (_, _) => _ = OnStateChanged(tab);
+            await OnStateChanged(tab);
             return null;
         }
         catch (Exception error) when (error is DapException or IOException or InvalidOperationException or TimeoutException)
         {
-            bool stopped = starting is not null && starting == stoppedStarting;
+            bool stopped = starting is not null && stoppedStarting.Remove(starting);
             string failed = stopped
                 ? launched ? $"Debugging {name} was stopped as it started" : $"Debugging {name} was stopped as the debugger attached, and it runs on"
                 : $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}";
-            if (starting is not null && Session != starting)
+            // Its output followed from outside (a container's log) ends with the start, whichever tab is the window's.
+            StopFollowing(tab);
+            if (disposed || !view.Sessions.Contains(tab))
             {
-                // Another session began meanwhile (Debug again): this one's end is not shown over it.
+                // Another session took its tab meanwhile (Debug again): this one's end is not shown over it.
                 return failed;
             }
-            Session = null;
-            lines = null;
+            // Its tab stays to say so, with no session: a caller asks Session whether it began.
+            tab.Session = null;
+            tab.Lines = null;
+            tab.HasEnded = true;
+            tab.OnStateChanged();
             if (stopped)
             {
-                view.Console.Append($"{failed}\n");
+                shown.Append($"{failed}\n");
             }
-            view.Console.Flush();
-            view.SetState(DebugState.Ended);
+            shown.Flush();
+            if (tab == chosen)
+            {
+                view.SetState(DebugState.Ended);
+            }
             Message?.Invoke(this, failed);
             StateChanged?.Invoke(this, EventArgs.Empty);
+            if (tab == chosen && Next() is { } next)
+            {
+                await ChooseAsync(next, say: false);
+            }
             return failed;
         }
     }
 
-    /// <summary>The session Stop ended while it started, whose failed start is said as stopped rather than as a failure.</summary>
-    private DebugSession? stoppedStarting;
+    /// <summary>A program's output followed from outside into its console (a container's log, which an attach gets none of
+    /// through the protocol), from before the debugger lets it go until its session's end has let its last words land.</summary>
+    private async Task FollowAsync(Func<System.Diagnostics.ProcessStartInfo> follow, OutputView console, DebugTab tab)
+    {
+        System.Diagnostics.Process process;
+        try
+        {
+            System.Diagnostics.ProcessStartInfo start = follow();
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            // Its fork off the window's thread (#441).
+            process = await ChildProcesses.StartAsync(start);
+        }
+        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            console.Append($"Its output could not be followed: {failed.Message}\n");
+            return;
+        }
+        if (disposed || !view.Sessions.Contains(tab))
+        {
+            // Its tab went as it started (closed, taken by another, its folder left), and its follower with it.
+            ChildProcesses.Kill(process);
+            return;
+        }
+        tab.Following = process;
+        ConsoleSink sink = console.Sink;
+        // For the program's life, as its output is: no screenshot waits on it. Its last words land as its follower ends.
+        _ = Task.Run(() => sink.PumpAsync(process.StandardOutput, ConsoleStream.Output));
+        _ = Task.Run(() => sink.PumpAsync(process.StandardError, ConsoleStream.Error));
+    }
+
+    /// <summary>Ends a tab's following of its program's output a moment after its session ended, its last words in.</summary>
+    private static void StopFollowing(DebugTab tab)
+    {
+        if (tab.Following is not { } process)
+        {
+            return;
+        }
+        tab.Following = null;
+        _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => ChildProcesses.Kill(process), TaskScheduler.Default);
+    }
+
+    /// <summary>A program run with Hot Reload through the debugger rather than dotnet watch (a container run's service, whose
+    /// image has no SDK): attached quietly, no breakpoint sent and no stop shown, so Apply Hot Reload Changes and a save
+    /// apply the edits to it; ended with its run.</summary>
+    public sealed record RunningReload(string Name, DebugSession Session, HotReload Reload);
+
+    private readonly List<RunningReload> running = [];
+
+    /// <summary>The programs run with Hot Reload through the debugger, while they run.</summary>
+    public IReadOnlyList<RunningReload> Running => running;
+
+    /// <summary>Attaches quietly for Hot Reload alone to a program run, which a container run's Run with Hot Reload held at its
+    /// start with DOTNET_MODIFIABLE_ASSEMBLIES=debug: the attach lets it go. Null once attached, else why not.</summary>
+    public async Task<string?> AttachForHotReloadAsync(int processId, string name, AdapterPlace? place = null, CancellationToken cancellation = default)
+    {
+        UiThread.Check();
+        if (disposed)
+        {
+            return $"Could not attach to {name} for Hot Reload: its folder was closed";
+        }
+        BuiltLines built = new(path => CSharp.ServerPlaces.TextOf(editors, path));
+        DebugSession? attaching = null;
+        try
+        {
+            cancellation.ThrowIfCancellationRequested();
+            using CancellationTokenRegistration stopped = cancellation.Register(() => UiThread.Post(() =>
+            {
+                if (attaching is { } pending)
+                {
+                    Send(pending.CloseAsync());
+                }
+            }));
+            DebugSession session = await DebugSession.AttachAsync(processId, Breakpoints, built, _ => { }, _ => { },
+                starting: session => attaching = session, hotReload: true, place: place, quiet: true);
+            cancellation.ThrowIfCancellationRequested();
+            if (disposed || ending)
+            {
+                throw new OperationCanceledException("The workspace ended during Hot Reload attach");
+            }
+            RunningReload reload = new(name, session, new HotReload(session, Server, editors));
+            running.Add(reload);
+            session.StateChanged += (_, _) =>
+            {
+                if (session.State == DebugState.Ended && running.Remove(reload))
+                {
+                    reload.Reload.End();
+                    StateChanged?.Invoke(this, EventArgs.Empty);
+                }
+                else if (session.State == DebugState.Paused)
+                {
+                    // Never shown: a Debugger.Break in its code goes on as a run would.
+                    Send(session.ContinueAsync());
+                }
+            };
+            StateChanged?.Invoke(this, EventArgs.Empty);
+            return null;
+        }
+        catch (Exception error) when (error is DapException or IOException or InvalidOperationException or TimeoutException)
+        {
+            if (attaching is not null)
+            {
+                await attaching.CloseAsync();
+            }
+            return $"Could not attach to {name} for Hot Reload: {(error is DapException dap ? dap.Reason : error.Message)}";
+        }
+        catch
+        {
+            if (attaching is not null)
+            {
+                await attaching.CloseAsync();
+            }
+            throw;
+        }
+    }
+
+    /// <summary>Apply Hot Reload Changes to the programs run with it through the debugger, each in turn, said together.</summary>
+    public async Task<HotReloadOutcome> ApplyRunningAsync()
+    {
+        UiThread.Check();
+        using IDisposable held = BackgroundWork.Scope();
+        if (running.Count == 0)
+        {
+            return new HotReloadOutcome(HotReloadResult.Failed, NothingDebugged);
+        }
+        Message?.Invoke(this, "Applying Hot Reload changes…");
+        List<(string, HotReloadOutcome)> each = [];
+        foreach (RunningReload reload in running.ToList())
+        {
+            each.Add((reload.Name, await reload.Reload.ApplyAsync()));
+        }
+        HotReloadOutcome outcome = Together(each);
+        LastApplied = outcome;
+        Message?.Invoke(this, outcome.Said);
+        Applied?.Invoke(this, outcome);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+        return outcome;
+    }
+
+    /// <summary>Apply to the programs run with Hot Reload as the action runs it: those whose edits need it restarted, as
+    /// Settings says (<see cref="RestartRunningFor"/>).</summary>
+    public async Task ApplyRunningAndRestartAsync()
+    {
+        if (await ApplyRunningAsync() is { Result: HotReloadResult.RestartNeeded } outcome)
+        {
+            await RestartRunningAsked(outcome, SettingsRestart);
+        }
+    }
+
+    /// <summary>A restart of the programs run with Hot Reload whose edits it could not apply, made as <paramref name="restart"/>
+    /// says; declined, those edits are not asked about again until the next edit.</summary>
+    private async Task<bool> RestartRunningAsked(HotReloadOutcome outcome, HotReloadRestart restart)
+    {
+        if (await restart(outcome, true))
+        {
+            return true;
+        }
+        foreach (RunningReload reload in running.Where(r => outcome.Restart.Contains(r.Name)))
+        {
+            reload.Reload.Changed = false;
+        }
+        return false;
+    }
+
+    /// <summary>Restarts the programs run with Hot Reload whose edits it could not apply (a container run's services, built
+    /// again and restarted); true once they are. The window's.</summary>
+    public Func<HotReloadOutcome, Task<bool>> RestartRunningFor { get; set; } = _ => Task.FromResult(false);
+
+    /// <summary>What several programs' Apply Changes came to, as one: the gravest result, each one's words that say more than
+    /// that nothing changed, and the programs that need a restart.</summary>
+    internal static HotReloadOutcome Together(IReadOnlyList<(string Name, HotReloadOutcome Outcome)> each)
+    {
+        if (each is [(_, var only)] && only.Result != HotReloadResult.RestartNeeded)
+        {
+            return only;
+        }
+        HotReloadResult result = each.Select(e => e.Outcome.Result).OrderBy(r => r switch
+        {
+            HotReloadResult.Errors => 0,
+            HotReloadResult.RestartNeeded => 1,
+            HotReloadResult.Failed => 2,
+            HotReloadResult.Applied => 3,
+            _ => 4,
+        }).First();
+        // Nothing applied says more when Roslyn said why (a stale project's file).
+        List<string> said = [.. each.Where(e => e.Outcome.Result != HotReloadResult.NothingToApply || e.Outcome.Problems.Count > 0).Select(e => $"{e.Name}: {e.Outcome.Said}")];
+        return new HotReloadOutcome(result, said.Count == 0 ? HotReload.NothingApplied([]) : string.Join("; ", said))
+        {
+            Problems = [.. each.SelectMany(e => e.Outcome.Problems).Distinct()],
+            Files = [.. each.SelectMany(e => e.Outcome.Files).Distinct(StringComparer.Ordinal)],
+            Modules = [.. each.SelectMany(e => e.Outcome.Modules).Distinct(StringComparer.Ordinal)],
+            Methods = each.Sum(e => e.Outcome.Methods),
+            Took = each.Aggregate(TimeSpan.Zero, (sum, e) => sum + e.Outcome.Took),
+            Restart = [.. each.Where(e => e.Outcome.Result == HotReloadResult.RestartNeeded).Select(e => e.Name)],
+        };
+    }
+
+    /// <summary>The tab a new session takes: with no other program debugged, the place of every tab there is (each has
+    /// ended), its console the window's first; else the ended tab of its own program, in its place; else a new one at the
+    /// end. A tab taken lets its console go, but the console the new one keeps.</summary>
+    private DebugTab Place(string name, bool replace = true)
+    {
+        List<DebugTab> tabs = [.. view.Sessions];
+        bool alone = !tabs.Any(t => t.IsLive);
+        List<DebugTab> taken = alone ? tabs : replace ? [.. tabs.Where(t => t.Name == name)] : [];
+        OutputView console = alone ? view.FirstConsole : taken.FirstOrDefault()?.Console ?? view.NewConsole();
+        int at = taken.Count > 0 ? tabs.IndexOf(taken[0]) : tabs.Count;
+        foreach (DebugTab gone in taken)
+        {
+            StopFollowing(gone);
+            view.Sessions.Remove(gone);
+            if (gone.Console != console)
+            {
+                view.ForgetConsole(gone.Console);
+            }
+        }
+        console.Input = null;
+        console.Clear();
+        DebugTab tab = new(name, console);
+        view.Sessions.Insert(Math.Min(at, view.Sessions.Count), tab);
+        TabsChanged?.Invoke(this, EventArgs.Empty);
+        return tab;
+    }
+
+    /// <summary>Shows a session's tab: its console, its stop's frames and values, the toolbar for its state, and its
+    /// execution point in the editor; nothing read of the last tab's stop is asked of again.</summary>
+    public Task ChooseAsync(DebugTab tab) => ChooseAsync(tab, say: true);
+
+    /// <summary>Chooses a tab, its state said in the status bar or not (as the chosen program ended, whose end it says).</summary>
+    private Task ChooseAsync(DebugTab tab, bool say)
+    {
+        UiThread.Check();
+        if (tab == chosen || disposed || !view.Sessions.Contains(tab))
+        {
+            return Task.CompletedTask;
+        }
+        chosen = tab;
+        foreach (DebugTab each in view.Sessions)
+        {
+            each.IsChosen = each == tab;
+        }
+        TabsChanged?.Invoke(this, EventArgs.Empty);
+        view.ShowConsole(tab.Console);
+        NextShown();
+        frame = null;
+        Stop = null;
+        showing = null;
+        executionPoint = null;
+        stopException = null;
+        undescribed = null;
+        propertyChange = null;
+        bindingStop = null;
+        bindingFrame = null;
+        lastResult = null;
+        clearing.Stop();
+        editors.CodeEditor.CancelChoices();
+        view.ShowFrames([], null, [], null);
+        view.Tree.Show([]);
+        ClearInlineValues();
+        UpdateAllMarks();
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+        if (tab.Session is { } session)
+        {
+            view.Tree.Load = reference => MembersAsync(session, reference);
+            return Show(tab, say);
+        }
+        view.SetState(tab.HasEnded ? DebugState.Ended : DebugState.Starting);
+        view.ShowDetachable(false);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>A tab's ×: its program, still debugged, is ended as a tab another takes the place of is (<see
+    /// cref="EndAsync"/>), and the tab goes, another chosen in its place.</summary>
+    private async Task CloseTabAsync(DebugTab tab)
+    {
+        UiThread.Check();
+        if (tab.IsLive)
+        {
+            await EndAsync(tab);
+        }
+        // Its program's output followed from outside goes with it, ended or not.
+        StopFollowing(tab);
+        int at = view.Sessions.IndexOf(tab);
+        if (at < 0 || disposed)
+        {
+            return;
+        }
+        view.Sessions.Remove(tab);
+        view.ForgetConsole(tab.Console);
+        if (tab != chosen)
+        {
+            TabsChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+        chosen = null;
+        TabsChanged?.Invoke(this, EventArgs.Empty);
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+        if ((Next() ?? (view.Sessions.Count > 0 ? view.Sessions[Math.Min(at, view.Sessions.Count - 1)] : null)) is { } next)
+        {
+            await ChooseAsync(next);
+            return;
+        }
+        // None left: the window is as before any session, its first console shown empty.
+        view.Clear();
+        view.SetState(DebugState.Ended);
+        executionPoint = null;
+        UpdateAllMarks();
+        ClearInlineValues();
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The tab to show once the chosen one's program has ended: one paused, else the last that is debugged.</summary>
+    private DebugTab? Next() =>
+        view.Sessions.FirstOrDefault(t => t.IsLive && t.Session?.State == DebugState.Paused) ?? view.Sessions.LastOrDefault(t => t.IsLive && t.Session is not null);
+
+    /// <summary>The sessions Stop ended while they started, whose failed start is said as stopped rather than as a failure.</summary>
+    private readonly HashSet<DebugSession> stoppedStarting = [];
 
     /// <summary>Input for the program, which a session that has ended, or an adapter gone, may never take: its end says so.</summary>
     private static void Send(Task sending) =>
         _ = sending.ContinueWith(static sent => sent.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
-    /// <summary>Stop: the program the debugger started ends, at once while the debugger still waits for its runtime; one it
-    /// is still attaching to is let go, running on, as nothing of the session has reached it.</summary>
-    public async Task StopAsync()
+    /// <summary>Stop: the chosen program ends, or, with none chosen that is debugged, every one does (Stop All).</summary>
+    public Task StopAsync()
     {
         UiThread.Check();
-        if (Session is not { } session)
+        return chosen is { IsLive: true } tab ? StopAsync(tab) : StopAllAsync();
+    }
+
+    /// <summary>Stop All: every program debugged ends, as Stop ends one.</summary>
+    public Task StopAllAsync()
+    {
+        UiThread.Check();
+        return Task.WhenAll([.. view.Sessions.Where(t => t.IsLive).Select(StopAsync)]);
+    }
+
+    /// <summary>Stops the program a name gives (a run configuration's) while it is debugged.</summary>
+    public Task StopAsync(string name)
+    {
+        UiThread.Check();
+        return view.Sessions.FirstOrDefault(t => t.Name == name && t.IsLive) is { } tab ? StopAsync(tab)
+            : running.FirstOrDefault(r => r.Name == name) is { } run ? run.Session.StopAsync()
+            : Task.CompletedTask;
+    }
+
+    /// <summary>Stop on one tab: the program the debugger started ends, at once while the debugger still waits for its
+    /// runtime; one it is still attaching to is let go, running on, as nothing of the session has reached it.</summary>
+    public async Task StopAsync(DebugTab tab)
+    {
+        UiThread.Check();
+        tab.OpeningStopped = true;
+        if (tab.Session is not { State: not DebugState.Ended } session)
         {
             return;
         }
         if (session.State == DebugState.Starting)
         {
-            stoppedStarting = session;
+            stoppedStarting.Add(session);
             if (session.Attached)
             {
                 await session.DetachAsync();
@@ -458,42 +1053,69 @@ public sealed class DebugController : IDisposable
         await session.StopAsync();
     }
 
+    /// <summary>Ends a tab's program as another session takes its place, or its tab closes, or the folder is left: one the
+    /// debugger attached to is let go, running on, as Detach does; one it started stops, as Stop stops it.</summary>
+    private Task EndAsync(DebugTab tab) =>
+        tab.Session is { Attached: true, State: DebugState.Running or DebugState.Paused } attached ? attached.DetachAsync() : StopAsync(tab);
+
     /// <summary>Rider's Detach: the debugger lets go of the program it attached to, which runs on. Null once it has, else why
     /// it could not (nothing attached to).</summary>
-    public async Task<string?> DetachAsync()
+    public Task<string?> DetachAsync() => DetachAsync(Session);
+
+    /// <summary>Detach of one session's program (the chosen tab's by default, else one an agent names), as Detach does it.</summary>
+    public async Task<string?> DetachAsync(DebugSession? session)
     {
         UiThread.Check();
-        if (WhyNotDetach() is { } why)
+        if ((session == Session ? WhyNotDetach() : WhyNotDetach(session)) is { } why)
         {
             return why;
         }
-        await Session!.DetachAsync();
+        await session!.DetachAsync();
         return null;
+    }
+
+    /// <summary>Lets go of the program a name gives (a container run's service) that the debugger attached to, in a tab or
+    /// quietly for Hot Reload, which runs on; done once it has.</summary>
+    public Task DetachAsync(string name)
+    {
+        UiThread.Check();
+        return view.Sessions.FirstOrDefault(t => t.Name == name && t.IsLive)?.Session is { Attached: true } attached ? attached.DetachAsync()
+            : running.FirstOrDefault(r => r.Name == name) is { } run ? run.Session.DetachAsync()
+            : Task.CompletedTask;
     }
 
     /// <summary>Why Detach cannot run now: nothing is being debugged, or the debugger started the program, which ends with
     /// its session (its input and output are the adapter's).</summary>
-    private string? WhyNotDetach() => !IsDebugging ? NothingDebugged
-        : !Session!.Attached ? "The debugger started this program: Stop ends it, and Detach lets go only of a program attached to"
-        : Session.State == DebugState.Starting ? StillStarting
+    private string? WhyNotDetach() => NotLive() ?? WhyNotDetach(Session);
+
+    /// <summary>Why one session's program cannot be let go now: it has ended, the debugger started it, or it still starts.</summary>
+    private static string? WhyNotDetach(DebugSession? session) => session is not { State: not DebugState.Ended } ? NothingDebugged
+        : !session.Attached ? "The debugger started this program: Stop ends it, and Detach lets go only of a program attached to"
+        : session.State == DebugState.Starting ? StillStarting
         : null;
 
     /// <summary>Why what needs the debugger's hold of the program cannot run while it starts (Stop can).</summary>
     private const string StillStarting = "The debugger is still taking hold of the program";
 
-    /// <summary>Ends the session's program and adapter as the IDE closes (<see cref="DebugSession.CloseAsync"/>).</summary>
+    /// <summary>Ends every session's program and adapter as the IDE closes (<see cref="DebugSession.CloseAsync"/>).</summary>
     public Task CloseAsync()
     {
         UiThread.Check();
-        return Session?.CloseAsync() ?? Task.CompletedTask;
+        ending = true;
+        foreach (DebugTab tab in view.Sessions)
+        {
+            tab.OpeningStopped = true;
+        }
+        return Task.WhenAll([.. view.Sessions.Select(t => t.Session?.CloseAsync() ?? Task.CompletedTask), .. running.Select(r => r.Session.CloseAsync())]);
     }
 
-    /// <summary>Its folder left with the window open: a program the debugger started is stopped, as Stop stops it, and one
-    /// it attached to let go, running on, as the window's close lets it go.</summary>
+    /// <summary>Its folder left with the window open: each program the debugger started is stopped, as Stop stops it, and
+    /// each it attached to let go, running on, as the window's close lets it go.</summary>
     public Task LeaveAsync()
     {
         UiThread.Check();
-        return WhyNotDetach() is null ? DetachAsync() : StopAsync();
+        ending = true;
+        return Task.WhenAll([.. view.Sessions.Where(t => t.IsLive).Select(EndAsync), .. running.Select(r => r.Session.StopAsync())]);
     }
 
     /// <summary>The debugger's actions, on the active editor's caret and the session of the debugger <paramref name="current"/>
@@ -513,8 +1135,8 @@ public sealed class DebugController : IDisposable
             {
                 d.Breakpoints.Toggle(c.File!.Path, c.Caret.Line);
             }
-        }, (_, c) => NeedsFile(c), new("Run", 2, 0));
-        Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", (d, c) => d.Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), (_, c) => NeedsFile(c), new("Run", 2, 1));
+        }, (_, c) => Refusals.NeedsLines(c), new("Run", 2, 0));
+        Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", (d, c) => d.Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), (_, c) => Refusals.NeedsLines(c), new("Run", 2, 1));
         Add(AppActions.Resume, "Resume Program", (d, c) =>
         {
             if (!d.IsDebugging)
@@ -525,7 +1147,7 @@ public sealed class DebugController : IDisposable
             _ = d.ResumeAsync(session => session.ContinueAsync(), "resume");
         }, (d, c) => d.IsDebugging ? d.NotPaused() : actions.WhyNot(AppActions.Debug, c), new("Run", 1, 0));
         Add(AppActions.Pause, "Pause Program", (d, c) => _ = d.Session!.PauseAsync(),
-            (d, _) => !d.IsDebugging ? NothingDebugged : d.Session!.State switch
+            (d, _) => d.NotLive() ?? d.Session!.State switch
             {
                 DebugState.Paused => "The program is paused already",
                 DebugState.Starting => StillStarting,
@@ -536,15 +1158,15 @@ public sealed class DebugController : IDisposable
         Add(AppActions.SmartStepInto, "Smart Step Into", (d, c) => _ = d.SmartStepIntoAsync(), (d, _) => d.NotPaused(), new("Run", 1, 4));
         Add(AppActions.StepOut, "Step Out", (d, c) => _ = d.ResumeAsync(session => session.StepOutAsync(), "step out"), (d, _) => d.NotPaused(), new("Run", 1, 5));
         Add(AppActions.RunToCursor, "Run to Cursor", (d, c) => _ = d.ResumeAsync(session => session.RunToCursorAsync(c.File!.Path, c.Caret.Line), "run to the cursor"),
-            (d, c) => NeedsFile(c) ?? d.NotPaused(), new("Run", 1, 6));
+            (d, c) => Refusals.NeedsLines(c) ?? d.NotPaused(), new("Run", 1, 6));
         Add(AppActions.SetNextStatement, "Set Next Statement", (d, c) => _ = d.SetNextStatementAsync(d.Session!, c.File!.Path, c.Caret.Line),
-            (d, c) => NeedsFile(c) ?? d.NotPaused(), new("Run", 1, 7));
+            (d, c) => Refusals.NeedsLines(c) ?? d.NotPaused(), new("Run", 1, 7));
         Add(AppActions.ShowExecutionPoint, "Show Execution Point", (d, _) =>
         {
             (string path, int line) = d.executionPoint!.Value;
             d.Navigate?.Invoke(d, (path, new TextPosition(d.Current(path, line), 0)));
         }, (d, _) => d.NotPaused() ?? (d.executionPoint is null ? "Where the program is paused has no source" : null), new("Run", 1, 8));
-        Add(AppActions.Evaluate, "Evaluate Expression...", (d, c) => d.view.FocusEvaluate(c.Symbol ?? string.Empty), (d, _) => d.NotPaused(), new("Run", 1, 9));
+        Add(AppActions.Evaluate, "Evaluate Expression…", (d, c) => d.view.FocusEvaluate(c.Symbol ?? string.Empty), (d, _) => d.NotPaused(), new("Run", 1, 9));
         Add(AppActions.AddToWatches, "Add to Watches", (d, c) => _ = d.Evaluate(c.Symbol!, watch: true),
             (d, c) => d.NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
         // In Rider's Run menu after Stop, and on the Debug window's toolbar after it.
@@ -562,8 +1184,6 @@ public sealed class DebugController : IDisposable
 
     private const string NothingDebugged = "Nothing is being debugged";
 
-    private static string? NeedsFile(ActionContext context) => context.File is null ? "No file is open" : null;
-
     /// <summary>The Avalonia XAML attribute the caret is on, whose own breakpoint Toggle Breakpoint sets; null elsewhere.</summary>
     public static string? AttributeAtCaret(ActionContext context) =>
         context.File is { } file && XamlBreakpoints.Compiled(file.Path)
@@ -574,13 +1194,15 @@ public sealed class DebugController : IDisposable
     /// agent's tools alike: false when the program restarted for them, or is no longer paused, and so is not to be set going.</summary>
     public async Task<bool> ApplyBeforeResumingAsync(DebugSession session)
     {
+        DebugTab? tab = TabOf(session);
         if (HotReload is { Changed: true } && WhyNotApply() is null && session.State == DebugState.Paused)
         {
-            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome))
+            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome, tab, SettingsRestart))
             {
                 return false;
             }
-            if (session != Session || session.State != DebugState.Paused)
+            // Its own state alone: another program's stop may have taken the window meanwhile, and this one still goes on.
+            if (session.State != DebugState.Paused)
             {
                 return false;
             }
@@ -589,14 +1211,20 @@ public sealed class DebugController : IDisposable
     }
 
     /// <summary>Why a step cannot go now: nothing is being debugged, or the program runs.</summary>
-    private string? NotPaused() => !IsDebugging ? NothingDebugged : Session!.State != DebugState.Paused ? "The program is not paused" : null;
+    private string? NotPaused() => NotLive() ?? (Session!.State != DebugState.Paused ? "The program is not paused" : null);
 
-    /// <summary>Sets the paused program going as an action asks. One the debugger refuses leaves it paused where it was,
-    /// the Debug window as it was, and the reason in the status bar. Edits made while it was paused are applied first, as
-    /// Rider's "Changes will be applied on the next step or resume": one that needs a restart restarts it (or asks, as
-    /// Settings says); one that does not compile is left, and the program goes on in the code it has, never stranded.</summary>
+    /// <summary>Why the chosen session takes no action now: nothing is being debugged, or the tab chosen is one that ended.</summary>
+    private string? NotLive() => !IsDebugging ? NothingDebugged
+        : Session is not { State: not DebugState.Ended } ? $"Debugging {name} has ended: choose a program that is debugged in the Debug window"
+        : null;
+
+    /// <summary>Sets the paused program going as an action asks, shown running at once; one the debugger refuses shows the
+    /// stop again, and the reason in the status bar. Edits made while it was paused are applied first, as Rider's "Changes
+    /// will be applied on the next step or resume": one that needs a restart restarts it (or asks, as Settings says); one
+    /// that does not compile is left, and the program goes on in the code it has, never stranded.</summary>
     private async Task ResumeAsync(Func<DebugSession, Task> resume, string action)
     {
+        asked = (action, System.Diagnostics.Stopwatch.GetTimestamp());
         if (Session is not { } session || !await ApplyBeforeResumingAsync(session))
         {
             return;
@@ -638,12 +1266,12 @@ public sealed class DebugController : IDisposable
             Message?.Invoke(this, $"Smart Step Into: {error.Reason}");
             return;
         }
-        if (stop != shown)
+        if (stop != shown || disposed)
         {
             return;
         }
         string path = PathNames.Canonical(source);
-        Navigate?.Invoke(this, (path, new TextPosition(Current(path, Math.Max(0, top.Line - 1)), Math.Max(0, top.Column - 1))));
+        Navigate?.Invoke(this, (path, Current(path, top)));
         CodeEditor editor = editors.CodeEditor;
         List<(StepInTarget Target, TextRange Range)> placed = editors.Active?.Path == path ? Placed(targets, path, editor.Document.Snapshot) : [];
         if (placed.Count <= 1)
@@ -669,23 +1297,22 @@ public sealed class DebugController : IDisposable
         List<(StepInTarget, TextRange)> placed = [];
         foreach (StepInTarget target in targets)
         {
-            if (target is not { Line: int line, Column: int column, EndLine: int endLine, EndColumn: int endColumn } || line != endLine)
+            if (target is not { Line: int line, Column: int column, EndLine: int endLine, EndColumn: int endColumn })
             {
                 continue;
             }
-            int now = Current(path, line - 1);
-            if (now < 0 || now >= text.LineCount)
+            TextPosition from = lines?.ToCurrent(path, line - 1, column - 1) ?? new TextPosition(line - 1, column - 1);
+            TextPosition to = lines?.ToCurrent(path, endLine - 1, endColumn - 1) ?? new TextPosition(endLine - 1, endColumn - 1);
+            if (from.Line != to.Line || from.Line < 0 || from.Line >= text.LineCount)
             {
                 continue;
             }
-            LineSpan row = text.GetLine(now);
-            int start = row.Start;
-            int length = row.Length;
-            if (column - 1 > length || endColumn - 1 > length || endColumn <= column)
+            LineSpan row = text.GetLine(from.Line);
+            if (from.Column > row.Length || to.Column > row.Length || to.Column <= from.Column)
             {
                 continue;
             }
-            placed.Add((target, TextRange.FromBounds(start + column - 1, start + endColumn - 1)));
+            placed.Add((target, TextRange.FromBounds(row.Start + from.Column, row.Start + to.Column)));
         }
         return placed;
     }
@@ -728,11 +1355,19 @@ public sealed class DebugController : IDisposable
         UiThread.Check();
         EventHandler<DocumentChangedEventArgs> follow = (_, change) =>
         {
-            // The built lines first: a breakpoint's move asks them what it now asks of the debugger.
-            lines?.Follow(document.Path, change);
-            if (hotReload is not null && change.Edits.Count > 0 && Path.GetExtension(document.Path).ToLowerInvariant() is ".cs" or ".razor" or ".cshtml")
+            // The built lines first, each session's: a breakpoint's move asks them what it now asks of the debugger.
+            bool code = change.Edits.Count > 0 && Path.GetExtension(document.Path).ToLowerInvariant() is ".cs" or ".razor" or ".cshtml";
+            foreach (DebugTab tab in view.Sessions)
             {
-                hotReload.Edited(document.Path, change.Before);
+                tab.Lines?.Follow(document.Path, change);
+                if (code && tab is { HotReload: { } reload, IsLive: true })
+                {
+                    reload.Edited(document.Path, change.Before);
+                }
+            }
+            foreach (RunningReload run in code ? running : [])
+            {
+                run.Reload.Edited(document.Path, change.Before);
             }
             Breakpoints.Follow(document.Path, change);
             FollowStop(document, change);
@@ -766,35 +1401,154 @@ public sealed class DebugController : IDisposable
 
     private void OnSaved(object? sender, EventArgs e)
     {
-        if (applyOnSave || HotReload is not { Changed: true } || !HotReloadOnSave() || WhyNotApply() is not null)
+        // A program run with Hot Reload takes a save's edits, as one under dotnet watch does, whatever else is debugged.
+        bool run = running.Any(r => r.Reload.Changed);
+        bool debugged = HotReload is { Changed: true } && HotReloadOnSave() && WhyNotApply() is null;
+        if (applyOnSave || !run && !debugged)
         {
             return;
         }
         applyOnSave = true;
+        DebugSession? savedSession = Session;
         Dispatcher.UIThread.Post(() =>
         {
             applyOnSave = false;
-            _ = ApplyAndRestartAsync();
+            if (!disposed && Session == savedSession)
+            {
+                _ = SavedAsync();
+            }
         });
+
+        async Task SavedAsync()
+        {
+            if (run)
+            {
+                await ApplyRunningAndRestartAsync();
+            }
+            if (debugged && HotReload is { Changed: true } && WhyNotApply() is null)
+            {
+                await ApplyAndRestartAsync();
+            }
+        }
     }
 
-    /// <summary>The value of the expression under the pointer while paused (a.b.c up to the word
-    /// hovered), in the chosen frame; null when there is none or it does not evaluate.</summary>
-    public async Task<string?> ValueAt(int offset, CancellationToken cancellation)
+    /// <summary>Apply Hot Reload Changes, the window's action and an agent's hot_reload alike: the programs run with Hot Reload
+    /// through the debugger take the edits whenever they have any (or nothing else would take them), whatever else is
+    /// debugged, and the chosen session debugged with Hot Reload takes them too; each that needs it restarts as
+    /// <paramref name="restart"/> says (the window's: <see cref="SettingsRestart"/>). Answers what each came to.</summary>
+    public async Task<HotReloadApplied> ApplyAllAsync(HotReloadRestart restart)
     {
         UiThread.Check();
-        if (Session is not { State: DebugState.Paused } session || frame is null || ExpressionAt(editors.CodeEditor.Document.Snapshot, offset) is not { } expression)
+        DebugTab? original = chosen;
+        bool debugged = HotReload is not null && WhyNotApply() is null;
+        HotReloadOutcome? services = null;
+        HotReloadOutcome? program = null;
+        bool restarted = false;
+        if (running.Count > 0 && (!debugged || running.Any(r => r.Reload.Changed)))
+        {
+            services = await ApplyRunningAsync();
+            restarted = services.Result == HotReloadResult.RestartNeeded && await RestartRunningAsked(services, restart);
+        }
+        DebugTab? applied = null;
+        if (debugged || running.Count == 0)
+        {
+            applied = original;
+            // Its own program's edits, chosen again should another program's stop have taken the window meanwhile.
+            if (original is { IsLive: true } && chosen != original && view.Sessions.Contains(original) && !disposed && !ending)
+            {
+                await ChooseAsync(original);
+            }
+            if (disposed || ending || chosen != original)
+            {
+                program = new HotReloadOutcome(HotReloadResult.Failed, $"{original?.Name ?? "The program"} is no longer debugged");
+            }
+            else
+            {
+                program = await ApplyChangesAsync();
+                restarted |= program.Result == HotReloadResult.RestartNeeded && await RestartAsked(program, applied, restart);
+            }
+        }
+        HotReloadOutcome outcome = services is { } both && program is { } and
+            ? Together([("the run's services", both), (applied?.Name ?? "the program debugged", and)])
+            : services ?? program!;
+        return new HotReloadApplied(outcome, restarted);
+    }
+
+    /// <summary>The value of the expression under the pointer while paused (a.b.c up to the word hovered), evaluated in the
+    /// chosen frame of the stop shown, for the hover card; one with members as its row, which opens as the Variables view's
+    /// rows do (<see cref="HoverValues"/>). Null when there is none or it does not evaluate. The card goes with the stop.</summary>
+    public async Task<CSharp.DebuggerHover?> HoverAt(int offset, CancellationToken cancellation)
+    {
+        UiThread.Check();
+        if (Session is not { State: DebugState.Paused } session || frame is not { } at || ExpressionAt(editors.CodeEditor.Document.Snapshot, offset) is not { } expression)
         {
             return null;
         }
+        int stop = shown;
+        CancellationToken gone = stopShown.Token;
         try
         {
-            EvaluateResponse value = await session.EvaluateAsync(expression, frame.Id, "hover").WaitAsync(cancellation);
-            return $"{expression} = {(value.Type is { Length: > 0 } type && value.Result != type ? $"{{{type}}} " : "")}{VariableNode.Cut(value.Result)}";
+            EvaluateResponse value = await session.EvaluateAsync(expression, at.Id, "hover").WaitAsync(cancellation);
+            if (stop != shown)
+            {
+                return null;
+            }
+            string code = $"{expression} = {(value.Type is { Length: > 0 } type && value.Result != type ? $"{{{type}}} " : "")}{VariableNode.Cut(value.Result)}";
+            return new CSharp.DebuggerHover(code)
+            {
+                Values = value.VariablesReference > 0 ? HoverValues(session, at, stop, expression, value) : null,
+                Gone = gone,
+            };
         }
         catch (DapException)
         {
             return null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A hovered value's rows: its own, opening into its members as the Variables view's rows do, each asked of the
+    /// stop it was read at and of no other; its rows' actions are the Variables view's own (Add to Watches, Inspect, Set
+    /// Value, a data breakpoint), and a value set there shows the hovered value read again with what was open still open.</summary>
+    private VariablesList HoverValues(DebugSession session, DapStackFrame at, int stop, string expression, EvaluateResponse value)
+    {
+        VariablesTree tree = new()
+        {
+            Load = async reference => stop == shown && session.State == DebugState.Paused
+                ? await session.VariablesAsync(reference)
+                : throw new DapException(DapCommands.Variables, "The program has gone on from the stop this value was read at"),
+        };
+        tree.Show([Hovered(value)]);
+        VariablesList list = new(tree) { DataWatch = DataWatchAsync };
+        list.EvaluateRequested += (_, request) => _ = Evaluate(request.Expression, request.Watch);
+        list.DataBreakpointRequested += (_, node) => _ = ToggleDataBreakpointAsync(node);
+        list.SetValueRequested += (_, request) => _ = SetHoveredAsync(request.Node, request.Value);
+        list.TextOpened += (_, node) => TextOpened?.Invoke(this, node.Value);
+        return list;
+
+        VariableNode Hovered(EvaluateResponse read) => new(expression, read.Result, read.Type, read.VariablesReference, 0, VariableRole.Value);
+
+        async Task SetHoveredAsync(VariableNode node, string typed)
+        {
+            if (!await SetValue(node, typed, at) || stop != shown)
+            {
+                return;
+            }
+            try
+            {
+                EvaluateResponse again = await session.EvaluateAsync(expression, at.Id, "hover");
+                if (stop == shown)
+                {
+                    await list.ShowAgain([Hovered(again)]);
+                }
+            }
+            catch (DapException)
+            {
+                // The value set shows in Variables; the card keeps what it read.
+            }
         }
     }
 
@@ -843,28 +1597,64 @@ public sealed class DebugController : IDisposable
 
     private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
-    private async Task OnStateChanged(DebugSession session)
+    /// <summary>A session started, stopped, ran on or ended: its tab follows, and the window when the tab is chosen. A stop
+    /// in a program not chosen chooses its tab; the chosen one's end chooses another still debugged (one paused first).</summary>
+    private async Task OnStateChanged(DebugTab tab)
     {
-        if (session != Session || disposed)
+        if (disposed || tab.Session is not { } session || !view.Sessions.Contains(tab))
         {
             return;
         }
         // What the program wrote before it stopped or ended is shown before the stop or the end is.
         if (session.State == DebugState.Ended)
         {
-            view.Console.Input = null;
-            view.Console.Sink.End(ConsoleStream.Output);
-            view.Console.Sink.End(ConsoleStream.Error);
-            view.Console.Sink.End(ConsoleStream.System);
+            tab.Console.Input = null;
+            tab.Console.Sink.End(ConsoleStream.Output);
+            tab.Console.Sink.End(ConsoleStream.Error);
+            tab.Console.Sink.End(ConsoleStream.System);
+            StopFollowing(tab);
+            tab.HasEnded = true;
+            tab.HotReload?.End();
+            tab.Lines = null;
         }
-        view.Console.Flush();
+        tab.Console.Flush();
+        tab.OnStateChanged();
+        if (disposed || !view.Sessions.Contains(tab))
+        {
+            return;
+        }
+        if (tab != chosen)
+        {
+            if (session.State == DebugState.Paused)
+            {
+                await ChooseAsync(tab);
+                return;
+            }
+            Message?.Invoke(this, Told(tab));
+            StateChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+        await Show(tab, say: true);
+        if (session.State == DebugState.Ended && tab == chosen && Next() is { } next)
+        {
+            // Said of the end, the status bar keeps it.
+            await ChooseAsync(next, say: false);
+        }
+    }
+
+    /// <summary>The chosen tab's session as it now is, in the window: the toolbar for its state, and its stop shown, or the
+    /// last one's let go a moment after it runs on, or its end.</summary>
+    private async Task Show(DebugTab tab, bool say)
+    {
+        DebugSession session = tab.Session!;
         view.SetState(session.State);
         view.ShowDetachable(session.Attached && session.State is DebugState.Running or DebugState.Paused);
         // Every stop is new and every run lets the last one's frames and values go: none is asked of again.
-        shown++;
+        NextShown();
         frame = null;
         Stop = null;
         clearing.Stop();
+        showing = session.State == DebugState.Paused ? (System.Diagnostics.Stopwatch.GetTimestamp(), null) : null;
         switch (session.State)
         {
             case DebugState.Paused:
@@ -874,38 +1664,64 @@ public sealed class DebugController : IDisposable
                 {
                     break;
                 }
-                Message?.Invoke(this, Said(session));
+                if (say)
+                {
+                    Message?.Invoke(this, Told(tab));
+                }
                 break;
             case DebugState.Running:
                 editors.CodeEditor.CancelChoices();
                 executionPoint = null;
                 stopException = null;
+                lastResult = null;
                 bindingStop = null;
                 bindingFrame = null;
                 UpdateAllMarks();
                 ClearInlineValues();
-                clearing.Start();
-                Message?.Invoke(this, Said(session));
+                clearing.Restart();
+                if (say)
+                {
+                    Message?.Invoke(this, Told(tab));
+                }
                 break;
             case DebugState.Ended:
-                hotReload?.End();
                 executionPoint = null;
-                lines = null;
                 UpdateAllMarks();
                 ClearInlineValues();
                 view.ShowFrames([], null, [], null);
                 view.Tree.Show([]);
                 view.SetState(DebugState.Ended);
-                Message?.Invoke(this, Said(session));
+                if (say)
+                {
+                    Message?.Invoke(this, Told(tab));
+                }
                 break;
         }
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>A session's state in words: the status bar's as it changes, and <see cref="Summary"/>'s.</summary>
-    private string Said(DebugSession session) => session.State switch
+    /// <summary>A session's state in words, and with several programs debugged how many are and which are paused: the status
+    /// bar's as it changes, and <see cref="Summary"/>'s.</summary>
+    private string Told(DebugTab tab)
+    {
+        string said = Said(tab);
+        List<DebugTab> live = [.. view.Sessions.Where(t => t.IsLive && t.Session is not null)];
+        if (live.Count == 0 || live is [var only] && only == tab)
+        {
+            return said;
+        }
+        string[] paused = [.. live.Where(t => t.Session!.State == DebugState.Paused).Select(t => t.Name)];
+        return $"{said}; {Plural.Of(live.Count, "program")} debugged"
+            + (paused.Length > 0 ? $", {string.Join(" and ", paused)} paused" : string.Empty);
+    }
+
+    /// <summary>A session's state in words; what its stop was read to be only for the chosen tab, whose stop is read.</summary>
+    private string Said(DebugTab tab) => Said(tab.Session!, tab.Name, tab == chosen);
+
+    private string Said(DebugSession session, string name, bool read) => session.State switch
     {
         DebugState.Starting => $"Debugging {name}",
+        DebugState.Paused when !read => $"{name}: paused ({session.StopReason})",
         DebugState.Paused when stopException is { } thrown => $"{name}: paused on {thrown.Text}",
         DebugState.Paused when undescribed is { } why => $"{name}: paused on an exception the debugger could not describe ({why})",
         DebugState.Paused when session.DataStop is ({ } watched, var change) =>
@@ -918,19 +1734,23 @@ public sealed class DebugController : IDisposable
         DebugState.Paused => $"{name}: paused ({session.StopReason})",
         DebugState.Running => $"{name}: running",
         _ when session.Detached => $"Detached from {name}, which runs on",
+        _ when session.Gone is { } gone => $"Debugging {name} ended: {gone}",
         _ => session.Failure is { } failure
             ? $"Debugging {name} ended: {failure}"
             : $"Debugging {name} ended{(session.ExitCode is int code ? $" with exit code {code}" : "")}",
     };
 
     /// <summary>Shows a stop: its exception described, then its thread's frames and the top one's values. An exception the
-    /// debugger cannot describe (a getter of its own that never returns) still shows where the program stopped.</summary>
+    /// debugger cannot describe (a getter of its own that never returns) still shows where the program stopped. Held as
+    /// background work until the stop is placed (its frames listed, the editor at its line), so a wait for the IDE to be
+    /// quiet never ends with the editor about to go there; its values are read after, unheld, as Continue never waits.</summary>
     private async Task ShowStop(DebugSession session)
     {
         if (session.StoppedThread is not int thread)
         {
             return;
         }
+        using IDisposable placing = BackgroundWork.Scope();
         int stop = shown;
         stopException = null;
         undescribed = null;
@@ -941,10 +1761,12 @@ public sealed class DebugController : IDisposable
         {
             try
             {
-                // Said by the inspector's call the debugger stopped in: the values, and what set the new one.
-                if ((await session.StackTraceAsync(thread)).FirstOrDefault() is { } changed)
+                // Said by the inspector's call the debugger stopped in: the values, and what set the new one, with where that
+                // is written apart, at its XAML compiler's line, said at the editor's.
+                if ((await session.StackTraceAsync(thread)).FirstOrDefault() is { } changed
+                    && StringValue((await session.EvaluateAsync("change", changed.Id, "watch")).Result) is { } words)
                 {
-                    propertyChange = StringValue((await session.EvaluateAsync("change", changed.Id, "watch")).Result);
+                    propertyChange = words + AppPlaces.At(SetAt(await session.EvaluateAsync("setAt", changed.Id, "watch")), CSharp.ServerPlaces.Texts(editors));
                 }
             }
             catch (DapException)
@@ -975,7 +1797,7 @@ public sealed class DebugController : IDisposable
                 view.Console.Append(BindingErrors.StopLine(failed.Problem, Folder), error: true);
             }
         }
-        if (session.StopReason == "exception")
+        if (session.StopReason == StopReasons.Exception)
         {
             try
             {
@@ -995,7 +1817,7 @@ public sealed class DebugController : IDisposable
         }
         try
         {
-            await ChooseThread(thread);
+            await ChooseThread(thread, placing);
         }
         catch (DapException error)
         {
@@ -1026,8 +1848,40 @@ public sealed class DebugController : IDisposable
         {
             return null;
         }
-        return failure is null ? null : new BindingStop(
-            BindingErrors.Problem(failure, failure.Place is { } at ? BindingErrors.TextOf(at.File, editors.Documents) : null), error.Result, error.Type, error.VariablesReference);
+        if (failure is null)
+        {
+            return null;
+        }
+        TextSnapshot? text = failure.Place is { } at ? BindingErrors.TextOf(at.File, editors.Documents) : null;
+        SourcePlace? element = failure.Place is { } place ? AppPlaces.InEditor(place, _ => text) : null;
+        return new BindingStop(BindingErrors.Problem(failure, text), error.Result, error.Type, error.VariablesReference)
+        {
+            Xaml = element is null ? null : $"{Path.GetFileName(element.File)}:{element.Line}:{element.Column}",
+        };
+    }
+
+    /// <summary>The members behind a reference, as Variables and an agent open them: those of <c>$bindingError</c> with its
+    /// Xaml, which the app wrote at its XAML compiler's line, at the editor's (<see cref="BindingStop.Xaml"/>).</summary>
+    public async Task<IReadOnlyList<DapVariable>> MembersAsync(DebugSession session, int reference)
+    {
+        IReadOnlyList<DapVariable> members = await session.VariablesAsync(reference);
+        return bindingStop is { Xaml: { } xaml } failed && failed.Reference == reference && session == Session
+            ? [.. members.Select(m => m.Name == "Xaml" && m.Value.StartsWith('"') ? m with { Value = SymbolDisplay.FormatLiteral(xaml, quote: true) } : m)]
+            : members;
+    }
+
+    /// <summary>Where the style that set a watched property is written, as the inspector's call gives it (a place as the
+    /// protocol writes one); null when it names none.</summary>
+    private static SourcePlace? SetAt(EvaluateResponse evaluated)
+    {
+        try
+        {
+            return StringValue(evaluated.Result) is { } said ? JsonSerializer.Deserialize(said, WireJson.Default.SourcePlace) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>A string as the debugger shows one, a C# literal, as it is; null for anything else (an error, null).</summary>
@@ -1036,7 +1890,9 @@ public sealed class DebugController : IDisposable
             ? literal.Token.ValueText
             : null;
 
-    private async Task ChooseThread(int thread)
+    /// <summary>Shows a thread's frames, the top one chosen and gone to; <paramref name="placed"/> is let go once it has been,
+    /// before the frame's values are read.</summary>
+    private async Task ChooseThread(int thread, IDisposable? placed = null)
     {
         if (Session is not { State: DebugState.Paused } session)
         {
@@ -1056,7 +1912,7 @@ public sealed class DebugController : IDisposable
         // there, but under Just My Code the user's frame it came through is the one shown, as Rider and Visual Studio show it.
         DapStackFrame? user = stack.FirstOrDefault(f => f.Source?.Path is not null && f.PresentationHint != "subtle");
         bool inspected = thread == session.StoppedThread && (session.PropertyStop is not null || session.BindingErrorStop);
-        bool thrown = thread == session.StoppedThread && session.StopReason == "exception";
+        bool thrown = thread == session.StoppedThread && session.StopReason == StopReasons.Exception;
         DapStackFrame? top = inspected ? user ?? stack.FirstOrDefault()
             : (thrown ? user : null) ?? stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
         bool shows = !inspected || top == user;
@@ -1067,16 +1923,20 @@ public sealed class DebugController : IDisposable
             bindingFrame = bindingStop is not null && shows ? top?.Id : null;
         }
         view.ShowFrames(threads, threads.FirstOrDefault(t => t.Id == thread), stack, top);
-        UpdateAllMarks();
-        if (top is not null)
+        if (thread == session.StoppedThread)
         {
-            await ChooseFrame(top, navigate: shows);
+            FramesShown();
         }
+        UpdateAllMarks();
+        // The frame is gone to before its first wait, for its values.
+        Task values = top is not null ? ChooseFrame(top, navigate: shows) : Task.CompletedTask;
         if (thread == session.StoppedThread && !shows && bindingStop?.Problem.Problem is { Path: { } xaml } failedAt && File.Exists(xaml))
         {
             // No code of the app's made the binding fail (a template's, a style's): its XAML is where to look.
             Navigate?.Invoke(this, (xaml, failedAt.Position));
         }
+        placed?.Dispose();
+        await values;
     }
 
     private async Task ChooseFrame(DapStackFrame chosen, bool navigate)
@@ -1088,12 +1948,13 @@ public sealed class DebugController : IDisposable
         frame = chosen;
         if (navigate && chosen.Source?.Path is { } path && File.Exists(path))
         {
-            Navigate?.Invoke(this, (path, new TextPosition(Current(path, Math.Max(0, chosen.Line - 1)), Math.Max(0, chosen.Column - 1))));
+            Navigate?.Invoke(this, (path, Current(path, chosen)));
         }
         await ShowVariables();
     }
 
-    /// <summary>The chosen frame's variables, under its watches and the last result evaluated.</summary>
+    /// <summary>The chosen frame's variables, under its watches and the last result evaluated; nothing more is asked once the
+    /// program has gone on.</summary>
     private async Task ShowVariables()
     {
         UiThread.Check();
@@ -1101,6 +1962,7 @@ public sealed class DebugController : IDisposable
         {
             return;
         }
+        int stop = shown;
         List<VariableNode> rows = [];
         if (bindingStop is { } failed && Stop is { } stopped && stopped.Frames.Any(f => f.Id == current.Id))
         {
@@ -1110,10 +1972,15 @@ public sealed class DebugController : IDisposable
         foreach (string watch in watches)
         {
             rows.Add(await Evaluated(session, current, watch, VariableRole.Watch));
+            if (stop != shown)
+            {
+                return;
+            }
         }
-        if (lastResult is { } result)
+        if (lastResult is { } result && result.Stop == stop)
         {
-            rows.Add(await Evaluated(session, current, result.Expression, VariableRole.Result));
+            VariableNode row = result.Row;
+            rows.Add(new VariableNode(row.Name, row.Value, row.Type, row.Reference, 0, row.Role));
         }
         Dictionary<string, string> values = [];
         try
@@ -1121,6 +1988,10 @@ public sealed class DebugController : IDisposable
             IReadOnlyList<DapScope> scopes = await session.ScopesAsync(current.Id);
             foreach (DapScope scope in scopes)
             {
+                if (stop != shown)
+                {
+                    return;
+                }
                 IReadOnlyList<DapVariable> variables = await session.VariablesAsync(scope.VariablesReference);
                 foreach (DapVariable variable in variables)
                 {
@@ -1141,16 +2012,57 @@ public sealed class DebugController : IDisposable
         {
             rows.Add(new VariableNode("error", error.Reason, null, 0, 0, VariableRole.Error));
         }
-        if (frame == current)
+        if (frame == current && stop == shown)
         {
             view.Tree.Show(rows);
             ShowInlineValues(current, values);
+            LocalsShown();
         }
+    }
+
+    /// <summary>The stop being shown: when it came, and when its frames were shown, until its locals are.</summary>
+    private (long Came, long? Framed)? showing;
+
+    /// <summary>The continue or step the person last asked for, and when, until the stop it comes to is shown.</summary>
+    private (string Action, long At)? asked;
+
+    /// <summary>How long the last stop took to show, as passenger.log has it.</summary>
+    public StopTimes? LastStopTimes { get; private set; }
+
+    private void FramesShown()
+    {
+        if (showing is { Framed: null } came)
+        {
+            showing = came with { Framed = System.Diagnostics.Stopwatch.GetTimestamp() };
+        }
+    }
+
+    /// <summary>The stop's locals are shown: how long it took, from the step that came to it and from the stop, goes to
+    /// passenger.log, since it is what a person waits on at every step.</summary>
+    private void LocalsShown()
+    {
+        if (showing is not { } stop)
+        {
+            return;
+        }
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        showing = null;
+        TimeSpan framed = System.Diagnostics.Stopwatch.GetElapsedTime(stop.Came, stop.Framed ?? now);
+        TimeSpan listed = System.Diagnostics.Stopwatch.GetElapsedTime(stop.Came, now);
+        (string Action, TimeSpan After)? step = asked is { } going ? (going.Action, System.Diagnostics.Stopwatch.GetElapsedTime(going.At, stop.Came)) : null;
+        asked = null;
+        LastStopTimes = new StopTimes(step?.Action, step?.After, framed, listed);
+        IdeErrors.Write($"Debugging {name}: {(step is { } s ? $"{s.Action} stopped {s.After.TotalMilliseconds:0} ms after it was asked, and the stop" : "a stop")} "
+            + $"showed its frames {framed.TotalMilliseconds:0} ms and its locals {listed.TotalMilliseconds:0} ms after it came");
     }
 
     /// <summary>The chosen frame's values after the lines of its method, in its file and no other.</summary>
     private void ShowInlineValues(DapStackFrame current, IReadOnlyDictionary<string, string> values)
     {
+        if (disposed)
+        {
+            return;
+        }
         string? path = current.Source?.Path is { } source ? PathNames.Canonical(source) : null;
         foreach (OpenDocument document in editors.Documents)
         {
@@ -1207,8 +2119,9 @@ public sealed class DebugController : IDisposable
     public async Task<DataWatchOffer> DataWatchAsync(VariableNode node)
     {
         UiThread.Check();
+        DebugSession? session = Session;
         (DataBreakpointInfoResponse? info, string? whyNot) = await DataInfoAsync(node);
-        return info?.DataId is { } dataId && Breakpoints.FindData(dataId) is not null
+        return info?.DataId is { } dataId && session is not null && Breakpoints.FindData(dataId, session) is not null
             ? new DataWatchOffer(DataWatchOffer.Remove, null)
             : new DataWatchOffer(DataWatchOffer.Set, whyNot);
     }
@@ -1220,18 +2133,19 @@ public sealed class DebugController : IDisposable
         UiThread.Check();
         // Held until the breakpoint is in the store, so a picture taken after the choice shows it.
         using IDisposable held = Editor.BackgroundWork.Scope();
+        DebugSession? session = Session;
         (DataBreakpointInfoResponse? info, string? whyNot) = await DataInfoAsync(node);
-        if (info?.DataId is not { } dataId)
+        if (info?.DataId is not { } dataId || session is null)
         {
             Message?.Invoke(this, $"Set Data Breakpoint: {whyNot}");
             return;
         }
-        if (Breakpoints.FindData(dataId) is { } set)
+        if (Breakpoints.FindData(dataId, session) is { } set)
         {
             Breakpoints.Remove(set);
             return;
         }
-        Breakpoints.AddData(dataId, DataLocation(node));
+        Breakpoints.AddData(dataId, DataLocation(node), session);
     }
 
     /// <summary>What the debugger says of watching a row: its answer, or why it was not asked or could not answer.</summary>
@@ -1285,16 +2199,18 @@ public sealed class DebugController : IDisposable
     /// <summary>Shows the chosen frame's variables and inline values again, as a value changed.</summary>
     public Task RefreshAsync() => ShowVariables();
 
-    /// <summary>Set Value: what a row's expression names takes the value typed (a C# expression), and the frame's
-    /// variables and inline values show what it now is; a refusal is said in the status bar.</summary>
-    public async Task SetValue(VariableNode node, string value)
+    /// <summary>Set Value: what a row's expression names takes the value typed (a C# expression), in the chosen frame or the
+    /// one given (a hover's), and the frame's variables and inline values show what it now is; a refusal is said in the
+    /// status bar. True when the value was set.</summary>
+    public async Task<bool> SetValue(VariableNode node, string value, DapStackFrame? within = null)
     {
         UiThread.Check();
         node.IsEditing = false;
-        if (Session is not { State: DebugState.Paused } session || frame is not { } current || node.Expression is not { } expression)
+        if (Session is not { State: DebugState.Paused } session || (within ?? frame) is not { } current || node.Expression is not { } expression)
         {
-            return;
+            return false;
         }
+        bool set = true;
         try
         {
             await session.SetExpressionAsync(expression, value, current.Id);
@@ -1302,10 +2218,23 @@ public sealed class DebugController : IDisposable
         catch (DapException error)
         {
             Message?.Invoke(this, $"Could not set {expression}: {error.Reason}");
+            set = false;
         }
         await ShowVariables();
+        return set;
     }
 
+    /// <summary>A new stop shown, or none: what the last one's requests bring back is dropped, and what still shows of it goes.</summary>
+    private void NextShown()
+    {
+        shown++;
+        CancellationTokenSource gone = stopShown;
+        stopShown = new CancellationTokenSource();
+        gone.Cancel();
+    }
+
+    /// <summary>Evaluate's Enter, or Add to Watches: a watch is evaluated at every stop, an expression only now, once, its
+    /// side effects with it, its result kept for this stop alone.</summary>
     private async Task Evaluate(string expression, bool watch)
     {
         if (watch)
@@ -1315,9 +2244,15 @@ public sealed class DebugController : IDisposable
                 watches.Add(expression);
             }
         }
-        else
+        else if (Session is { State: DebugState.Paused } session && frame is { } current)
         {
-            lastResult = (expression, string.Empty);
+            int stop = shown;
+            VariableNode row = await Evaluated(session, current, expression, VariableRole.Result);
+            if (stop != shown)
+            {
+                return;
+            }
+            lastResult = (stop, row);
         }
         await ShowVariables();
     }
@@ -1340,6 +2275,10 @@ public sealed class DebugController : IDisposable
 
     private void UpdateMarks(OpenDocument document)
     {
+        if (disposed)
+        {
+            return;
+        }
         bool debugging = IsDebugging;
         // Muted, a breakpoint shows as Rider's muted ones do, grey whatever the debugger said of it.
         bool muted = Breakpoints.Muted;
@@ -1363,12 +2302,16 @@ public sealed class DebugController : IDisposable
     }
 
     /// <summary>Carries the stop shown in a file through an edit to it, as Rider's execution point and inline values go
-    /// with the text: the arrow from the built lines, the values a line at a time.</summary>
+    /// with the text: the arrow and the frames' rows from the built lines, the values a line at a time.</summary>
     private void FollowStop(OpenDocument document, DocumentChangedEventArgs change)
     {
         if (executionPoint is { } point && point.Path == document.Path)
         {
             UpdateMarks(document);
+        }
+        if (change.After.LineCount != change.Before.LineCount && view.Frames.Count > 0)
+        {
+            view.ShowPlacesAgain();
         }
         if (document.LineAnnotations.Count > 0)
         {
@@ -1380,18 +2323,55 @@ public sealed class DebugController : IDisposable
     /// (an app's XAML places) are read against.</summary>
     public int CurrentLine(string path, int line) => Current(path, line);
 
-    /// <summary>The built line a line (from zero) of a file has, while a session runs.</summary>
-    public int BuiltLine(string path, int line) => Built(path, line);
+    /// <summary>The built place (line and column from zero, as the compiler counted them) a place in a file now has: through
+    /// the edits since the build while a session runs, else in the file's text as it is.</summary>
+    public TextPosition BuiltPlace(string path, int line, int column)
+    {
+        if (lines is not null)
+        {
+            return lines.ToBuilt(path, line, column);
+        }
+        Lsp.LspPosition at = CSharp.ServerPlaces.CompiledPositionOf(path, CSharp.ServerPlaces.TextOf(editors, path), new TextPosition(line, column));
+        return new TextPosition(at.Line, at.Character);
+    }
 
     /// <summary>Whether a line (from zero) of a file is the build's, rather than written since the session began.</summary>
     public bool IsBuiltLine(string path, int line) => lines?.IsBuilt(path, line) ?? true;
 
+    /// <summary>Where a stack frame is in its file now, line and column from zero as the editor counts them (the debugger's are
+    /// the compiler's, from one, in the build); null for a frame without a file.</summary>
+    public TextPosition? PlaceOf(DapStackFrame frame) => frame.Source?.Path is { } path ? Current(PathNames.Canonical(path), frame) : null;
+
+    /// <summary>Where a frame of a session's program (the chosen one's or another's) is in its file now, through that
+    /// session's built lines.</summary>
+    public TextPosition? PlaceOf(DapStackFrame frame, DebugSession session)
+    {
+        if (frame.Source?.Path is not { } path)
+        {
+            return null;
+        }
+        int line = Math.Max(0, frame.Line - 1);
+        int column = Math.Max(0, frame.Column - 1);
+        return TabOf(session)?.Lines?.ToCurrent(PathNames.Canonical(path), line, column) ?? new TextPosition(line, column);
+    }
+
     /// <summary>Where a built line of a file is now, while a session runs.</summary>
     private int Current(string path, int line) => lines?.ToCurrent(path, line) ?? line;
+
+    /// <summary>Where a frame's built line and column in a file are now, while a session runs.</summary>
+    private TextPosition Current(string path, DapStackFrame frame)
+    {
+        int line = Math.Max(0, frame.Line - 1);
+        int column = Math.Max(0, frame.Column - 1);
+        return lines?.ToCurrent(path, line, column) ?? new TextPosition(line, column);
+    }
 
     /// <summary>The built line a line of a file has, while a session runs.</summary>
     private int Built(string path, int line) => lines?.ToBuilt(path, line) ?? line;
 }
+
+/// <summary>The exact native tab and process started or attached by an additional launch.</summary>
+public sealed record DebugLaunch(DebugTab Tab, int ProcessId);
 
 /// <summary>What Set Data Breakpoint offers on a row of Variables: its title (Rider's Set Data Breakpoint, or Remove Data
 /// Breakpoint on a member watched), and why it cannot be chosen when it cannot.</summary>
@@ -1400,6 +2380,10 @@ public sealed record DataWatchOffer(string Title, string? WhyNot)
     public const string Set = "Set Data Breakpoint";
     public const string Remove = "Remove Data Breakpoint";
 }
+
+/// <summary>How long a stop took to show: from the continue or step that came to it (as the status bar names it), when the
+/// person asked for one, and from the stop to its frames and to its locals shown.</summary>
+public sealed record StopTimes(string? Asked, TimeSpan? ToStop, TimeSpan Frames, TimeSpan Locals);
 
 /// <summary>A stop as the debugger read it: the thread that stopped and why, its frames (the top one with source among
 /// them), and the exception it stopped on, described as the stop's line shows it.</summary>
@@ -1413,6 +2397,10 @@ public sealed record DebugStop(int Thread, string? Reason, IReadOnlyList<DapStac
 /// its control's element), and the inspector call's parameter as the debugger shows it, which opens into its parts.</summary>
 public sealed record BindingStop(BindingProblem Problem, string Value, string? Type, int Reference)
 {
+    /// <summary>Its control's element as the parameter's Xaml names it ("MainWindow.axaml:8:20"), at the editor's line and
+    /// column: the app wrote its XAML compiler's, which a lone '\r' above puts lines ahead.</summary>
+    public string? Xaml { get; init; }
+
     /// <summary>Its row in Variables, as Rider names the exception stopped at $exception; the breakpoint's condition and log
     /// message read it by the same name.</summary>
     public const string Name = "$bindingError";

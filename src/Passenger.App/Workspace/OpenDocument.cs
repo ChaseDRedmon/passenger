@@ -8,8 +8,8 @@ using Passenger.Text;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>A file open in a tab: its text, how to write it back, and where its view was left so
-/// switching tabs returns to the same carets and scroll.</summary>
+/// <summary>A file open in a tab: its text and storage, or a read-only asset, with the view left so switching tabs
+/// returns to the same carets and scroll. An asset is shared by the file's tabs and released with its last view or hold.</summary>
 public sealed class OpenDocument : Observable
 {
     private IHighlighter? parser;
@@ -44,6 +44,148 @@ public sealed class OpenDocument : Observable
     /// disk tries first.</summary>
     private bool encodingChosen;
 
+    /// <summary>The image or font owned by this document, null for text: a stand-in (<see cref="AssetPreview.IsPending"/>)
+    /// until its first decode lands, then the decoded one, replaced only after a successful reload.</summary>
+    public AssetPreview? Asset { get; private set; }
+
+    /// <summary>The asset's decode under way off the UI thread, until what it came to has landed.</summary>
+    private Task? decoding;
+
+    /// <summary>A reload asked for while a decode was under way: one more follows it rather than running beside it.</summary>
+    private bool decodeAgain;
+
+    /// <summary>Closed, so a decode that lands after lets go of what it decoded.</summary>
+    private bool closed;
+
+    /// <summary>Why the asset's first decode failed, said once: its tabs close, as a file that could not be opened.</summary>
+    public event EventHandler<string>? PreviewFailed;
+
+    /// <summary>Why the asset's first decode failed, once it has; null while it shows or loads, and for text.</summary>
+    public string? PreviewFailure { get; private set; }
+
+    /// <summary>Whether the asset is being decoded off the UI thread: its first time (the tab says it is loading) or again.</summary>
+    public bool IsDecoding => decoding is { IsCompleted: false };
+
+    /// <summary>Waits until no decode of the asset is under way, a reload's that followed another's too.</summary>
+    public async Task DecodedAsync()
+    {
+        while (decoding is { IsCompleted: false } under)
+        {
+            await under;
+        }
+    }
+
+    /// <summary>Opens a supported image or font as a read-only asset with an empty text placeholder, otherwise as text.
+    /// An asset's tab shows it loading until its decode lands off the UI thread; a missing, empty or oversized one is
+    /// refused at once. Other binary content opens as its bytes' text, read-only and never written
+    /// (<see cref="FileText.Bytes"/>), or, unless <paramref name="asBytes"/> (for what would edit it), is refused with an
+    /// <see cref="IOException"/>, as is one past <see cref="LargestText"/>.</summary>
+    public static OpenDocument Load(string path, bool asBytes = true)
+    {
+        if (AssetPreview.KindOf(path) is { } kind)
+        {
+            OpenDocument asset = new(path, new FileText(string.Empty, new UTF8Encoding(false), false))
+            {
+                Asset = AssetPreview.Pending(path),
+                Language = kind == AssetKind.Font ? Language.Font : Language.Image,
+            };
+            asset.Decode();
+            return asset;
+        }
+        // A workbook's tab holds no text, since its table is read from the file itself.
+        if (Tables.Workbook.IsWorkbook(path))
+        {
+            return new OpenDocument(path, new FileText(string.Empty, new UTF8Encoding(false), false));
+        }
+        string name = System.IO.Path.GetFileName(path);
+        DiskStamp stamp = DiskStamp.Of(new FileInfo(path));
+        long length = stamp.Length;
+        if (length > LargestText)
+        {
+            throw new IOException($"{name} is {length / (1024.0 * 1024):0.#} MB: the editor opens a file of up to {LargestText / (1024 * 1024)} MB as text");
+        }
+        FileText file = FileText.Load(path) ?? (asBytes ? FileText.Bytes(path) : throw new IOException($"{name} looks like a binary file."));
+        OpenDocument document = new(path, file);
+        document.ReadAt(stamp);
+        return document;
+    }
+
+    /// <summary>The file's length and last write time as found just before the editor last read all of it, with the version of
+    /// the text it then held: while both hold, the editor holds what the disk does (<see cref="TakeDiskTextAsync"/>).</summary>
+    private (DiskStamp Stamp, int Version)? readAt;
+
+    private void ReadAt(DiskStamp? stamp) => readAt = stamp is { } found ? (found, Text.Version) : null;
+
+    /// <summary>The largest file opened as text or as its bytes, as an image's preview is bounded too: plain text that size
+    /// opens in a moment and takes keys at once, but the editor holds about six and a half times a file's size (a 100 MB
+    /// log, 850 MB), and .NET holds no string past a billion characters.</summary>
+    public const long LargestText = 64 * 1024 * 1024;
+
+    /// <summary>Decodes the asset off the UI thread, the one shown (the stand-in at first) kept until the new one lands;
+    /// while one decode is under way, one more follows it, so a file written in several steps is read once more, never
+    /// twice at once.</summary>
+    private void Decode()
+    {
+        if (IsDecoding)
+        {
+            decodeAgain = true;
+            return;
+        }
+        decoding = DecodeAsync();
+    }
+
+    /// <summary>One decode and what it came to: the new asset in place of the one shown, or why not, said in the banner
+    /// over a picture already shown, or as <see cref="PreviewFailed"/> over the stand-in.</summary>
+    private async Task DecodeAsync()
+    {
+        string path = Path;
+        AssetPreview? decoded = null;
+        string? failed = null;
+        try
+        {
+            decoded = await BackgroundWork.Run(() => AssetPreview.Load(path));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            failed = error.Message;
+        }
+        catch (Exception error)
+        {
+            // A fault of the IDE's rather than the file's: reported, and the tab never left loading for good.
+            IdeErrors.Report(error);
+            failed = $"Passenger failed: {error.GetType().Name}: {error.Message}";
+        }
+        // Moved meanwhile, it is read again where it is now.
+        if (closed || decodeAgain || path != Path)
+        {
+            decoded?.Dispose();
+            if (!closed)
+            {
+                decodeAgain = false;
+                decoding = DecodeAsync();
+            }
+            return;
+        }
+        AssetPreview shown = Asset!;
+        if (decoded is not null)
+        {
+            Asset = decoded;
+            Raise(nameof(Asset));
+            shown.Dispose();
+            Notice = null;
+        }
+        else if (!shown.IsPending)
+        {
+            Notice = $"Preview reload failed; showing the previous version: {failed}";
+        }
+        else
+        {
+            PreviewFailure = failed;
+            PreviewFailed?.Invoke(this, failed!);
+        }
+    }
+
+    /// <summary>Opens text with the encoding and line endings read from disk, and the conventions its path supplies.</summary>
     public OpenDocument(string path, FileText file)
     {
         Path = path;
@@ -52,7 +194,8 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         crBreaks = file.CrBreaks;
-        Language = Language.ForPath(path);
+        IsBinary = file.IsBinary;
+        Language = IsBinary ? Language.PlainText : Language.ForPath(path);
         detected = Language.Detect(file.Text);
         Conventions = EditorConfig.For(path);
         Indentation = Choose();
@@ -67,17 +210,13 @@ public sealed class OpenDocument : Observable
             Selections = TextEditing.MapThrough(Selections, change.Edits).Clamp(change.After.Length);
             if (foldRegions.Count > 0)
             {
-                FoldRegion[] moved = new FoldRegion[foldRegions.Count];
-                for (int i = 0; i < moved.Length; i++)
-                {
-                    FoldRegion region = foldRegions[i];
-                    moved[i] = region with
-                    {
-                        Start = TextEditing.MapOffset(region.Start, change.Edits, afterInsertions: true),
-                        End = TextEditing.MapOffset(region.End, change.Edits, afterInsertions: true),
-                    };
-                }
-                FoldRegions = moved;
+                // Moved where the edit reaches them, the runs of regions past it shifted whole.
+                FoldRegions = FoldList.Of(foldRegions).Through(change.Edits);
+            }
+            if (inlayHints.Count > 0)
+            {
+                // The same way: each editor has carried its own already, which this draws alike, so none wraps a line again.
+                InlayHints = HintList.Of(inlayHints).Through(change.Edits);
             }
             FollowHeld(change.Edits);
             Raise(nameof(IsModified));
@@ -164,6 +303,10 @@ public sealed class OpenDocument : Observable
     /// all of the IDE's work.</summary>
     public bool IsChecking => checks > 0;
 
+    /// <summary>The file's own checks are all done again (<see cref="IsChecking"/> false), on the UI thread: what an agent's
+    /// diagnostics waits on.</summary>
+    public event EventHandler? Checked;
+
     /// <summary>Holds <see cref="IsChecking"/> until the scope ends, on the UI thread.</summary>
     public IDisposable Checking()
     {
@@ -181,7 +324,10 @@ public sealed class OpenDocument : Observable
             if (!released)
             {
                 released = true;
-                document.checks--;
+                if (--document.checks == 0)
+                {
+                    document.Checked?.Invoke(document, EventArgs.Empty);
+                }
             }
         }
     }
@@ -235,6 +381,27 @@ public sealed class OpenDocument : Observable
         set => Set(ref testMarks, value);
     }
 
+    /// <summary>The run icons beside what a run configuration runs from it: a compose file's services, a Dockerfile's image.</summary>
+    public IReadOnlyList<RunMark> RunMarks
+    {
+        get => runMarks;
+        set => Set(ref runMarks, value);
+    }
+
+    private IReadOnlyList<RunMark> runMarks = [];
+
+    /// <summary>The icons beside the web routes it declares, each sending its route's request; drawn as the run icons are.</summary>
+    public IReadOnlyList<RunMark> RouteMarks
+    {
+        get => routeMarks;
+        set => Set(ref routeMarks, value);
+    }
+
+    private IReadOnlyList<RunMark> routeMarks = [];
+
+    /// <summary>Every run icon its gutter draws: a run configuration's and a route's.</summary>
+    public IReadOnlyList<RunMark> GutterRunMarks => routeMarks.Count == 0 ? runMarks : [.. runMarks, .. routeMarks];
+
     /// <summary>The colours its lines write or name (XAML's, C#'s), each a swatch in the gutter.</summary>
     public IReadOnlyList<ColourMark> ColourMarks
     {
@@ -280,11 +447,12 @@ public sealed class OpenDocument : Observable
         set => Set(ref gutterAnnotations, value);
     }
 
-    /// <summary>The language service's words inside lines (parameter names before arguments), in this text's offsets.</summary>
+    /// <summary>The language service's words inside lines (parameter names before arguments), in this text's offsets: a
+    /// <see cref="HintList"/>, which the text carries through each edit, as its editors carry theirs.</summary>
     public IReadOnlyList<InlayHint> InlayHints
     {
         get => inlayHints;
-        set => Set(ref inlayHints, value);
+        set => Set(ref inlayHints, HintList.Of(value));
     }
 
     /// <summary>The debugger's text after lines: inline values, the exception it stopped on.</summary>
@@ -321,9 +489,12 @@ public sealed class OpenDocument : Observable
         set => Set(ref showWhitespaces, value);
     }
 
-    /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>
+    /// <summary>Lets go of the file's asset (one still decoding as it lands), colours and folds after its last view or hold
+    /// closes.</summary>
     public void Close()
     {
+        closed = true;
+        Asset?.Dispose();
         (Highlighter as IDisposable)?.Dispose();
         (finder as FoldScan)?.Dispose();
     }
@@ -331,12 +502,19 @@ public sealed class OpenDocument : Observable
     public string Path { get; private set; }
     public string Name => System.IO.Path.GetFileName(Path);
 
+    /// <summary>What its tab is called: its name, or for release notes the app carries what they are ("What's New in 0.2.0").</summary>
+    public string Title => Updates.ReleaseNotes.VersionOf(Path) is { } version ? Updates.ReleaseNotes.TitleOf(version) : Name;
+
+    /// <summary>Whether this is release notes the app carries, which its tab shows rendered (What's New), read-only.</summary>
+    public bool IsReleaseNotes => Updates.ReleaseNotes.VersionOf(Path) is not null;
+
     /// <summary>Takes the file's new path once it moved on disk, keeping its text, undo, carets and folds; a new name
-    /// of another language takes that language's parser.</summary>
+    /// of another language takes that language's parser. An asset keeps its preview, and a binary file its bytes' plain
+    /// text, rather than becoming another language's.</summary>
     public void MoveTo(string path)
     {
         Path = path;
-        Language language = Language.ForPath(path);
+        Language language = Asset is null && !IsBinary ? Language.ForPath(path) : Language;
         if (language != Language)
         {
             Language = language;
@@ -448,16 +626,26 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Rider's Line Separators: every break made <paramref name="to"/>'s and the file written so, as one undoable
-    /// step whose undo and redo write it too, and which a save keeps over the .editorconfig's <c>end_of_line</c>.</summary>
+    /// step whose undo and redo write it too, and which a save keeps over the .editorconfig's <c>end_of_line</c>.
+    /// An asset preview is left unchanged.</summary>
     public void ConvertLineSeparators(LineSeparator to)
     {
+        if (Asset is not null)
+        {
+            return;
+        }
         IReadOnlyList<TextEdit> edits = TextEditing.Saving(Text.Snapshot.ToString(), Selections, false, false, to.Held(), Text.LineEnding)?.Edits ?? [];
         Change(edits, Current with { Separator = to, SeparatorChosen = true }, write: true);
     }
 
-    /// <summary>What another encoding would do to the file, read again or written in it.</summary>
+    /// <summary>What another encoding would do to the file, read again or written in it. An asset has no text encoding
+    /// and is refused with an <see cref="InvalidOperationException"/>.</summary>
     public EncodingChange Weigh(FileEncoding to)
     {
+        if (Asset is not null)
+        {
+            throw new InvalidOperationException("Asset previews do not have a text encoding.");
+        }
         byte[]? bytes;
         try
         {
@@ -471,9 +659,13 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Rider's Reload: the file's bytes read again in the encoding replace the text, as one undoable step; the
-    /// file is left as it is.</summary>
+    /// file is left as it is. An asset preview is left unchanged.</summary>
     public void ReloadIn(FileEncoding to)
     {
+        if (Asset is not null)
+        {
+            return;
+        }
         FileText read = FileText.Decode(FileText.Read(Path), to.Encoding);
         LineSeparator separator = read.Text.Contains('\n', StringComparison.Ordinal) ? SeparatorOf(read) : Separator;
         // UTF-16 is written with its BOM, the only way it is read back as UTF-16.
@@ -482,12 +674,31 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Rider's Convert: the text written in the encoding, as one undoable step whose undo and redo write it too.
-    /// A character it cannot hold, converted anyway, becomes '?' in the text as on disk.</summary>
+    /// A character it cannot hold, converted anyway, becomes '?' in the text as on disk. Asset previews are unchanged.</summary>
     public void ConvertTo(FileEncoding to) =>
         Change(EncodingChange.Lost(to.Encoding, Text.Snapshot.ToString()), Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: true);
 
+    /// <summary>Local History's revert: a version's bytes read as that version was written (UTF-8 before the encoding the
+    /// file has now, which a Convert since may have changed), its text and how it was stored taken as one undoable step
+    /// and written, as Convert writes, its undo and redo writing too. Nothing changes when the version is what it holds.</summary>
+    public void Revert(byte[] bytes)
+    {
+        FileEncoding now = FileEncoding.Of(Encoding, HasBom);
+        FileText version = FileText.FromBytes(bytes, null, () => now.IsUnicode ? Conventions.Charset : now) ?? new FileText(string.Empty, Encoding, HasBom);
+        string text = Text.Snapshot.ToString();
+        LineSeparator separator = version.Text.Contains('\n', StringComparison.Ordinal) ? SeparatorOf(version) : Separator;
+        // Bytes the encoding now writes as the version had them (ASCII in UTF-8 or Latin-1) keep it.
+        bool stored = version.IsStoredAs(Encoding, HasBom);
+        if (version.Text == text && stored && separator == Separator)
+        {
+            return;
+        }
+        Change(LineDiff.Edits(text, version.Text), stored ? Current with { Separator = separator } : Current with { Encoding = version.Encoding, Bom = version.HasBom, Separator = separator }, write: true);
+    }
+
     /// <summary>Rider's change and forget: an encoding that reads the file's bytes as the text it has and writes the text as
-    /// the bytes it has (an ASCII file) is taken with nothing read or written, as one undoable step.</summary>
+    /// the bytes it has (an ASCII file) is taken with nothing read or written, as one undoable step. Asset previews
+    /// are left unchanged.</summary>
     public void TakeEncoding(FileEncoding to) =>
         Change([], Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: false);
 
@@ -501,12 +712,17 @@ public sealed class OpenDocument : Observable
     /// encoding taken, is the text.</summary>
     private void Change(IReadOnlyList<TextEdit> edits, Stored after, bool write)
     {
+        // A workbook's empty stand-in or a binary file's signs, written, would replace the file.
+        if (!HoldsText)
+        {
+            return;
+        }
         Stored before = Current;
         SelectionSet carets = Selections;
         TextEdit[] sorted = [.. edits.OrderBy(e => e.Start)];
         string changed = Text.Snapshot.Apply(sorted).ToString();
         // Written before anything changes, so a write that fails leaves the file and the editor as they were.
-        (FileText, string?)? written = write ? FileText.Save(Path, changed, after.Encoding, after.Bom, after.Separator == LineSeparator.CR) : null;
+        (FileText, string?)? written = write ? FileText.Save(Path, changed, after.Encoding, after.Bom, after.Separator == LineSeparator.CR, makeFolder: false) : null;
         Text.Perform(sorted, carets, TextEditing.MapThrough(carets, sorted).Clamp(changed.Length),
             () => Undoable(() => Settle(before, write)),
             () => Undoable(() => Settle(after, write)));
@@ -703,24 +919,57 @@ public sealed class OpenDocument : Observable
     /// own, and nothing typed there would reach the library.</summary>
     public bool IsDecompiled => Path.Contains($"{System.IO.Path.DirectorySeparatorChar}MetadataAsSource{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal);
 
-    /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence or notices the
-    /// app carries, or an MSBuild file of the .NET SDK or a package that Go to Declaration went into.</summary>
-    public bool IsReadOnly => IsDecompiled || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
+    /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence, notices or release
+    /// notes the app carries, a workbook, an asset preview, a binary file shown as its bytes, or an MSBuild file of the .NET
+    /// SDK or a package that Go to Declaration went into, or a copy of a container's file or of what the engine says of one.</summary>
+    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || IsReleaseNotes
+        || MSBuild.MSBuildFiles.IsInstalled(Path) || Containers.ContainerFilesPane.IsCopy(Path) || Endpoints.RequestLog.IsCommandCopy(Path);
 
-    /// <summary>What the bar over a read-only file says it came from.</summary>
-    public string Origin => Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
+    /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
+    /// written over it.</summary>
+    public bool IsWorkbook => Tables.Workbook.IsWorkbook(Path);
+
+    /// <summary>Whether this is a binary file with no view of its own, shown as its bytes' text (<see cref="FileText.Bytes"/>),
+    /// which written back would no longer be the file.</summary>
+    public bool IsBinary { get; }
+
+    /// <summary>Whether its tab holds the file's text: an asset preview's and a workbook's hold an empty stand-in, a
+    /// binary file's its bytes drawn as signs and release notes' their Markdown shown rendered, so nothing searches, reads,
+    /// edits or writes it as the file's (<see cref="ShownAs"/> says what the file is instead).</summary>
+    public bool HoldsText => Asset is null && !IsWorkbook && !IsBinary && !IsReleaseNotes;
+
+    /// <summary>What a file whose tab holds no text is shown as, for what refuses its text to say; null for text.</summary>
+    public string? ShownAs => Asset is { Kind: AssetKind.Image } ? "an image, shown as a read-only preview"
+        : Asset is not null ? "a font, shown as a read-only preview"
+        : IsWorkbook ? "an Excel workbook, shown as its sheets' cells"
+        : IsBinary ? "a binary file, shown as its bytes' text"
+        : IsReleaseNotes ? "Passenger's release notes, shown rendered" : null;
+
+    /// <summary>What the bar over a read-only file says it is and where it came from.</summary>
+    public string Origin => Asset is { Kind: AssetKind.Image } ? "An image, shown as its pixels, read-only"
+        : Asset is not null ? "A font, shown in its own glyphs, read-only"
+        : IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
+        : IsBinary ? "A binary file, shown as its bytes' text, read-only"
+        : IsReleaseNotes ? "Passenger's release notes, as the app carries them, read-only"
+        : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
+        : Containers.ContainerFilesPane.IsCopy(Path) ? "A copy of what a container holds, or of what the engine says of it, read-only"
+        : Endpoints.RequestLog.IsCommandCopy(Path) ? "SQL a running app issued, or an EF Core query's the debugger read, copied to read, read-only"
         : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
         ? "Source from the library's Source Link or PDB, read-only"
         : "Decompiled code: the language server made this from the assembly, so it is read-only";
+    /// <summary>The editable text, or an empty placeholder for an asset that must never be serialized over its file.</summary>
     public TextDocument Text { get; }
+
     /// <summary>How the file is stored, which a save keeps: as it was read, as it is on disk since (a BOM a formatter
     /// added), or UTF-8 once a save needed it.</summary>
     public Encoding Encoding { get; private set; }
     public bool HasBom { get; private set; }
     public string EncodingName { get; private set; }
     public Language Language { get; private set; }
-    public bool IsModified => Text.IsModified;
+
+    /// <summary>Whether text has unsaved changes; a read-only asset is never considered modified.</summary>
+    public bool IsModified => Asset is null && Text.IsModified;
     public Avalonia.Media.Geometry Icon => Explorer.FileIcons.ForFile(Path);
     public Avalonia.Media.IBrush IconBrush => Explorer.FileIcons.BrushForFile(Path);
 
@@ -730,13 +979,19 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Whether something other than this IDE changed the file's text on disk since it was last loaded or saved.
     /// A change only to how it is stored there (a BOM a formatter added, a conversion to UTF-8) is taken at once, over
-    /// unsaved edits too, since they were made over the same text: the next save keeps it, and no question is asked.</summary>
+    /// unsaved edits too, since they were made over the same text: the next save keeps it, and no question is asked.
+    /// An asset answers false with nothing read: it has no text to conflict, and the folder watcher's word that its file
+    /// changed is what decodes it again (<see cref="Reload"/>).</summary>
     public bool ChangedOnDisk()
     {
+        if (Asset is not null)
+        {
+            return false;
+        }
         FileText? file;
         try
         {
-            file = File.Exists(Path) ? FileText.Load(Path, Chosen) : null;
+            file = File.Exists(Path) ? FromDisk() : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -754,18 +1009,44 @@ public sealed class OpenDocument : Observable
         return false;
     }
 
+    /// <summary>Whether a file holds the text this one was last loaded or saved with, read as this one is read (an asset's
+    /// bytes): the same file under another name, once its folder was moved.</summary>
+    public bool IsSavedAt(string path)
+    {
+        try
+        {
+            return Asset is { } asset ? asset.IsOf(path) : File.Exists(path) && FromDisk(path)?.Text == Text.Saved.ToString();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The encoding the person chose for the file, which a read from disk tries before guessing.</summary>
     private Encoding? Chosen => encodingChosen ? Encoding : null;
 
+    /// <summary>A file's text on disk (this one's, unless another is named) read as this one was when opened: a binary
+    /// file's as its bytes.</summary>
+    private FileText? FromDisk(string? path = null) => IsBinary ? FileText.Bytes(path ?? Path) : FileText.Load(path ?? Path, Chosen);
+
     /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
     /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved
-    /// changes only when asked (File Cache Conflict's Load File System Changes). Whether it changed the text.</summary>
+    /// changes only when asked (File Cache Conflict's Load File System Changes). An asset is decoded again off the UI
+    /// thread and replaced once that succeeds, the previous preview kept and <see cref="Notice"/> set on failure. Whether
+    /// the text changed; false for an asset, whose change lands later.</summary>
     public bool Reload(bool overUnsaved = false)
     {
+        if (Asset is not null)
+        {
+            Decode();
+            return false;
+        }
         FileText? file;
+        DiskStamp? stamp = null;
         try
         {
-            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FileText.Load(Path, Chosen);
+            file = (IsModified && !overUnsaved) || (stamp = DiskStamp.Of(Path)) is null ? null : FromDisk();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -775,8 +1056,59 @@ public sealed class OpenDocument : Observable
         {
             return false;
         }
+        bool taken = Take(file, same: Text.Snapshot.ToString() == file.Text);
+        ReadAt(stamp);
+        return taken;
+    }
+
+    /// <summary>Takes the file's text from disk when another program wrote it since the editor last read it (an agent's own
+    /// file tools, which write and then ask of it at once), never over unsaved changes, as <see cref="Reload"/> would: its
+    /// length and time looked at, and only once they changed the file read and compared, off the UI thread, so an agent's
+    /// many questions of one file between its writes cost the window nothing of the disk. A preview has no text to take.</summary>
+    public async Task TakeDiskTextAsync(CancellationToken cancel)
+    {
+        if (IsModified || !HoldsText)
+        {
+            return;
+        }
+        (DiskStamp Stamp, int Version)? known = readAt is { } at && at.Version == Text.Version ? at : null;
+        int version = Text.Version;
+        TextSnapshot held = Text.Snapshot;
+        string path = Path;
+        bool binary = IsBinary;
+        Encoding? chosen = Chosen;
+        (DiskStamp? stamp, FileText? file, bool same) = await BackgroundWork.Run(() =>
+        {
+            try
+            {
+                DiskStamp? now = DiskStamp.Of(path);
+                if (now is not { } found || known is { } kept && kept.Stamp.Holds(found))
+                {
+                    return ((DiskStamp?)null, (FileText?)null, true);
+                }
+                FileText? read = binary ? FileText.Bytes(path) : FileText.Load(path, chosen);
+                return (now, read, read is null || held.ToString() == read.Text);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return (null, null, true);
+            }
+        }, cancel);
+        // Typed into, or taken from disk by the watcher, while the disk was read: what the editor holds now stands.
+        if (file is null || IsModified || Text.Version != version)
+        {
+            return;
+        }
+        Take(file, same);
+        ReadAt(stamp);
+    }
+
+    /// <summary>The disk's text taken, as one undoable step over only the lines that differ, unless it is the
+    /// <paramref name="same"/> as the editor's; how it is stored taken either way. Whether the text changed.</summary>
+    private bool Take(FileText file, bool same)
+    {
         StoreAs(file);
-        if (Text.Snapshot.ToString() == file.Text)
+        if (same)
         {
             return false;
         }
@@ -796,9 +1128,25 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Writes the file, first doing to its text what its .editorconfig asks of a save (trailing whitespace off
     /// every line without one of <paramref name="carets"/>, a final line break, every break its <c>end_of_line</c>, as
-    /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays.</summary>
-    public void Save(SelectionSet? carets = null)
+    /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays. Its folder, once
+    /// another program moved or deleted it, is made again only when <paramref name="makeFolder"/> (the person's Save). An
+    /// asset preview is never written, even when Save is called directly.</summary>
+    public void Save(SelectionSet? carets = null, bool makeFolder = false)
     {
+        if (Asset is not null)
+        {
+            return;
+        }
+        if (IsWorkbook)
+        {
+            // Its tab's text is no workbook's: written, it would empty the file.
+            throw new IOException($"{Name} is a workbook, shown read-only.");
+        }
+        if (IsBinary)
+        {
+            // Its control characters are shown as signs: written, they would replace the bytes.
+            throw new IOException($"{Name} is a binary file, shown read-only.");
+        }
         ReadConventions();
         string text = Text.Snapshot.ToString();
         SelectionSet kept = carets ?? Selections;
@@ -814,12 +1162,13 @@ public sealed class OpenDocument : Observable
             SetSeparator(separator);
         }
         FileEncoding? charset = encodingChosen ? null : Conventions.Charset;
-        Write(charset?.Encoding ?? Encoding, charset?.Bom ?? HasBom);
+        Write(charset?.Encoding ?? Encoding, charset?.Bom ?? HasBom, makeFolder);
     }
 
     /// <summary>Writes the text as it stands, in an encoding and the file's line separator, and takes that as how the
     /// file is stored.</summary>
-    private void Write(Encoding encoding, bool bom) => Wrote(FileText.Save(Path, Text.Snapshot.ToString(), encoding, bom, crBreaks));
+    private void Write(Encoding encoding, bool bom, bool makeFolder = false) =>
+        Wrote(FileText.Save(Path, Text.Snapshot.ToString(), encoding, bom, crBreaks, makeFolder));
 
     /// <summary>Takes how a write stored the file, which now holds the text.</summary>
     private void Wrote((FileText Written, string? Converted) write)
@@ -869,6 +1218,10 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
 {
     public static readonly Language PlainText = new("Text", null);
 
+    /// <summary>What an image's or a font's preview is, as the status bar and the tools name it: no text, so no comments.</summary>
+    public static readonly Language Image = new("Image", null);
+    public static readonly Language Font = new("Font", null);
+
     /// <summary>How a file of the language indents when neither an .editorconfig nor its own lines say.</summary>
     public IndentOptions Indent => new(IndentSize);
 
@@ -896,6 +1249,16 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
     public static Language ForPath(string path)
     {
         string name = System.IO.Path.GetFileName(path);
+        // By name before extension, as the Dockerfile server is chosen: Dockerfile.dev, Containerfile.prod, .env.local.
+        if (Web.WebLanguages.IsDockerfile(name))
+        {
+            return new Language("Dockerfile", "#");
+        }
+        if (name.Equals(".env", StringComparison.OrdinalIgnoreCase) || name.StartsWith(".env.", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".env", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Language("Dotenv", "#");
+        }
         return System.IO.Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".cs" or ".csx" => new Language("C#", "//", 4, "/*", "*/"),
@@ -911,13 +1274,32 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
             ".js" or ".mjs" or ".cjs" or ".jsx" => new Language("JavaScript", "//", 4, "/*", "*/"),
             ".ts" or ".mts" or ".cts" or ".tsx" => new Language("TypeScript", "//", 4, "/*", "*/"),
             ".sh" or ".bash" or ".zsh" => new Language("Shell", "#"),
-            ".dockerfile" => new Language("Dockerfile", "#"),
+            ".dockerignore" => new Language("Ignore", "#"),
             ".scss" or ".less" or ".rs" or ".go" or ".java" or ".kt" or ".swift" or ".c" or ".h" or ".cpp" => new Language("Code", "//", 4, "/*", "*/"),
             ".py" or ".toml" or ".ps1" or ".rb" => new Language("Script", "#"),
-            _ when name.Equals("Dockerfile", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase)
-                || name.Equals("Containerfile", StringComparison.OrdinalIgnoreCase) => new Language("Dockerfile", "#"),
             _ when name.Equals("justfile", StringComparison.OrdinalIgnoreCase) => new Language("Script", "#"),
             _ => PlainText,
         };
     }
+}
+
+/// <summary>A file's length and last write time on disk, and when they were found.</summary>
+public readonly record struct DiskStamp(long Length, DateTime Written, DateTime Found)
+{
+    /// <summary>How long after its last write a file's time is trusted to show a second write: a coarse clock's tick (FAT's two
+    /// seconds) could hide one made in it.</summary>
+    private static readonly TimeSpan Racy = TimeSpan.FromSeconds(2);
+
+    /// <summary>A file's stamp now, or null when there is none there.</summary>
+    public static DiskStamp? Of(string path)
+    {
+        FileInfo info = new(path);
+        return info.Exists ? Of(info) : null;
+    }
+
+    public static DiskStamp Of(FileInfo info) => new(info.Length, info.LastWriteTimeUtc, DateTime.UtcNow);
+
+    /// <summary>Whether a file found as <paramref name="now"/> still holds what was read once this was found: its length and
+    /// time the same, that time far enough before the read for no second write to hide in its tick.</summary>
+    public bool Holds(DiskStamp now) => now.Length == Length && now.Written == Written && Found - Written > Racy;
 }

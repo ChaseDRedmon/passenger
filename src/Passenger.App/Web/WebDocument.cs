@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Passenger.App.CSharp;
 using Passenger.App.Workspace;
 using Passenger.Editor;
@@ -7,7 +6,7 @@ using Passenger.Text;
 
 namespace Passenger.App.Web;
 
-/// <summary>One open JavaScript, TypeScript, HTML, CSS or JSON file's share of its language server: kept in step, marked
+/// <summary>One open JavaScript, TypeScript, HTML, CSS, JSON, Dockerfile or YAML file's share of its language server: kept in step, marked
 /// with the diagnostics the server pulls or pushes (moved with the text between them, as a C# file's are), and, where the
 /// server finds colours (CSS's), a swatch in the gutter beside each line that writes one. Of one server only: a server
 /// started again gives the file a new one, so what asks the server asks <see cref="WebLanguages.For"/> each time.</summary>
@@ -17,22 +16,30 @@ public sealed class WebDocument : IServerDocument, IDisposable
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(400);
 
     private readonly OpenDocument document;
-    private CancellationTokenSource? pulling;
+    private readonly ServerDiagnostics diagnostics;
     private LanguageSession? session;
 
     /// <summary>The file's checks held while its server starts: until it is connected, or cannot start.</summary>
     private IDisposable? waiting;
-    private Diagnostic[] found = [];
-    private TextRange[] ranges = [];
-    private IReadOnlyList<Diagnostic>? placed = [];
 
-    /// <summary>The file's markers from its own server, and from ESLint, which the editor shows together.</summary>
+    /// <summary>The file's checks held, for the Dockerfile and YAML servers, which push a file's diagnostics after each
+    /// change of it, from the change until that push lands or <see cref="PushLimit"/> passes: what an agent's diagnostics
+    /// and a screenshot wait for.</summary>
+    private IDisposable? awaitingPush;
+    private CancellationTokenSource? pushLimit;
+
+    private static readonly TimeSpan PushLimit = TimeSpan.FromSeconds(5);
+
+    /// <summary>The file's markers from its own server, from ESLint, and from the container engine's checks (BuildKit's of
+    /// a Dockerfile, Compose's of a compose file), which the editor shows together.</summary>
     private IReadOnlyList<Marker> own = [];
     private IReadOnlyList<Marker> lint = [];
+    private IReadOnlyList<Marker> engine = [];
 
     internal WebDocument(OpenDocument document, WebServerKind kind, string languageId)
     {
         this.document = document;
+        diagnostics = new ServerDiagnostics(document, holdsChecks: true);
         Kind = kind;
         LanguageId = languageId;
         // What a server before this one marked moves with the text until this one says otherwise.
@@ -63,7 +70,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
     /// definitions or renames, which Passenger then gives itself.</summary>
     public bool Provides(string capability) => session?.Server.Provides(capability) == true;
 
-    public IReadOnlyList<Diagnostic> Diagnostics => placed ??= DiagnosticMarks.Placed(document.Text.Snapshot, found, ranges);
+    public IReadOnlyList<Diagnostic> Diagnostics => diagnostics.Placed;
 
     /// <summary>ESLint's share of the file, while ESLint checks it.</summary>
     public EslintDocument? Lint { get; set; }
@@ -72,7 +79,29 @@ public sealed class WebDocument : IServerDocument, IDisposable
     public void ShowLint(IReadOnlyList<Marker> markers)
     {
         lint = markers;
-        document.Markers = [.. own, .. lint];
+        document.Markers = Shown();
+    }
+
+    /// <summary>The container engine's checks of the file, shown with the server's own (<see cref="Containers.EngineChecks"/>).</summary>
+    public void ShowEngine(IReadOnlyList<Marker> markers)
+    {
+        engine = markers;
+        document.Markers = Shown();
+    }
+
+    /// <summary>Every source's markers, but an engine's on a line the server already marks as gravely: Compose checks a
+    /// compose file by the schema the YAML server does, and the Dockerfile server knows some of BuildKit's rules, so the
+    /// line is marked once (Problems' Containers tab lists the engine's whole).</summary>
+    private IReadOnlyList<Marker> Shown()
+    {
+        if (engine.Count == 0)
+        {
+            return [.. own, .. lint];
+        }
+        TextSnapshot text = document.Text.Snapshot;
+        int Line(Marker m) => text.GetLineFromOffset(Math.Min(m.Range.Start, text.Length));
+        HashSet<(int, MarkerKind)> marked = [.. own.Select(m => (Line(m), m.Kind))];
+        return [.. own, .. lint, .. engine.Where(m => !marked.Contains((Line(m), m.Kind)))];
     }
 
     internal void Connect(LanguageSession started)
@@ -84,8 +113,50 @@ public sealed class WebDocument : IServerDocument, IDisposable
         session = started;
         Lsp = started.Open(document.Path, document.Text, LanguageId);
         Lsp.DiagnosticsPushed += OnPushed;
+        AwaitPush();
         Refresh();
         Unreached();
+    }
+
+    /// <summary>Holds the file's checks until its server's push for the text as it stands (<see cref="awaitingPush"/>).</summary>
+    private void AwaitPush()
+    {
+        if (Lsp is null || Kind is not (WebServerKind.Dockerfile or WebServerKind.Yaml))
+        {
+            return;
+        }
+        if (awaitingPush is null)
+        {
+            awaitingPush = document.Checking();
+            BackgroundWork.Begin();
+        }
+        pushLimit?.Cancel();
+        CancellationTokenSource limit = pushLimit = new CancellationTokenSource();
+        _ = Task.Delay(PushLimit, limit.Token).ContinueWith(waited =>
+        {
+            if (!waited.IsCanceled)
+            {
+                UiThread.Post(() =>
+                {
+                    if (pushLimit == limit)
+                    {
+                        PushLanded();
+                    }
+                });
+            }
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+    }
+
+    private void PushLanded()
+    {
+        pushLimit?.Cancel();
+        pushLimit = null;
+        if (awaitingPush is { } held)
+        {
+            awaitingPush = null;
+            held.Dispose();
+            BackgroundWork.End();
+        }
     }
 
     /// <summary>The diagnostics and colours asked for again (the server's refresh, a server started again).</summary>
@@ -93,7 +164,8 @@ public sealed class WebDocument : IServerDocument, IDisposable
 
     public void Dispose()
     {
-        pulling?.Cancel();
+        diagnostics.Stop();
+        PushLanded();
         Unreached();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
@@ -107,26 +179,23 @@ public sealed class WebDocument : IServerDocument, IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (ranges.Length > 0)
-        {
-            for (int i = 0; i < ranges.Length; i++)
-            {
-                ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
-            }
-            placed = null;
-        }
-        if (own.Count + lint.Count > 0)
+        diagnostics.Move(e);
+        if (own.Count + lint.Count + engine.Count > 0)
         {
             own = [.. own.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
             lint = [.. lint.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
-            document.Markers = [.. own, .. lint];
+            engine = [.. engine.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
+            document.Markers = Shown();
         }
+        AwaitPush();
         Pull(Settle);
     }
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
 
-    /// <summary>A push from the server, on its thread: taken on the window's, if it is for the text as it stands.</summary>
+    /// <summary>A push from the server, on its thread: taken on the window's, if it answers the text as it stands (the
+    /// version it answers told as it arrived, <see cref="LspDocument.Pushed"/>), which lets the file's checks go; one for
+    /// a text typed over leaves them held for the next.</summary>
     private void OnPushed(object? sender, EventArgs e)
     {
         if (sender is LspDocument lsp)
@@ -135,10 +204,11 @@ public sealed class WebDocument : IServerDocument, IDisposable
             {
                 if (lsp == Lsp)
                 {
-                    (IReadOnlyList<Diagnostic> diagnostics, int version) = lsp.Pushed;
+                    (IReadOnlyList<Diagnostic> pushed, int version) = lsp.Pushed;
                     if (version == document.Text.Version)
                     {
-                        Show(diagnostics);
+                        Show(pushed);
+                        PushLanded();
                     }
                 }
             });
@@ -152,65 +222,32 @@ public sealed class WebDocument : IServerDocument, IDisposable
         {
             return;
         }
-        pulling?.Cancel();
-        CancellationTokenSource cancel = new();
-        pulling = cancel;
-        BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token, document.Checking());
+        diagnostics.Pull(delay, cancel => PullAsync(lsp, cancel));
     }
 
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel, IDisposable checking)
+    /// <summary>The file's diagnostics where its server is asked for them (the rest push theirs), then its colours where it
+    /// finds them, each for the text as it stands.</summary>
+    private async Task PullAsync(LspDocument lsp, CancellationToken cancel)
     {
-        try
+        if (session?.Server.Provides("diagnosticProvider") == true && await diagnostics.PulledAsync(lsp, cancel) is { } pulled)
         {
-            if (delay > TimeSpan.Zero)
-            {
-                await Task.Delay(delay, cancel);
-            }
-            if (session?.Server.Provides("diagnosticProvider") == true)
-            {
-                (IReadOnlyList<Diagnostic> diagnostics, int version) = await lsp.DiagnosticsAsync(cancel);
-                if (!cancel.IsCancellationRequested && version == document.Text.Version)
-                {
-                    Show(diagnostics);
-                }
-            }
-            if (session?.Server.Provides("colorProvider") == true)
-            {
-                (IReadOnlyList<ColorInformation> colours, int coloured) = await lsp.ColoursAsync(cancel);
-                if (!cancel.IsCancellationRequested && coloured == document.Text.Version)
-                {
-                    document.ColourMarks = Swatches(lsp, colours);
-                }
-            }
+            Show(pulled);
         }
-        catch (OperationCanceledException)
+        if (session?.Server.Provides("colorProvider") == true)
         {
-            // Typing went on, or the file was let go.
-        }
-        catch (LanguageServerFailed)
-        {
-            // The markers stand until the server answers again, or a server started again does.
-        }
-        finally
-        {
-            Dispatcher.UIThread.Post(() =>
+            (IReadOnlyList<ColorInformation> colours, int coloured) = await lsp.ColoursAsync(cancel);
+            if (!cancel.IsCancellationRequested && coloured == document.Text.Version)
             {
-                checking.Dispose();
-                BackgroundWork.End();
-            });
+                document.ColourMarks = Swatches(lsp, colours);
+            }
         }
     }
 
-    private void Show(IReadOnlyList<Diagnostic> diagnostics)
+    private void Show(IReadOnlyList<Diagnostic> reported)
     {
-        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-        found = [.. diagnostics];
-        ranges = [.. found.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
-        placed = diagnostics;
         // The server's own codes stay with the diagnostics, which its quick fixes are asked for by.
-        own = [.. found.Select((d, i) => DiagnosticMarks.Marker(Named(d), ranges[i])).OfType<Marker>()];
-        document.Markers = [.. own, .. lint];
+        own = diagnostics.Take(reported, (d, range) => DiagnosticMarks.Marker(Named(d), range));
+        document.Markers = Shown();
     }
 
     /// <summary>A diagnostic with the code Rider shows before its message: TypeScript's as TS2322 (from its own server, or

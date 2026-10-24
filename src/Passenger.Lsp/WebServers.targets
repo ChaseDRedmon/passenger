@@ -1,5 +1,5 @@
 <Project>
-  <!-- The language servers for JavaScript, TypeScript, HTML, CSS and JSON (Web/ in the app), carried under web/ beside the
+  <!-- The language servers for JavaScript, TypeScript, HTML, CSS, JSON, Dockerfiles and YAML (Web/ in the app), carried under web/ beside the
        app as Roslyn's server is under roslyn/: npm packages, pure JavaScript, so one copy serves every system, run on the
        machine's Node.js. WebServers/package.json pins them and WebServers/package-lock.json every package they bring,
        each with its tarball's sha512; tools/Passenger.NodePackages puts them in place at build with no Node.js, each
@@ -24,7 +24,8 @@
          nothing else reads them. -->
     <WebServersMoved Include="node_modules/vscode-langservers-extracted/node_modules/typescript/lib/lib%2A.d.ts|node_modules/node_modules/typescript/lib" />
     <!-- JSON schemas the JSON server is given for the files that name none (package.json, tsconfig.json, appsettings.json,
-         launchSettings.json, global.json) and those they refer to, as SchemaStore publishes them (Web/JsonSchemas.cs). -->
+         launchSettings.json, global.json) and those they refer to, as SchemaStore publishes them, and the YAML server the Compose
+         specification's for compose files (Web/JsonSchemas.cs). -->
     <WebServersSchema Include="$(MSBuildThisFileDirectory)WebServers/schemas/*.json" />
   </ItemGroup>
 

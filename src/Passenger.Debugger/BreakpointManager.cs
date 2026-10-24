@@ -48,6 +48,9 @@ public class BreakpointManager
         /// <summary>A source breakpoint's request as the client made it: one made again just so keeps this breakpoint.</summary>
         public BreakpointRequest? Request { get; set; }
 
+        /// <summary>A function breakpoint's request as the client made it: one made again just so keeps this breakpoint.</summary>
+        public FunctionBreakpointRequest? FunctionRequest { get; set; }
+
         /// <summary>The debugger will not take it as it is (a condition or hit count it cannot read), as its message says.</summary>
         public bool Refused { get; set; }
     }
@@ -138,17 +141,6 @@ public class BreakpointManager
         lock (_lock)
         {
             return _breakpoints.Values.Where(bp => bp.IsFunctionBreakpoint).ToList();
-        }
-    }
-
-    public void ClearFunctionBreakpoints()
-    {
-        lock (_lock)
-        {
-            foreach (int id in _breakpoints.Values.Where(bp => bp.IsFunctionBreakpoint).Select(bp => bp.Id).ToList())
-            {
-                _breakpoints.Remove(id);
-            }
         }
     }
 

@@ -20,11 +20,20 @@ public static class Handlers
     public const string PullMembersUp = "Passenger.Roslyn.Extension.PullMembersUp";
     public const string PushMembersDown = "Passenger.Roslyn.Extension.PushMembersDown";
     public const string DocumentTexts = "Passenger.Roslyn.Extension.DocumentTexts";
+    public const string AspireProjectDeclaration = "Passenger.Roslyn.Extension.AspireProjectDeclaration";
+    public const string AspireCodeHelp = "Passenger.Roslyn.Extension.AspireCodeHelp";
+    public const string AspireReferenceFix = "Passenger.Roslyn.Extension.AspireReferenceFix";
+    public const string AspireRunResources = "Passenger.Roslyn.Extension.AspireRunResources";
+    public const string AspireRename = "Passenger.Roslyn.Extension.AspireRename";
+    public const string AspireParameters = "Passenger.Roslyn.Extension.AspireParameters";
+    public const string ConnectionReads = "Passenger.Roslyn.Extension.ConnectionReads";
+    public const string WebRoutes = "Passenger.Roslyn.Extension.WebRoutes";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
-        DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts,
+        DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
+        AspireRename, AspireParameters, ConnectionReads, WebRoutes,
     ];
 }
 
@@ -53,6 +62,170 @@ public sealed record Place([property: JsonPropertyName("line")] int Line, [prope
 
 /// <summary>Where the caret is: what a describing message asks about.</summary>
 public sealed record Caret([property: JsonPropertyName("at")] Place At);
+
+/// <summary>Where Go to Declaration goes in Aspire's code: an AddProject call's project file, or the AppHost's file and the
+/// place (<paramref name="At"/>) its Add call names a resource a service reads; a null path when neither can be proven.</summary>
+public sealed record AspireProjectTarget([property: JsonPropertyName("path")] string? Path, [property: JsonPropertyName("at")] Place? At = null);
+
+/// <summary>Semantic Aspire help; a caret requests resource-name completion as well as diagnostics.</summary>
+public sealed record AspireHelpRequest([property: JsonPropertyName("at")] Place? At, bool Explain = false);
+
+/// <summary>The selected missing edge; its identity is checked again against the current semantic graph.</summary>
+public sealed record AspireFixRequest(Place At, string Service, string Resource);
+
+/// <summary>A proven absent AppHost reference, with its source range and proposed workspace change.</summary>
+public sealed record AspireMissingReference(Place Start, Place End, string Service, string Resource, Refactored Fix);
+
+/// <summary>A connection string a service reads by a name no resource of its AppHost has: where the name is (its characters
+/// within the string when it is written plainly, <paramref name="Exact"/>, else the whole expression), the name, the
+/// service's project, whose settings may give it, and the names of the AppHost's resources that give connection strings.</summary>
+public sealed record AspireUnknownConnection(Place Start, Place End, string Name, bool Exact, string Project, IReadOnlyList<string> Declared);
+
+/// <summary>Names valid at the caret's string argument, references missing from this service's AppHost, and the connection
+/// strings it reads that no resource of the AppHost is named.</summary>
+public sealed record AspireHelp(Place? Start, Place? End, IReadOnlyList<string> Names, IReadOnlyList<AspireMissingReference> Missing, string? Evidence = null,
+    IReadOnlyList<AspireUnknownConnection>? Unknown = null);
+
+/// <summary>Rename of the resource whose name is at a place: described (no new name), or made with the new name.</summary>
+public sealed record AspireRenameRequest([property: JsonPropertyName("at")] Place At, [property: JsonPropertyName("newName")] string? NewName = null);
+
+/// <summary>The resource a rename would rename, by its name and the stretch of it at the place asked (none where no resource's
+/// name is), and once a new name is given, what renaming it changes or why it does not.</summary>
+public sealed record AspireRenaming(string? Name, Place? Start, Place? End, Refactored? Made);
+
+/// <summary>An AppHost file's parameters that take their value from its configuration alone are asked for.</summary>
+public sealed record AspireParametersRequest;
+
+/// <summary>A parameter an AppHost declares with no value of its own: its name, whether it is a secret, and where its name is.</summary>
+public sealed record AspireParameter(string Name, bool Secret, Place Start, Place End);
+
+/// <summary>The parameters an AppHost's file declares that take their value from its configuration alone.</summary>
+public sealed record AspireParametersFound(IReadOnlyList<AspireParameter> Parameters);
+
+/// <summary>The projects whose code's connection-string reads are asked for, by their project files' paths, and with
+/// <paramref name="Keys"/> every configuration key their code reads or binds too (<see cref="ConfigurationKey"/>).</summary>
+public sealed record ConnectionReadsRequest(
+    [property: JsonPropertyName("projects")] IReadOnlyList<string> Projects,
+    [property: JsonPropertyName("keys")] bool Keys = false);
+
+/// <summary>A configuration key a project's code reads or binds, as .NET's configuration names it (sections joined by ':',
+/// <c>*</c> for any item of a collection or key of a dictionary): what reads it (<see cref="ConfigurationKinds"/>), the type
+/// it is read as (<see cref="ConfigurationTypes"/>, with that type's name in C# and an enum's names), whether the read has
+/// a default or its result is checked for null (or, for an options property, whether it has a value of its own), and where
+/// it is written: the string naming it in a read or a binding, the property's name in an options class (none for one of a
+/// library's), the stretch the name's characters in a plainly written string.</summary>
+public sealed record ConfigurationKey(
+    [property: JsonPropertyName("project")] string Project,
+    [property: JsonPropertyName("key")] string Key,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("typeName")] string TypeName,
+    [property: JsonPropertyName("guarded")] bool Guarded,
+    [property: JsonPropertyName("path")] string? Path,
+    [property: JsonPropertyName("at")] Place? At,
+    [property: JsonPropertyName("end")] Place? End,
+    [property: JsonPropertyName("values")] IReadOnlyList<string>? Values = null,
+    [property: JsonPropertyName("owner")] string? Owner = null);
+
+/// <summary>What reads a configuration key: a value read by its key (an indexer, GetValue, GetConnectionString, a section's
+/// Value), a section (GetSection, and GetRequiredSection, which throws without one), an options class bound to a section
+/// (Configure, Bind, BindConfiguration, Get), or one of that class's properties.</summary>
+public static class ConfigurationKinds
+{
+    public const string Read = "read";
+    public const string Section = "section";
+    public const string Binding = "binding";
+    public const string Option = "option";
+}
+
+/// <summary>What a configuration key's value is read as.</summary>
+public static class ConfigurationTypes
+{
+    public const string String = "string";
+    public const string Boolean = "boolean";
+    public const string Number = "number";
+    public const string Enum = "enum";
+    public const string Object = "object";
+    public const string Array = "array";
+    public const string Dictionary = "dictionary";
+}
+
+/// <summary>A connection string a project's code reads: the project's file, the name it reads, and the file and the stretch
+/// where the name is written (the string or constant naming it).</summary>
+public sealed record ConnectionRead(
+    [property: JsonPropertyName("project")] string Project,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("at")] Place At,
+    [property: JsonPropertyName("end")] Place End);
+
+/// <summary>The connection strings the projects asked for read, each where it is read, and when asked the configuration
+/// keys they read or bind; none of a project the server has not loaded.</summary>
+public sealed record ConnectionReadsFound(
+    [property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads,
+    [property: JsonPropertyName("keys")] IReadOnlyList<ConfigurationKey>? Keys = null);
+
+/// <summary>The projects whose web routes are asked for, by their project files' paths; none asks for every project's.</summary>
+public sealed record RoutesRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
+
+/// <summary>A value a route takes: its name, where it comes from (route, query, body, header, form or services), its type
+/// as written (none for a route parameter no handler parameter takes), its template constraints ("int:min(1)") and
+/// whether it may be left out.</summary>
+public sealed record RouteParameter(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("source")] string Source,
+    [property: JsonPropertyName("type")] string? Type = null,
+    [property: JsonPropertyName("constraints")] string? Constraints = null,
+    [property: JsonPropertyName("optional")] bool Optional = false);
+
+/// <summary>A route an ASP.NET Core project's code declares, read with no build: what declares it (<see cref="RouteKinds"/>),
+/// its HTTP methods (none for any), its whole template from the app's root ("/api/todos/{id:int}"), the query a Razor
+/// Page's named handler takes ("handler=Delete"), its parameters, its handler ("TodosController.Get"), where the route is
+/// written (the file, the stretch from <paramref name="At"/> to <paramref name="End"/>, and that file's text's
+/// <see cref="TextHash"/>, which places it only in the text it was read from), where its handler is, the body parameter's
+/// type, a JSON body shaped from that type, and a hub's methods.</summary>
+public sealed record WebRoute(
+    [property: JsonPropertyName("project")] string Project,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("methods")] IReadOnlyList<string> Methods,
+    [property: JsonPropertyName("template")] string Template,
+    [property: JsonPropertyName("query")] string? Query,
+    [property: JsonPropertyName("parameters")] IReadOnlyList<RouteParameter> Parameters,
+    [property: JsonPropertyName("handler")] string Handler,
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("at")] Place At,
+    [property: JsonPropertyName("end")] Place End,
+    [property: JsonPropertyName("sourceHash")] string SourceHash,
+    [property: JsonPropertyName("handlerPath")] string? HandlerPath = null,
+    [property: JsonPropertyName("handlerAt")] Place? HandlerAt = null,
+    [property: JsonPropertyName("bodyType")] string? BodyType = null,
+    [property: JsonPropertyName("body")] string? Body = null,
+    [property: JsonPropertyName("operations")] IReadOnlyList<string>? Operations = null);
+
+/// <summary>What declares a route.</summary>
+public static class RouteKinds
+{
+    public const string Minimal = "Minimal API";
+    public const string Controller = "Controller";
+    public const string RazorPage = "Razor Page";
+    public const string Blazor = "Blazor";
+    public const string SignalR = "SignalR";
+    public const string Grpc = "gRPC";
+}
+
+/// <summary>The routes of the projects asked for, and those of them that are web projects, read even when they declare none.</summary>
+public sealed record RoutesFound(
+    [property: JsonPropertyName("routes")] IReadOnlyList<WebRoute> Routes,
+    [property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
+
+/// <summary>The AppHost whose proven project resources and source locations are read.</summary>
+public sealed record AspireResourcesRequest(string AppHost);
+
+/// <summary>A project resource and the source fingerprint that makes its gutter location current.</summary>
+public sealed record AspireRunResource(string Name, string Project, string Source, Place At, string SourceHash);
+
+/// <summary>Proven resources, or why the AppHost cannot be read yet.</summary>
+public sealed record AspireRunResourcesResult(IReadOnlyList<AspireRunResource> Resources, string? Problem = null);
 
 /// <summary>One edit to a file's text, between two places of it as it was.</summary>
 public sealed record Edit(

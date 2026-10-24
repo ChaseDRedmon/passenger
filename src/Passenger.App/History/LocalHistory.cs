@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -46,9 +47,6 @@ public sealed class LocalHistory
     /// <summary>Rider's name for changes made by another program.</summary>
     public const string ExternalChange = "External change";
 
-    /// <summary>How much of a file is checked for a NUL byte before it is called binary, as the editor checks.</summary>
-    private const int BinaryProbe = 8000;
-
     /// <summary>The most files a folder made or deleted elsewhere is read for at once.</summary>
     private const int WalkLimit = 5000;
 
@@ -63,18 +61,23 @@ public sealed class LocalHistory
     /// same folder may have written it for a line it is about to add.</summary>
     private static readonly TimeSpan Orphaned = TimeSpan.FromMinutes(10);
 
+    /// <summary>How long a change to the history waits for another Passenger keeping it in the same state to let go of it:
+    /// past that an append goes on all the same, and a prune waits for its next turn.</summary>
+    private static readonly TimeSpan HeldFor = TimeSpan.FromSeconds(10);
+
     private static readonly Dictionary<string, LocalHistory> Stores = new(StringComparer.Ordinal);
 
     private static readonly JsonSerializerOptions Compact = new() { WriteIndented = false };
 
     private readonly object gate = new();
     private readonly List<HistoryEvent> events = [];
-    private readonly Dictionary<string, string?> known = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, string?> known = new(PathNames.Comparer);
 
     /// <summary>The saves of each path queued and not yet recorded, whose new content the disk may already hold.</summary>
-    private readonly Dictionary<string, int> writing = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, int> writing = new(PathNames.Comparer);
     private readonly Queue<Action> jobs = new();
     private readonly string log;
+    private readonly string held;
     private readonly string blobs;
     private readonly string stateFolder;
     private readonly DateTime openedUtc = DateTime.UtcNow;
@@ -95,6 +98,7 @@ public sealed class LocalHistory
         Keeping = keeping;
         Root = Path.Combine(State.ProjectState.FolderOf(stateFolder, folder), "localHistory");
         log = Path.Combine(Root, "changes.log");
+        held = Path.Combine(Root, "changes.lock");
         blobs = Path.Combine(Root, "blobs");
         lastSet = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000;
         // Read first: what is recorded from now on follows what was kept.
@@ -304,9 +308,9 @@ public sealed class LocalHistory
     public static string Hash(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes)[..16]);
 
     /// <summary>Whether the history keeps a path: a file under the folder, outside the folders every walk passes over and
-    /// outside the state store, and not a save's temporary file.</summary>
+    /// outside the state store, and neither a save's temporary file nor the system's own.</summary>
     public bool Keeps(string path) =>
-        PathNames.IsUnder(path, Folder) && !PathNames.Within(path, stateFolder) && !FileText.IsSaving(path)
+        PathNames.IsUnder(path, Folder) && !PathNames.Within(path, stateFolder) && !FileText.IsSaving(path) && !PathNames.IsSystemFile(Path.GetFileName(path))
         && !Path.GetRelativePath(Folder, path).Split(Path.DirectorySeparatorChar).Any(IgnoredFolders.Contains);
 
     /// <summary>The set and name a save is kept under: the activity under way, else a set of its own.</summary>
@@ -552,7 +556,7 @@ public sealed class LocalHistory
         List<(string Path, string Hash, byte[] Bytes, bool Made)> found = [];
         List<(string Path, string Hash)> gone = [];
         List<string> later = [];
-        HashSet<string> looked = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> looked = new(PathNames.Comparer);
         foreach (string path in paths)
         {
             lock (gate)
@@ -566,13 +570,14 @@ public sealed class LocalHistory
             }
             if (Directory.Exists(path))
             {
-                // A folder new to the history (made, or moved in) is read for its files; one it knows has their own changes.
+                // A folder new to the history (made, or moved in) is read for its files; one it knows has their own changes,
+                // and a link to one holds nothing new: what it leads to is kept by its own names.
                 bool knownUnder;
                 lock (gate)
                 {
                     knownUnder = known.Keys.Any(k => PathNames.IsUnder(k, path));
                 }
-                foreach (string file in knownUnder ? [] : Walk(path))
+                foreach (string file in knownUnder || new DirectoryInfo(path).LinkTarget is not null ? [] : Walk(path))
                 {
                     Look(file);
                 }
@@ -590,7 +595,7 @@ public sealed class LocalHistory
             }
         }
         List<HistoryEvent> made = [];
-        HashSet<string> paired = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> paired = new(PathNames.Comparer);
         foreach ((string path, string hash, byte[] bytes, bool isNew) in found)
         {
             string? was;
@@ -655,7 +660,7 @@ public sealed class LocalHistory
     private void RecordDeletion(HistoryDeletion deletion, long set, string? name, DateTimeOffset time)
     {
         List<HistoryEvent> made = [];
-        HashSet<string> taken = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> taken = new(PathNames.Comparer);
         foreach ((string path, byte[] bytes) in deletion.Files)
         {
             if (!IsText(bytes))
@@ -695,7 +700,10 @@ public sealed class LocalHistory
         {
             lines.Append(Line(kept)).Append('\n');
         }
-        File.AppendAllText(log, lines.ToString());
+        using (Hold())
+        {
+            File.AppendAllText(log, lines.ToString());
+        }
         sincePrune += made.Count;
     }
 
@@ -721,19 +729,24 @@ public sealed class LocalHistory
     }
 
     /// <summary>Rider's purge, as the store opens and once a day: the change sets older than <see cref="HistoryKeeping.Days"/>
-    /// of activity go, counting back from the newest, a pause of 12 hours or more counted as nothing; then the oldest go
-    /// until what is left needs no more content than <see cref="HistoryKeeping.Bytes"/>. The log is written again
-    /// without them, and the content nothing names any longer is deleted. What it weighs is the log as it is on disk, not
-    /// only what this store recorded: another Passenger on the folder with the same state (an agent's, over --mcp) appends
-    /// lines of its own, which a rewrite from this store's alone erased, their content with them.</summary>
+    /// of activity go, counting back from the newest, a pause of 12 hours or more counted as nothing, then the oldest until the
+    /// rest needs no more content than <see cref="HistoryKeeping.Bytes"/>; the log is written again without them and content
+    /// nothing names is deleted. It weighs the log on disk, which another Passenger on the same state (an agent's, over --mcp)
+    /// appends to too, held against that one's appends from its read to its last delete (<see cref="Hold"/>).</summary>
     private void Prune()
     {
         DateTimeOffset now = Keeping.Clock();
         prunedOn = DateOnly.FromDateTime(now.LocalDateTime);
         sincePrune = 0;
+        using FileStream? holding = Hold();
+        if (holding is null)
+        {
+            // Held past the wait: the next day's prune, or the next thousand changes', tries again.
+            return;
+        }
         List<(string Line, HistoryEvent? Event)> logged = Logged();
         List<HistoryEvent> all = [.. logged.Select(l => l.Event).OfType<HistoryEvent>()];
-        HashSet<string> onDisk = new(all.Select(Key), StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> onDisk = new(all.Select(Key), PathNames.Comparer);
         List<HistoryEvent> unlogged;
         lock (gate)
         {
@@ -796,9 +809,7 @@ public sealed class LocalHistory
                 events.RemoveAll(e => dropped.Contains(e.Set));
                 changed = true;
             }
-            string temporary = $"{log}.{Environment.ProcessId}.tmp";
-            File.WriteAllText(temporary, string.Concat(left.Select(line => line + "\n")));
-            File.Move(temporary, log, overwrite: true);
+            AtomicFile.Write(log, Encoding.UTF8.GetBytes(string.Concat(left.Select(line => line + "\n"))));
         }
         DateTime old = DateTime.UtcNow - Orphaned;
         foreach (string hash in sizes.Keys.Where(h => !references.ContainsKey(h)))
@@ -856,28 +867,64 @@ public sealed class LocalHistory
         return sizes;
     }
 
-    /// <summary>Keeps bytes once, compressed, by their hash, through a temporary file so a reader never finds half of
-    /// them; their hash.</summary>
+    /// <summary>Keeps bytes once, compressed, by their hash, written whole so a reader never finds half of them; their
+    /// hash.</summary>
     private string Store(byte[] bytes)
     {
         string hash = Hash(bytes);
         string file = BlobPath(hash);
         if (File.Exists(file))
         {
-            return hash;
+            using (Hold())
+            {
+                try
+                {
+                    // Named again: its time says so, so no prune, here or in another Passenger, deletes it as long unnamed.
+                    File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
+                    return hash;
+                }
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    // Pruned as unnamed a moment ago: written again.
+                }
+            }
         }
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        string temporary = $"{file}.{Environment.ProcessId}.tmp";
-        using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-        using (BrotliStream brotli = new(stream, CompressionLevel.Fastest))
+        using MemoryStream compressed = new();
+        using (BrotliStream brotli = new(compressed, CompressionLevel.Fastest, leaveOpen: true))
         {
             brotli.Write(bytes);
         }
-        File.Move(temporary, file, overwrite: true);
+        AtomicFile.Write(file, compressed.GetBuffer().AsSpan(0, (int)compressed.Length));
         return hash;
     }
 
     private string BlobPath(string hash) => Path.Combine(blobs, hash[..2], hash[2..]);
+
+    /// <summary>The history held against every other Passenger keeping it in the same state (an agent's, over --mcp) while
+    /// this one changes it: the log appended to or written again, content taken up again or deleted. A lock file open
+    /// sharing nothing, waited for on the queue (never the UI thread) up to <see cref="HeldFor"/>; null when not had.</summary>
+    private FileStream? Hold()
+    {
+        Directory.CreateDirectory(Root);
+        long began = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            try
+            {
+                return new FileStream(held, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (Stopwatch.GetElapsedTime(began) < HeldFor)
+            {
+                Thread.Sleep(10);
+            }
+            catch (IOException refused)
+            {
+                IdeErrors.Write($"Local History of {Folder}: another Passenger on the same state held {held} past {HeldFor.TotalSeconds:0} s: {refused.Message}");
+                return null;
+            }
+        }
+    }
 
     /// <summary>A file's bytes when the history keeps its content: text, and not too large; else null.</summary>
     private static byte[]? ReadKept(string file)
@@ -892,47 +939,12 @@ public sealed class LocalHistory
         }
     }
 
-    /// <summary>Text as the editor takes it: a BOM, or no NUL byte near the start.</summary>
-    private static bool IsText(byte[] bytes) =>
-        bytes.Length <= FileText.KeptLimit && (FileText.Bom(bytes) is not null || !bytes.AsSpan(0, Math.Min(bytes.Length, BinaryProbe)).Contains((byte)0));
+    /// <summary>Text as the editor takes it (<see cref="FileText.LooksBinary"/>), and not too large to keep.</summary>
+    private static bool IsText(byte[] bytes) => bytes.Length <= FileText.KeptLimit && !FileText.LooksBinary(bytes);
 
-    /// <summary>The files under a folder the history keeps, as many as it reads at once, linked folders not followed.</summary>
-    private IEnumerable<string> Walk(string top)
-    {
-        Stack<DirectoryInfo> folders = new([new DirectoryInfo(top)]);
-        int count = 0;
-        while (folders.Count > 0)
-        {
-            DirectoryInfo at = folders.Pop();
-            List<FileSystemInfo> entries;
-            try
-            {
-                entries = [.. at.EnumerateFileSystemInfos()];
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-            foreach (FileSystemInfo entry in entries)
-            {
-                if (entry is DirectoryInfo folder)
-                {
-                    if (folder.LinkTarget is null && !IgnoredFolders.Contains(folder.Name))
-                    {
-                        folders.Push(folder);
-                    }
-                }
-                else if (Keeps(entry.FullName))
-                {
-                    if (++count > WalkLimit)
-                    {
-                        yield break;
-                    }
-                    yield return entry.FullName;
-                }
-            }
-        }
-    }
+    /// <summary>The files under a folder the history keeps, as many as it reads at once, found as every walk of the open
+    /// folder finds them (<see cref="FolderWalk"/>).</summary>
+    private IEnumerable<string> Walk(string top) => FolderWalk.Files(top).Where(Keeps).Take(WalkLimit);
 
     private string Line(HistoryEvent kept)
     {

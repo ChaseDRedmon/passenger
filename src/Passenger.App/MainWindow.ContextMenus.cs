@@ -21,7 +21,7 @@ public partial class MainWindow
     private void AddContextMenus()
     {
         Editors.ForEachEditor(editor => editor.ContextMenuRequested += (_, at) => ShowEditorMenu(editor, at));
-        actions!.Add(new IdeAction(A.ShowContextMenu, "Show Context Menu", "IDE", _ => ShowFocusedContextMenu()));
+        actions!.Add(new IdeAction(A.ShowContextMenu, "Show Context Menu", "IDE", context => ShowFocusedContextMenu(context.Focused)));
     }
 
     /// <summary>Rider's editor menu: context actions and the clipboard, Find Usages, Refactor, Go To, Generate and
@@ -92,10 +92,11 @@ public partial class MainWindow
         static MenuEntry Sub(string title, params MenuEntry[] entries) => new(null, title, entries);
     }
 
-    /// <summary>The menu key (Shift+F10): the menu of the place with the focus, at its caret or chosen row.</summary>
-    private void ShowFocusedContextMenu()
+    /// <summary>The menu key (Shift+F10): the menu of the place with the focus, in whichever of the IDE's windows it was
+    /// pressed, at its caret or chosen row.</summary>
+    private static void ShowFocusedContextMenu(object? focused)
     {
-        switch (FocusManager?.GetFocusedElement())
+        switch (focused)
         {
             case CodeEditor editor:
                 editor.RequestContextMenu();

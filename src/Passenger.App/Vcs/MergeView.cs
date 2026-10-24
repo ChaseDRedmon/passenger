@@ -69,14 +69,14 @@ public sealed class MergeView : DockPanel
         simple = [.. chunks.Select(c => c.IsConflict ? ThreeWayMerge.ResolveSimply(common[c.BaseStart..c.BaseEnd], leftLines[c.LeftStart..c.LeftEnd], rightLines[c.RightStart..c.RightEnd]) : null)];
         Texts = texts;
 
-        // Not in the IDE's window, which sends its editors their keys, each resolves its own (undo, a caret's moves).
-        Left = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true, Keymap = AppActions.Keymap() };
+        // The IDE's keymap sends each its keys from the merge's window (IdeKeys), as it does a diff's.
+        Left = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true };
         Left.Show(new TextDocument(texts.Left), SelectionSet.Single(0), default);
         result = new TextDocument(texts.Base);
         started = result.Snapshot;
-        Result = new CodeEditor { ChangeBackgrounds = true, Keymap = AppActions.Keymap() };
+        Result = new CodeEditor { ChangeBackgrounds = true };
         Result.Show(result, SelectionSet.Single(0), default);
-        Right = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true, Keymap = AppActions.Keymap() };
+        Right = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true };
         Right.Show(new TextDocument(texts.Right), SelectionSet.Single(0), default);
         state = [.. chunks.Select(c => new Resolution(c.BaseStart, c.BaseEnd, !c.LeftChanged, !c.RightChanged, false))];
         states[started] = state;
@@ -97,11 +97,11 @@ public sealed class MergeView : DockPanel
 
         status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
-        applyNonConflicting = Tool("Icon.ApplyNonConflicts", "Apply All Non-Conflicting Changes", ApplyNonConflicting);
+        applyNonConflicting = ToolButtons.Of("Icon.ApplyNonConflicts", "Apply All Non-Conflicting Changes", ApplyNonConflicting);
         // Rider's icon is two arrows meeting in the middle: the vertical one turned on its side.
         applyNonConflicting.Content = new PathIcon { RenderTransform = new RotateTransform(90) };
         ((PathIcon)applyNonConflicting.Content).Bind(PathIcon.DataProperty, applyNonConflicting.GetResourceObservable("Icon.ApplyNonConflicts"));
-        resolveSimple = Tool("Icon.Wand", "Resolve Simple Conflicts", ResolveSimpleConflicts);
+        resolveSimple = ToolButtons.Of("Icon.Wand", "Resolve Simple Conflicts", ResolveSimpleConflicts);
         Border rule = new() { Width = 1, Height = 16, Margin = new Thickness(6, 0) };
         rule.Bind(Border.BackgroundProperty, rule.GetResourceObservable("Passenger.Divider"));
         StackPanel tools = new()
@@ -115,8 +115,8 @@ public sealed class MergeView : DockPanel
                 applyNonConflicting,
                 resolveSimple,
                 rule,
-                Tool("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
-                Tool("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
+                ToolButtons.Of("Icon.ArrowUp", "Previous Difference (Shift+F7)", () => Step(-1)),
+                ToolButtons.Of("Icon.ArrowDown", "Next Difference (F7)", () => Step(1)),
                 new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) },
                 status,
             },
@@ -452,8 +452,7 @@ public sealed class MergeView : DockPanel
         static string Count(int count, string what, string none) => count switch
         {
             0 => none,
-            1 => $"1 {what}",
-            _ => $"{count} {what}s",
+            _ => Core.Plural.Of(count, what),
         };
     }
 
@@ -640,18 +639,26 @@ public sealed class MergeView : DockPanel
         return line + delta;
     }
 
+    /// <summary>Whether a key is the merge's own, which the IDE's keymap leaves to it: Rider's Visual Studio keymaps' F7 and
+    /// Shift+F7 (F8 too on Windows) for the next and previous difference, and Accept Left Side and Accept Right Side,
+    /// Ctrl+Cmd+Right and Left on the Mac, Ctrl+Alt+R and A elsewhere.</summary>
+    public static bool TakesKey(KeyEventArgs e) => IsStep(e) || IsAccept(e);
+
+    private static bool IsStep(KeyEventArgs e) =>
+        (e.Key == Key.F7 || (!OperatingSystem.IsMacOS() && e.Key == Key.F8)) && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift;
+
+    private static bool IsAccept(KeyEventArgs e) => OperatingSystem.IsMacOS()
+        ? e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Meta) && e.Key is Key.Right or Key.Left
+        : e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Alt) && e.Key is Key.R or Key.A;
+
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        bool mac = OperatingSystem.IsMacOS();
-        // Rider's Visual Studio keymaps: F7 and Shift+F7 (F8 too on Windows) for the next and previous difference; Accept
-        // Left Side and Accept Right Side, Ctrl+Cmd+Right and Left on the Mac, Ctrl+Alt+R and A elsewhere.
-        if ((e.Key == Key.F7 || (!mac && e.Key == Key.F8)) && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
+        if (IsStep(e))
         {
             Step(e.KeyModifiers == KeyModifiers.Shift ? -1 : 1);
             e.Handled = true;
         }
-        else if (mac ? e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Meta) && e.Key is Key.Right or Key.Left
-            : e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Alt) && e.Key is Key.R or Key.A)
+        else if (IsAccept(e))
         {
             AcceptAtCaret(e.Key is Key.Right or Key.R ? MergeSide.Left : MergeSide.Right);
             e.Handled = true;
@@ -682,15 +689,6 @@ public sealed class MergeView : DockPanel
         label.Bind(TextBlock.ForegroundProperty, label.GetResourceObservable("Passenger.TextMuted"));
         Grid.SetColumn(label, column);
         return label;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
     }
 
     /// <summary>A change's place in the result, and its sides dealt with; <see cref="Taken"/> once a conflict's side is in.</summary>

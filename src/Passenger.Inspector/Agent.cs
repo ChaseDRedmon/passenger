@@ -19,6 +19,14 @@ public static class Agent
     /// <summary>The inspector on the app's UI thread, once made: what an evaluation's read of binding values names elements by.</summary>
     internal static Inspector? Current { get; private set; }
 
+    /// <summary>Why the app keeps a top level from an agent's input, else null (<see cref="Guard"/>).</summary>
+    internal static Func<object, string?>? Refusing { get; private set; }
+
+    /// <summary>Keeps the agent's input from the top levels the app names a reason for, called with each one input would
+    /// reach: Passenger's own windows, inspected in Passenger, keep its questions to the person and its Settings so. Set
+    /// before <see cref="Start"/>, on the app's UI thread.</summary>
+    public static void Guard(Func<object, string?> refusing) => Refusing = refusing;
+
     /// <param name="overlays">The renderer debug overlays the launch named (<see cref="Wire.OverlaysVariable"/>), or null.</param>
     public static void Start(string socket, Thread main, string avalonia, string? overlays)
     {
@@ -45,6 +53,8 @@ public static class Agent
         catch (Exception error)
         {
             connection.Send(new Reply { Event = Wire.Hello, Hello = new Hello(Wire.Version, Environment.ProcessId, avalonia, $"The inspector could not start: {error.Message}") });
+            // Written before the connection closes, so Passenger shows why rather than an app gone silent.
+            connection.Drain();
             Bindings.Stop();
             return;
         }

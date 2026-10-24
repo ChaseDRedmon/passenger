@@ -1,3 +1,4 @@
+using Avalonia.Platform.Storage;
 using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
@@ -21,27 +22,30 @@ public partial class MainWindow
 
     private void AddLinks()
     {
-        foreach (OutputView console in (OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
+        foreach (OutputView console in (OutputView[])[Bottom.Run, Bottom.Build])
         {
             console.LinkClicked += (_, target) => OpenLink(target);
         }
+        // Every debugged program's console, each session's own, as it is made.
+        Bottom.Debug.ConsoleLinkClicked += (_, target) => OpenLink(target);
         Bottom.Tests.LinkClicked += (_, target) => OpenLink(target);
         // The project folder the Run window's program and the Debug window's came from is looked in first.
         Bottom.Run.Links.Folders = () => LinkFolders(buildRun.RunProject);
+        // A container run's images name their own paths, which are the workspace's files.
+        Bottom.Run.Links.Paths = () => session.ContainerRun?.Plan.Paths;
         Bottom.Debug.Console.Links.Folders = () => LinkFolders(buildRun.DebugProject);
         Bottom.Build.Links.Folders = () => LinkFolders(null);
         Bottom.Tests.Links.Folders = () => LinkFolders(null);
-        AddTerminalLinks();
     }
 
     /// <summary>The terminal's links, Rider's terminal's: web addresses and stack frames as the consoles find them, and any
     /// path to a file, a relative one under the folder the shell said it is in, then the open folder's.</summary>
-    private void AddTerminalLinks()
+    private void AddTerminalLinks(ToolWindows.TerminalPanel terminal)
     {
         ConsoleLinks links = new() { FilePaths = true };
         string? shellFolder = null;
         links.Folders = () => LinkFolders(shellFolder);
-        terminal!.View.Links = text =>
+        terminal.View.Links = text =>
         {
             string? at = terminal.Active?.Screen.WorkingDirectory;
             if (at != shellFolder)
@@ -78,7 +82,15 @@ public partial class MainWindow
         switch (target)
         {
             case FileLink file:
-                NavigateTo(file.Path, file.Position);
+                if (file.CompiledLines)
+                {
+                    NavigateTo(file.Path, CSharp.ServerPlaces.PositionOfCompiled(file.Path, CSharp.ServerPlaces.TextOf(Editors, file.Path),
+                        new Lsp.LspPosition(file.Position.Line, file.Position.Column)));
+                }
+                else
+                {
+                    NavigateTo(file.Path, file.Position);
+                }
                 if (Editors.Active is { } active && PathNames.Same(active.Path, file.Path))
                 {
                     Editors.CodeEditor.Focus();
@@ -97,6 +109,21 @@ public partial class MainWindow
         UiThread.Check();
         browsed.Add(address);
         _ = Launcher.LaunchUriAsync(address);
+    }
+
+    private readonly List<string> shownInFileManager = [];
+
+    /// <summary>Every file and folder the window showed in the file manager, in order (where a publish landed, the
+    /// Explorer's Reveal, the log): what a test reads, as the headless platform opens nothing.</summary>
+    public IReadOnlyList<string> ShownInFileManager => shownInFileManager;
+
+    /// <summary>Shows a file chosen in its folder, or a folder's contents, in the person's file manager: the only way the
+    /// IDE opens it (<see cref="FileManager"/>), the file manager the person's, never ended with the IDE.</summary>
+    public void ShowInFileManager(string path)
+    {
+        UiThread.Check();
+        shownInFileManager.Add(path);
+        FileManager.Show(this, path);
     }
 
     /// <summary>Rider's Open browser after launch: the plan's browser URL opens once its program listens there, as

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Passenger.Dap;
 using Passenger.Debugger.ExpressionEvaluator;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.ExpressionEvaluator.Compiler;
@@ -66,6 +67,7 @@ public partial class ManagedDebugger
         _stopAtEntry = launchInfo.StopAtEntry;
         _hotReload = launchInfo.HotReload;
         _pendingLaunchInfo = launchInfo;
+        _launched = true;
     }
 
     /// <summary>A program named without a folder, found on the PATH as a shell would find it.</summary>
@@ -215,14 +217,33 @@ public partial class ManagedDebugger
         return _breakpointManager.RemoveBreakpoint(id);
     }
 
-    /// <summary>The process to attach to, taken hold of by configurationDone once the client's breakpoints are set.</summary>
-    public void Attach(int processId, bool justMyCode)
+    /// <summary>The process to attach to, taken hold of by configurationDone once the client's breakpoints are set; with
+    /// <paramref name="hotReload"/> (a program started held, DOTNET_MODIFIABLE_ASSEMBLIES=debug set) the user's modules that
+    /// load after the attach get Edit and Continue, as a launch's do.</summary>
+    public void Attach(int processId, bool justMyCode, bool hotReload = false)
     {
         EnsureNoProcessBeingDebugged();
         _logger?.Invoke($"Storing attach target: {processId}");
         _justMyCode = justMyCode;
         _stopAtEntry = false;
+        _hotReload = hotReload;
         _pendingAttachProcessId = processId;
+        Volatile.Write(ref _heldTarget, processId);
+        _launched = false;
+    }
+
+    /// <summary>Lets go the runtime of a process an attach was to take hold of and did not (the session ended first, or the
+    /// attach failed), should it be held at its start: it runs on undebugged rather than wait for good for a debugger that
+    /// is not coming. A runtime already running takes the word as done.</summary>
+    private void ReleaseHeldTarget()
+    {
+        int target = Interlocked.Exchange(ref _heldTarget, 0);
+        if (target == 0)
+        {
+            return;
+        }
+        string? why = DiagnosticClientHelper.Resume(target);
+        _logger?.Invoke(why is null ? $"Let process {target} go: the debugger did not take hold of it" : $"Process {target}, not taken hold of, was not let go: {why}");
     }
 
     /// <summary>The client's breakpoints are set: the launch or attach asked for is made.</summary>
@@ -302,7 +323,7 @@ public partial class ManagedDebugger
         // ICorDebug's Stop is synchronous and raises no callback of its own, so the stop is reported here.
         if (PausedThread() is { } thread)
         {
-            ReportStop(thread, "pause");
+            ReportStop(thread, StopReasons.Pause);
             return;
         }
         // No thread runs managed code yet (the runtime is still starting): the pause is taken at its next event.
@@ -321,7 +342,7 @@ public partial class ManagedDebugger
         }
         _pauseRequested = false;
         EndStepForStop();
-        ReportStop(thread, "pause");
+        ReportStop(thread, StopReasons.Pause);
         return true;
     }
 
@@ -489,22 +510,39 @@ public partial class ManagedDebugger
         return result;
     }
 
+    /// <summary>Sets the function breakpoints to those asked for, which replace those set before. One asked for again just as
+    /// it was is kept whole, as <see cref="SetBreakpoints"/> keeps a line's: its id, its bindings and its hit count, so a
+    /// change beside it (a property breakpoint added) starts no count again and a hit of it on its way still stops.</summary>
     public List<BreakpointManager.BreakpointInfo> SetFunctionBreakpoints(FunctionBreakpointRequest[] breakpoints)
     {
-        foreach (BreakpointManager.BreakpointInfo bp in _breakpointManager.GetFunctionBreakpoints())
+        List<BreakpointManager.BreakpointInfo> existing = _breakpointManager.GetFunctionBreakpoints();
+        BreakpointManager.BreakpointInfo?[] kept = new BreakpointManager.BreakpointInfo?[breakpoints.Length];
+        for (int i = 0; i < breakpoints.Length; i++)
         {
-            foreach (BreakpointManager.FunctionBreakpointBinding binding in bp.FunctionBindings)
+            kept[i] = existing.FirstOrDefault(b => b.FunctionRequest == breakpoints[i] && !kept.Contains(b));
+        }
+        foreach (BreakpointManager.BreakpointInfo gone in existing.Where(b => !kept.Contains(b)))
+        {
+            foreach (BreakpointManager.FunctionBreakpointBinding binding in gone.FunctionBindings)
             {
                 try { binding.CorBreakpoint.Activate(false); }
                 catch (Exception ex) { _logger?.Invoke($"Error deactivating function breakpoint: {ex.Message}"); }
             }
+            _breakpointManager.RemoveBreakpoint(gone.Id);
         }
-        _breakpointManager.ClearFunctionBreakpoints();
 
         List<BreakpointManager.BreakpointInfo> result = new List<BreakpointManager.BreakpointInfo>();
-        foreach (FunctionBreakpointRequest request in breakpoints)
+        for (int i = 0; i < breakpoints.Length; i++)
         {
+            if (kept[i] is { } same)
+            {
+                _logger?.Invoke($"Function breakpoint {same.Id} on {same.FunctionName} kept as it was, {same.HitCount} hits in");
+                result.Add(same);
+                continue;
+            }
+            FunctionBreakpointRequest request = breakpoints[i];
             BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateFunctionBreakpoint(request.Name, request.Condition, request.HitCondition, request.LogMessage, request.Suspend);
+            bp.FunctionRequest = request;
             if (bp.HitCondition is { } hits && !Passenger.Dap.HitCondition.TryParse(hits, out _, out string? problem))
             {
                 bp.Message = problem;
@@ -535,9 +573,11 @@ public partial class ManagedDebugger
         return result;
     }
 
-    public List<(int id, string name)> GetThreads()
+    /// <summary>The threads running managed code, each with its name (the program's, else the engine's) and whether it is the
+    /// thread that runs Main (<see cref="NoteMainThread"/>), whatever the program named it.</summary>
+    public List<(int id, string name, bool main)> GetThreads()
     {
-        List<(int, string)> result = new List<(int, string)>();
+        List<(int, string, bool)> result = new List<(int, string, bool)>();
         if (_process is null)
         {
             return result;
@@ -554,7 +594,7 @@ public partial class ManagedDebugger
                     continue;
                 }
                 threadInfo.Name ??= threadInfo.Thread.GetThreadNameOrNull();
-                result.Add((id, threadInfo.Name ?? (id == _mainThreadId ? "Main Thread" : "<No Name>")));
+                result.Add((id, threadInfo.Name ?? (id == _mainThreadId ? "Main Thread" : "<No Name>"), id == _mainThreadId));
             }
         }
         catch (Exception ex)
@@ -897,6 +937,10 @@ public partial class ManagedDebugger
                 {
                     if (IsEnumerable(objectValue.ExactType))
                     {
+                        if (EfQueryModule(objectValue.ExactType) is not null)
+                        {
+                            AddQuerySqlRow(variablesReference, result);
+                        }
                         AddEnumerablePseudoVariables(variablesReference, result);
                     }
                     else
@@ -922,6 +966,10 @@ public partial class ManagedDebugger
             else if (variablesReference.ReferenceKind is StoredReferenceKind.EnumerableResults)
             {
                 await AddEnumerableResults(variablesReference, result);
+            }
+            else if (variablesReference.ReferenceKind is StoredReferenceKind.QuerySql)
+            {
+                result.Add(await ReadQuerySql(variablesReference));
             }
             else if (variablesReference.ReferenceKind is StoredReferenceKind.ArrayRange)
             {
@@ -1043,8 +1091,9 @@ public partial class ManagedDebugger
         Dispose();
     }
 
-    /// <summary>Ends the session: the program ends with it when asked, else it is let go to run on.</summary>
-    public void Disconnect(bool terminateDebuggee)
+    /// <summary>Ends the session: the program ends with it when asked, else it is let go to run on, the let-go kept within
+    /// the client's time for it when it gives one (<paramref name="within"/>).</summary>
+    public void Disconnect(bool terminateDebuggee, TimeSpan? within = null)
     {
         _logger?.Invoke($"Disconnect (terminate: {terminateDebuggee})");
 
@@ -1062,9 +1111,13 @@ public partial class ManagedDebugger
                     _logger?.Invoke($"Error stopping process during disconnect: {hResult}");
                 }
             }
-            Dispose(letGo: true);
+            Dispose(letGo: true, within);
         }
     }
+
+    /// <summary>The client went without disconnecting (crashed, or was ended): a program the session launched ends with it,
+    /// and one it attached to is let go to run on, as a detach lets it go.</summary>
+    public void Abandon() => Disconnect(terminateDebuggee: _launched);
 
     public async Task<ExceptionInfo> ExceptionInfo(ThreadId threadId)
     {

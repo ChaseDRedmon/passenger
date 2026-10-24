@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Passenger.Core;
 
 namespace Passenger.Xaml.Projects;
 
@@ -155,7 +156,7 @@ public sealed record ProjectInputs(
         }
         Regex matcher = new("^" + Regex.Escape(normal).Replace(@"\*\*/", "(.*/)?", StringComparison.Ordinal).Replace(@"\*\*", ".*", StringComparison.Ordinal)
             .Replace(@"\*", "[^/]*", StringComparison.Ordinal).Replace(@"\?", "[^/]", StringComparison.Ordinal) + "$", RegexOptions.CultureInvariant);
-        foreach (string file in Directory.EnumerateFiles(start, "*", SearchOption.AllDirectories))
+        foreach (string file in PathNames.FoldersUnder(start, _ => true).SelectMany(f => FilesIn(f, "*")))
         {
             string relative = Path.GetRelativePath(folder, file).Replace('\\', '/');
             if (relative.StartsWith("bin/", StringComparison.Ordinal) || relative.StartsWith("obj/", StringComparison.Ordinal))
@@ -378,36 +379,58 @@ public sealed record ProjectInputs(
         return [];
     }
 
-    /// <summary>The project's own C# files: under its folder, but for bin, obj, hidden folders and another project's.</summary>
-    private static List<string> SourceFilesOf(string folder)
+    /// <summary>Whether a C# file is one of the project's own, as <see cref="SourceFiles"/> reads them, there now or not.</summary>
+    public bool Compiles(string path)
     {
-        List<string> files = [];
-        Walk(folder, top: true);
-        return files;
+        if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || !PathNames.Within(path, Folder))
+        {
+            return false;
+        }
+        string top = Folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        for (string? at = Path.GetDirectoryName(path); at is not null && at.Length > top.Length; at = Path.GetDirectoryName(at))
+        {
+            string name = Path.GetFileName(at);
+            if (name is "bin" or "obj" or "node_modules" || name.StartsWith('.') || HasProject(at))
+            {
+                return false;
+            }
+        }
+        return true;
 
-        void Walk(string at, bool top)
+        static bool HasProject(string folder)
         {
             try
             {
-                if (!top && Directory.EnumerateFiles(at, "*.csproj").Any())
-                {
-                    return;
-                }
-                files.AddRange(Directory.EnumerateFiles(at, "*.cs"));
-                foreach (string sub in Directory.EnumerateDirectories(at))
-                {
-                    string name = Path.GetFileName(sub);
-                    if (name is "bin" or "obj" or "node_modules" || name.StartsWith('.'))
-                    {
-                        continue;
-                    }
-                    Walk(sub, top: false);
-                }
+                return Directory.Exists(folder) && Directory.EnumerateFiles(folder, "*.csproj").Any();
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
-                // A folder that cannot be read holds nothing the XAML can name.
+                return false;
             }
+        }
+    }
+
+    /// <summary>The project's own C# files: under its folder, but for bin, obj, hidden folders and another project's.</summary>
+    private static List<string> SourceFilesOf(string folder) => [.. OwnFolders(folder).SelectMany(f => FilesIn(f, "*.cs"))];
+
+    /// <summary>A project's own folders: its folder and those under it but bin, obj, node_modules, hidden folders and another
+    /// project's (<see cref="PathNames.FoldersUnder"/>).</summary>
+    internal static IEnumerable<string> OwnFolders(string folder) => PathNames.FoldersUnder(folder, sub =>
+    {
+        string name = Path.GetFileName(sub);
+        return name is not ("bin" or "obj" or "node_modules") && !name.StartsWith('.') && !Directory.EnumerateFiles(sub, "*.csproj").Any();
+    });
+
+    /// <summary>A folder's files a pattern names, none for a folder that cannot be read.</summary>
+    internal static IReadOnlyList<string> FilesIn(string folder, string pattern)
+    {
+        try
+        {
+            return [.. Directory.EnumerateFiles(folder, pattern)];
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return [];
         }
     }
 

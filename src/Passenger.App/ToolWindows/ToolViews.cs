@@ -1,3 +1,5 @@
+using Passenger.App.Aspire;
+
 namespace Passenger.App.ToolWindows;
 
 /// <summary>The views of the tool windows that start at the bottom (Build, Run, Debug, Unit Tests, Problems). Each is
@@ -11,8 +13,20 @@ public sealed class ToolViews
 
     public OutputView Build { get; } = new();
     public OutputView Run { get; } = new() { RerunsWhileRunning = true };
-    public ProblemsView Problems { get; } = new();
-    public DebugView Debug { get; } = new();
+    /// <summary>What the Problems window lists, kept while its view is not built.</summary>
+    public ProblemsModel Problems { get; } = new();
+    /// <summary>What the Debug window shows, kept while its view is not built.</summary>
+    public DebugModel Debug { get; } = new();
+
+    /// <summary>What the Aspire window shows of the session's AppHosts, kept while its view is not built: made anew with each
+    /// session, whose AppHosts write to it.</summary>
+    public AspireModel Aspire { get; private set; } = new();
+
+    internal void ResetAspire(AspireClient client)
+    {
+        Aspire.Dispose();
+        Aspire = new AspireModel(client);
+    }
 
     /// <summary>The Unit Tests window, over the tree the test runner fills.</summary>
     public TestsView Tests { get; }

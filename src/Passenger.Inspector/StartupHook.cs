@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.Loader;
+using Passenger.Core;
 using Passenger.Inspector;
 
 /// <summary>The runtime calls this before the app's Main, as DOTNET_STARTUP_HOOKS names this assembly: only in a run
@@ -57,12 +58,7 @@ internal static class StartupHook
     {
         Environment.SetEnvironmentVariable(Wire.SocketVariable, null);
         Environment.SetEnvironmentVariable(Wire.OverlaysVariable, null);
-        string self = typeof(StartupHook).Assembly.Location;
-        if (Environment.GetEnvironmentVariable(Wire.StartupHooks) is { Length: > 0 } hooks)
-        {
-            string[] others = [.. hooks.Split(Path.PathSeparator).Where(h => h.Length > 0 && !string.Equals(Path.GetFullPath(h), self, StringComparison.Ordinal))];
-            Environment.SetEnvironmentVariable(Wire.StartupHooks, others.Length == 0 ? null : string.Join(Path.PathSeparator, others));
-        }
+        StartupHooks.TakeOut(typeof(StartupHook).Assembly.Location);
     }
 
     /// <summary>The app's Avalonia, from the assemblies it will load, and why the inspector cannot serve it, if it cannot.</summary>
@@ -75,9 +71,9 @@ internal static class StartupHook
             return (null, "The app does not use Avalonia");
         }
         Version? version = AssemblyName.GetAssemblyName(path).Version;
-        return version?.Major == Wire.AvaloniaMajor
+        return version?.Major == StartupHooks.AvaloniaMajor
             ? (version, null)
-            : (version, $"The app runs Avalonia {version?.ToString(3)}; the Live Visual Tree needs Avalonia {Wire.AvaloniaMajor}");
+            : (version, $"The app runs Avalonia {version?.ToString(3)}; the Live Visual Tree needs Avalonia {StartupHooks.AvaloniaMajor}");
     }
 }
 

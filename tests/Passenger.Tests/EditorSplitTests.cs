@@ -102,6 +102,32 @@ public sealed class EditorSplitTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A split scrolled to its file's end while another split deletes all but its first lines: the first draws the
+    /// lines left, where its view stood past the last of them, blank, gutter and all, until scrolled.</summary>
+    [AvaloniaFact]
+    public void A_split_scrolled_to_the_files_end_draws_the_lines_left_once_another_split_deletes_most_of_them()
+    {
+        File.WriteAllText(Path.Combine(folder, "Long.cs"), string.Concat(Enumerable.Range(1, 300).Select(i => $"// line {i}\n")));
+        MainWindow window = Open("Long.cs");
+        EditorArea area = window.EditorArea;
+        EditorGroup left = area.ActiveGroup;
+        Assert.True(window.Perform(AppActions.SplitRight));
+        Ui.Settle();
+        EditorGroup right = area.ActiveGroup;
+        left.Editor.GoTo(new TextPosition(299, 0));
+        Ui.Settle();
+        Assert.True(left.Editor.ScrollOffset.Y > 200 * left.Editor.LineHeight, "Going to the last line left the view at the file's top");
+
+        // Everything after the tenth line deleted in the right split.
+        TextSnapshot text = right.Editor.Document.Snapshot;
+        right.Editor.Selections = SelectionSet.Single(new Selection(text.GetLineStart(10), text.Length));
+        right.Editor.Focus();
+        Ui.Press(window, "BACK");
+        Assert.Equal(11, left.Editor.Document.Snapshot.LineCount);
+        Ui.DrawsText(window, left.Editor, "another split deleted all but ten lines");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_tab_dragged_to_its_splits_right_edge_splits_it_off_and_back_onto_the_first_strip_joins_it_again()
     {
@@ -109,7 +135,7 @@ public sealed class EditorSplitTests : IDisposable
         EditorArea area = window.EditorArea;
         EditorGroup first = area.ActiveGroup;
         Control two = Tab(first, "Two.cs");
-        Point from = Middle(window, two);
+        Point from = Ui.Centre(two, window);
         Point edge = first.Editor.TranslatePoint(new Point(first.Editor.Bounds.Width - 20, first.Editor.Bounds.Height / 2), window)!.Value;
         Drag(window, from, edge);
         Assert.Equal(2, area.Groups.Count);
@@ -120,7 +146,7 @@ public sealed class EditorSplitTests : IDisposable
         Assert.True(second.TranslatePoint(default, window)!.Value.X > first.TranslatePoint(default, window)!.Value.X + 100);
 
         // Back onto the first split's strip, after One.cs: one split again, with both tabs in order.
-        Point back = Middle(window, Tab(second, "Two.cs"));
+        Point back = Ui.Centre(Tab(second, "Two.cs"), window);
         Point strip = first.TabStrip.TranslatePoint(new Point(first.TabStrip.Bounds.Width - 30, first.TabStrip.Bounds.Height / 2), window)!.Value;
         Drag(window, back, strip);
         Assert.Single(area.Groups);
@@ -144,17 +170,17 @@ public sealed class EditorSplitTests : IDisposable
         (double topHeight, double bottomHeight) = (top.Bounds.Height, bottom.Bounds.Height);
 
         // Grabbed 3 px right of its line, over the split after it.
-        Point across = Middle(window, Divider(area, GridResizeDirection.Columns)) + new Point(3, 0);
+        Point across = Ui.Centre(Divider(area, GridResizeDirection.Columns), window) + new Point(3, 0);
         Drag(window, across, across - new Point(120, 0));
         Assert.True(Math.Abs(left.Bounds.Width - (leftWidth - 120)) < 2 && Math.Abs(top.Bounds.Width - (rightWidth + 120)) < 2,
             $"The splits beside each other were {leftWidth} and {rightWidth} wide, and {left.Bounds.Width} and {top.Bounds.Width} once their divider, grabbed right of its line, was dragged 120 px left");
 
         // Grabbed 3 px below its line, and 2 px above.
-        Point down = Middle(window, Divider(area, GridResizeDirection.Rows)) + new Point(0, 3);
+        Point down = Ui.Centre(Divider(area, GridResizeDirection.Rows), window) + new Point(0, 3);
         Drag(window, down, down + new Point(0, 80));
         Assert.True(Math.Abs(top.Bounds.Height - (topHeight + 80)) < 2 && Math.Abs(bottom.Bounds.Height - (bottomHeight - 80)) < 2,
             $"The splits one over the other were {topHeight} and {bottomHeight} tall, and {top.Bounds.Height} and {bottom.Bounds.Height} once their divider, grabbed below its line, was dragged 80 px down");
-        Point up = Middle(window, Divider(area, GridResizeDirection.Rows)) - new Point(0, 2);
+        Point up = Ui.Centre(Divider(area, GridResizeDirection.Rows), window) - new Point(0, 2);
         Drag(window, up, up - new Point(0, 40));
         Assert.True(Math.Abs(top.Bounds.Height - (topHeight + 40)) < 2 && Math.Abs(bottom.Bounds.Height - (bottomHeight - 40)) < 2,
             $"The splits one over the other were {topHeight + 80} and {bottomHeight - 80} tall, and {top.Bounds.Height} and {bottom.Bounds.Height} once their divider, grabbed above its line, was dragged 40 px up");
@@ -209,6 +235,7 @@ public sealed class EditorSplitTests : IDisposable
         first.Show();
         first.KeepLayout();
         first.OpenFolder(folder);
+        Ui.Settle();
         first.OpenFile(Path.Combine(folder, "One.cs"));
         first.OpenFile(Path.Combine(folder, "Two.cs"));
         Ui.Settle();
@@ -269,7 +296,9 @@ public sealed class EditorSplitTests : IDisposable
         Ui.Settle();
         Assert.True(right.Find.IsVisible);
         Button close = Tab(right, "Two.cs").GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("tabClose"));
-        close.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(close);
+        // The pointer moves on, as a person's does: until it does, the pointer still rests on the closed tab's button.
+        window.MouseMove(new Point(1, 1));
         Ui.Settle();
         Assert.Single(area.Groups);
         Assert.NotSame(right, area.ActiveGroup);
@@ -281,9 +310,6 @@ public sealed class EditorSplitTests : IDisposable
 
     private static GridSplitter Divider(EditorArea area, GridResizeDirection direction) =>
         area.GetVisualDescendants().OfType<GridSplitter>().Single(s => s.ResizeDirection == direction);
-
-    private static Point Middle(MainWindow window, Control control) =>
-        control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
 
     private static void Drag(MainWindow window, Point from, Point to)
     {

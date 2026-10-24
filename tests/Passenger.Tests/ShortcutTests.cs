@@ -82,11 +82,11 @@ public sealed class ShortcutTests : IDisposable
         Ui.Type(window, "control alt F", "[");
         Assert.StartsWith("śłŁ[", Text(editor), StringComparison.Ordinal);
         Assert.True(editor.IsFocused, "AltGr took the focus from the editor rather than typing");
-        Assert.False(window.DockHost.IsShown("structure"), "AltGr+F showed Structure rather than typing [");
+        Assert.False(window.DockHost.IsShown(ToolWindowIds.Structure), "AltGr+F showed Structure rather than typing [");
 
         // An English layout gives Ctrl+Alt+F no character, so the shortcut runs.
         Ui.Press(window, "control alt F");
-        Assert.True(window.DockHost.IsShown("structure"), "Ctrl+Alt+F without a character never showed Structure");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Structure), "Ctrl+Alt+F without a character never showed Structure");
         window.Close();
     }
 

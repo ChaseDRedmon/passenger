@@ -177,209 +177,105 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
         Assert.Equal((breakpointedFilePath, 32, 3), stopInfo3);
     }
 
+    /// <summary>Each exception filter and condition in turn, in one program with Just My Code on: from the loop's head
+    /// (Program.cs line 24, no filter set while the loop came round) the filter and the exception to throw are set, and the
+    /// program stops at the exception with its type and break mode, or goes on to the line after the throw (35) without.</summary>
     [Fact]
-    public Task ExceptionFilters_BreakOnAllExceptions()
+    public async Task Each_exception_filter_and_condition_stops_at_the_exceptions_it_names_and_at_no_other()
     {
-        return AssertBreaksOnException(
-            new SetExceptionBreakpointsArguments(["all"], []),
-            exceptionToThrow: "Normal",
-            justMyCode: true,
-            expectedExceptionType: "System.InvalidOperationException",
-            expectedBreakMode: "always");
+        using DebugSession host = await AttachedAfterTheThrow(justMyCode: true);
+        SetExceptionBreakpointsArguments all = new(["all"], []);
+        SetExceptionBreakpointsArguments userUnhandled = new(["user-unhandled"], []);
+        (string Type, string BreakMode) thrown = ("System.InvalidOperationException", "always");
+        (string Type, string BreakMode) unhandled = ("System.InvalidOperationException", "userUnhandled");
+        await Round(host, "all exceptions", all, "Normal", thrown);
+        await Round(host, "all exceptions, one handled within external code", all, "HandledWithinExternalCode", null);
+        await Round(host, "all exceptions, one thrown in external code into the user's", all, "ExternalCode", ("System.FormatException", "always"));
+        await Round(host, "user-unhandled exceptions", userUnhandled, "UserUnhandled", unhandled);
+        await Round(host, "user-unhandled exceptions, one the user's code handles", userUnhandled, "Normal", null);
+        await Round(host, "user-unhandled of its type", Unhandled("System.InvalidOperationException"), "UserUnhandled", unhandled);
+        await Round(host, "user-unhandled of another type", Unhandled("System.FormatException"), "UserUnhandled", null);
+        await Round(host, "no filter", new SetExceptionBreakpointsArguments([], []), "Normal", null);
+        await Round(host, "all of its type", All("System.InvalidOperationException"), "Normal", thrown);
+        await Round(host, "all of another type", All("System.FormatException"), "Normal", null);
+        await Round(host, "all but another type", All("!System.FormatException"), "Normal", thrown);
+        await Round(host, "all but its type", All("!System.InvalidOperationException"), "Normal", null);
+        await Round(host, "all of two types, its among them", All("System.FormatException,System.InvalidOperationException"), "Normal", thrown);
+        await Round(host, "all but one type and of another", All("!System.FormatException,System.ArgumentException"), "Normal", thrown);
+        await Round(host, "all of two types, spaced", All("System.FormatException, System.InvalidOperationException"), "Normal", thrown);
+
+        static SetExceptionBreakpointsArguments Unhandled(string condition) => new([], [new DapExceptionFilterOptions("user-unhandled", condition)]);
+        static SetExceptionBreakpointsArguments All(string condition) => new([], [new DapExceptionFilterOptions("all", condition)]);
     }
 
+    /// <summary>With Just My Code off, the filter for all exceptions stops at one thrown and handled within external code.</summary>
     [Fact]
-    public Task ExceptionFilters_AllExceptionsWithJmcEnabled_DoesNotBreakWhenHandledInExternalCode()
+    public async Task With_just_my_code_off_all_exceptions_stop_at_one_handled_within_external_code()
     {
-        return AssertContinuesWithoutExceptionStop(
-            new SetExceptionBreakpointsArguments(["all"], []),
-            exceptionToThrow: "HandledWithinExternalCode",
-            justMyCode: true);
+        using DebugSession host = await AttachedAfterTheThrow(justMyCode: false);
+        await Round(host, "all exceptions without Just My Code", new SetExceptionBreakpointsArguments(["all"], []), "HandledWithinExternalCode",
+            ("System.ArgumentException", "always"));
     }
 
-    [Fact]
-    public Task ExceptionFilters_AllExceptionsWithJmcDisabled_BreaksWhenHandledInExternalCode()
-    {
-        return AssertBreaksOnException(
-            new SetExceptionBreakpointsArguments(["all"], []),
-            exceptionToThrow: "HandledWithinExternalCode",
-            justMyCode: false,
-            expectedExceptionType: "System.ArgumentException",
-            expectedBreakMode: "always");
-    }
+    private const int LoopHead = 24;
+    private const int AfterThrow = 35;
 
-    [Fact]
-    public Task ExceptionFilters_AllExceptionsWithJmcEnabled_BreaksWhenReturnedToUserCode()
-    {
-        return AssertBreaksOnException(
-            new SetExceptionBreakpointsArguments(["all"], []),
-            exceptionToThrow: "ExternalCode",
-            justMyCode: true,
-            expectedExceptionType: "System.FormatException",
-            expectedBreakMode: "always");
-    }
+    private static string ProgramPath => Debuggees.Source("DebuggableConsoleApp", "Program.cs");
 
-    [Fact]
-    public Task ExceptionFilters_BreakOnUserUnhandledExceptions()
-    {
-        return AssertBreaksOnException(
-            new SetExceptionBreakpointsArguments(["user-unhandled"], []),
-            exceptionToThrow: "UserUnhandled",
-            justMyCode: true,
-            expectedExceptionType: "System.InvalidOperationException",
-            expectedBreakMode: "userUnhandled");
-    }
-
-    [Fact]
-    public Task ExceptionFilters_UserUnhandledDoesNotBreakOnExceptionHandledInUserCode()
-    {
-        return AssertContinuesWithoutExceptionStop(
-            new SetExceptionBreakpointsArguments(["user-unhandled"], []),
-            exceptionToThrow: "Normal",
-            justMyCode: true);
-    }
-
-    [Theory]
-    [InlineData("System.InvalidOperationException", true)]
-    [InlineData("System.FormatException", false)]
-    public Task ExceptionFilters_UserUnhandledConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
-    {
-        var request = new SetExceptionBreakpointsArguments([], [new DapExceptionFilterOptions("user-unhandled", condition)]);
-
-        return expectExceptionStop
-            ? AssertBreaksOnException(request, exceptionToThrow: "UserUnhandled", justMyCode: true, expectedExceptionType: "System.InvalidOperationException", expectedBreakMode: "userUnhandled")
-            : AssertContinuesWithoutExceptionStop(request, exceptionToThrow: "UserUnhandled", justMyCode: true);
-    }
-
-    [Fact]
-    public Task ExceptionFilters_NoFiltersDoesNotBreakOnHandledException()
-    {
-        return AssertContinuesWithoutExceptionStop(
-            new SetExceptionBreakpointsArguments([], []),
-            exceptionToThrow: "Normal",
-            justMyCode: true);
-    }
-
-    [Theory]
-    [InlineData("System.InvalidOperationException", true)]
-    [InlineData("System.FormatException", false)]
-    public Task ExceptionFilters_AllExceptionsIncludeConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
-    {
-        return AssertAllExceptionsCondition(condition, expectExceptionStop);
-    }
-
-    [Theory]
-    [InlineData("!System.FormatException", true)]
-    [InlineData("!System.InvalidOperationException", false)]
-    public Task ExceptionFilters_AllExceptionsExcludeConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
-    {
-        return AssertAllExceptionsCondition(condition, expectExceptionStop);
-    }
-
-    [Theory]
-    [InlineData("System.FormatException,System.InvalidOperationException", true)]
-    [InlineData("!System.FormatException,System.ArgumentException", true)]
-    [InlineData("System.FormatException, System.InvalidOperationException", true)]
-    public Task ExceptionFilters_AllExceptionsConditionSupportsMultipleTypes(string condition, bool expectExceptionStop)
-    {
-        return AssertAllExceptionsCondition(condition, expectExceptionStop);
-    }
-
-    private Task AssertAllExceptionsCondition(string condition, bool expectExceptionStop)
-    {
-        var request = new SetExceptionBreakpointsArguments([], [new DapExceptionFilterOptions("all", condition)]);
-
-        return expectExceptionStop
-            ? AssertBreaksOnException(request, exceptionToThrow: "Normal", justMyCode: true, expectedExceptionType: "System.InvalidOperationException", expectedBreakMode: "always")
-            : AssertContinuesWithoutExceptionStop(request, exceptionToThrow: "Normal", justMyCode: true);
-    }
-
-    private async Task AssertBreaksOnException(
-        SetExceptionBreakpointsArguments exceptionBreakpointsRequest,
-        string exceptionToThrow,
-        bool justMyCode,
-        string expectedExceptionType,
-        string expectedBreakMode)
+    /// <summary>DebuggableConsoleApp attached to as it starts, stopped at the line after its loop's throw (35) with no
+    /// exception filter set.</summary>
+    private async Task<DebugSession> AttachedAfterTheThrow(bool justMyCode)
     {
         const bool startSuspended = true;
-        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process process);
-
-        await debugProtocolHost
-            .WithInitializeRequest()
-            .WithAttachRequest(process.Id, justMyCode)
-            .WaitForInitializedEvent();
-        debugProtocolHost.Request("setExceptionBreakpoints", exceptionBreakpointsRequest);
-
-        const int setupBreakpointLine = 24;
-        const int completionMarkerLine = 35;
-        string programPath = Debuggees.Source("DebuggableConsoleApp", "Program.cs");
-        debugProtocolHost
-            .WithBreakpointsRequest([setupBreakpointLine], programPath)
-            .WithConfigurationDoneRequest()
-            .WithOptionalResumeRuntime(process.Id, startSuspended);
-
-        StoppedEvent setupStop = await debugProtocolHost.WaitForStoppedEvent();
-        Assert.Equal("breakpoint", setupStop.Reason);
-        (string filePath, int line, int column) setupStopInfo = setupStop.ReadStopInfo();
-        Assert.Equal(programPath, setupStopInfo.filePath);
-        Assert.Equal(setupBreakpointLine, setupStopInfo.line);
-
-        debugProtocolHost.WithStackTraceRequest(setupStop.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
-        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, $"exceptionToThrow = ExceptionToThrow.{exceptionToThrow}", out EvaluateResponse? evaluateResponse);
-        Assert.Equal(exceptionToThrow, evaluateResponse.Result);
-
-        debugProtocolHost
-            .WithBreakpointsRequest([completionMarkerLine], programPath)
-            .WithContinueRequest();
-
-        StoppedEvent exceptionStop = await debugProtocolHost.WaitForStoppedEvent();
-        Assert.Equal("exception", exceptionStop.Reason);
-
-        ExceptionInfoResponse exceptionInfo = debugProtocolHost.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(exceptionStop.ThreadId!.Value));
-        Assert.Equal(expectedExceptionType, exceptionInfo.Details!.FullTypeName);
-        Assert.Equal(expectedBreakMode, exceptionInfo.BreakMode);
+        DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process process);
+        try
+        {
+            await host
+                .WithInitializeRequest()
+                .WithAttachRequest(process.Id, justMyCode)
+                .WaitForInitializedEvent();
+            host.WithBreakpointsRequest([AfterThrow], ProgramPath)
+                .WithConfigurationDoneRequest()
+                .WithOptionalResumeRuntime(process.Id, startSuspended);
+            StoppedEvent first = await host.WaitForStoppedEvent();
+            Assert.Equal(("breakpoint", AfterThrow), (first.Reason, first.ReadStopInfo().line));
+            return host;
+        }
+        catch
+        {
+            host.Dispose();
+            throw;
+        }
     }
 
-    private async Task AssertContinuesWithoutExceptionStop(
-        SetExceptionBreakpointsArguments exceptionBreakpointsRequest,
-        string exceptionToThrow,
-        bool justMyCode)
+    /// <summary>One turn of DebuggableConsoleApp's loop from a stop after the throw (line 35): no filter while the loop
+    /// comes round to its head, there the filters given and the exception chosen, then the stop at the exception with its type
+    /// and break mode (or none) and the stop after the throw again. A failure names the round.</summary>
+    private static async Task Round(DebugSession host, string round, SetExceptionBreakpointsArguments filters, string exceptionToThrow,
+        (string Type, string BreakMode)? expected)
     {
-        const bool startSuspended = true;
-        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process process);
+        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], []));
+        host.WithBreakpointsRequest([LoopHead], ProgramPath).WithContinueRequest();
+        StoppedEvent head = await host.WaitForStoppedEvent();
+        Assert.True(head.Reason == "breakpoint" && head.ReadStopInfo().line == LoopHead,
+            $"{round}: the loop did not come round to its head with no filter set, but stopped at the {head.Reason} at line {head.Line}");
 
-        await debugProtocolHost
-            .WithInitializeRequest()
-            .WithAttachRequest(process.Id, justMyCode)
-            .WaitForInitializedEvent();
-        debugProtocolHost.Request("setExceptionBreakpoints", exceptionBreakpointsRequest);
+        host.Request("setExceptionBreakpoints", filters);
+        host.WithEvaluateRequest(host.GetTopStackFrame(head.ThreadId!.Value).Id, $"exceptionToThrow = ExceptionToThrow.{exceptionToThrow}", out EvaluateResponse chosen);
+        Assert.Equal(exceptionToThrow, chosen.Result);
+        host.WithBreakpointsRequest([AfterThrow], ProgramPath).WithContinueRequest();
 
-        const int setupBreakpointLine = 24;
-        const int completionMarkerLine = 35;
-        string programPath = Debuggees.Source("DebuggableConsoleApp", "Program.cs");
-        debugProtocolHost
-            .WithBreakpointsRequest([setupBreakpointLine], programPath)
-            .WithConfigurationDoneRequest()
-            .WithOptionalResumeRuntime(process.Id, startSuspended);
-
-        StoppedEvent setupStop = await debugProtocolHost.WaitForStoppedEvent();
-        Assert.Equal("breakpoint", setupStop.Reason);
-        (string filePath, int line, int column) setupStopInfo = setupStop.ReadStopInfo();
-        Assert.Equal(programPath, setupStopInfo.filePath);
-        Assert.Equal(setupBreakpointLine, setupStopInfo.line);
-
-        debugProtocolHost.WithStackTraceRequest(setupStop.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
-        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, $"exceptionToThrow = ExceptionToThrow.{exceptionToThrow}", out EvaluateResponse? evaluateResponse);
-        Assert.Equal(exceptionToThrow, evaluateResponse.Result);
-
-        debugProtocolHost
-            .WithBreakpointsRequest([completionMarkerLine], programPath)
-            .WithContinueRequest();
-
-        StoppedEvent completionStop = await debugProtocolHost.WaitForStoppedEvent();
-        DapStackFrame completionStackFrame = debugProtocolHost.GetTopStackFrame(completionStop.ThreadId!.Value);
-        Assert.Equal(programPath, completionStackFrame.Source?.Path);
-        Assert.Equal(completionMarkerLine, completionStackFrame.Line);
-        Assert.Equal("breakpoint", completionStop.Reason);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        if (expected is { } exception)
+        {
+            Assert.True(stop.Reason == "exception",
+                $"{round}: the {exception.Type} thrown did not stop the program, which went on to the {stop.Reason} at line {stop.Line}");
+            ExceptionInfoResponse info = host.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(stop.ThreadId!.Value));
+            Assert.True((info.Details?.FullTypeName, info.BreakMode) == exception,
+                $"{round}: the program stopped at a {info.Details?.FullTypeName} ({info.BreakMode}), where a {exception.Type} ({exception.BreakMode}) was thrown");
+            stop = await host.WithContinueRequest().WaitForStoppedEvent();
+        }
+        Assert.True(stop.Reason == "breakpoint" && stop.ReadStopInfo().line == AfterThrow,
+            $"{round}: the program stopped at the {stop.Reason} at line {stop.Line}, where it was to go on to the line after the throw ({AfterThrow})");
     }
 }

@@ -117,7 +117,7 @@ public sealed class EditorWindowTests : IDisposable
         // Small enough that a window the size of its editors fits on the screen beside it.
         MainWindow window = Open(900, 600, "One.cs", "Two.cs");
         EditorGroup first = Assert.Single(GroupsIn(window));
-        Point from = Middle(window, Tab(first, "Two.cs"));
+        Point from = Ui.Centre(Tab(first, "Two.cs"), window);
         Point outside = new(window.Bounds.Width + 60, 200);
         Drag(window, from, outside);
 
@@ -131,7 +131,7 @@ public sealed class EditorWindowTests : IDisposable
         Assert.True(onScreen.Contains(dropped), $"The tab was let go at {dropped} on the screen, and its window put it at {onScreen}");
 
         // Back onto the main window's strip, after One.cs: the window goes, its tab in the main window again.
-        Point back = Middle(editors, tab);
+        Point back = Ui.Centre(tab, editors);
         Point strip = editors.PointToClient(first.TabStrip.PointToScreen(new Point(first.TabStrip.Bounds.Width - 30, first.TabStrip.Bounds.Height / 2)));
         Drag(editors, back, strip);
         Assert.False(editors.IsVisible, "The editor window stayed open with its one tab dragged back out of it");
@@ -149,6 +149,7 @@ public sealed class EditorWindowTests : IDisposable
         first.Show();
         first.KeepLayout();
         first.OpenFolder(folder);
+        Ui.Settle();
         first.OpenFile(Path.Combine(folder, "One.cs"));
         first.OpenFile(Path.Combine(folder, "Two.cs"));
         Ui.Settle();
@@ -232,13 +233,10 @@ public sealed class EditorWindowTests : IDisposable
         Ui.Settle();
         MenuItem chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => i.Header is string header && header.StartsWith(title, StringComparison.Ordinal))
             ?? throw new Xunit.Sdk.XunitException($"The tab's menu has no {title}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        chosen.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Ui.Click(chosen);
         menu.Close();
         Ui.Settle();
     }
-
-    private static Point Middle(TopLevel window, Control control) =>
-        control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
 
     private static void Drag(TopLevel window, Point from, Point to)
     {

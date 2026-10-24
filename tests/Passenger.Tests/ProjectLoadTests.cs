@@ -78,20 +78,20 @@ public sealed class ProjectLoadTests : IDisposable
 
         // A click on it shows it in Problems' Toolset, Environment: under the project, with the advisory's link, which opens
         // in the browser.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         window.DockHost.Hide("problems");
         problems.Shown = ProblemsTab.File;
         ClickStatus(window);
-        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Toolset,
-            $"A click on the status bar's load warning showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.Toolset,
+            $"A click on the status bar's load warning showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
         Problem warning = Assert.Single(problems.ToolsetProblems);
         Assert.True(problems.Selected == warning, $"A click on the status bar's load warning chose {problems.Selected?.Message ?? "nothing"} in Problems, not the warning");
         Assert.True(warning is { Severity: ProblemSeverity.Warning, Project: "Web", Message: Warned } && warning.Link == new Uri(Advisory),
             $"Problems lists the load's warning as {warning.Severity} \"{warning.Message}\" under {warning.Project}, its link {warning.Link}");
         Assert.Equal(["Web", Warned], problems.Rows.Select(r => r.Label));
-        Button link = Links(problems).SingleOrDefault(b => (string?)b.Content == Advisory)
+        Button link = Links(window.ProblemsWindow).SingleOrDefault(b => (string?)b.Content == Advisory)
             ?? throw new Xunit.Sdk.XunitException("The warning's row in Problems shows no link to the advisory");
-        link.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(link, settle: false);
         Assert.True(window.Browsed.Contains(new Uri(Advisory)), $"Clicking the advisory's link opened [{string.Join(", ", window.Browsed)}]");
 
         // The NuGet window marks the package, says what Rider says of it, and offers the version that fixes it.
@@ -99,7 +99,7 @@ public sealed class ProjectLoadTests : IDisposable
         window.Perform(AppActions.ShowNuGet);
         Ui.Landed(() => nuget.Selected is { Id: "Passenger.Vulnerable", IsVulnerable: true } && nuget.Versions.Count == 3, "the vulnerable package marked and its versions");
         Advisory advisory = Assert.Single(nuget.Selected!.Advisories);
-        Assert.True(advisory.Severity == AdvisorySeverity.Moderate && advisory.Url == new Uri(Advisory), $"The NuGet window has the package's advisory as {advisory}");
+        Assert.True(advisory.Severity == AdvisorySeverity.Moderate && advisory.Link == new Uri(Advisory), $"The NuGet window has the package's advisory as {advisory}");
         Assert.True(nuget.Status == "1 package installed, 1 vulnerable", $"The NuGet window's status says \"{nuget.Status}\"");
         Assert.True(nuget.ChosenVersion == "1.0.1", $"The NuGet window offers {nuget.ChosenVersion}, not 1.0.1, the version that fixes the vulnerability");
         Assert.True(Labels(nuget).Contains("Update"), $"Web's line offers [{string.Join(", ", Labels(nuget))}], not Update");
@@ -107,8 +107,29 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.True(said.Contains("Known security vulnerability in 1.0.0. It could be exploited in certain scenarios. See the advisories below for details.")
             && said.Contains("(Severity: Moderate)") && said.Contains("Fixed in 1.0.1"),
             $"The package's details do not say Rider's words on its vulnerability, its severity and its fix: [{string.Join(" | ", said)}]");
-        Links(nuget).Single(b => (string?)b.Content == Advisory).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(Links(nuget).Single(b => (string?)b.Content == Advisory), settle: false);
         Assert.True(window.Browsed.Count(u => u == new Uri(Advisory)) == 2, "The NuGet window's advisory link did not open the advisory");
+        window.Close();
+    }
+
+    /// <summary>An advisory's address is the feed's to name, in any scheme: only an http or https one is a link, and one that
+    /// would launch a program (a file: address) is words that open nothing.</summary>
+    [AvaloniaFact]
+    public void An_advisory_whose_address_is_no_web_page_is_shown_in_the_nuget_window_as_words_not_a_link()
+    {
+        const string Local = "file:///System/Applications/Calculator.app";
+        feed.Advise("Passenger.Vulnerable", 2, Local, "[1.0.0, 1.0.1)");
+        MainWindow window = Open();
+        NuGetView nuget = window.NuGet;
+        window.Perform(AppActions.ShowNuGet);
+        Ui.Landed(() => nuget.Selected is { Id: "Passenger.Vulnerable", IsVulnerable: true, Advisories.Count: 2 }, "the vulnerable package marked with both advisories");
+        Advisory local = nuget.Selected!.Advisories.Single(a => a.Address == Local);
+        Assert.True(local is { Severity: AdvisorySeverity.High, Link: null }, $"The NuGet window has the file: advisory as {local}");
+
+        List<string> said = Texts(nuget);
+        Assert.True(said.Contains(Local) && !Labels(nuget).Contains(Local), $"The file: advisory is not shown as words beside the web one's link: [{string.Join(" | ", said)}]");
+        Ui.Click(Links(nuget).Single(b => (string?)b.Content == Advisory), settle: false);
+        Assert.True(window.Browsed.SequenceEqual([new Uri(Advisory)]), $"The NuGet window's advisories opened [{string.Join(", ", window.Browsed)}]");
         window.Close();
     }
 
@@ -117,7 +138,7 @@ public sealed class ProjectLoadTests : IDisposable
     {
         Restore.Run(project);
         MainWindow window = Open();
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         Ui.WaitFor(() => problems.ToolsetProblems.Count == 1, "the vulnerable package's warning in Problems");
         NuGetView nuget = window.NuGet;
         window.Perform(AppActions.ShowNuGet);
@@ -126,7 +147,7 @@ public sealed class ProjectLoadTests : IDisposable
         Button update = Descendants<StackPanel>(nuget).Where(l => l.Children.FirstOrDefault() is TextBlock { Text: "Web" })
             .SelectMany(l => l.Children.OfType<Button>()).FirstOrDefault(b => (string?)b.Content == "Update")
             ?? throw new Xunit.Sdk.XunitException("The NuGet window offers no Update on Web's line");
-        update.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(update, settle: false);
         Ui.WaitFor(() => !nuget.IsBusy && Version(window) == "1.0.1", $"Web updated to 1.0.1:\n{nuget.Log}", TimeSpan.FromMinutes(3));
 
         // The server loads the project again, without the warning, as the update's restore left it.
@@ -154,12 +175,12 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.True(window.StatusSeverity == ProblemSeverity.Error, $"The status bar's load error is marked as {window.StatusSeverity?.ToString() ?? "nothing"}, not an error");
 
         // A click on it shows it under the project in Problems' Toolset, Environment.
-        ProblemsView problems = window.BottomPanel.Problems;
+        ProblemsModel problems = window.BottomPanel.Problems;
         window.DockHost.Hide("problems");
         problems.Shown = ProblemsTab.File;
         ClickStatus(window);
-        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Toolset,
-            $"A click on the status bar's load error showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.Toolset,
+            $"A click on the status bar's load error showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
         Problem error = Assert.Single(problems.ToolsetProblems);
         Assert.True(error is { Severity: ProblemSeverity.Error, Project: "Bad", Message: Reason, Link: null },
             $"Problems lists the load's error as {error.Severity} \"{error.Message}\" under {error.Project}");
@@ -175,14 +196,14 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.True(window.StatusPlace is null && !said.Focusable && said.Cursor is null && ToolTip.GetTip(said) as string == window.Status,
             $"The status bar's next words, which go nowhere, still look like a link (place '{window.StatusPlace?.Name}', cursor {said.Cursor}, tooltip \"{ToolTip.GetTip(said)}\")");
         ClickStatus(window);
-        Assert.True(!window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.File,
+        Assert.True(!window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.File,
             "A click on status bar words that go nowhere showed Problems, as the load error said before them did");
 
         // Going to the error opens the project file.
         window.Perform(AppActions.ShowProblems);
         problems.Shown = ProblemsTab.Toolset;
         Ui.Settle();
-        ListBox list = Descendants<ListBox>(problems).First();
+        ListBox list = Descendants<ListBox>(window.ProblemsWindow).First();
         list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
         Ui.ChooseFromMenu(list, "Go to");
         Ui.Settle();
@@ -211,10 +232,7 @@ public sealed class ProjectLoadTests : IDisposable
     private static void ClickStatus(MainWindow window)
     {
         Button said = StatusMessage(window);
-        Point at = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(said);
     }
 
     private static IEnumerable<Button> Links(Control parent) => Descendants<Button>(parent).Where(b => b.Classes.Contains("link"));

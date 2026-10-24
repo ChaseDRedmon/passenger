@@ -14,7 +14,8 @@ namespace Passenger.Tests;
 /// dialog takes a chord (the first keystroke, Second stroke, the second), lists the actions it is already assigned to as
 /// the keys are pressed (a chord clashing with the key that begins it too) and warns before it is kept, Remove taking it
 /// from them; the chord then runs its action from the editor and is kept after a restart, Reset Shortcuts giving an
-/// action its own back; and Find Actions by Shortcut narrows the page to the actions a chord runs.</summary>
+/// action its own back; Find Actions by Shortcut narrows the page to the actions a chord runs; and the keypad's / is a key
+/// of its own beside the main keys' /, named as the keypad's, recorded, kept and run apart from it.</summary>
 public sealed class KeymapTests : IDisposable
 {
     private const string Source = "class One { }\n";
@@ -43,12 +44,12 @@ public sealed class KeymapTests : IDisposable
             Ui.Press(keys, $"{Cmd} K");
             Assert.Equal(Keystroke.Parse($"{Cmd} K").Display(), keys.Keys.First.Text);
             Assert.True(keys.OkButton.IsEnabled, "OK stays disabled with a keystroke pressed");
-            Click(keys, keys.Keys.SecondStroke);
+            Ui.Click(keys.Keys.SecondStroke);
             Assert.True(keys.Keys.Second.IsFocused, "Checking Second stroke did not take the keys to the second keystroke's field");
             Ui.Press(keys, $"{Cmd} J");
             Assert.Equal(Keystroke.Parse($"{Cmd} J").Display(), keys.Keys.Second.Text);
             Assert.True(keys.Conflicts.Count == 0, $"A chord no action has is said to be assigned to: {string.Join(", ", keys.Conflicts)}");
-            Click(keys, keys.OkButton);
+            Ui.Click(keys.OkButton);
             Ui.WaitFor(() => !keys.IsVisible, "the Keyboard Shortcut dialog to close");
 
             string chord = Shortcut.Parse($"{Cmd} K , {Cmd} J").Display();
@@ -56,7 +57,7 @@ public sealed class KeymapTests : IDisposable
             Assert.Equal([chord], dialog.ShortcutsShown(AppActions.SplitRight));
             Assert.True(dialog.ShowsChanged(AppActions.SplitRight), "Split Right, given a shortcut, is not shown as changed");
             Assert.Contains($"Remove {chord}", EditShortcuts(dialog, AppActions.SplitRight));
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
 
             window.EditorArea.CodeEditor.Focus();
             Ui.Press(window, $"{Cmd} K");
@@ -80,21 +81,21 @@ public sealed class KeymapTests : IDisposable
         {
             SettingsDialog dialog = Settings(window, "split right");
             KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitRight);
-            Click(keys, keys.Keys.SecondStroke);
+            Ui.Click(keys.Keys.SecondStroke);
             Assert.True(keys.Keys.First.IsFocused, "Second stroke checked before any keystroke took the keys from the first field");
             Ui.Press(keys, $"{Cmd} K");
             Assert.True(keys.Keys.Second.IsFocused, "The first keystroke, with Second stroke checked, left the keys in its field");
             Ui.Press(keys, $"{Cmd} C");
             Assert.Equal(["Comment in Editor Actions"], keys.Conflicts);
-            Click(keys, keys.OkButton);
+            Ui.Click(keys.OkButton);
 
             ConfirmDialog warning = Asked(dialog);
-            Click(warning, Button(warning, "Remove"));
+            Ui.Click(Button(warning, "Remove"));
             Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
             string chord = Shortcut.Parse($"{Cmd} K , {Cmd} C").Display();
             Assert.Equal([chord], dialog.ShortcutsShown(AppActions.SplitRight));
             Assert.Equal([Shortcut.Parse($"{Cmd} K , C").Display()], dialog.ShortcutsShown(EditorActions.Comment));
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
 
             window.EditorArea.CodeEditor.Focus();
             Ui.Press(window, $"{Cmd} K");
@@ -127,12 +128,12 @@ public sealed class KeymapTests : IDisposable
             KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitRight);
             Ui.Press(keys, "control J");
             Assert.Equal([Listed], keys.Conflicts);
-            Click(keys, keys.Keys.SecondStroke);
+            Ui.Click(keys.Keys.SecondStroke);
             Ui.Press(keys, "control K");
             Assert.Equal([Listed], keys.Conflicts);
-            Click(keys, keys.OkButton);
+            Ui.Click(keys.OkButton);
             ConfirmDialog warning = Asked(dialog);
-            Click(warning, Button(warning, "Cancel"));
+            Ui.Click(Button(warning, "Cancel"));
             Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
             Assert.Empty(dialog.ShortcutsShown(AppActions.SplitRight));
             Assert.Contains(completion, dialog.ShortcutsShown(AppActions.Complete));
@@ -140,15 +141,15 @@ public sealed class KeymapTests : IDisposable
             // Remove takes Ctrl+J from Basic Completion, which would have run before the chord's second key.
             keys = AddKeyboardShortcut(dialog, AppActions.SplitRight);
             Ui.Press(keys, "control J");
-            Click(keys, keys.Keys.SecondStroke);
+            Ui.Click(keys.Keys.SecondStroke);
             Ui.Press(keys, "control K");
-            Click(keys, keys.OkButton);
+            Ui.Click(keys.OkButton);
             warning = Asked(dialog);
-            Click(warning, Button(warning, "Remove"));
+            Ui.Click(Button(warning, "Remove"));
             Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
             Assert.DoesNotContain(completion, dialog.ShortcutsShown(AppActions.Complete));
             Assert.Equal([Keystroke.Parse("control SPACE").Display()], dialog.ShortcutsShown(AppActions.Complete));
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
 
             window.EditorArea.CodeEditor.Focus();
             Ui.Press(window, "control J");
@@ -202,10 +203,11 @@ public sealed class KeymapTests : IDisposable
             Assert.Equal(Shortcut.Parse($"{Cmd} K , {Cmd} C"), dialog.ShortcutFilter);
 
             // A click away closes the popup and keeps the filter; Clear Filtering lists every action again.
-            Click(dialog, ((Panel)dialog.KeymapRow(EditorActions.Comment)).Children[0]);
+            Control comment = dialog.KeymapRow(EditorActions.Comment);
+            Ui.Click(comment, Ui.Centre(((Panel)comment).Children[0], comment));
             Assert.True(TopLevel.GetTopLevel(dialog.FindShortcut) is null, "A click outside left Find Shortcut open");
             Assert.Equal(["Comment"], dialog.Shown);
-            Click(dialog, dialog.ClearFiltering);
+            Ui.Click(dialog.ClearFiltering);
             Assert.Null(dialog.ShortcutFilter);
             Assert.Equal(all, dialog.Shown.Count);
             dialog.Close();
@@ -226,13 +228,13 @@ public sealed class KeymapTests : IDisposable
             SettingsDialog dialog = Settings(window, "split right");
             KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitRight);
             Ui.Press(keys, $"{Cmd} K");
-            Click(keys, keys.Keys.SecondStroke);
+            Ui.Click(keys.Keys.SecondStroke);
             Ui.Press(keys, $"{Cmd} C");
-            Click(keys, keys.OkButton);
+            Ui.Click(keys.OkButton);
             ConfirmDialog warning = Asked(dialog);
-            Click(warning, Button(warning, "Remove"));
+            Ui.Click(Button(warning, "Remove"));
             Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
         }
         finally
         {
@@ -257,7 +259,7 @@ public sealed class KeymapTests : IDisposable
             Assert.False(dialog.ShowsChanged(EditorActions.Comment), "Comment, reset, is still shown as changed");
             Assert.DoesNotContain("Reset Shortcuts", EditShortcuts(dialog, EditorActions.Comment));
             Assert.Empty(dialog.ShortcutsShown(AppActions.SplitRight));
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
 
             again.EditorArea.CodeEditor.Focus();
             Ui.Press(again, $"{Cmd} K");
@@ -269,6 +271,101 @@ public sealed class KeymapTests : IDisposable
         {
             again.ApplySettings(new AppSettings());
             again.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_shortcut_recorded_on_the_keypads_slash_is_named_as_the_keypads_kept_and_run_by_it_alone()
+    {
+        string keypad = OperatingSystem.IsMacOS() ? "⌘⌨/" : "Ctrl+NumPad /";
+        MainWindow window = Open(keeps: true);
+        try
+        {
+            SettingsDialog dialog = Settings(window, "split right");
+            KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitRight);
+            Ui.Press(keys, $"{Cmd} DIVIDE");
+            Assert.Equal(keypad, keys.Keys.First.Text);
+            // Comment with Line Comment has the keypad's / beside the main keys' /, as Rider's keymaps give it both.
+            Assert.StartsWith("Comment with Line Comment in ", Assert.Single(keys.Conflicts), StringComparison.Ordinal);
+            Ui.Click(keys.OkButton);
+            ConfirmDialog warning = Asked(dialog);
+            Ui.Click(Button(warning, "Remove"));
+            Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
+            Assert.Equal([keypad], dialog.ShortcutsShown(AppActions.SplitRight));
+            IReadOnlyList<string> comment = dialog.ShortcutsShown(EditorActions.ToggleLineComment);
+            Assert.True(!comment.Contains(keypad) && comment.Contains(Keystroke.Parse($"{Cmd} SLASH").Display()),
+                $"Comment with Line Comment shows [{string.Join(", ", comment)}] once the keypad's / was taken from it, not its main keys' / alone");
+            Ui.Click(Button(dialog, "OK"));
+
+            // macOS's menu bar would take a keypad key as its character alone, which the main keys' / presses too.
+            NativeMenuItem split = Ui.Submenu(Ui.Submenu(window.MenuBar, "Window"), "Editor Tabs").Items.OfType<NativeMenuItem>().Single(i => i.Header == "Split Right");
+            Assert.True(split.Gesture is null, $"The menu bar's Split Right was given {split.Gesture} as its key equivalent, which the main keys' / would press too");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        // Kept as Rider's DIVIDE, it is the keypad's key again after a restart, never the main keys' /.
+        MainWindow again = Open(keeps: true);
+        try
+        {
+            again.EditorArea.CodeEditor.Focus();
+            Ui.Press(again, $"{Cmd} SLASH");
+            Assert.True(again.EditorArea.Groups.Count == 1, $"The main keys' / ran Split Right, which {keypad} was recorded for");
+            Assert.StartsWith("//", Text(again), StringComparison.Ordinal);
+            Ui.Press(again, $"{Cmd} DIVIDE");
+            Assert.True(again.EditorArea.Groups.Count == 2, $"{keypad}, recorded for Split Right and kept, split nothing after a restart");
+            Assert.StartsWith("//", Text(again), StringComparison.Ordinal);
+        }
+        finally
+        {
+            again.ApplySettings(new AppSettings());
+            again.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void The_comment_actions_run_from_the_keypads_slash_as_from_the_main_keys_one_each_shown_as_its_own_key()
+    {
+        bool mac = OperatingSystem.IsMacOS();
+        MainWindow window = Open();
+        try
+        {
+            SettingsDialog dialog = Settings(window, null);
+            dialog.Page = SettingsDialog.KeymapPage;
+            Ui.Settle();
+            string[] comment = mac ? ["⌘/", "⌘⌨/", "⌥⌘/", "⌥⌘⌨/", "⌘K, ⌘/"] : ["Ctrl+/", "Ctrl+NumPad /", "Ctrl+Alt+/", "Ctrl+Alt+NumPad /", "Ctrl+K, Ctrl+/"];
+            Assert.Equal(comment, dialog.ShortcutsShown(EditorActions.ToggleLineComment));
+            string[] back = mac ? ["⌘-", "⌘⌨-"] : ["Ctrl+-", "Ctrl+NumPad -"];
+            Assert.Equal(back, dialog.ShortcutsShown(AppActions.Back));
+            dialog.Close();
+
+            window.EditorArea.CodeEditor.Focus();
+            (string Slash, string Keypad)[] lineComment = mac
+                ? [("meta SLASH", "meta DIVIDE"), ("meta alt SLASH", "meta alt DIVIDE")]
+                : [("control SLASH", "control DIVIDE"), ("control alt SLASH", "control alt DIVIDE")];
+            foreach ((string slash, string keypad) in lineComment)
+            {
+                Ui.Press(window, keypad);
+                Assert.True(Text(window).StartsWith("//", StringComparison.Ordinal), $"{Keystroke.Parse(keypad).Display()} did not comment the line");
+                Ui.Press(window, slash);
+                Assert.True(Text(window) == Source, $"{Keystroke.Parse(slash).Display()} did not take the comment off again");
+            }
+
+            // Block Comment's keypad key does what its main keys' does.
+            Ui.Press(window, mac ? "control meta SLASH" : "control shift SLASH");
+            string commented = Text(window);
+            Assert.NotEqual(Source, commented);
+            Ui.Press(window, $"{Cmd} Z");
+            Assert.Equal(Source, Text(window));
+            string blockKeypad = mac ? "meta shift DIVIDE" : "control shift DIVIDE";
+            Ui.Press(window, blockKeypad);
+            Assert.True(Text(window) == commented, $"{Keystroke.Parse(blockKeypad).Display()} left \"{Text(window)}\", not Block Comment's \"{commented}\"");
+        }
+        finally
+        {
+            window.Close();
         }
     }
 
@@ -299,12 +396,10 @@ public sealed class KeymapTests : IDisposable
         {
             Control row = settings.KeymapRow(action);
             Button edit = row.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Edit Shortcuts");
-            Click(settings, edit);
+            Ui.Click(edit);
             ContextMenu menu = row.ContextMenu!;
             Assert.True(menu.IsOpen, "The ⋮ beside an action's shortcuts opened no Edit Shortcuts menu");
-            menu.Items.OfType<MenuItem>().First(i => (string?)i.Header == "Add Keyboard Shortcut").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-            menu.Close();
-            Ui.Settle();
+            Ui.Choose(menu, "Add Keyboard Shortcut");
         }
         else
         {
@@ -320,7 +415,7 @@ public sealed class KeymapTests : IDisposable
     /// <summary>Find Actions by Shortcut clicked: its popup, once its first field has the keys.</summary>
     private static void OpenFindShortcut(SettingsDialog settings)
     {
-        Click(settings, settings.FindByShortcut);
+        Ui.Click(settings.FindByShortcut);
         Ui.WaitFor(() => settings.FindShortcut.First.IsFocused, "Find Shortcut's field to take the keys");
     }
 
@@ -349,18 +444,6 @@ public sealed class KeymapTests : IDisposable
 
     private static Button Button(Window window, string content) =>
         window.GetVisualDescendants().OfType<Button>().First(b => b.Content as string == content);
-
-    /// <summary>A click on a control, at its middle, as a person's mouse makes it.</summary>
-    private static void Click(Window window, Control control)
-    {
-        Ui.Settle();
-        TopLevel top = TopLevel.GetTopLevel(control) ?? window;
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), top)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not shown");
-        top.MouseDown(at, MouseButton.Left);
-        top.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     private static string Text(MainWindow window) => window.EditorArea.CodeEditor.Document.Snapshot.ToString();
 

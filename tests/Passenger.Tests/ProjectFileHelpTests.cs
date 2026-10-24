@@ -2,6 +2,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
+using Passenger.App.MSBuild;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -14,8 +15,9 @@ namespace Passenger.Tests;
 /// Directory.Packages.props complete their elements, properties and values, package ids and versions from the folder's
 /// feed (a stand-in on loopback, never nuget.org), paths and the names MSBuild's evaluation knows; the card over a name
 /// says its evaluated value and where it was set; Go to Declaration goes where a property, target or import is defined,
-/// the SDK's own targets read-only; the evaluation's errors and a vulnerable package are marked on their lines and listed in
-/// Problems; and a project file saved has the Solution view show what it says now.</summary>
+/// the SDK's own targets read-only, and an item's card counts the files its wildcards take in as they come and go on disk;
+/// the evaluation's errors and a vulnerable package are marked on their lines and listed in Problems; and a project file saved
+/// has the Solution view show what it says now.</summary>
 public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Shop>
 {
     private const string Advisory = "https://github.com/advisories/GHSA-pass-0000-test";
@@ -43,10 +45,10 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
 
         """;
 
-    private const string BuildProps = """
+    private const string BuildProps = $"""
         <Project>
           <PropertyGroup>
-            <TargetFramework>net10.0</TargetFramework>
+            <TargetFramework>{TestProjects.Framework}</TargetFramework>
             <ShopLogs>true</ShopLogs>
             <SampleVersion>2.0.0</SampleVersion>
           </PropertyGroup>
@@ -69,13 +71,13 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
     {
         MainWindow window = Open("App/App.csproj");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<OutputType>Exe</OutputType>");
+        Ui.PlaceAfter(editor, "<OutputType>Exe</OutputType>");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("TargetFramework"), "the properties a PropertyGroup takes after a tag's '<'");
         Assert.Equal(["TargetFramework", "TargetFrameworks", "OutputType", "Nullable", "ImplicitUsings"], window.Assist.CompletionLabels.Take(5));
         // A property's value now is beside it, as the evaluation has it from Directory.Build.props.
-        Assert.Contains(("TargetFramework", "net10.0"), window.Assist.CompletionDetails);
+        Assert.Contains(("TargetFramework", TestProjects.Framework), window.Assist.CompletionDetails);
         window.KeyTextInput("Nul");
         Ui.Settle();
         Assert.Equal("Nullable", window.Assist.CompletionLabels.FirstOrDefault());
@@ -88,7 +90,7 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         Assert.EndsWith("<Nullable>enable|</Nullable>", CaretLine(editor), StringComparison.Ordinal);
 
         // Those the project's own files set are offered too, Directory.Build.props' among them.
-        PlaceAfter(editor, "<Nullable>enable</Nullable>");
+        Ui.PlaceAfter(editor, "<Nullable>enable</Nullable>");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Count > 0, "the properties offered again");
@@ -98,14 +100,14 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         Ui.Press(window, "ESCAPE");
 
         // A property in a condition: the names the evaluation knows, a property of Directory.Build.props among them.
-        PlaceAfter(editor, "'$(Shop");
+        Ui.PlaceAfter(editor, "'$(Shop");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Count > 0, "the properties offered after '$('");
         Assert.Equal(("ShopLogs", "true"), window.Assist.CompletionDetails[0]);
         Ui.Press(window, "ESCAPE");
 
         // A project reference's path, a folder at a time from the project's own.
-        PlaceAfter(editor, "<ProjectReference Include=\"../");
+        Ui.PlaceAfter(editor, "<ProjectReference Include=\"../");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Core"), "the folders beside the project's");
         window.KeyTextInput("Co");
@@ -132,14 +134,14 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
             "Problems listing the vulnerable package");
 
         // The versions the feed has, newest first, the vulnerable one saying so.
-        PlaceAfter(editor, "Include=\"Passenger.Vulnerable\" Version=\"");
+        Ui.PlaceAfter(editor, "Include=\"Passenger.Vulnerable\" Version=\"");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the package's three versions");
         Assert.Equal([("1.1.0", ""), ("1.0.1", ""), ("1.0.0", "Moderate severity vulnerability")], window.Assist.CompletionDetails);
         Ui.Press(window, "ESCAPE");
 
         // A new reference: the item, then its id from the feed, which goes in with the feed's latest version.
-        PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("PackageReference"), "the item types an ItemGroup takes");
@@ -161,12 +163,12 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
     {
         MainWindow window = Open("App/App.csproj");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "'$(Shop");
+        Ui.PlaceAfter(editor, "'$(Shop");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the property");
         Assert.Equal("ShopLogs = true\nMSBuild property, set in Directory.Build.props, line 4", window.Assist.HoverText);
         Ui.Press(window, "ESCAPE");
-        PlaceAfter(editor, "<Output");
+        Ui.PlaceAfter(editor, "<Output");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the project's own property");
         Assert.StartsWith("OutputType = Exe\nMSBuild property, set in App.csproj, line 3 (over ", window.Assist.HoverText);
@@ -174,7 +176,7 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         Ui.Press(window, "ESCAPE");
 
         // From a property to where it is set.
-        PlaceAfter(editor, "'$(Shop");
+        Ui.PlaceAfter(editor, "'$(Shop");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Directory.Build.props", window.EditorArea.Active?.Name);
@@ -184,7 +186,7 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.OpenFile(Path.Combine(folder, "App", "App.csproj"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<Import Project=\"Sha");
+        Ui.PlaceAfter(editor, "<Import Project=\"Sha");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Shared.targets", window.EditorArea.Active?.Name);
@@ -193,7 +195,7 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.OpenFile(Path.Combine(folder, "App", "App.csproj"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "DependsOnTargets=\"Bui");
+        Ui.PlaceAfter(editor, "DependsOnTargets=\"Bui");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the target");
         Assert.StartsWith("Target Build\nMSBuild target, defined in Microsoft.Common.CurrentVersion.targets, line ", window.Assist.HoverText);
@@ -206,10 +208,45 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         Assert.Equal("  |<Target", CaretLine(window.EditorArea.CodeEditor));
         Assert.Contains("Name=\"Build\"", targets.Text.Snapshot.GetLineText(window.EditorArea.CodeEditor.CaretPosition.Line + 1), StringComparison.Ordinal);
         // In the SDK's file the card still knows the project's values, gone into from it.
-        PlaceAfter(window.EditorArea.CodeEditor, "\"$(BuildDepends");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "\"$(BuildDepends");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the SDK's property");
         Assert.StartsWith("BuildDependsOn = ", window.Assist.HoverText);
+        window.Close();
+    }
+
+    /// <summary>Core takes in its own folder's C# by the SDK's wildcard and Shared's by its own element, so a file come into or
+    /// gone from either folder, whether another program or the IDE made it, changes what the cards count with nothing typed.</summary>
+    [AvaloniaFact]
+    public void An_item_elements_card_counts_the_files_come_into_and_gone_from_the_folders_its_wildcards_walk_with_nothing_typed()
+    {
+        MainWindow window = Open("Core/Core.csproj");
+        OpenDocument document = window.EditorArea.Active!;
+        MSBuildDocument help = window.Session.MSBuild.For(document)!;
+        void Counted(int count, string why) => Ui.WaitFor(() => help.Insight?.ItemType("Compile")?.Count == count, why);
+        // As MSBuild evaluates the element's wildcard: by the system's separator.
+        string price = Path.Combine("..", "Shared", "Price.cs");
+        string tag = Path.Combine("..", "Shared", "Tag.cs");
+        Assert.Equal($"MSBuild item, 2 Compile items in the project: {price}", ItemCard(window, "<Comp"));
+
+        File.WriteAllText(Path.Combine(folder, "Core", "Shelf.cs"), "class Shelf\n{\n}\n");
+        Counted(3, "the Compile items to count the file another program put in the project's folder");
+        Assert.Equal($"MSBuild item, 3 Compile items in the project: {price}", ItemCard(window, "<Comp"));
+        File.WriteAllText(Path.Combine(folder, "Shared", "Tag.cs"), "class Tag\n{\n}\n");
+        Counted(4, "the Compile items to count the file put in the folder outside the project that its element takes in");
+        Assert.Equal($"MSBuild item, 4 Compile items in the project: {price};{tag}", ItemCard(window, "<Comp"));
+        File.Delete(Path.Combine(folder, "Core", "Shelf.cs"));
+        Counted(3, "the Compile items to stop counting the file deleted from the project's folder");
+        File.Delete(Path.Combine(folder, "Shared", "Tag.cs"));
+        Counted(2, "the Compile items to stop counting the file deleted from Shared");
+        Assert.Equal($"MSBuild item, 2 Compile items in the project: {price}", ItemCard(window, "<Comp"));
+
+        // A file the IDE makes itself, which the folder watcher takes for a save.
+        Assert.Null(window.CreateFile(Path.Combine(folder, "Core"), "Crate.cs", "class Crate\n{\n}\n"));
+        Counted(3, "the Compile items to count the file New File made");
+        window.OpenFile(Path.Combine(folder, "Core", "Core.csproj"));
+        Ui.Settle();
+        Assert.Equal($"MSBuild item, 3 Compile items in the project: {price}", ItemCard(window, "<Comp"));
         window.Close();
     }
 
@@ -267,13 +304,13 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         Assert.Equal(MarkerKind.Warning, MarkerOn(editor, props, "1.0.0").Kind);
         Ui.WaitFor(() => window.BottomPanel.Problems.FileProblems.Count == 1, "Problems listing the vulnerable version");
 
-        PlaceAfter(editor, "<PackageVersion Include=\"Passenger.Vulnerable\" Version=\"");
+        Ui.PlaceAfter(editor, "<PackageVersion Include=\"Passenger.Vulnerable\" Version=\"");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the package's versions");
         Assert.Equal(["1.1.0", "1.0.1", "1.0.0"], window.Assist.CompletionLabels);
         Ui.Press(window, "ESCAPE");
 
-        PlaceAfter(editor, "<PackageVersion Include=\"Passenger.Vul");
+        Ui.PlaceAfter(editor, "<PackageVersion Include=\"Passenger.Vul");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the central version");
         Assert.Equal($"PackageVersion Passenger.Vulnerable\nVersion = 1.0.0\nPackage 'Passenger.Vulnerable' 1.0.0 has a known moderate severity vulnerability, {Advisory}\n"
@@ -281,7 +318,7 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
             window.Assist.HoverText);
         Ui.Press(window, "ESCAPE");
 
-        PlaceAfter(editor, "Version=\"$(SampleVer");
+        Ui.PlaceAfter(editor, "Version=\"$(SampleVer");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the property the version reads");
         Assert.Equal("SampleVersion = 2.0.0\nMSBuild property, set in Directory.Build.props, line 5", window.Assist.HoverText);
@@ -298,7 +335,7 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         OpenDocument project = window.EditorArea.Active!;
         Ui.WaitFor(() => project.Markers.Any(m => m.Message.StartsWith("NU1902", StringComparison.Ordinal)), "the reference to the vulnerable central version warned of");
         Assert.Equal(MarkerKind.Warning, MarkerOn(editor, project, "Passenger.Vulnerable").Kind);
-        PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("PackageReference"), "the item types an ItemGroup takes");
@@ -317,17 +354,59 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.Close();
     }
 
+    /// <summary>A lone '\r', U+0085, U+2028 and U+2029 end a line for the edits a workspace edit makes, not for the editor:
+    /// the version a new reference takes goes into Directory.Packages.props, not open, beside the others below them.</summary>
+    [AvaloniaFact]
+    public void A_new_references_version_goes_beside_the_others_in_a_directory_packages_props_holding_line_breaks_only_roslyn_counts()
+    {
+        string props = $"""
+            <Project>
+              <PropertyGroup>
+                <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+              </PropertyGroup>
+              <!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c{'\r'}d -->
+              <ItemGroup>
+                <PackageVersion Include="Passenger.Sample" Version="$(SampleVersion)" />
+                <PackageVersion Include="Passenger.Vulnerable" Version="1.0.0" />
+              </ItemGroup>
+            </Project>
+
+            """;
+        Write("Directory.Packages.props", props);
+        Write("App/App.csproj", Project.Replace(" Version=\"1.0.0\"", string.Empty, StringComparison.Ordinal));
+        MainWindow window = Open("App/App.csproj");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument project = window.EditorArea.Active!;
+        Ui.WaitFor(() => project.Markers.Any(m => m.Message.StartsWith("NU1902", StringComparison.Ordinal)), "the reference to the vulnerable central version warned of");
+        Ui.PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("PackageReference"), "the item types an ItemGroup takes");
+        window.KeyTextInput("PackageRef");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the feed's packages");
+        window.KeyTextInput("Oth");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Equal(props.Replace("    <PackageVersion Include=\"Passenger.Sample\"",
+            "    <PackageVersion Include=\"Passenger.Other\" Version=\"3.0.0\" />\n    <PackageVersion Include=\"Passenger.Sample\"", StringComparison.Ordinal),
+            File.ReadAllText(Path.Combine(folder, "Directory.Packages.props")));
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_project_file_saved_has_the_solution_view_and_the_language_server_take_what_it_says_now()
     {
-        MainWindow window = Open("App/App.csproj", autosaves: true);
+        MainWindow window = Open("App/App.csproj", autosaves: true, languageServer: true);
         CodeEditor editor = window.EditorArea.CodeEditor;
         Assert.DoesNotContain("Passenger.Sample", Children(window, "Dependencies"));
         Assert.True(window.CSharpService?.Session is not null, "No language server started");
         string log = Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{window.CSharpService!.Session!.Server.ProcessId}.log").Single();
         int Loads() => Ui.Shared(log).Split('\n').Count(l => l.Contains("Completed (re)load of all projects", StringComparison.Ordinal));
         int before = Loads();
-        PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<PackageReference Include=\"Passenger.Sample\" Version=\"2.0.0\" />");
         Ui.Press(window, "ESCAPE");
@@ -338,10 +417,11 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.Close();
     }
 
-    /// <summary>A window on the solution, on the server the class's last window left.</summary>
-    private MainWindow Open(string file, bool autosaves = false)
+    /// <summary>A window on the solution, with no C# language server unless asked for, since the project files' help is the
+    /// MSBuild host's; asked for, on the server the class's last window left.</summary>
+    private MainWindow Open(string file, bool autosaves = false, bool languageServer = false)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = autosaves, WarmServer = shop.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = autosaves, WarmServer = shop.Server, StartsLanguageServer = languageServer };
         window.Show();
         window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
         window.OpenFile(Path.Combine(folder, file));
@@ -365,9 +445,19 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Name == name)
             ?? throw new InvalidOperationException($"The Explorer shows no {name}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
 
-    private static string CaretLine(CodeEditor editor) => XamlTests.CaretLine(editor);
+    /// <summary>The card over an item element: its item type's count, then the element's own items in the order of their names.</summary>
+    private static string ItemCard(MainWindow window, string at)
+    {
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, at);
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the item element");
+        string[] lines = window.Assist.HoverText!.Split('\n');
+        Ui.Press(window, "ESCAPE");
+        string items = lines[0].Split(' ', 2) is [_, { } includes] ? string.Join(';', includes.Split(';').Order(StringComparer.Ordinal)) : lines[0];
+        return $"{lines.FirstOrDefault(l => l.StartsWith("MSBuild item", StringComparison.Ordinal))}: {items}";
+    }
 
-    private static void PlaceAfter(CodeEditor editor, string text) => XamlTests.PlaceAfter(editor, text);
+    private static string CaretLine(CodeEditor editor) => XamlTests.CaretLine(editor);
 
     private static void Replace(CodeEditor editor, string what, string with) => XamlTests.Replace(editor, what, with);
 
@@ -376,7 +466,8 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
     private void Write(string relative, string text) => shop.Write(relative, text);
 
     /// <summary>The solution of App and Core over Directory.Build.props, its packages from a stand-in feed on loopback (for
-    /// the audit too) into a package folder of its own, restored once for every test, and the warm server they share on it.</summary>
+    /// the audit too) into a package folder of its own, restored once for every test, and the server of the one test that
+    /// asks the C# language server what it loaded.</summary>
     public sealed class Shop : SharedProject
     {
         private readonly StandInFeed feed = new();
@@ -412,8 +503,9 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
             Put("App/App.csproj", Project);
             Put("App/Shared.targets", "<Project>\n  <Target Name=\"Greet\" BeforeTargets=\"Build\" />\n</Project>\n");
             Put("App/Program.cs", "System.Console.WriteLine(\"Shop\");\n");
-            Put("Core/Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n</Project>\n");
+            Put("Core/Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <Compile Include=\"../Shared/*.cs\" />\n  </ItemGroup>\n</Project>\n");
             Put("Core/Store.cs", "class Store\n{\n}\n");
+            Put("Shared/Price.cs", "class Price\n{\n}\n");
             Prepare();
         }
 

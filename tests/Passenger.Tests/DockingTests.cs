@@ -19,17 +19,17 @@ public sealed class DockingTests
     public void A_stripe_button_shows_its_window_in_its_place_and_hides_the_one_there()
     {
         MainWindow window = Open();
-        Click(window, Button(window, "debug"));
-        Assert.True(window.DockHost.IsShown("debug"));
-        Click(window, Button(window, "run"));
-        Assert.True(window.DockHost.IsShown("run"));
-        Assert.False(window.DockHost.IsShown("debug"));
+        Ui.Click(Button(window, "debug"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Debug));
+        Ui.Click(Button(window, "run"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Run));
+        Assert.False(window.DockHost.IsShown(ToolWindowIds.Debug));
         Assert.True(Button(window, "run").IsChecked);
         Assert.False(Button(window, "debug").IsChecked);
 
         // Its button again closes it.
-        Click(window, Button(window, "run"));
-        Assert.False(window.DockHost.IsShown("run"));
+        Ui.Click(Button(window, "run"));
+        Assert.False(window.DockHost.IsShown(ToolWindowIds.Run));
         window.Close();
     }
 
@@ -37,10 +37,10 @@ public sealed class DockingTests
     public void A_stripe_button_dragged_to_the_other_stripe_docks_its_window_on_that_side()
     {
         MainWindow window = Open();
-        window.DockHost.Show("debug");
+        window.DockHost.Show(ToolWindowIds.Debug);
         Ui.Settle();
         ToggleButton debug = Button(window, "debug");
-        Point from = Middle(window, debug);
+        Point from = Ui.Centre(debug, window);
         Point to = new(window.Bounds.Width - 20, 120);
         Drag(window, from, to);
         ToolWindow moved = window.DockHost["debug"]!;
@@ -58,20 +58,22 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Move(dock["hierarchy"]!, ToolAnchor.RightBottom);
-        dock.Move(dock["liveTree"]!, ToolAnchor.LeftBottom);
+        dock.Move(dock[ToolWindowIds.Hierarchy]!, ToolAnchor.RightBottom);
+        dock.Move(dock[ToolWindowIds.LiveTree]!, ToolAnchor.LeftBottom);
+        dock.Move(dock[ToolWindowIds.Endpoints]!, ToolAnchor.LeftBottom);
+        dock.Move(dock[ToolWindowIds.Requests]!, ToolAnchor.LeftBottom);
         Ui.Settle();
         Assert.Single(Stripe(window, right: true));
-        Point lowest = Middle(window, Button(window, "hierarchy"));
+        Point lowest = Ui.Centre(Button(window, "hierarchy"), window);
 
-        Drag(window, Middle(window, Button(window, "debug")), lowest - new Point(0, 4));
-        Assert.Equal(ToolAnchor.RightTop, dock["debug"]!.Anchor);
+        Drag(window, Ui.Centre(Button(window, "debug"), window), lowest - new Point(0, 4));
+        Assert.Equal(ToolAnchor.RightTop, dock[ToolWindowIds.Debug]!.Anchor);
 
         // Below the middle of the lower group's first button, a drop joins that group.
-        dock.Move(dock["debug"]!, ToolAnchor.BottomLeft);
+        dock.Move(dock[ToolWindowIds.Debug]!, ToolAnchor.BottomLeft);
         Ui.Settle();
-        Drag(window, Middle(window, Button(window, "run")), Middle(window, Button(window, "hierarchy")) + new Point(0, 4));
-        Assert.Equal(ToolAnchor.RightBottom, dock["run"]!.Anchor);
+        Drag(window, Ui.Centre(Button(window, "run"), window), Ui.Centre(Button(window, "hierarchy"), window) + new Point(0, 4));
+        Assert.Equal(ToolAnchor.RightBottom, dock[ToolWindowIds.Run]!.Anchor);
         window.Close();
     }
 
@@ -79,15 +81,15 @@ public sealed class DockingTests
     public void A_header_dragged_onto_the_bottom_right_docks_the_window_there_beside_the_bottom_left_one()
     {
         MainWindow window = Open();
-        window.DockHost.Show("run");
+        window.DockHost.Show(ToolWindowIds.Run);
         Ui.Settle();
         Control header = Header(window, "Explorer");
-        Point from = Middle(window, header);
+        Point from = Ui.Centre(header, window);
         Point to = new(window.Bounds.Width * 0.8, window.Bounds.Height * 0.85);
         Drag(window, from, to);
         Assert.Equal(ToolAnchor.BottomRight, window.DockHost["explorer"]!.Anchor);
-        Assert.True(window.DockHost.IsShown("explorer"));
-        Assert.True(window.DockHost.IsShown("run"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Explorer));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Run));
         Assert.Equal(0, window.DockHost.ColumnDefinitions[1].ActualWidth);
         window.Close();
     }
@@ -99,7 +101,7 @@ public sealed class DockingTests
         MainWindow first = Open(settings);
         first.KeepLayout();
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
-        first.DockHost.Show("tests");
+        first.DockHost.Show(ToolWindowIds.Tests);
         first.DockHost.Hide("explorer");
         first.Close();
 
@@ -107,8 +109,8 @@ public sealed class DockingTests
         second.KeepLayout();
         Ui.Settle();
         Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
-        Assert.True(second.DockHost.IsShown("tests"));
-        Assert.False(second.DockHost.IsShown("explorer"));
+        Assert.True(second.DockHost.IsShown(ToolWindowIds.Tests));
+        Assert.False(second.DockHost.IsShown(ToolWindowIds.Explorer));
         second.Close();
     }
 
@@ -117,12 +119,12 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("debug");
-        ToolWindow debug = dock["debug"]!;
+        dock.Show(ToolWindowIds.Debug);
+        ToolWindow debug = dock[ToolWindowIds.Debug]!;
         dock.SetMode(debug, ToolMode.Floating);
         Ui.Settle();
         Window floating = Assert.Single(window.OwnedWindows);
-        Assert.Contains(window.BottomPanel.Debug, floating.GetVisualDescendants());
+        Assert.Contains(window.DebugWindow, floating.GetVisualDescendants());
         Assert.Equal(0, dock.RowDefinitions[2].ActualHeight);
         Assert.True(debug.IsShown);
 
@@ -137,10 +139,10 @@ public sealed class DockingTests
         Ui.Settle();
         Assert.False(debug.IsShown);
         dock.SetMode(debug, ToolMode.Docked);
-        dock.Show("debug");
+        dock.Show(ToolWindowIds.Debug);
         Ui.Settle();
         Assert.True(dock.RowDefinitions[2].ActualHeight > 100);
-        Assert.Contains(window.BottomPanel.Debug, dock.GetVisualDescendants());
+        Assert.Contains(window.DebugWindow, dock.GetVisualDescendants());
         window.Close();
     }
 
@@ -149,7 +151,7 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("debug");
+        dock.Show(ToolWindowIds.Debug);
         Ui.Settle();
         double before = dock.RowDefinitions[2].ActualHeight;
         Ui.Run(window, AppActions.MaximizeToolWindow);
@@ -161,8 +163,8 @@ public sealed class DockingTests
         Ui.Run(window, AppActions.HideAllToolWindows);
         Assert.DoesNotContain(dock.Windows, w => w.IsShown);
         Ui.Run(window, AppActions.HideAllToolWindows);
-        Assert.True(dock.IsShown("debug"));
-        Assert.True(dock.IsShown("explorer"));
+        Assert.True(dock.IsShown(ToolWindowIds.Debug));
+        Assert.True(dock.IsShown(ToolWindowIds.Explorer));
         window.Close();
     }
 
@@ -173,17 +175,17 @@ public sealed class DockingTests
         MainWindow first = Open(settings);
         first.KeepLayout();
         DockHost dock = first.DockHost;
-        dock.Show("build");
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
         // The person's own size, dragged above the default.
         Control splitter = dock.Children.First(c => Grid.GetRow(c) == 1).GetVisualDescendants().OfType<GridSplitter>().Single();
-        Point grip = Middle(first, splitter);
+        Point grip = Ui.Centre(splitter, first);
         Drag(first, grip, grip - new Point(0, 60));
         double restored = dock.RowDefinitions[2].ActualHeight;
         Assert.True(restored > 320, $"The bottom area was not dragged taller: {restored}");
         Ui.Run(first, AppActions.MaximizeToolWindow);
         // A window shown while it is maximised keeps the layout as well.
-        dock.Show("structure");
+        dock.Show(ToolWindowIds.Structure);
         Ui.Settle();
         Assert.True(dock.RowDefinitions[2].ActualHeight > restored + 100);
         first.Close();
@@ -191,7 +193,7 @@ public sealed class DockingTests
         MainWindow second = Open(settings);
         second.KeepLayout();
         Ui.Settle();
-        Assert.True(second.DockHost.IsShown("build"));
+        Assert.True(second.DockHost.IsShown(ToolWindowIds.Build));
         Assert.False(second.DockHost.IsMaximized);
         Assert.True(Math.Abs(second.DockHost.RowDefinitions[2].ActualHeight - restored) < 1,
             $"The Build window opened {second.DockHost.RowDefinitions[2].ActualHeight} tall, the maximised height kept, not the {restored} it had before");
@@ -203,16 +205,16 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("debug");
-        dock.SetMode(dock["debug"]!, ToolMode.Floating);
+        dock.Show(ToolWindowIds.Debug);
+        dock.SetMode(dock[ToolWindowIds.Debug]!, ToolMode.Floating);
         Ui.Settle();
         // Hidden by its stripe button, and closed by the system.
         WeakReference<Window> hidden = Closed(window, () => dock.Toggle("debug"));
         dock.Toggle("debug");
         Ui.Settle();
         WeakReference<Window> closed = Closed(window, () => window.OwnedWindows[0].Close());
-        dock.SetMode(dock["debug"]!, ToolMode.Docked);
-        dock.Show("debug");
+        dock.SetMode(dock[ToolWindowIds.Debug]!, ToolMode.Docked);
+        dock.Show(ToolWindowIds.Debug);
         Ui.Settle();
 
         GC.Collect();
@@ -220,7 +222,7 @@ public sealed class DockingTests
         GC.Collect();
         Assert.False(hidden.TryGetTarget(out _), "The floating window hidden by its button is still alive, held by its tool window");
         Assert.False(closed.TryGetTarget(out _), "The floating window the system closed is still alive, held by its tool window");
-        Assert.Contains(window.BottomPanel.Debug, dock.GetVisualDescendants());
+        Assert.Contains(window.DebugWindow, dock.GetVisualDescendants());
         window.Close();
     }
 
@@ -268,28 +270,28 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("explorer");
-        dock.Show("hierarchy");
-        dock.Show("build");
+        dock.Show(ToolWindowIds.Explorer);
+        dock.Show(ToolWindowIds.Hierarchy);
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
         (double left, double right, double bottom) = (dock.ColumnDefinitions[1].ActualWidth, dock.ColumnDefinitions[5].ActualWidth, dock.RowDefinitions[2].ActualHeight);
 
         // Each grabbed 3 px past its line, over the area after it.
-        Point grip = Middle(window, Divider(dock, c => Grid.GetColumn(c) == 2)) + new Point(3, 0);
+        Point grip = Ui.Centre(Divider(dock, c => Grid.GetColumn(c) == 2), window) + new Point(3, 0);
         Drag(window, grip, grip + new Point(60, 0));
         Assert.True(Math.Abs(dock.ColumnDefinitions[1].ActualWidth - (left + 60)) < 1,
             $"The left area was {left} wide, and {dock.ColumnDefinitions[1].ActualWidth} once its divider, grabbed right of its line, was dragged 60 px right");
-        grip = Middle(window, Divider(dock, c => Grid.GetColumn(c) == 4)) + new Point(3, 0);
+        grip = Ui.Centre(Divider(dock, c => Grid.GetColumn(c) == 4), window) + new Point(3, 0);
         Drag(window, grip, grip - new Point(60, 0));
         Assert.True(Math.Abs(dock.ColumnDefinitions[5].ActualWidth - (right + 60)) < 1,
             $"The right area was {right} wide, and {dock.ColumnDefinitions[5].ActualWidth} once its divider, grabbed right of its line, was dragged 60 px left");
-        grip = Middle(window, Divider(dock, c => Grid.GetRow(c) == 1)) + new Point(0, 3);
+        grip = Ui.Centre(Divider(dock, c => Grid.GetRow(c) == 1), window) + new Point(0, 3);
         Drag(window, grip, grip - new Point(0, 60));
         Assert.True(Math.Abs(dock.RowDefinitions[2].ActualHeight - (bottom + 60)) < 1,
             $"The bottom area was {bottom} tall, and {dock.RowDefinitions[2].ActualHeight} once its divider, grabbed below its line, was dragged 60 px up");
 
         // Closed, the right area leaves the editor's edge to the editor: a drag there opens no empty area.
-        dock.Hide("hierarchy");
+        dock.Hide(ToolWindowIds.Hierarchy);
         Ui.Settle();
         Control center = dock.Center!;
         Point edge = center.TranslatePoint(new Point(center.Bounds.Width - 2, center.Bounds.Height / 2), window)!.Value;
@@ -315,7 +317,7 @@ public sealed class DockingTests
             Assert.NotEmpty(splitters);
             foreach (GridSplitter splitter in splitters)
             {
-                Avalonia.Media.Color shown = Ui.Pixel(window, Middle(window, splitter));
+                Avalonia.Media.Color shown = Ui.Pixel(window, Ui.Centre(splitter, window));
                 Assert.True(shown == line, $"The {id} window is {shown} on the divider between its panes, not the divider colour {line}");
             }
         }
@@ -330,24 +332,24 @@ public sealed class DockingTests
         window.KeepLayout();
         DockHost dock = window.DockHost;
         Dictionary<string, (ToolAnchor Anchor, int Order)> first = dock.Windows.ToDictionary(w => w.Id, w => (w.Anchor, w.Order));
-        dock.Show("build");
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
         double bottom = dock.RowDefinitions[2].ActualHeight;
-        dock.Hide("build");
-        dock.Show("explorer");
+        dock.Hide(ToolWindowIds.Build);
+        dock.Show(ToolWindowIds.Explorer);
 
         // Moved, floated, hidden, shown and resized.
-        Drag(window, Middle(window, Button(window, "debug")), new Point(window.Bounds.Width - 20, 120));
-        dock.Move(dock["tests"]!, ToolAnchor.LeftBottom, 0);
-        dock.Show("tests");
-        dock.Show("run");
-        dock.SetMode(dock["run"]!, ToolMode.Floating);
-        dock.Hide("explorer");
-        dock.Show("build");
+        Drag(window, Ui.Centre(Button(window, "debug"), window), new Point(window.Bounds.Width - 20, 120));
+        dock.Move(dock[ToolWindowIds.Tests]!, ToolAnchor.LeftBottom, 0);
+        dock.Show(ToolWindowIds.Tests);
+        dock.Show(ToolWindowIds.Run);
+        dock.SetMode(dock[ToolWindowIds.Run]!, ToolMode.Floating);
+        dock.Hide(ToolWindowIds.Explorer);
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
-        Point divider = Middle(window, Divider(dock, c => Grid.GetRow(c) == 1)) + new Point(0, 3);
+        Point divider = Ui.Centre(Divider(dock, c => Grid.GetRow(c) == 1), window) + new Point(0, 3);
         Drag(window, divider, divider - new Point(0, 150));
-        Assert.Equal(ToolAnchor.RightTop, dock["debug"]!.Anchor);
+        Assert.Equal(ToolAnchor.RightTop, dock[ToolWindowIds.Debug]!.Anchor);
         Assert.Single(window.OwnedWindows);
         Assert.True(dock.RowDefinitions[2].ActualHeight > bottom + 100, $"The bottom area dragged 150 px taller is {dock.RowDefinitions[2].ActualHeight} tall, from {bottom}");
 
@@ -367,9 +369,139 @@ public sealed class DockingTests
         next.KeepLayout();
         Assert.Equal(first, next.DockHost.Windows.ToDictionary(w => w.Id, w => (w.Anchor, w.Order)));
         Assert.Equal(["explorer"], next.DockHost.Windows.Where(w => w.IsShown).Select(w => w.Id));
-        next.DockHost.Show("build");
+        next.DockHost.Show(ToolWindowIds.Build);
         Ui.Settle();
         Assert.Equal(bottom, next.DockHost.RowDefinitions[2].ActualHeight, 1);
+        next.Close();
+    }
+
+    /// <summary>A window's start makes no view of a tool window it hides, and no console's editor (#233: building every
+    /// view up front was 616 ms of a 2 s launch, the consoles' 77 and the Debug window's 51): each is built as it is first
+    /// shown, by its layout kept too, a run's output written meanwhile there whole, the caret at its end.</summary>
+    [AvaloniaFact]
+    public void A_hidden_tool_windows_view_is_built_only_as_it_is_first_shown_and_a_console_shows_what_was_written_before()
+    {
+        string settings = TestFolders.Create("settings-");
+        MainWindow window = Open(settings);
+        window.KeepLayout();
+        DockHost dock = window.DockHost;
+        string[] built = [ToolWindowIds.Structure, ToolWindowIds.Find, ToolWindowIds.Hierarchy, ToolWindowIds.Bookmarks, ToolWindowIds.LocalHistory, ToolWindowIds.Endpoints, ToolWindowIds.NuGet, ToolWindowIds.Containers, ToolWindowIds.Terminal, ToolWindowIds.Git, ToolWindowIds.Commit,
+            ToolWindowIds.Problems, ToolWindowIds.Debug, ToolWindowIds.LiveTree, ToolWindowIds.Profiler, ToolWindowIds.Aspire, ToolWindowIds.Requests, ToolWindowIds.Migrations];
+        foreach (string id in built)
+        {
+            Assert.False(dock[id]!.IsBuilt, $"The {dock[id]!.Title} window's view was made as the window started, though it is hidden");
+        }
+        Passenger.App.ToolWindows.ToolViews bottom = window.BottomPanel;
+        Assert.False(bottom.Run.HasEditor || bottom.Build.HasEditor || bottom.Debug.FirstConsole.HasEditor,
+            "A console's editor was made as the window started, though its window is hidden");
+        Assert.False(bottom.Tests.HasDetails, "The Unit Tests window's details editor was made as the window started, though it is hidden");
+
+        // Output written while the Run window is hidden is all there once it is shown, the caret at its end to follow it.
+        bottom.Run.Append("Building…\nRunning Hello\n");
+        Ui.Settle();
+        Assert.False(bottom.Run.HasEditor, "Output written to the hidden Run window made its editor");
+        dock.Show(ToolWindowIds.Run);
+        Ui.Settle();
+        Assert.Contains(bottom.Run.Editor, dock.GetVisualDescendants());
+        Assert.Equal("Building…\nRunning Hello\n", bottom.Run.Document.Snapshot.ToString());
+        Assert.Equal(bottom.Run.Document.Snapshot.Length, bottom.Run.Editor.Selections.Primary.Caret);
+        bottom.Run.Append("Done\n");
+        Assert.Equal(bottom.Run.Document.Snapshot.Length, bottom.Run.Editor.Selections.Primary.Caret);
+
+        // What the IDE writes to the hidden Problems and Debug windows is all there once each is shown: a build's problems,
+        // their tab chosen; a debugged program's tab, its console shown with what it wrote, and Mute Breakpoints pressed.
+        Passenger.App.Run.Problem broken = new(Passenger.App.Run.ProblemSeverity.Error, "The name 'x' does not exist", Path.Combine(settings, "Program.cs"), "Hello",
+            new Passenger.Text.TextPosition(2, 4), "Program.cs:3");
+        bottom.Problems.Show([broken]);
+        bottom.Debug.Sessions.Add(new Passenger.App.ToolWindows.DebugTab("Hello", bottom.Debug.FirstConsole));
+        bottom.Debug.FirstConsole.Append("Hello from the program\n");
+        bottom.Debug.ShowTab(console: true);
+        bottom.Debug.ShowMuted(true);
+        Ui.Settle();
+        Assert.False(dock[ToolWindowIds.Problems]!.IsBuilt || dock[ToolWindowIds.Debug]!.IsBuilt, "What the IDE wrote to the hidden Problems or Debug window built its view");
+        dock.Show(ToolWindowIds.Problems);
+        Ui.Settle();
+        Control problems = dock[ToolWindowIds.Problems]!.Content;
+        Assert.Contains(problems, dock.GetVisualDescendants());
+        Assert.Contains(problems.GetVisualDescendants().OfType<ToggleButton>(), t => t.IsChecked == true && t.Content as string == "Build  1");
+        Assert.Contains(problems.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == broken.Message);
+        dock.Show(ToolWindowIds.Debug);
+        Ui.Settle();
+        Passenger.App.ToolWindows.DebugView debug = window.DebugWindow;
+        Assert.Contains(debug, dock.GetVisualDescendants());
+        Assert.Contains(bottom.Debug.FirstConsole.Editor, debug.GetVisualDescendants());
+        Assert.Equal("Hello from the program\n", bottom.Debug.FirstConsole.Document.Snapshot.ToString());
+        Assert.Contains(debug.HeaderTools.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Hello");
+        Assert.Contains(debug.GetVisualDescendants().OfType<ToggleButton>(), t => t.IsChecked == true && ToolTip.GetTip(t) is string tip && tip.StartsWith("Mute Breakpoints", StringComparison.Ordinal));
+        dock.Hide(ToolWindowIds.Debug);
+        Ui.Settle();
+
+        // What the IDE writes to the hidden Aspire and Requests windows is there once each is shown: an AppHost's resources,
+        // chosen, and a request heard; the Migrations window says what its controller found meanwhile.
+        string appHost = Path.Combine(settings, "AppHost", "AppHost.csproj");
+        window.Aspire.SetApps([new Passenger.App.Aspire.AspireApp(appHost, 42, "Running")]);
+        window.Aspire.ApplyResourceSnapshot([new Passenger.App.Aspire.AspireResource(System.Text.Json.JsonDocument.Parse(
+            """{"name":"apiservice","displayName":"apiservice","state":"Running","resourceType":"Project"}""").RootElement)]);
+        window.RequestLog.Hear(new Passenger.Profiler.RequestBegan("heard", DateTime.UtcNow, "heard", "GET", "/orders/2", string.Empty), "Shop", null);
+        window.RequestLog.Hear(new Passenger.Profiler.RequestEnded("heard", DateTime.UtcNow, "heard", 200), "Shop", null);
+        Ui.Settle();
+        Assert.All((string[])[ToolWindowIds.Aspire, ToolWindowIds.Requests, ToolWindowIds.Migrations],
+            id => Assert.False(dock[id]!.IsBuilt, $"What the IDE wrote to the hidden {dock[id]!.Title} window built its view"));
+        dock.Show(ToolWindowIds.Aspire);
+        Ui.Settle();
+        Passenger.App.Aspire.AspireView aspire = window.AspireWindow;
+        Assert.Contains(aspire, dock.GetVisualDescendants());
+        Assert.Equal("apiservice", Assert.IsType<Passenger.App.ToolWindows.RunItem<Passenger.App.Aspire.AspireRow>>(aspire.ResourceList.SelectedItem).Data.Resource.Name);
+        Assert.Contains(aspire.ResourceList.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "apiservice");
+        Assert.Contains(aspire.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "Live · 1 resource");
+        Assert.Equal("apiservice", aspire.Details.Resource?.Name);
+        dock.Hide(ToolWindowIds.Aspire);
+        dock.Show(ToolWindowIds.Requests);
+        Ui.Settle();
+        Assert.Contains(window.Requests, dock.GetVisualDescendants());
+        Assert.Equal("/orders/2", Assert.IsType<Passenger.App.Endpoints.LiveRequest>(Assert.Single(window.Requests.Rows)).Path);
+        Assert.Contains(window.Requests.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "/orders/2");
+        dock.Hide(ToolWindowIds.Requests);
+        dock.Show(ToolWindowIds.Migrations);
+        Ui.Settle();
+        Assert.Contains(window.MigrationsView, dock.GetVisualDescendants());
+        Assert.Contains(window.MigrationsView.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "No project here uses EF Core");
+        dock.Hide(ToolWindowIds.Migrations);
+        Ui.Settle();
+
+        // The Live Visual Tree says what it would follow, as its controller said it while it was hidden.
+        dock.Show(ToolWindowIds.LiveTree);
+        Ui.Settle();
+        Assert.Contains(window.LiveTree, dock.GetVisualDescendants());
+        Assert.Contains(window.LiveTree.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "Debug an Avalonia or WPF app to see its windows and controls here.");
+        dock.Hide(ToolWindowIds.LiveTree);
+        Ui.Settle();
+
+        // A folder's start lists its kept snapshots for the profiler, whose view is built only as it is shown, listing them; no
+        // folder's start, the second's in a window either, builds a view it hides.
+        MainWindow profiled = Ui.OpenFolder(TestFolders.Create("profiled-"), languageServer: false);
+        string[] followers = [ToolWindowIds.Profiler, ToolWindowIds.LiveTree, ToolWindowIds.Aspire, ToolWindowIds.Requests, ToolWindowIds.Migrations];
+        Assert.All(followers, id => Assert.False(profiled.DockHost[id]!.IsBuilt, $"A folder's start built the {profiled.DockHost[id]!.Title} window's view, though it is hidden"));
+        profiled.OpenFolder(TestFolders.Create("profiled-second-"));
+        Ui.Settle();
+        Assert.All(followers, id => Assert.False(profiled.DockHost[id]!.IsBuilt, $"A second folder's start built the {profiled.DockHost[id]!.Title} window's view, though it is hidden"));
+        profiled.DockHost.Show(ToolWindowIds.Profiler);
+        Ui.Settle();
+        Assert.Contains(profiled.ProfilerView, profiled.DockHost.GetVisualDescendants());
+        Assert.StartsWith("No snapshots yet.", profiled.ProfilerView.KeptSummary, StringComparison.Ordinal);
+        profiled.Close();
+
+        // Shown, a window's view is built; the layout kept with it shown builds it as the next window opens, and no other.
+        dock.Show(ToolWindowIds.Structure);
+        Ui.Settle();
+        Assert.Contains(window.StructureView, dock.GetVisualDescendants());
+        window.Close();
+        MainWindow next = Open(settings);
+        next.KeepLayout();
+        Ui.Settle();
+        Assert.True(next.DockHost.IsShown(ToolWindowIds.Structure));
+        Assert.Contains(next.StructureView, next.DockHost.GetVisualDescendants());
+        Assert.All(built.Skip(1), id => Assert.False(next.DockHost[id]!.IsBuilt, $"The {next.DockHost[id]!.Title} window's view was made, though it is hidden"));
         next.Close();
     }
 
@@ -401,23 +533,12 @@ public sealed class DockingTests
 
     private static IEnumerable<ToggleButton> Stripe(MainWindow window, bool right) =>
         window.DockHost.GetVisualDescendants().OfType<ToggleButton>()
-            .Where(b => b.Tag is string && (Middle(window, b).X > window.Bounds.Width / 2) == right);
+            .Where(b => b.Tag is string && (Ui.Centre(b, window).X > window.Bounds.Width / 2) == right);
 
     /// <summary>A tool window's header, by the title on it.</summary>
     private static Control Header(MainWindow window, string title) =>
         window.DockHost.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == title && t.FontWeight == Avalonia.Media.FontWeight.SemiBold)
             .FindAncestorOfType<Border>()!;
-
-    private static Point Middle(MainWindow window, Control control) =>
-        control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = Middle(window, control);
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     private static void Drag(MainWindow window, Point from, Point to)
     {

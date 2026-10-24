@@ -8,6 +8,7 @@ type="expression"`), which `Passenger.Notices` writes into the app's notices und
   v3.29.0 (commit 31ba1a5), `text/MIT.txt` and `text/Apache-2.0.txt`.
 - `ISC.txt`: the same release's `text/ISC.txt`, for an npm package under web/ that states ISC and carries no licence
   file of its own (boolbase).
+- `BSD-3-Clause.txt`: the same release's `text/BSD-3-Clause.txt`, for Google.Protobuf.
 
 An npm package (under web/) that carries its own licence file is written with that file, which holds its copyright; one
 without is written with the text here for the SPDX identifier its package.json states.

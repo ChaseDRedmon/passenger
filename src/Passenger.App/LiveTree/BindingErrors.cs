@@ -28,10 +28,29 @@ public static partial class BindingErrors
     public static string Line(BindingProblem problem, string? folder)
     {
         (BindingFailure failure, Problem at) = (problem.Failure, problem.Problem);
-        string place = at.Path is { } file ? $"{Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
+        string place = at.Path is { } file ? $"{PathNames.Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
         string again = failure.Count > 1 ? $" (×{failure.Count})" : string.Empty;
         return $"{place}binding error: {failure.Control}.{failure.Property} to {failure.Path}: {Message(failure)}{again}\n";
     }
+
+    /// <summary>What an app could not tell of its failed bindings, as Problems' Bindings says it under them: the failures it
+    /// counted past the bindings it lists, and the messages its inspector left out; nothing when it told all.</summary>
+    public static IEnumerable<(string Said, string Why)> Untold(LiveApp app)
+    {
+        if (app.Untold.Bindings > 0)
+        {
+            yield return ($"{Plural.Of(app.Untold.Bindings, "more binding failure")}, not listed",
+                $"{app.Name} lists its first {app.Bindings.Count} failed bindings and only counts the failures of any after them");
+        }
+        if (app.Untold.Messages > 0)
+        {
+            yield return ($"{app.Untold.Messages} of {app.Name}'s inspector's own messages left out", "Too many waited to be sent at once; the IDE's log has those it sent");
+        }
+    }
+
+    /// <summary>A console's line as an app first counts failures past the bindings it lists, which it no longer writes there.</summary>
+    public static string UntoldLine(LiveApp app) =>
+        $"binding errors past the first {app.Bindings.Count} failed bindings are counted, not listed: Problems' Bindings says how many\n";
 
     /// <summary>The framework's message, and the nearest members when the path named one its source's type does not have.</summary>
     public static string Message(BindingFailure failure) => failure.Nearest.Count == 0
@@ -44,7 +63,7 @@ public static partial class BindingErrors
     public static string StopLine(BindingProblem problem, string? folder)
     {
         Problem at = problem.Problem;
-        string place = at.Path is { } file ? $"{Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
+        string place = at.Path is { } file ? $"{PathNames.Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
         return $"{place}paused on a binding error: {Stopped(problem.Failure)}\n";
     }
 
@@ -83,18 +102,15 @@ public static partial class BindingErrors
         }
     }
 
-    private static string Shown(string file, string? folder) =>
-        folder is not null && PathNames.IsUnder(file, folder) ? Path.GetRelativePath(folder, file) : file;
-
     /// <summary>A XAML file's path as the editor knows it, when it is there.</summary>
     private static string Canonical(string file) => File.Exists(file) ? PathNames.Canonical(file) : file;
 
     /// <summary>The problem a failure is in Problems: at its misspelt member in <paramref name="text"/> (its file's text,
-    /// when there is one to read), else at its control's element.</summary>
+    /// when there is one to read), else at its control's element, in the editor's lines (<see cref="AppPlaces"/>).</summary>
     public static BindingProblem Problem(BindingFailure failure, TextSnapshot? text)
     {
         string? path = failure.Place is { } at ? Canonical(at.File) : null;
-        TextPosition position = failure.Place is { } place ? new TextPosition(Math.Max(0, place.Line - 1), Math.Max(0, place.Column - 1)) : default;
+        TextPosition position = failure.Place is { } place ? AppPlaces.PositionOf(place.File, place.Line, place.Column, text) : default;
         if (text is not null && MemberIn(text, failure) is { } member)
         {
             position = text.GetPosition(member.Start);
@@ -108,12 +124,13 @@ public static partial class BindingErrors
     /// binding a style's setter gives, the file changed since the app was built).</summary>
     public static TextRange? MemberIn(TextSnapshot text, BindingFailure failure)
     {
-        if (failure is not { Place: { } place, Member: { Length: > 0 } member } || place.Line < 1 || place.Line > text.LineCount)
+        // The control's place is its XAML compiler's, whose lines a lone '\r' ends too.
+        if (failure is not { Place: { } place, Member: { Length: > 0 } member } || place.Line < 1
+            || place.Line > (ServerPlaces.Compiled(place.File, text)?.LineCount ?? text.LineCount))
         {
             return null;
         }
-        LineSpan line = text.GetLine(place.Line - 1);
-        int start = line.Start + Math.Clamp(place.Column - 1, 0, line.Length);
+        int start = text.GetOffset(AppPlaces.PositionOf(place.File, place.Line, place.Column, text));
         string rest = text.GetText(start, Math.Min(text.Length - start, 64 * 1024));
         // The element's start tag: from its name to the '>' outside its attributes' quotes.
         int end = -1;

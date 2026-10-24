@@ -27,7 +27,7 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
         {
             Write(root, "Shapes.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Lib/Lib.csproj\" />\n</Solution>\n");
             Write(root, "Lib/Lib.csproj",
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>\n  </PropertyGroup>\n</Project>\n");
+                $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFrameworks>{TestProjects.Framework};net11.0</TargetFrameworks>\n  </PropertyGroup>\n</Project>\n");
             Write(root, "Lib/Greeter.cs", """
                 namespace Lib;
 
@@ -77,6 +77,36 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
     }
 
     [AvaloniaFact]
+    public void A_directory_build_file_made_above_the_projects_reaches_the_language_server_made_while_the_folder_was_closed_or_open()
+    {
+        // Each error but the first compiled only under a constant a Directory.Build file above the projects defines.
+        string counts = Path.Combine(folder, "App", "Counts.cs");
+        File.WriteAllText(counts, "static class Counts\n{\n    static int None() => Lacking;\n#if SHAPES\n    static int Many() => \"many\";\n#endif\n#if MORE\n    static int More() => 1.5;\n#endif\n}\n");
+        MainWindow first = Keeping();
+        first.OpenFile(counts);
+        WaitForCode(first, counts, "CS0103", "the server's error on Lacking, which it gives with nothing defined");
+        Assert.DoesNotContain("CS0029", Codes(first, counts));
+        first.Close();
+
+        Write(folder, "Directory.Build.props", "<Project>\n  <PropertyGroup>\n    <DefineConstants>$(DefineConstants);SHAPES</DefineConstants>\n  </PropertyGroup>\n</Project>\n");
+        MainWindow second = Keeping();
+        second.OpenFile(counts);
+        WaitForCode(second, counts, "CS0029", "the error only SHAPES compiles, the Directory.Build.props made while the folder was closed reaching the server's builds rather than the builds kept");
+
+        Write(folder, "Directory.Build.targets", "<Project>\n  <PropertyGroup>\n    <DefineConstants>$(DefineConstants);MORE</DefineConstants>\n  </PropertyGroup>\n</Project>\n");
+        WaitForCode(second, counts, "CS0266", "the error only MORE compiles, the Directory.Build.targets made while the folder is open reaching the server");
+        second.Close();
+    }
+
+    private static IEnumerable<string?> Codes(MainWindow window, string path) =>
+        window.EditorArea.Documents.FirstOrDefault(d => d.Path == path) is { } open && window.CSharpService?.For(open) is { } served
+            ? served.Diagnostics.Select(d => d.Code?.ToString())
+            : [];
+
+    private static void WaitForCode(MainWindow window, string path, string code, string what) =>
+        Ui.WaitFor(() => Codes(window, path).Contains(code), what, TimeSpan.FromMinutes(2));
+
+    [AvaloniaFact]
     public void A_file_of_a_multi_targeted_project_is_answered_for_in_the_target_framework_chosen_in_the_editor()
     {
         string greeter = Path.Combine(folder, "Lib", "Greeter.cs");
@@ -86,17 +116,17 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
         CodeEditor editor = window.EditorArea.CodeEditor;
         Ui.WaitFor(() => window.CSharpService?.IsReady == true && document.ProjectContexts.Count == 2,
             "the server to say Greeter.cs is compiled for both of Lib's target frameworks", TimeSpan.FromMinutes(2));
-        Assert.Equal(["Lib (net10.0)", "Lib (net11.0)"], document.ProjectContexts.Order(StringComparer.Ordinal));
+        Assert.Equal([$"Lib ({TestProjects.Framework})", "Lib (net11.0)"], document.ProjectContexts.Order(StringComparer.Ordinal));
         Assert.Equal(document.ProjectContext![5..^1], editor.ContextLabel);
 
         // Only net11.0 compiles the member that names what does not exist.
         Choose(window, editor, "Lib (net11.0)");
         Assert.Equal("net11.0", editor.ContextLabel);
         Ui.WaitFor(() => Missing(window, document), "the error on Missing, which only net11.0 compiles");
-        Choose(window, editor, "Lib (net10.0)");
-        Assert.Equal("net10.0", editor.ContextLabel);
+        Choose(window, editor, $"Lib ({TestProjects.Framework})");
+        Assert.Equal(TestProjects.Framework, editor.ContextLabel);
         Ui.WaitFor(() => !Missing(window, document) && window.CSharpService!.For(document)!.Diagnostics.Count == 0,
-            "the error on Missing to go, net10.0 compiling none of it");
+            $"the error on Missing to go, {TestProjects.Framework} compiling none of it");
         window.Close();
     }
 
@@ -105,15 +135,8 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
     {
         Rect bounds = editor.ContextSwitcherBounds;
         Assert.True(bounds.Width > 0, "The editor shows no target framework switcher for a file compiled for two");
-        Point at = editor.TranslatePoint(bounds.Center, window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-        ContextMenu menu = Assert.IsType<ContextMenu>(window.OpenContextMenu);
-        MenuItem item = menu.Items.OfType<MenuItem>().Single(i => (string?)i.Header == context);
-        item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
+        Ui.Click(editor, bounds.Center);
+        Ui.Choose(Assert.IsType<ContextMenu>(window.OpenContextMenu), context);
     }
 
     [AvaloniaFact]

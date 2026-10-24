@@ -16,6 +16,10 @@ public static partial class PathNames
     public static StringComparison Comparison { get; } =
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
+    /// <summary><see cref="Comparison"/> as a set's or a dictionary's: every collection keyed by paths (or by names in one
+    /// folder) takes this one.</summary>
+    public static StringComparer Comparer { get; } = StringComparer.FromComparison(Comparison);
+
     /// <summary>The path as the file system names it. Of a path that is not there (yet, or any more), the part that is
     /// there is resolved and the names below it are kept as given.</summary>
     public static string Canonical(string path)
@@ -52,6 +56,99 @@ public static partial class PathNames
 
     /// <summary>Where a path is once a file or folder moved: the new place when it was that or under it, else itself.</summary>
     public static string Moved(string path, string from, string to) => Within(path, from) ? to + path[from.Length..] : path;
+
+    /// <summary>A path as the IDE shows it to a person: from the open folder when it is inside it ("src/App/App.cs"), the
+    /// folder itself by its name, and anywhere else (or with no folder open) whole, which says where it is. Every list,
+    /// banner and status line that names a file goes through this one.</summary>
+    public static string Shown(string path, string? folder)
+    {
+        if (folder is not { Length: > 0 })
+        {
+            return path;
+        }
+        if (IsUnder(path, folder))
+        {
+            return Path.GetRelativePath(folder, path);
+        }
+        ReadOnlySpan<char> top = folder.AsSpan().TrimEnd(Separators);
+        return path.AsSpan().TrimEnd(Separators).Equals(top, Comparison) ? Path.GetFileName(top).ToString() : path;
+    }
+
+    /// <summary>A folder and the folders under it that <paramref name="enters"/> lets the walk into, nearest first, each once
+    /// by its canonical path whatever links reach it (named as first reached), and none a link goes up to (the first folder
+    /// or one above it), as MSBuild's globs walk them: a link back up would otherwise have the walk go round the tree for
+    /// good. A folder that cannot be read is passed over. Every walk of a project's folders goes through this one.</summary>
+    public static IEnumerable<string> FoldersUnder(string start, Func<string, bool> enters) =>
+        Walk(start, (sub, _) => enters(sub), inside: false, files: false).Select(f => f.At);
+
+    /// <summary>The files in a folder and in the folders under it that <paramref name="enters"/> lets the walk into (asked of
+    /// each by its canonical path), folder by folder, nearest first, all by their canonical paths, as the editor, the folder
+    /// watcher and Local History name them: each folder once whatever links reach it and none a link leads to outside the
+    /// first, so no walk loops or leaves it; the system's own files (<see cref="IsSystemFile"/>) passed over. Every walk of
+    /// the open folder's files goes through this one.</summary>
+    public static IEnumerable<(string Folder, IReadOnlyList<string> Files)> FilesUnder(string start, Func<string, bool> enters) =>
+        Walk(start, (_, canonical) => enters(canonical), inside: true, files: true).Select(f => (f.Canonical, f.Files));
+
+    /// <summary>Whether a file is the system's own record of its folder (Finder's .DS_Store, Explorer's Thumbs.db), which no
+    /// walk or listing of a folder shows and no project means to hold.</summary>
+    public static bool IsSystemFile(string name) => SystemFiles.Contains(name);
+
+    private static readonly HashSet<string> SystemFiles = new(StringComparer.OrdinalIgnoreCase) { ".DS_Store", "Thumbs.db" };
+
+    /// <summary>The walk under <see cref="FoldersUnder"/> and <see cref="FilesUnder"/>, breadth first, each folder's folders
+    /// and files in the order of their names; <paramref name="inside"/> enters no folder outside the first.</summary>
+    private static IEnumerable<(string At, string Canonical, IReadOnlyList<string> Files)> Walk(string start, Func<string, string, bool> enters, bool inside, bool files)
+    {
+        string root = Canonical(start);
+        HashSet<string> walked = new(Comparer) { root };
+        Queue<(string At, string Canonical)> waiting = new([(start, root)]);
+        while (waiting.TryDequeue(out (string At, string Canonical) folder))
+        {
+            List<FileSystemInfo> entries;
+            try
+            {
+                DirectoryInfo at = new(folder.At);
+                entries = files ? [.. at.EnumerateFileSystemInfos()] : [.. at.EnumerateDirectories()];
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // Gone or shut: it holds nothing to walk.
+                entries = [];
+            }
+            entries.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+            List<string> found = [];
+            foreach (FileSystemInfo entry in entries)
+            {
+                if (entry is not DirectoryInfo sub)
+                {
+                    if (!IsSystemFile(entry.Name))
+                    {
+                        found.Add(Path.Join(folder.Canonical, entry.Name));
+                    }
+                    continue;
+                }
+                // Only a link (or another reparse point) is asked where it leads: any other folder is its name in its parent.
+                string canonical = sub.Attributes.HasFlag(FileAttributes.ReparsePoint) ? Canonical(sub.FullName) : Path.Join(folder.Canonical, sub.Name);
+                if ((inside ? IsUnder(canonical, root) : !Within(root, canonical)) && Enters(sub.FullName, canonical) && walked.Add(canonical))
+                {
+                    waiting.Enqueue((sub.FullName, canonical));
+                }
+            }
+            yield return (folder.At, folder.Canonical, found);
+        }
+
+        bool Enters(string sub, string canonical)
+        {
+            try
+            {
+                return enters(sub, canonical);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+    }
 
     private static ReadOnlySpan<char> Separators => OperatingSystem.IsWindows() ? @"\/" : "/";
 

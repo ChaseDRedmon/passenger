@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The same graph at the EF Core before, which a provider that trails EF Core's releases supports: what the Migrations
+       window's fix moves EF Core's packages to restores from the package cache. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" VersionOverride="$(EfCoreOlderVersion)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" VersionOverride="$(EfCoreOlderVersion)" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

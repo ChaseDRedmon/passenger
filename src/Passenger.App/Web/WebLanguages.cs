@@ -22,9 +22,16 @@ public enum WebServerKind
 
     /// <summary>VS Code's JSON server, with SchemaStore's schemas for the well-known files (<see cref="JsonSchemas"/>).</summary>
     Json,
+
+    /// <summary>dockerfile-language-server-nodejs: Dockerfiles and Containerfiles, by their names (<see cref="WebLanguages.IsDockerfile"/>).</summary>
+    Dockerfile,
+
+    /// <summary>Red Hat's yaml-language-server: every YAML file, a compose file checked and completed by the Compose
+    /// specification's schema (<see cref="JsonSchemas.ComposeUri"/>).</summary>
+    Yaml,
 }
 
-/// <summary>JavaScript, TypeScript, HTML, CSS and JSON for the open folder: each kind's language server (the npm packages
+/// <summary>JavaScript, TypeScript, HTML, CSS, JSON, Dockerfiles and YAML for the open folder: each kind's language server (the npm packages
 /// carried under <c>web/</c>, run on the machine's Node.js through ChildProcesses) started as the first file that needs
 /// it opens, every open file of its languages kept in step with it (a <see cref="WebDocument"/> each), and ended with the
 /// folder. Without a Node.js to run them (none found, or one too old), each file says why in its banner and the status bar,
@@ -43,27 +50,34 @@ public sealed class WebLanguages : IAsyncDisposable
     private readonly Dictionary<OpenDocument, WebDocument> documents = [];
 
     /// <summary>The folders npm install runs in now, whose files' banners say so.</summary>
-    private readonly HashSet<string> installing = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly HashSet<string> installing = new(PathNames.Comparer);
     private readonly CancellationTokenSource ending = new();
     private string? configured;
     private Task<NodeRuntime>? finding;
 
     /// <summary>The ESLint settings the ESLint server runs by, which a change of them starts it again for.</summary>
     private (ToolConfiguration, string?, string) linting;
+
+    /// <summary>Whether the Dockerfile server asks Docker Hub for an image's tags, which a change starts it again for.</summary>
+    private bool asksDockerHub;
     private bool disposed;
 
     /// <summary>A folder's servers, run on the Node.js Settings names (null for the PATH's), with ESLint and Prettier as
-    /// <paramref name="settings"/> configure them; remote JSON schemas are downloaded while Settings allows it.</summary>
-    public WebLanguages(string folder, Func<AppSettings> settings)
+    /// <paramref name="settings"/> configure them; remote JSON schemas are downloaded, and Docker Hub asked for image
+    /// tags, while Settings allows it. The container <paramref name="engine"/> (the person's when none is given) checks
+    /// the Dockerfiles and compose files.</summary>
+    public WebLanguages(string folder, Func<AppSettings> settings, Func<Containers.ContainerEngine>? engine = null)
     {
         this.folder = folder;
         this.settings = settings;
         AppSettings now = settings();
         configured = now.NodeInterpreter;
         linting = Linting(now);
+        asksDockerHub = now.DockerHubTags;
         Schemas = new JsonSchemas(() => settings().DownloadJsonSchemas);
         Eslint = new EslintService(folder, settings, FindNodeAsync);
         Prettier = new PrettierService(folder, settings, FindNodeAsync);
+        Checks = new Containers.EngineChecks(engine ?? (() => Containers.ContainerEngine.Shared), now.BuildKitChecks);
         Eslint.Message += (_, message) => Message?.Invoke(this, message);
     }
 
@@ -78,11 +92,18 @@ public sealed class WebLanguages : IAsyncDisposable
 
     public JsonSchemas Schemas { get; }
 
+    /// <summary>Where the Dockerfile server asks for image tags in Docker Hub's place: a test's stand-in; null for the
+    /// place <c>PASSENGER_DOCKER_HUB</c> names, else Docker Hub's own (<see cref="DockerHubTags"/>).</summary>
+    public Uri? DockerHub { get; init; }
+
     /// <summary>ESLint, for the files it checks.</summary>
     public EslintService Eslint { get; }
 
     /// <summary>Prettier, for the files it formats.</summary>
     public PrettierService Prettier { get; }
+
+    /// <summary>The container engine's checks of the Dockerfiles and compose files, beside their servers' own.</summary>
+    public Containers.EngineChecks Checks { get; }
 
     /// <summary>The folder the servers work on.</summary>
     public string Folder => folder;
@@ -91,7 +112,19 @@ public sealed class WebLanguages : IAsyncDisposable
     public static string LogFolder => Path.Combine(IdeErrors.LogFolder, "web");
 
     /// <summary>The servers' packages, carried beside the app.</summary>
-    public static string Modules => Path.Combine(AppContext.BaseDirectory, "web", "node_modules");
+    public static string Modules => Path.Combine(Carried, "node_modules");
+
+    /// <summary>Where the servers, their schemas and Passenger's scripts for them are carried: beside the app, or in a
+    /// macOS bundle its Resources, since codesign takes a folder under Contents/MacOS named with a dot (a package's
+    /// .github, yaml's dist/schema/yaml-1.1) for a nested bundle and refuses to sign the app.</summary>
+    public static string Carried { get; } = CarriedFolder();
+
+    private static string CarriedFolder()
+    {
+        string beside = Path.Combine(AppContext.BaseDirectory, "web");
+        string resources = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "Resources", "web"));
+        return !Directory.Exists(beside) && Directory.Exists(resources) ? resources : beside;
+    }
 
     /// <summary>The Node.js found for the servers, once one has been looked for.</summary>
     public NodeRuntime? Node => finding is { IsCompletedSuccessfully: true } found ? found.Result : null;
@@ -100,6 +133,11 @@ public sealed class WebLanguages : IAsyncDisposable
     public static (WebServerKind Kind, string LanguageId)? LanguageOf(string path)
     {
         string name = Path.GetFileName(path);
+        // By name before extension: Dockerfile.dev is a Dockerfile, whatever follows its dot.
+        if (IsDockerfile(name))
+        {
+            return (WebServerKind.Dockerfile, "dockerfile");
+        }
         return Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".ts" or ".mts" or ".cts" => (WebServerKind.TypeScript, "typescript"),
@@ -112,9 +150,17 @@ public sealed class WebLanguages : IAsyncDisposable
             ".less" => (WebServerKind.Css, "less"),
             ".jsonc" => (WebServerKind.Json, "jsonc"),
             ".json" => (WebServerKind.Json, AllowsComments(name) ? "jsonc" : "json"),
+            ".yml" or ".yaml" => (WebServerKind.Yaml, "yaml"),
             _ => null,
         };
     }
+
+    /// <summary>Whether a file's name makes it a Dockerfile, as Docker's and Podman's builds name them: Dockerfile or
+    /// Containerfile, either with a suffix after a dot (Dockerfile.dev), or any name ending in .dockerfile.</summary>
+    public static bool IsDockerfile(string name) =>
+        name.Equals("Dockerfile", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Containerfile", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Containerfile.", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".dockerfile", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The JSON files whose readers take comments (TypeScript's configuration, ASP.NET Core's settings and launch
     /// profiles, the SDK's global.json, ESLint's), which the JSON server then does not mark as errors.</summary>
@@ -130,6 +176,8 @@ public sealed class WebLanguages : IAsyncDisposable
         WebServerKind.TypeScript => "TypeScript",
         WebServerKind.Html => "HTML",
         WebServerKind.Css => "CSS",
+        WebServerKind.Dockerfile => "Dockerfile",
+        WebServerKind.Yaml => "YAML",
         _ => "JSON",
     };
 
@@ -148,12 +196,18 @@ public sealed class WebLanguages : IAsyncDisposable
         {
             features.Connect(running);
         }
-        else if (server.Problem is null && server.Starting is null)
+        else if (server.Problem is not null)
+        {
+            // A server that cannot start holds none of its files' checks, this one's no more than those before it.
+            features.Unreached();
+        }
+        else if (server.Starting is null)
         {
             Start(server);
         }
         // Else the start under way connects it with the rest of its kind.
         Eslint.Attach(document, features);
+        Checks.Attach(document, features);
         Announce(document);
     }
 
@@ -163,6 +217,7 @@ public sealed class WebLanguages : IAsyncDisposable
         if (documents.Remove(document, out WebDocument? features))
         {
             Eslint.Detach(document);
+            Checks.Detach(document);
             features.Dispose();
             document.Notice = null;
             document.NoticeAction = null;
@@ -233,7 +288,7 @@ public sealed class WebLanguages : IAsyncDisposable
     }
 
     /// <summary>A path as the banner names it: from the folder open when it is inside it.</summary>
-    private string Shown(string path) => PathNames.IsUnder(path, folder) ? Path.GetRelativePath(folder, path) : PathNames.Same(path, folder) ? Path.GetFileName(folder) : path;
+    private string Shown(string path) => PathNames.Shown(path, folder);
 
     /// <summary>The packages looked for again, a package.json or its lock changed (npm install run in the terminal):
     /// ESLint checks the files it covers now, and each banner says what is still missing.</summary>
@@ -261,6 +316,7 @@ public sealed class WebLanguages : IAsyncDisposable
             Recheck();
         }
         Eslint.FilesChanged(paths);
+        Checks.FilesChanged(paths);
     }
 
     /// <summary>Settings changed: ESLint configured otherwise starts again on the files it covers then, and every banner
@@ -393,6 +449,22 @@ public sealed class WebLanguages : IAsyncDisposable
         }
     }
 
+    /// <summary>Settings' Complete image tags from Docker Hub changed: the Dockerfile server, running or starting, starts
+    /// again with its files, told whether to ask Docker Hub, which it learns only as it starts.</summary>
+    public void UseDockerHub(bool asks)
+    {
+        UiThread.Check();
+        if (disposed || asks == asksDockerHub)
+        {
+            return;
+        }
+        asksDockerHub = asks;
+        if (servers.TryGetValue(WebServerKind.Dockerfile, out Server? server) && server.Problem is null)
+        {
+            Replace(server, restart: true);
+        }
+    }
+
     private Server ServerFor(WebServerKind kind)
     {
         if (!servers.TryGetValue(kind, out Server? server))
@@ -426,7 +498,7 @@ public sealed class WebLanguages : IAsyncDisposable
             {
                 return null;
             }
-            string package = Path.Combine(Modules, server.Kind == WebServerKind.TypeScript ? "typescript-language-server" : "vscode-langservers-extracted", "package.json");
+            string package = Path.Combine(Modules, Package(server.Kind), "package.json");
             if (node.Problem is { } none)
             {
                 Unavailable(server, none, node.Path is null || !File.Exists(node.Path) ? "no Node.js" : "Node.js could not run");
@@ -484,9 +556,12 @@ public sealed class WebLanguages : IAsyncDisposable
         }
     }
 
-    /// <summary>Why a server cannot start that this build is to blame for: its package is not beside the app.</summary>
+    /// <summary>Why a server cannot start that this build is to blame for: its package, or the Dockerfile server's preload,
+    /// is not beside the app.</summary>
     private static string? Missing(WebServerKind kind) =>
-        File.Exists(Script(kind)) ? null : $"its language server is missing from the app's folder ({Script(kind)})";
+        !File.Exists(Script(kind)) ? $"its language server is missing from the app's folder ({Script(kind)})"
+        : kind == WebServerKind.Dockerfile && !File.Exists(DockerHubTags.Preload) ? $"Passenger's part of its language server is missing from the app's folder ({DockerHubTags.Preload})"
+        : null;
 
     /// <summary>A server that cannot run: its files keep their colours and say why in their banner, the status bar in a
     /// few words (<paramref name="label"/>).</summary>
@@ -515,7 +590,18 @@ public sealed class WebLanguages : IAsyncDisposable
         "css" => "CSS",
         "scss" => "SCSS",
         "less" => "Less",
+        "dockerfile" => "A Dockerfile",
+        "yaml" => "YAML",
         _ => "JSON",
+    };
+
+    /// <summary>The npm package a server is, whose package.json says which Node.js it needs.</summary>
+    private static string Package(WebServerKind kind) => kind switch
+    {
+        WebServerKind.TypeScript => "typescript-language-server",
+        WebServerKind.Dockerfile => "dockerfile-language-server-nodejs",
+        WebServerKind.Yaml => "yaml-language-server",
+        _ => "vscode-langservers-extracted",
     };
 
     /// <summary>The script of a server's package that runs it.</summary>
@@ -524,14 +610,24 @@ public sealed class WebLanguages : IAsyncDisposable
         WebServerKind.TypeScript => Path.Combine(Modules, "typescript-language-server", "lib", "cli.mjs"),
         WebServerKind.Html => Path.Combine(Modules, "vscode-langservers-extracted", "lib", "html-language-server", "node", "htmlServerMain.js"),
         WebServerKind.Css => Path.Combine(Modules, "vscode-langservers-extracted", "lib", "css-language-server", "node", "cssServerMain.js"),
+        WebServerKind.Dockerfile => Path.Combine(Modules, "dockerfile-language-server-nodejs", "lib", "server.js"),
+        // Its module rather than its bin script, which has no extension for Node.js to read as a module by.
+        WebServerKind.Yaml => Path.Combine(Modules, "yaml-language-server", "out", "src", "server.js"),
         _ => Path.Combine(Modules, "vscode-langservers-extracted", "lib", "json-language-server", "node", "jsonServerMain.js"),
     };
 
     /// <summary>How a server starts: its script on Node.js in the folder, with the options its package documents. The
-    /// TypeScript server never installs type packages from npm (automatic type acquisition) behind the person's back.</summary>
+    /// TypeScript server never installs type packages from npm (automatic type acquisition) behind the person's back, nor
+    /// the Dockerfile server asks Docker Hub for image tags unless Settings allows it (its preload, <see cref="DockerHubTags"/>).</summary>
     private ServerStart Starting(WebServerKind kind, string node)
     {
-        System.Diagnostics.ProcessStartInfo process = ChildProcesses.Command(node, [Script(kind), "--stdio"], folder);
+        ProcessStartInfo process = ChildProcesses.Command(node, kind == WebServerKind.Dockerfile
+            ? ["--require", DockerHubTags.Preload, Script(kind), "--stdio"]
+            : [Script(kind), "--stdio"], folder);
+        if (kind == WebServerKind.Dockerfile && DockerHubTags.Told(asksDockerHub, DockerHub) is { } told)
+        {
+            process.Environment[DockerHubTags.Variable] = told;
+        }
         object? options = kind switch
         {
             WebServerKind.TypeScript => new
@@ -543,27 +639,55 @@ public sealed class WebLanguages : IAsyncDisposable
             },
             WebServerKind.Html => new { provideFormatter = true, embeddedLanguages = new { css = true, javascript = true } },
             WebServerKind.Css => new { provideFormatter = true },
+            // Both read their settings from workspace/configuration alone.
+            WebServerKind.Dockerfile or WebServerKind.Yaml => null,
             _ => new { provideFormatter = true, handledSchemaProtocols = new[] { "file" } },
         };
         return new ServerStart(process, folder, LogFolder, ClientCapabilities.Web, options)
         {
             Configuration = section => Section(kind, section),
-            Content = kind == WebServerKind.Json ? Schemas.ContentAsync : null,
+            Content = kind is WebServerKind.Json or WebServerKind.Yaml ? Schemas.ContentAsync : null,
+            // Neither names the version its pushes answer: the Dockerfile server's checks each text, the YAML server's the latest after 200 ms.
+            Pushes = kind switch
+            {
+                WebServerKind.Dockerfile => new PushPace(EachText: true, TimeSpan.Zero),
+                WebServerKind.Yaml => new PushPace(EachText: false, TimeSpan.FromMilliseconds(200)),
+                _ => PushPace.Latest,
+            },
         };
     }
 
     /// <summary>What a server's <c>workspace/configuration</c> is answered: the CSS server's validation on for each of its
-    /// languages, the HTML server's for its styles and scripts, the rest left to its defaults.</summary>
+    /// languages, the HTML server's for its styles and scripts, the YAML server's settings (<see cref="YamlSettings"/>),
+    /// the rest left to its defaults (the Dockerfile server's checks and layout among them).</summary>
     private static object? Section(WebServerKind kind, string? section) => (kind, section) switch
     {
         (WebServerKind.Css, "css" or "scss" or "less") => new { validate = true },
         (WebServerKind.Html, "html") => new { validate = new { scripts = true, styles = true }, format = new { enable = true } },
         (WebServerKind.Html, "css") => new { validate = true },
+        (WebServerKind.Yaml, "yaml") => YamlSettings,
         _ => null,
     };
 
+    /// <summary>The YAML server's settings: checks, completion, hover and formatting on; the Compose specification's schema,
+    /// carried and read from disk, for compose files; Compose's merge tags known; and nothing fetched by the server itself,
+    /// neither SchemaStore's catalogue nor Kubernetes' schemas (a schema a file names over HTTP is asked of
+    /// <see cref="JsonSchemas"/>, as the JSON server's are, once <c>yaml/registerContentRequest</c> has told it to).</summary>
+    private static readonly object YamlSettings = new
+    {
+        validate = true,
+        completion = true,
+        hover = true,
+        format = new { enable = true },
+        schemaStore = new { enable = false },
+        kubernetesCRDStore = new { enable = false },
+        customTags = new[] { "!reset scalar", "!reset sequence", "!reset mapping", "!override sequence", "!override mapping" },
+        schemas = new Dictionary<string, string[]> { [JsonSchemas.ComposeUri] = JsonSchemas.ComposeFiles },
+    };
+
     /// <summary>The settings a server reads from <c>workspace/didChangeConfiguration</c> rather than asks for, sent once it
-    /// has started: the JSON server's validation and formatting, and which schema each well-known file takes.</summary>
+    /// has started: the JSON server's validation and formatting, and which schema each well-known file takes; and the YAML
+    /// server's word that Passenger answers for schemas over HTTP.</summary>
     private static async Task Configure(WebServerKind kind, LanguageServer server)
     {
         switch (kind)
@@ -587,6 +711,14 @@ public sealed class WebLanguages : IAsyncDisposable
                 {
                     settings = new { css = new { validate = true }, scss = new { validate = true }, less = new { validate = true } },
                 });
+                break;
+            case WebServerKind.Yaml:
+                // It asks for its settings as it starts (YamlSettings); this has it ask Passenger for a schema named over
+                // HTTP rather than download it, before any file opens. Its one parameter goes unread.
+                await server.NotifyAsync("yaml/registerContentRequest", new { });
+                break;
+            case WebServerKind.Dockerfile:
+                await server.NotifyAsync("workspace/didChangeConfiguration", new { settings = new { } });
                 break;
             default:
                 await server.NotifyAsync("workspace/didChangeConfiguration", new { settings = new { } });
@@ -619,7 +751,7 @@ public sealed class WebLanguages : IAsyncDisposable
                 }
             }
         });
-        language.Exited += (_, why) => UiThread.Post(() =>
+        void Lose(string why) => UiThread.Post(() =>
         {
             if (!disposed && server.Session == started)
             {
@@ -627,6 +759,12 @@ public sealed class WebLanguages : IAsyncDisposable
                 Lost(server, $"The {name} language server ended");
             }
         });
+        language.Exited += (_, why) => Lose(why);
+        // One that ended before it was listened to is lost as any that ends.
+        if (language.Ended is { } gone)
+        {
+            Lose(gone);
+        }
         language.NotResponding += (_, why) => UiThread.Post(() =>
         {
             if (!disposed && server.Session == started)
@@ -698,6 +836,7 @@ public sealed class WebLanguages : IAsyncDisposable
         ending.Cancel();
         Task linter = Eslint.DisposeAsync().AsTask();
         Task formatter = Prettier.DisposeAsync().AsTask();
+        Checks.Dispose();
         foreach (WebDocument features in documents.Values)
         {
             features.Dispose();

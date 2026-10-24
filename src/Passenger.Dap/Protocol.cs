@@ -69,6 +69,10 @@ public sealed record AttachArguments
 {
     public int? ProcessId { get; init; }
     public bool? JustMyCode { get; init; }
+
+    /// <summary>Passenger's own: the program was started held with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so each of the user's
+    /// modules, loading after the attach, gets Edit and Continue as a launch's does (Hot Reload, applyChanges).</summary>
+    public bool? HotReload { get; init; }
 }
 
 public sealed record DapSource
@@ -226,7 +230,12 @@ public static class ExceptionScenarioNames
 
 public sealed record ThreadsResponse(IReadOnlyList<DapThread> Threads);
 
-public sealed record DapThread(int Id, string Name);
+public sealed record DapThread(int Id, string Name)
+{
+    /// <summary>Passenger's own: true for the thread that runs Main (the first the runtime told of, or on a launch on Windows
+    /// the one the program was started on), whatever the program named it; a desktop app's UI thread.</summary>
+    public bool? IsMain { get; init; }
+}
 
 public sealed record StackTraceArguments(int ThreadId, int? StartFrame = null, int? Levels = null);
 
@@ -281,7 +290,9 @@ public sealed record DapVariable
     public DapPresentationHint? PresentationHint { get; init; }
 }
 
-public sealed record DapPresentationHint(string? Kind = null, IReadOnlyList<string>? Attributes = null, string? Visibility = null);
+/// <summary>How a variable shows: its kind ("virtual" for a row the adapter adds), its attributes, and whether it is lazy, its
+/// value read only as it is opened (its reference then names one variable, the value in its place).</summary>
+public sealed record DapPresentationHint(string? Kind = null, IReadOnlyList<string>? Attributes = null, string? Visibility = null, bool? Lazy = null);
 
 public sealed record EvaluateArguments(string Expression, int? FrameId = null, string? Context = null);
 
@@ -342,7 +353,10 @@ public sealed record StepInTarget
 
 public sealed record ContinueResponse(bool? AllThreadsContinued = null);
 
-public sealed record DisconnectArguments(bool? Restart = null, bool? TerminateDebuggee = null);
+/// <summary>A disconnect; Passenger's own <paramref name="LetGoWithin"/> is how long, in milliseconds, the client waits for
+/// a program let go (not terminated) to be run off its stop and detached, which the adapter keeps its let-go within: a
+/// window that closes waits less than a Detach does.</summary>
+public sealed record DisconnectArguments(bool? Restart = null, bool? TerminateDebuggee = null, int? LetGoWithin = null);
 
 public sealed record TerminateArguments(bool? Restart = null);
 
@@ -390,7 +404,7 @@ public sealed record DapEmpty;
 public sealed record StoppedEvent
 {
     /// <summary>step, breakpoint, exception, pause, entry, goto, function breakpoint, data breakpoint.</summary>
-    public string Reason { get; init; } = "unknown";
+    public string Reason { get; init; } = StopReasons.Unknown;
     public string? Description { get; init; }
 
     /// <summary>More on the stop: at a data breakpoint, the value it watches before and after the write.</summary>
@@ -405,8 +419,6 @@ public sealed record StoppedEvent
     public int? Line { get; init; }
     public int? Column { get; init; }
 }
-
-public sealed record ContinuedEvent(int ThreadId, bool? AllThreadsContinued = null);
 
 public sealed record ExitedEvent(int ExitCode);
 

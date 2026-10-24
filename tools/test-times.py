@@ -9,7 +9,7 @@ budget says how long a job may take before someone decides it should, and a clas
 On GitHub Actions the warnings and the failure are annotations and the table goes in the step's summary. Each shard's
 Test step runs it over its own .trx after `dotnet test --logger trx` (--shard), and each system's summary job over all
 its shards' (--summary), which only shows their times and warns of a budgeted class that none ran; here, after the same:
-python3 -I tools/test-times.py TestResults --budget tests/Passenger.Tests/TestBudget.json
+python3 -I tools/test-times.py artifacts/test-results --budget tests/Passenger.Tests/TestBudget.json
 """
 import argparse
 import glob

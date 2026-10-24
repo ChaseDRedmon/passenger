@@ -24,7 +24,16 @@ public static class UiThread
 
     /// <summary><see cref="Post(Action, string, int)"/> at a priority of its own: work that can wait for the window's input
     /// and drawing (a console's next batch of output) goes below them. The crossing's hold is named by its caller.</summary>
-    public static void Post(Action work, DispatcherPriority priority, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
+    public static void Post(Action work, DispatcherPriority priority, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        Cross(work, priority, null, file, line);
+
+    /// <summary><see cref="Post(Action, string, int)"/> for work that lets go of a hold its caller took (a program's end until
+    /// its console says so): <paramref name="dropped"/> lets go of it in the work's place when the dispatcher will never
+    /// run the work, as a headless test's once that test is over, so the hold never outlives what was to end it.</summary>
+    public static void Post(Action work, Action dropped, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        Cross(work, DispatcherPriority.Default, dropped, file, line);
+
+    private static void Cross(Action work, DispatcherPriority priority, Action? dropped, string file, int line)
     {
         Dispatcher? owned = owner;
         if (owned?.CheckAccess() ?? Dispatcher.UIThread.CheckAccess())
@@ -45,10 +54,20 @@ public static class UiThread
             }
         }, priority);
         // A dispatcher that has shut down (a headless test's, once it is over) aborts what it will never run.
-        operation.Aborted += (_, _) => held.Dispose();
+        int aborted = 0;
+        operation.Aborted += (_, _) => Drop();
         if (operation.Status == DispatcherOperationStatus.Aborted)
         {
-            held.Dispose();
+            Drop();
+        }
+
+        void Drop()
+        {
+            if (Interlocked.Exchange(ref aborted, 1) == 0)
+            {
+                held.Dispose();
+                dropped?.Invoke();
+            }
         }
     }
 

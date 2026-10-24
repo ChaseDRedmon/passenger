@@ -39,6 +39,10 @@ public sealed class CSharpService : IAsyncDisposable
     private WorkspaceModel? workspace;
     private bool disposed;
 
+    /// <summary>When the window heard the server had loaded every project (a Stopwatch timestamp), for the start's
+    /// timing.</summary>
+    private (RoslynSession Session, long At)? loadedAt;
+
     /// <summary>A service that starts its own server and ends it with itself, or, given a <see cref="WarmServer"/>, takes
     /// up the server kept there and leaves its own there as it ends.</summary>
     public CSharpService(WarmServer? warm = null) => this.warm = warm;
@@ -66,9 +70,16 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
     public event EventHandler? StateChanged;
 
+    /// <summary>The server finished loading projects (the file shown's first, then the rest, or one loaded again); raised on
+    /// the UI thread.</summary>
+    public event EventHandler? ProjectsLoaded;
+
     /// <summary>Where the language servers keep their logs, a file to each server: beside the IDE's own log, so Help, Show
     /// Log finds them, and the newest kept as servers start.</summary>
     public static string LogFolder => Path.Combine(IdeErrors.LogFolder, "roslyn");
+
+    /// <summary>The state's cache, where the server runs from a copy when it may not write beside itself in the app (#450).</summary>
+    public static string ServerCache => Path.Combine(Passenger.App.State.StateStore.DefaultRoot, "cache");
 
     public string State { get; private set; } = string.Empty;
     public bool IsReady => session is { IsLoaded: true };
@@ -90,7 +101,7 @@ public sealed class CSharpService : IAsyncDisposable
 
     /// <summary>What each project's last load reported, by its project file; a project that loads again without any
     /// problem leaves.</summary>
-    private readonly Dictionary<string, List<ProjectLoadProblem>> loadProblems = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, List<ProjectLoadProblem>> loadProblems = new(PathNames.Comparer);
 
     /// <summary>The problems of the loads under way, in the order they came: one toast says the batch had problems, the
     /// first project's, so the status bar says the rest when the batch ends.</summary>
@@ -110,8 +121,9 @@ public sealed class CSharpService : IAsyncDisposable
     /// says to see the log is about.</summary>
     private (string Text, long At)? unsaid;
 
-    /// <summary>The solution's problems changed (solution-wide analysis, or an open file's); raised on the UI thread.</summary>
-    public event EventHandler? SolutionProblemsChanged;
+    /// <summary>The solution's problems changed (solution-wide analysis, or an open file's), with the files whose problems
+    /// changed, or null for every file (the analysis turned on or off, or its first answer); raised on the UI thread.</summary>
+    public event EventHandler<IReadOnlyCollection<string>?>? SolutionProblemsChanged;
 
     /// <summary>The scope Roslyn's analyzers and compiler run over with solution-wide analysis on: every document.</summary>
     private static readonly IReadOnlyDictionary<string, object?> FullSolution = new Dictionary<string, object?>
@@ -120,7 +132,15 @@ public sealed class CSharpService : IAsyncDisposable
         ["dotnet_compiler_diagnostics_scope"] = "fullSolution",
     };
 
-    private readonly Dictionary<(string? Source, string Uri), (string? ResultId, IReadOnlyList<Diagnostic> Items)> solutionReports = [];
+    /// <summary>Each file's last report by source, its URI made a path and its errors and warnings placed on the editor's
+    /// lines off the UI thread as the report came (<see cref="Placed"/>).</summary>
+    private readonly Dictionary<(string? Source, string Uri), WorkspaceReport> solutionReports = [];
+
+    /// <summary>The keys of <see cref="solutionReports"/> by file, so a pull merges again only the files it changed.</summary>
+    private readonly Dictionary<string, List<(string? Source, string Uri)>> reportsOf = new(PathNames.Comparer);
+
+    /// <summary>The errors and warnings of each file the reports have any in, every source's merged, each once.</summary>
+    private readonly Dictionary<string, IReadOnlyList<SolutionProblem>> analysed = new(PathNames.Comparer);
     private CancellationTokenSource? analysing;
     private bool solutionWide;
 
@@ -151,7 +171,7 @@ public sealed class CSharpService : IAsyncDisposable
                 return;
             }
             solutionWide = value;
-            solutionReports.Clear();
+            ForgetReports();
             analysing?.Cancel();
             if (session is { } running)
             {
@@ -161,7 +181,7 @@ public sealed class CSharpService : IAsyncDisposable
                 }
             }
             StartAnalysis();
-            SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+            SolutionProblemsChanged?.Invoke(this, null);
         }
     }
 
@@ -190,8 +210,9 @@ public sealed class CSharpService : IAsyncDisposable
         ["tab_width"] = indent.TabWidth.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 
-    /// <summary>Every error and warning the solution-wide analysis has found, by file; null with it off.</summary>
-    public IReadOnlyList<(string Path, Diagnostic Diagnostic)>? SolutionProblems
+    /// <summary>Every error and warning the solution-wide analysis has found, by file, each where it starts as the editor
+    /// counts the file's lines; null with it off. An open file's are its own pull's, as they stand.</summary>
+    public IReadOnlyList<SolutionProblem>? SolutionProblems
     {
         get
         {
@@ -199,30 +220,123 @@ public sealed class CSharpService : IAsyncDisposable
             {
                 return null;
             }
-            Dictionary<string, IReadOnlyList<Diagnostic>> byPath = [];
-            foreach (((string? _, string uri), (string? _, IReadOnlyList<Diagnostic> items)) in solutionReports)
+            List<SolutionProblem> all = [];
+            foreach ((string path, IReadOnlyList<SolutionProblem> problems) in analysed)
             {
-                string path = DocumentUris.ToPath(uri);
-                byPath[path] = byPath.TryGetValue(path, out IReadOnlyList<Diagnostic>? before) ? [.. before, .. items] : items;
+                if (OpenAt(path) is null)
+                {
+                    all.AddRange(problems);
+                }
             }
-            // An open file's problems are its own pull's, which the workspace's leave out and which follow typing.
             foreach ((OpenDocument open, CSharpDocument features) in documents)
             {
-                byPath[open.Path] = features.Diagnostics;
+                all.AddRange(OpenProblems(open, features));
             }
-            return [.. byPath.SelectMany(p => p.Value
-                .Where(d => d.Severity is 1 or 2)
-                .DistinctBy(d => (d.Range, d.Message))
-                .Select(d => (p.Key, d)))];
+            return all;
         }
     }
 
+    /// <summary>One file's errors and warnings as <see cref="SolutionProblems"/> has them, for a file it said changed.</summary>
+    public IReadOnlyList<SolutionProblem> SolutionProblemsOf(string path) =>
+        !solutionWide ? [] : OpenAt(path) is { } open ? OpenProblems(open.Key, open.Value) : analysed.GetValueOrDefault(path) ?? [];
+
+    /// <summary>The open C# or Razor file at a path, with its features; null when it is not open.</summary>
+    private KeyValuePair<OpenDocument, CSharpDocument>? OpenAt(string path)
+    {
+        foreach (KeyValuePair<OpenDocument, CSharpDocument> open in documents)
+        {
+            if (PathNames.Same(open.Key.Path, path))
+            {
+                return open;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>An open file's errors and warnings: its own pull's, which the workspace's leave out and which follow typing.</summary>
+    private static List<SolutionProblem> OpenProblems(OpenDocument open, CSharpDocument features)
+    {
+        List<SolutionProblem> problems = [];
+        HashSet<(LspRange, string)>? seen = null;
+        ServerLines? lines = null;
+        foreach (Diagnostic diagnostic in features.Diagnostics)
+        {
+            if (diagnostic.Severity is 1 or 2 && (seen ??= []).Add((diagnostic.Range, diagnostic.Message)))
+            {
+                lines ??= ServerLines.Of(open.Text.Snapshot);
+                problems.Add(new SolutionProblem(open.Path, diagnostic, ServerPlaces.PositionOf(lines, diagnostic.Range.Start)));
+            }
+        }
+        return problems;
+    }
+
     /// <summary>An open file's own diagnostics arrived: the solution's problems include them.</summary>
-    internal void FileProblemsChanged()
+    internal void FileProblemsChanged(OpenDocument document)
     {
         if (solutionWide)
         {
-            SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+            SolutionProblemsChanged?.Invoke(this, [document.Path]);
+        }
+    }
+
+    /// <summary>The reports let go of: the analysis turned on or off, or the server gone.</summary>
+    private void ForgetReports()
+    {
+        solutionReports.Clear();
+        reportsOf.Clear();
+        analysed.Clear();
+    }
+
+    /// <summary>The reports a pull changed, each URI made a path once and each file with problems read as the server read it
+    /// (a file not open is the disk's), its problems placed on the editor's lines: off the UI thread, as they come.</summary>
+    private static List<WorkspaceReport> Placed(IReadOnlyList<WorkspaceDocumentDiagnosticReport> changed)
+    {
+        Dictionary<string, string> paths = DocumentUris.ToPaths(changed.Select(r => r.Uri));
+        Dictionary<string, ServerLines?> lines = new(PathNames.Comparer);
+        List<WorkspaceReport> placed = new(changed.Count);
+        foreach (WorkspaceDocumentDiagnosticReport report in changed)
+        {
+            string path = paths[report.Uri];
+            List<SolutionProblem> problems = [];
+            foreach (Diagnostic diagnostic in report.Items ?? [])
+            {
+                if (diagnostic.Severity is not (1 or 2))
+                {
+                    continue;
+                }
+                if (!lines.TryGetValue(path, out ServerLines? counted))
+                {
+                    lines[path] = counted = ServerPlaces.Differing(ServerPlaces.Read(path));
+                }
+                problems.Add(new SolutionProblem(path, diagnostic, ServerPlaces.PositionOf(counted, diagnostic.Range.Start)));
+            }
+            placed.Add(new WorkspaceReport(report.Uri, path, report.ResultId is { } id ? new PreviousResultId(report.Uri, id) : null, problems));
+        }
+        return placed;
+    }
+
+    /// <summary>A file's problems merged again from every source's report of it, each once.</summary>
+    private void Merge(string path)
+    {
+        List<SolutionProblem> merged = [];
+        HashSet<(LspRange, string)> seen = [];
+        foreach ((string? Source, string Uri) key in reportsOf.GetValueOrDefault(path) ?? [])
+        {
+            foreach (SolutionProblem problem in solutionReports[key].Problems)
+            {
+                if (seen.Add((problem.Diagnostic.Range, problem.Diagnostic.Message)))
+                {
+                    merged.Add(problem);
+                }
+            }
+        }
+        if (merged.Count > 0)
+        {
+            analysed[path] = merged;
+        }
+        else
+        {
+            analysed.Remove(path);
         }
     }
 
@@ -258,8 +372,8 @@ public sealed class CSharpService : IAsyncDisposable
             while (!cancel.IsCancellationRequested)
             {
                 List<PreviousResultId> previous = [.. solutionReports
-                    .Where(r => r.Key.Source == source && r.Value.ResultId is not null)
-                    .Select(r => new PreviousResultId(r.Key.Uri, r.Value.ResultId!))];
+                    .Where(r => r.Key.Source == source && r.Value.Previous is not null)
+                    .Select(r => r.Value.Previous!)];
                 DateTime asked = DateTime.UtcNow;
                 IReadOnlyList<WorkspaceDocumentDiagnosticReport> reports;
                 try
@@ -279,13 +393,32 @@ public sealed class CSharpService : IAsyncDisposable
                     return;
                 }
                 List<WorkspaceDocumentDiagnosticReport> changed = [.. reports.Where(r => r.Kind != "unchanged")];
-                foreach (WorkspaceDocumentDiagnosticReport report in changed)
+                List<WorkspaceReport> placed = changed.Count == 0 ? [] : await BackgroundWork.Run(() => Placed(changed), cancel);
+                if (cancel.IsCancellationRequested)
                 {
-                    solutionReports[(source, report.Uri)] = (report.ResultId, report.Items ?? []);
+                    return;
                 }
-                if (changed.Count > 0 || first)
+                HashSet<string> files = new(PathNames.Comparer);
+                foreach (WorkspaceReport report in placed)
                 {
-                    SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+                    if (!solutionReports.ContainsKey((source, report.Uri)))
+                    {
+                        if (!reportsOf.TryGetValue(report.Path, out List<(string? Source, string Uri)>? keys))
+                        {
+                            reportsOf[report.Path] = keys = [];
+                        }
+                        keys.Add((source, report.Uri));
+                    }
+                    solutionReports[(source, report.Uri)] = report;
+                    files.Add(report.Path);
+                }
+                foreach (string path in files)
+                {
+                    Merge(path);
+                }
+                if (files.Count > 0 || first)
+                {
+                    SolutionProblemsChanged?.Invoke(this, first ? null : files);
                 }
                 if (first)
                 {
@@ -424,7 +557,7 @@ public sealed class CSharpService : IAsyncDisposable
                 options[name] = value;
             }
             RoslynSession started;
-            string loading = solution is not null ? Path.GetFileName(solution) : $"{projects.Length} project{(projects.Length == 1 ? "" : "s")}";
+            string loading = solution is not null ? Path.GetFileName(solution) : Plural.Of(projects.Length, "project");
             if (warm?.Take(opening.Folder, solution, projects, options) is { } taken)
             {
                 started = taken;
@@ -449,14 +582,23 @@ public sealed class CSharpService : IAsyncDisposable
                     return named;
                 }) : null;
                 IProjectFeed? feed = Feed;
-                started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first, feed), cancel);
+                started = await BackgroundWork.Run(async () =>
+                {
+                    RoslynSession begun = await RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first, feed, ServerCache);
+                    // Said as its start comes back, however long the window's thread takes to get to it.
+                    if (!cancel.IsCancellationRequested)
+                    {
+                        string copy = begun.Server.ServerCopy is { } from ? $", run from its copy in {from}" : string.Empty;
+                        IdeErrors.Write($"C# language server (process {begun.Server.ProcessId}) started for {opening.Folder} in {Since(began)}{copy}, loading {loading}");
+                    }
+                    return begun;
+                }, cancel);
                 if (cancel.IsCancellationRequested)
                 {
                     // Disposed, or started again, just as this server started: nothing else will end it.
                     await started.DisposeAsync();
                     return;
                 }
-                IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) started for {opening.Folder} in {Since(began)}, loading {loading}");
                 _ = TimeFirstColoursAsync(started, began);
                 _ = TimeActiveFileAsync(started, began);
             }
@@ -465,8 +607,12 @@ public sealed class CSharpService : IAsyncDisposable
             EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.ColoursMoved()));
             EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
             // Projects loaded (the file shown's first, then the rest, or one loaded again): the files' projects may be others.
-            EventHandler onProjects = (_, _) => UiThread.Post(() => Each(document => document.FindContexts()));
-            EventHandler<string> onExited = (_, why) => UiThread.Post(() => OnExited(started, why));
+            EventHandler onProjects = (_, _) => UiThread.Post(() =>
+            {
+                Each(document => document.FindContexts());
+                ProjectsLoaded?.Invoke(this, EventArgs.Empty);
+            });
+            EventHandler<string> onExited = (_, _) => UiThread.Post(() => OnExited(started));
             EventHandler<string> onHung = (_, why) => UiThread.Post(() => OnNotResponding(started, why));
             started.Loaded += onLoaded;
             started.Server.ColoursRefreshRequested += onColours;
@@ -487,6 +633,11 @@ public sealed class CSharpService : IAsyncDisposable
                 started.Server.NotResponding -= onHung;
             });
             session = started;
+            // One that ended before Exited was listened to (as its start came back to this thread) is replaced as any that ends.
+            if (started.Server.Ended is not null)
+            {
+                UiThread.Post(() => OnExited(started));
+            }
             if (told != startedWith)
             {
                 started.Server.SetOptions(IndentSettings(told));
@@ -510,6 +661,7 @@ public sealed class CSharpService : IAsyncDisposable
                 }
             }
             IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) loaded {loading} in {Since(began)}");
+            loadedAt = (started, Stopwatch.GetTimestamp());
             SetState("C# ready");
             RefreshAll();
             StartAnalysis();
@@ -558,14 +710,18 @@ public sealed class CSharpService : IAsyncDisposable
             UiThread.Post(() => OnShown(server, message));
         };
         EventHandler<WorkProgress> progressed = (_, progress) => UiThread.Post(() => OnProgress(server, progress));
+        // Said as it is heard, from its start on: one that ends before the window listens (OnExited) is in the log all the same.
+        EventHandler<string> ended = (_, why) => IdeErrors.Write($"The C# language server (process {server.ProcessId}) ended: {why}");
         server.Logged += logged;
         server.Shown += shown;
         server.Progressed += progressed;
+        server.Exited += ended;
         Hook(() =>
         {
             server.Logged -= logged;
             server.Shown -= shown;
             server.Progressed -= progressed;
+            server.Exited -= ended;
         });
     }
 
@@ -650,10 +806,8 @@ public sealed class CSharpService : IAsyncDisposable
         Said?.Invoke(this, new ServerSaid($"{kind} while loading {Shown(first.Project)}: {first.Message}{rest}", first.Severity, first));
     }
 
-    /// <summary>A project as the status bar names it: its path from the open folder, else its file's name.</summary>
-    private string Shown(string project) => workspace is { } open && PathNames.IsUnder(project, open.Folder)
-        ? Path.GetRelativePath(open.Folder, project)
-        : Path.GetFileName(project);
+    /// <summary>A project as the status bar names it.</summary>
+    private string Shown(string project) => PathNames.Shown(project, workspace?.Folder);
 
     /// <summary>The status bar's word on the server's work, each piece by its token: its title, and whether it is held back
     /// from the person, as the canonical project's restore is (a restore is held until it names a project of theirs).</summary>
@@ -741,32 +895,30 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    /// <summary>The phases of a start that say when the person can work: the open file in its own project at the server
-    /// (not Miscellaneous Files, whose answers know nothing of the solution), then that project's colours and diagnostics
-    /// for it. Asked every tenth of a second until then, for the file shown first.</summary>
+    /// <summary>The phases of a start that say when the person can work: an open file in its own project at the server
+    /// (not Miscellaneous Files, whose answers know nothing of the solution), then the first colours and diagnostics
+    /// the editor asked for once the server had it there (<see cref="CSharpDocument.Placed"/>, or every project loaded,
+    /// when the editor asks again; <see cref="LspDocument.Coloured"/>). Looked for every tenth of a second, asking the
+    /// server nothing of its own.</summary>
     private async Task TimeActiveFileAsync(RoslynSession started, long began)
     {
         // A wait that never holds a screenshot: a folder may have no C# file open for a long while.
         DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(10);
         while (!disposed && (session is null || session == started) && DateTime.UtcNow < until && !started.Server.HasExited)
         {
-            if (documents.Values.FirstOrDefault(d => d.Lsp is { IsRazor: false }) is { Lsp: { } lsp })
+            foreach ((OpenDocument open, CSharpDocument features) in documents)
             {
-                try
+                if (features is not { Lsp: { IsRazor: false } lsp, Placed: { } placed })
                 {
-                    if ((await lsp.ProjectContextsAsync())?.Default is { IsMiscellaneous: false } project)
-                    {
-                        string placed = Since(began);
-                        await lsp.SemanticTokensAsync();
-                        string coloured = Since(began);
-                        await lsp.DiagnosticsAsync();
-                        IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) had {Path.GetFileName(DocumentUris.ToPath(lsp.Uri))} in {project.Label} {placed}, its colours {coloured} and its diagnostics {Since(began)} after it was started");
-                        return;
-                    }
+                    continue;
                 }
-                catch (LanguageServerFailed)
+                long inProject = loadedAt is { } loaded && loaded.Session == started ? Math.Min(placed.Asked, loaded.At) : placed.Asked;
+                (long Asked, long Came) coloured = lsp.Coloured;
+                (long Asked, long Came) diagnosed = lsp.Diagnosed;
+                if (coloured.Asked >= inProject && diagnosed.Asked >= inProject)
                 {
-                    // Not yet able to say (a request cancelled as projects load), or gone: asked again, or the loop ends.
+                    IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) had {open.Name} in {placed.Project} {Since(began, placed.At)}, its colours {Since(began, coloured.Came)} and its diagnostics {Since(began, diagnosed.Came)} after it was started");
+                    return;
                 }
             }
             await Task.Delay(TimeSpan.FromMilliseconds(100));
@@ -774,6 +926,8 @@ public sealed class CSharpService : IAsyncDisposable
     }
 
     private static string Since(long began) => $"{Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s";
+
+    private static string Since(long began, long at) => $"{Stopwatch.GetElapsedTime(began, at).TotalSeconds:0.00} s";
 
     /// <summary>A message the server logged, as the status bar says it: without its tags ("[project/open]"), the open
     /// folder's paths made relative, its spaces single, and without MSBuild's repeat of the file at its end.</summary>
@@ -789,14 +943,13 @@ public sealed class CSharpService : IAsyncDisposable
         return last > 0 && text[..last].Contains(text[(last + 2)..], StringComparison.Ordinal) ? text[..(last + 1)] : text;
     }
 
-    /// <summary>The server ended on its own: it crashed, or something else ended it.</summary>
-    private void OnExited(RoslynSession lost, string why)
+    /// <summary>The server ended on its own: it crashed, or something else ended it (<see cref="Hear"/> logs why).</summary>
+    private void OnExited(RoslynSession lost)
     {
         if (disposed || session != lost || workspace is null)
         {
             return;
         }
-        IdeErrors.Write($"The C# language server (process {lost.Server.ProcessId}) ended: {why}");
         Replace(lost, workspace, "The C# language server ended");
     }
 
@@ -824,7 +977,7 @@ public sealed class CSharpService : IAsyncDisposable
         unsaid = null;
         ForgetLoadProblems();
         analysing?.Cancel();
-        solutionReports.Clear();
+        ForgetReports();
         _ = lost.DisposeAsync();
         foreach (OpenDocument open in documents.Keys.ToList())
         {
@@ -857,6 +1010,44 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
+    /// <summary>What a C# file is to Aspire (the session's <see cref="Aspire.AspireFiles.RoleOf"/>): only an AppHost's and a
+    /// service's ask Passenger's extension for Aspire's help; none for a service started without a session.</summary>
+    public Func<string, Aspire.AspireRole>? AspireRoleOf { get; init; }
+
+    /// <summary>The AppHost an AppHost's C# file is of, as its parameters' values are read (its folder, its UserSecretsId); null
+    /// for any other file, and without a session.</summary>
+    public Func<string, Aspire.AspireAppHostSettings?>? AspireAppHostOf { get; init; }
+
+    /// <summary>An AppHost's text changed, so its graph may have: each open service file's Aspire warnings go and are pulled
+    /// again, no other file's.</summary>
+    internal void AspireGraphChanged() => Each(document =>
+    {
+        if (document.AspireRole == Aspire.AspireRole.Service)
+        {
+            document.AspireChanged();
+        }
+    });
+
+    /// <summary>The configuration of the project a C# file is of (the session's <see cref="ProjectSession.ConfigurationOf(string)"/>),
+    /// against which its reads of keys nothing gives are warned of; none without a session, which warns of none.</summary>
+    public Func<string, Workspace.ConfigurationProject?>? ConfigurationOf { get; init; }
+
+    /// <summary>A reader of files' texts for work off the UI thread, the open files' as the editor has them now
+    /// (<see cref="Workspace.ConfigurationFiles.Reader"/>); the disk's without a session.</summary>
+    public Func<Func<string, string?>>? Texts { get; init; }
+
+    /// <summary>A settings file, user secrets or launch profile changed: each open file that warned of a key nothing gave, or
+    /// that reads configuration, pulls its diagnostics again; no other file.</summary>
+    internal void ConfigurationChanged() => Each(document => document.ConfigurationChanged());
+
+    /// <summary>The connection strings the open compose files' .NET services read that their environments do not set (the
+    /// session's <see cref="Containers.EngineChecks.Gaps"/>), whose reads in the code are marked too; none without a session.</summary>
+    public Func<IReadOnlyList<Containers.ComposeGap>>? ComposeGaps { get; init; }
+
+    /// <summary>What the open compose files find missing changed: each open file that reads such a name, or was marked for one,
+    /// pulls its diagnostics again; no other file.</summary>
+    internal void ComposeGapsChanged() => Each(document => document.ComposeChanged());
+
     private void RefreshAll() => Each(document => document.Refresh());
 
     private void Each(Action<CSharpDocument> act)
@@ -878,3 +1069,10 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>What the status bar says when a command (<paramref name="what"/>) asks the server before it is ready.</summary>
     public string Unready(string what) => $"{what} needs the C# language server: {State}";
 }
+
+/// <summary>One error or warning of the solution's, in its file, where it starts as the editor counts the file's lines.</summary>
+public readonly record struct SolutionProblem(string Path, Diagnostic Diagnostic, TextPosition At);
+
+/// <summary>A file's last report from one source of the solution-wide analysis: its URI, made a path once, the result id
+/// to give back on the next pull, and its errors and warnings placed.</summary>
+internal sealed record WorkspaceReport(string Uri, string Path, PreviousResultId? Previous, IReadOnlyList<SolutionProblem> Problems);

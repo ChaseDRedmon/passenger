@@ -47,8 +47,16 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
             return new WorkspaceModel(folder, null, [ProjectModel.Unevaluated(named)]) { ProjectFile = named };
         }
         string? path = named is not null && IsSolution(named) && File.Exists(named) ? named : SolutionModel.Find(folder);
-        return path is not null && SolutionModel.Load(path) is { } solution ? new WorkspaceModel(folder, solution, [.. solution.Projects]) : null;
+        // A Docker Compose project (.dcproj) is Visual Studio's alone (its SDK is not .NET's): read as XML for its run
+        // configurations, never loaded, built or evaluated as a project.
+        return path is not null && SolutionModel.Load(path) is { } solution
+            ? new WorkspaceModel(folder, solution, [.. solution.Projects.Where(p => !Containers.ContainerConfigurations.IsComposeProject(p.Path))])
+            : null;
     }
+
+    /// <summary>The solution's Docker Compose projects (.dcproj), each a compose configuration of its own.</summary>
+    public IReadOnlyList<string> ComposeProjects => Solution is null ? []
+        : [.. Solution.Projects.Where(p => p.Exists && Containers.ContainerConfigurations.IsComposeProject(p.Path)).Select(p => p.Path)];
 
     /// <summary>The same workspace with each project as <paramref name="map"/> gives it: MSBuild's evaluation of it, in
     /// the solution's folders and in <see cref="Projects"/> alike.</summary>
@@ -63,7 +71,7 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     /// <summary>What building the whole builds: the solution, or each project loaded in turn when some are unloaded or
     /// there is no solution; the folder when it has neither, for the .NET command line to say why.</summary>
     public IReadOnlyList<string> BuildTargets(IReadOnlyList<ProjectModel> loaded) =>
-        Solution is not null && loaded.Count == Projects.Count ? [Solution.Path]
+        Solution is not null && loaded.Count == Projects.Count && ComposeProjects.Count == 0 ? [Solution.Path]
         : Solution is null && Projects.Count == 0 ? [Folder]
         : [.. loaded.Select(p => p.Path)];
 
@@ -73,31 +81,8 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     public bool LoadsAs(WorkspaceModel other) =>
         Solution?.Path == other.Solution?.Path && Projects.Select(p => p.Path).SequenceEqual(other.Projects.Select(p => p.Path));
 
-    /// <summary>The project files under a folder, those nearer the top first; a linked folder is not followed, since it
-    /// can loop.</summary>
-    private static List<string> ProjectsUnder(string folder)
-    {
-        List<string> found = [];
-        Queue<DirectoryInfo> folders = new([new DirectoryInfo(folder)]);
-        for (int read = 0; folders.Count > 0 && found.Count < ProjectLimit && read < FolderLimit; read++)
-        {
-            DirectoryInfo at = folders.Dequeue();
-            try
-            {
-                found.AddRange(at.EnumerateFiles("*.csproj").Select(f => f.FullName).Order(StringComparer.Ordinal));
-                foreach (DirectoryInfo child in at.EnumerateDirectories().OrderBy(d => d.Name, StringComparer.Ordinal))
-                {
-                    // Hidden folders are version control's, IDEs' and tools' own (a worktree's copy of the projects).
-                    if (!child.Name.StartsWith('.') && !IgnoredFolders.Contains(child.Name) && child.LinkTarget is null)
-                    {
-                        folders.Enqueue(child);
-                    }
-                }
-            }
-            catch (Exception error) when (error is UnauthorizedAccessException or IOException)
-            {
-            }
-        }
-        return [.. found.Take(ProjectLimit)];
-    }
+    /// <summary>The project files under a folder, those nearer the top first, as a walk for what projects build finds them
+    /// (<see cref="FolderWalk"/>): hidden folders are version control's, IDEs' and tools' own (a worktree's copy of them).</summary>
+    private static List<string> ProjectsUnder(string folder) =>
+        [.. FolderWalk.Folders(folder, built: true).Take(FolderLimit).SelectMany(f => f.Files).Where(IsProject).Take(ProjectLimit)];
 }

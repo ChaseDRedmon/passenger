@@ -10,6 +10,11 @@ namespace Passenger.App.Workspace;
 public sealed record FolderChanges(IReadOnlySet<string> Paths, bool Structure, bool Projects, bool Git)
 {
     public IReadOnlySet<string> Restored { get; init; } = new HashSet<string>();
+
+    /// <summary>Whether the system lost changes (too many at once, as a large checkout makes) or a watch failed: what they
+    /// were is not known, so everything shown from the folder is read again (the open files, the Explorer, the solution,
+    /// Go to File's index). <see cref="Paths"/> then holds the folder itself.</summary>
+    public bool Lost { get; init; }
 }
 
 /// <summary>Watches a folder for what other programs change in it (a terminal's <c>git pull</c>, an agent's edits,
@@ -21,6 +26,9 @@ public sealed record FolderChanges(IReadOnlySet<string> Paths, bool Structure, b
 public sealed class FolderWatcher : IDisposable
 {
     private static readonly TimeSpan Gather = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>How long after a save its file's events are taken for the save's own.</summary>
+    private static readonly TimeSpan OwnWriteHeard = TimeSpan.FromSeconds(5);
 
     private static readonly string[] ProjectExtensions = [".sln", ".slnx", ".csproj", ".fsproj", ".vbproj", ".props", ".targets"];
 
@@ -41,6 +49,7 @@ public sealed class FolderWatcher : IDisposable
     private bool structure;
     private bool projects;
     private bool git;
+    private bool lost;
     private bool pending;
     private bool disposed;
     private int outOfWatches;
@@ -73,12 +82,23 @@ public sealed class FolderWatcher : IDisposable
         }
     }
 
-    /// <summary>A file Passenger is saving: its events in the next moments are its content changing, not a new file.</summary>
+    /// <summary>A file Passenger is saving: its events in the next moments are its content changing, not a new file.
+    /// The saves heard of longer ago than that are let go here, so the watcher keeps only its last moments' saves.</summary>
     private void OnWriting(string path)
     {
+        string canonical = PathNames.Canonical(path);
         lock (gate)
         {
-            ownWrites[PathNames.Canonical(path)] = DateTime.UtcNow;
+            DateTime now = DateTime.UtcNow;
+            foreach ((string written, DateTime at) in ownWrites)
+            {
+                if (now - at >= OwnWriteHeard)
+                {
+                    // A dictionary's enumeration survives a removal (since .NET Core 3.0).
+                    ownWrites.Remove(written);
+                }
+            }
+            ownWrites[canonical] = now;
         }
     }
 
@@ -201,6 +221,10 @@ public sealed class FolderWatcher : IDisposable
             return;
         }
         // Changes lost (too many at once) or a watch that failed: everything is read again, and walked again if lost.
+        lock (gate)
+        {
+            lost = true;
+        }
         Note(folder, created: true);
         if (watching.EachFolder && error is InternalBufferOverflowException)
         {
@@ -422,7 +446,7 @@ public sealed class FolderWatcher : IDisposable
                 string canonical = PathNames.Canonical(path);
                 paths.Add(canonical);
                 // A save moves its temporary file over the file: a change, not a file come or gone.
-                bool saved = ownWrites.TryGetValue(canonical, out DateTime at) && DateTime.UtcNow - at < TimeSpan.FromSeconds(5);
+                bool saved = ownWrites.TryGetValue(canonical, out DateTime at) && DateTime.UtcNow - at < OwnWriteHeard;
                 structure |= created && !saved;
                 projects |= ProjectExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)
                     || Path.GetFileName(path).Equals("launchSettings.json", StringComparison.OrdinalIgnoreCase);
@@ -451,10 +475,11 @@ public sealed class FolderWatcher : IDisposable
             changes = new FolderChanges(new HashSet<string>(paths, StringComparer.Ordinal), structure, projects, git)
             {
                 Restored = new HashSet<string>(restored, StringComparer.Ordinal),
+                Lost = lost,
             };
             paths.Clear();
             restored.Clear();
-            structure = projects = git = pending = false;
+            structure = projects = git = lost = pending = false;
             live = !disposed;
         }
         if (live)

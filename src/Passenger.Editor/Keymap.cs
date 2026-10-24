@@ -36,16 +36,22 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
 
     public static Keystroke From(KeyEventArgs e) => new(e.Key, e.KeyModifiers);
 
+    /// <summary>Whether the key is on the numeric keypad (its operators, decimal point and digits), a key of its own
+    /// beside the one that types the same character.</summary>
+    public bool IsOnKeypad => Keypad(Key) is not null;
+
     /// <summary>For menus and tooltips: ⌘⇧L on macOS, Ctrl+Shift+L elsewhere, a key named as Rider names it (its Mac
-    /// symbols for Return, Escape, Tab and the keys around them).</summary>
+    /// symbols for Return, Escape, Tab and the keys around them), a keypad key as Rider names the keypad's / (NumPad /, ⌨/
+    /// on macOS): every keypad key so, where Rider's own "." (and macOS's "+" and "-") would read as the main keys'.</summary>
     public string Display()
     {
         bool mac = OperatingSystem.IsMacOS();
         string key = Key switch
         {
+            _ when Keypad(Key) is { } typed => mac ? $"⌨{typed}" : $"NumPad {typed}",
             Key.OemPeriod => ".",
             Key.OemComma => ",",
-            Key.OemQuestion or Key.Divide => "/",
+            Key.OemQuestion => "/",
             Key.OemSemicolon => ";",
             Key.OemOpenBrackets => "[",
             Key.OemCloseBrackets => "]",
@@ -116,9 +122,25 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
         return string.Join(' ', parts);
     }
 
+    /// <summary>The character a keypad key types, or null for a key elsewhere.</summary>
+    private static char? Keypad(Key key) => key switch
+    {
+        Key.Divide => '/',
+        Key.Multiply => '*',
+        Key.Add => '+',
+        Key.Subtract => '-',
+        Key.Decimal => '.',
+        Key.Separator => ',',
+        >= Key.NumPad0 and <= Key.NumPad9 => (char)('0' + (key - Key.NumPad0)),
+        _ => null,
+    };
+
+    /// <summary>A key by the name IntelliJ's keymaps give it, Java's VK_ without the prefix: SLASH is the main keys' /, and
+    /// DIVIDE, MULTIPLY, ADD, SUBTRACT, DECIMAL, SEPARATOR and NUMPAD0 to NUMPAD9 the keypad's, each a key of its own.</summary>
     private static Key ParseKey(string name) => name.ToUpperInvariant() switch
     {
-        "SLASH" or "DIVIDE" => Key.OemQuestion,
+        "SLASH" => Key.OemQuestion,
+        "DIVIDE" => Key.Divide,
         "PERIOD" => Key.OemPeriod,
         "COMMA" => Key.OemComma,
         "SEMICOLON" => Key.OemSemicolon,

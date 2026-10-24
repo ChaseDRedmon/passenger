@@ -17,6 +17,18 @@ public sealed class DapConnection : IAsyncDisposable
 {
     private static readonly byte[] HeaderEnd = "\r\n\r\n"u8.ToArray();
 
+    /// <summary>The most a message's header is read to before its blank line: the protocol's is one Content-Length line,
+    /// and an end that sends more without one is not speaking it.</summary>
+    public const int MostHeader = 64 * 1024;
+
+    /// <summary>The longest message body read, 256 MB: the largest either end sends are Hot Reload's deltas (a large
+    /// edit's metadata, IL and PDB, a few MB in base64) and a large collection's variables (a few MB), so this is far above
+    /// any real one, and a Content-Length beyond it ends the conversation rather than take the reader's memory.</summary>
+    public const long MostBody = 256L * 1024 * 1024;
+
+    /// <summary>The read buffer's size between messages: a larger message's room is let go once it has been read.</summary>
+    private const int UsualBuffer = 64 * 1024;
+
     private readonly Stream input;
     private readonly Stream output;
     private readonly Action<string>? log;
@@ -213,7 +225,7 @@ public sealed class DapConnection : IAsyncDisposable
 
     private async Task ReadAsync()
     {
-        byte[] buffer = new byte[64 * 1024];
+        byte[] buffer = new byte[UsualBuffer];
         int filled = 0;
         try
         {
@@ -222,6 +234,10 @@ public sealed class DapConnection : IAsyncDisposable
                 int headerEnd = buffer.AsSpan(0, filled).IndexOf(HeaderEnd);
                 if (headerEnd < 0)
                 {
+                    if (filled >= MostHeader)
+                    {
+                        throw new IOException($"A DAP message's header ran past {MostHeader} bytes without the blank line that ends it");
+                    }
                     if (filled == buffer.Length)
                     {
                         Array.Resize(ref buffer, buffer.Length * 2);
@@ -234,13 +250,22 @@ public sealed class DapConnection : IAsyncDisposable
                     filled += read;
                     continue;
                 }
-                int length = ContentLength(Encoding.ASCII.GetString(buffer, 0, headerEnd));
-                int start = headerEnd + HeaderEnd.Length;
-                if (buffer.Length < start + length)
+                if (headerEnd > MostHeader)
                 {
-                    Array.Resize(ref buffer, start + length);
+                    throw new IOException($"A DAP message's header ran past {MostHeader} bytes without the blank line that ends it");
                 }
-                while (filled < start + length)
+                long length = ContentLength(Encoding.ASCII.GetString(buffer, 0, headerEnd));
+                if (length > MostBody)
+                {
+                    throw new IOException($"A DAP message of {length} bytes is over the {MostBody} bytes the connection reads of one");
+                }
+                int start = headerEnd + HeaderEnd.Length;
+                int size = (int)length;
+                if (buffer.Length < start + size)
+                {
+                    Array.Resize(ref buffer, start + size);
+                }
+                while (filled < start + size)
                 {
                     int read = await input.ReadAsync(buffer.AsMemory(filled), stopping.Token).ConfigureAwait(false);
                     if (read == 0)
@@ -249,19 +274,24 @@ public sealed class DapConnection : IAsyncDisposable
                     }
                     filled += read;
                 }
-                Trace?.Invoke(Name, $"<-- {Encoding.UTF8.GetString(buffer, start, length)}");
+                Trace?.Invoke(Name, $"<-- {Encoding.UTF8.GetString(buffer, start, size)}");
                 // Parsed from a copy: a document reads the memory it is given, and the buffer is reused.
-                JsonElement message = JsonDocument.Parse(buffer.AsSpan(start, length).ToArray()).RootElement;
-                buffer.AsSpan(start + length, filled - start - length).CopyTo(buffer);
-                filled -= start + length;
+                JsonElement message = JsonDocument.Parse(buffer.AsSpan(start, size).ToArray()).RootElement;
+                // What came after it moves to the front, into a buffer of the usual size again when it had grown for a large one.
+                byte[] next = buffer.Length > UsualBuffer && filled - start - size <= UsualBuffer ? new byte[UsualBuffer] : buffer;
+                buffer.AsSpan(start + size, filled - start - size).CopyTo(next);
+                buffer = next;
+                filled -= start + size;
                 Receive(message);
             }
         }
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
         }
-        catch (Exception error) when (error is IOException or ObjectDisposedException)
+        catch (Exception error) when (error is IOException or ObjectDisposedException or JsonException or InvalidOperationException or KeyNotFoundException
+            or FormatException)
         {
+            // A message that does not read (its JSON, or a field of the wrong kind) ends the conversation as a closed stream does.
             log?.Invoke($"DAP read ended: {error.Message}");
         }
         finally
@@ -271,18 +301,27 @@ public sealed class DapConnection : IAsyncDisposable
         }
     }
 
-    private static int ContentLength(string header)
+    /// <summary>A header's Content-Length, read as a long, so a length too large for the buffer is refused by its size rather
+    /// than taken for no length; one larger still than a long is over every limit.</summary>
+    private static long ContentLength(string header)
     {
         foreach (string line in header.Split("\r\n"))
         {
             int colon = line.IndexOf(':', StringComparison.Ordinal);
-            if (colon > 0 && line.AsSpan(0, colon).Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(line.AsSpan(colon + 1).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int length))
+            if (colon > 0 && line.AsSpan(0, colon).Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
             {
-                return length;
+                ReadOnlySpan<char> value = line.AsSpan(colon + 1).Trim();
+                if (long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out long length))
+                {
+                    return length;
+                }
+                if (value.Length > 0 && !value.ContainsAnyExceptInRange('0', '9'))
+                {
+                    return long.MaxValue;
+                }
             }
         }
-        throw new IOException($"A DAP message with no Content-Length: '{header}'");
+        throw new IOException($"A DAP message with no Content-Length: '{(header.Length > 200 ? header[..200] + "…" : header)}'");
     }
 
     private void Receive(JsonElement message)
@@ -290,11 +329,13 @@ public sealed class DapConnection : IAsyncDisposable
         if (Text(message, "type") == "response")
         {
             int seq = message.GetProperty("request_seq").GetInt32();
+            // Read before the request is taken from those waiting, so an answer that does not read fails it with the rest.
+            bool succeeded = message.TryGetProperty("success", out JsonElement success) && success.GetBoolean();
             if (!pending.TryRemove(seq, out (string Command, TaskCompletionSource<JsonElement> Answer) request))
             {
                 return;
             }
-            if (message.TryGetProperty("success", out JsonElement success) && success.GetBoolean())
+            if (succeeded)
             {
                 request.Answer.TrySetResult(message.TryGetProperty("body", out JsonElement body) ? body.Clone() : default);
             }

@@ -43,7 +43,7 @@ public sealed partial class AboutTests : IDisposable
             Assert.Contains(head, about.Text);
 
             // Its notices link opens the notices beside the app, read-only, in place of About.
-            Click(about, Link(about, AboutDialog.NoticesLink));
+            Ui.Click(Link(about, AboutDialog.NoticesLink));
             Assert.False(about.IsVisible, "About stays open over the notices its link opened");
             Assert.Equal(PathNames.Canonical(Path.Combine(AppContext.BaseDirectory, "THIRD-PARTY-NOTICES.txt")), window.EditorArea.Active?.Path);
             string notices = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
@@ -55,7 +55,7 @@ public sealed partial class AboutTests : IDisposable
 
             // And its licence link opens Passenger's licence beside the app, the repository's LICENSE.
             about = OpenAbout(window);
-            Click(about, Link(about, AboutDialog.LicenseLink));
+            Ui.Click(Link(about, AboutDialog.LicenseLink));
             Assert.Equal(PathNames.Canonical(Path.Combine(AppContext.BaseDirectory, "LICENSE.txt")), window.EditorArea.Active?.Path);
             Assert.Equal(File.ReadAllText(Path.Combine(Repository, "LICENSE")).ReplaceLineEndings("\n"),
                 window.EditorArea.CodeEditor.Document.Snapshot.ToString().ReplaceLineEndings("\n"));
@@ -151,14 +151,6 @@ public sealed partial class AboutTests : IDisposable
 
     private static Button Link(Window about, string words) =>
         about.GetVisualDescendants().OfType<Button>().First(b => b.Classes.Contains("link") && (string?)b.Content == words);
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     /// <summary>The packages a .deps.json file names whose files are beside it, as Id/Version: those with none of their
     /// files there (Visual Studio's left out of roslyn/) are not carried.</summary>

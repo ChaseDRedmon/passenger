@@ -20,9 +20,13 @@ public partial class MainWindow
     /// <summary>Open Solution's question while it asks, else null.</summary>
     public OpenProjectDialog? Asking { get; private set; }
 
-    /// <summary>Whether the window has started (taken its command line) or opened a folder, so a solution the system hands
-    /// Passenger goes to it rather than waiting for the first window's start.</summary>
+    /// <summary>Whether the window has started (taken its command line, or been opened beside another) or opened a
+    /// folder, so a solution the system hands Passenger goes to it rather than waiting for the first window's start.</summary>
     public bool IsStarted => started || Folder is not null;
+
+    /// <summary>A window opened beside another (<see cref="PassengerApp.NewWindow"/>) has no command line to take: it is
+    /// started as it is made, so a solution handed to Passenger opens from it whatever it has open.</summary>
+    internal void StartBeside() => started = true;
 
     private void AddProjectWindows()
     {
@@ -50,23 +54,23 @@ public partial class MainWindow
 
     /// <summary>A path checked as one Open takes, opened as the person chose it: in this window while it has nothing open
     /// or the path is in its own folder, where another window has it open there, else where Settings' Open project in
-    /// says, or as the person answers Open Solution.</summary>
-    private void OpenChosen(string full)
+    /// says, or as the person answers Open Solution; <paramref name="then"/> told the window once it has opened there.</summary>
+    private void OpenChosen(string full, Action<MainWindow>? then)
     {
         string opening = File.Exists(full) ? Path.GetDirectoryName(full)! : full;
         if (Folder is null || PathNames.Same(Folder, opening)
             || PassengerApp.Windows.Any(w => w.Folder is { } other && PathNames.Same(other, opening)))
         {
-            PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this);
+            PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this, then);
             return;
         }
         switch (settings.OpenProjectIn)
         {
             case OpenProjectIn.CurrentWindow:
-                PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this);
+                PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this, then);
                 return;
             case OpenProjectIn.NewWindow:
-                PassengerApp.OpenProject(full, OpenTarget.NewWindow, this);
+                PassengerApp.OpenProject(full, OpenTarget.NewWindow, this, then);
                 return;
         }
         Asking?.Close();
@@ -87,7 +91,7 @@ public partial class MainWindow
                 ApplySettings(settings with { OpenProjectIn = target == OpenTarget.NewWindow ? OpenProjectIn.NewWindow : OpenProjectIn.CurrentWindow });
             }
             // Once the question has gone and this window has the keys back, so a new window comes in front of it.
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => PassengerApp.OpenProject(full, target, this));
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => PassengerApp.OpenProject(full, target, this, then));
         };
         _ = dialog.ShowDialog(this);
     }
@@ -136,7 +140,7 @@ public partial class MainWindow
     /// quitting, or the last window, it stays open for the next start to reopen, as Rider's do.</summary>
     private void LeaveRecentOpen()
     {
-        if (!quitting && !PassengerApp.Quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible))
+        if (!quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible))
         {
             ForgetOpen();
         }

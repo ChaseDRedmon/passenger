@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.Inspector;
 
 /// <summary>The runtime calls this before the app's Main, as DOTNET_STARTUP_HOOKS names this assembly: only in a WPF app's
@@ -43,12 +44,7 @@ internal static class StartupHook
     {
         Environment.SetEnvironmentVariable(Wire.SocketVariable, null);
         Environment.SetEnvironmentVariable(Wire.ProjectVariable, null);
-        string self = typeof(StartupHook).Assembly.Location;
-        if (Environment.GetEnvironmentVariable(Wire.StartupHooks) is { Length: > 0 } hooks)
-        {
-            string[] others = [.. hooks.Split(Path.PathSeparator).Where(h => h.Length > 0 && !string.Equals(Path.GetFullPath(h), self, StringComparison.OrdinalIgnoreCase))];
-            Environment.SetEnvironmentVariable(Wire.StartupHooks, others.Length == 0 ? null : string.Join(Path.PathSeparator, others));
-        }
+        StartupHooks.TakeOut(typeof(StartupHook).Assembly.Location);
     }
 
     /// <summary>Why the inspector cannot serve the app: it has no WPF among the assemblies it will load.</summary>

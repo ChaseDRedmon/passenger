@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The site's pictures, site/images/<scene>-<dark|light>.webp, retaken from the sample solution beside this script:
+# The site's pictures, site/images/<scene>-<dark|light>.webp, retaken from the sample solutions beside this script:
 # just site-shots [SCENE...] (every scene when none is named). Build first (just build): it runs the Debug build's
 # --screenshot. The sample is copied to a folder of its own under TMPDIR and given a git history there; its restore and
 # its builds' NuGet stay under artifacts/site-shots and Passenger's state beside the copy, never the person's.
@@ -7,7 +7,8 @@
 # capture's command line; SITE_SHOTS_REUSE=1 takes the pictures in
 # the copy the last run made, without making it again, and SITE_SHOTS_THEMES=dark (or light) takes one theme's.
 # A step's point is in the window's logical units: half the picture's pixels. The agent scene's agent is agent.py, run
-# by python3 through --agent.
+# by python3 through --agent; the themes scene's twelve captures, one per look, are the frames of one animated picture
+# (img2webp, every frame whole), with a still of Passenger's own look for those who ask for less motion.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -26,7 +27,7 @@ if [[ ! -x "$passenger" ]]; then
 fi
 command -v cwebp > /dev/null || { echo "site-shots: cwebp is not on the PATH (brew install webp)" >&2; exit 2; }
 
-all_scenes=(editor debugger git find-in-files profiler xaml project-files web live-tree agent)
+all_scenes=(editor debugger git find-in-files profiler xaml project-files web live-tree agent themes aspire requests)
 scenes=("$@")
 if [[ ${#scenes[@]} -eq 0 ]]; then
     scenes=("${all_scenes[@]}")
@@ -111,25 +112,109 @@ if [[ -z ${SITE_SHOTS_REUSE:-} || ! -d "$folder/.git" ]]; then
     prepare
 fi
 
+# The aspire and requests scenes' solution, services/ beside this script: an Aspire AppHost over a web API on EF Core and
+# SQLite and a worker that calls it each second, copied beside the sample's copy with a history of its own and built
+# once, when a scene first asks for it. Its AppHost runs in a home of its own (DCP's state, the dashboard's keys), short
+# as macOS's socket paths ask, since its record of itself is a socket there, and asks the window nothing
+# (ASPIRE_INTERACTIVITY_ENABLED), where it would say in a dialog that no development certificate is trusted there.
+services="$tmp/passenger-site-shots/GreenhouseServices"
+aspire_home=/private/tmp/passenger-site-shots-aspire
+services_prepared=
+services_ready() {
+    if [[ -n $services_prepared ]] || [[ -n ${SITE_SHOTS_REUSE:-} && -d "$services/.git" ]]; then
+        services_prepared=1
+        return
+    fi
+    rm -rf "$services" "$aspire_home"
+    mkdir -p "$services" "$aspire_home"
+    cp -R "$repo/tools/site-shots/services/." "$services/"
+    python3 -I - "$services/src/Greenhouse.AppHost/Properties/launchSettings.json" "$aspire_home" <<'EOF'
+import json, sys
+path, home = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    launch = json.load(f)
+variables = launch["profiles"]["http"]["environmentVariables"]
+variables["HOME"] = home
+variables["ASPIRE_INTERACTIVITY_ENABLED"] = "false"
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(launch, f, indent=2)
+    f.write("\n")
+EOF
+    export GIT_AUTHOR_NAME="Rosa Field" GIT_AUTHOR_EMAIL="rosa@greenhouse.example"
+    export GIT_COMMITTER_NAME="Rosa Field" GIT_COMMITTER_EMAIL="rosa@greenhouse.example"
+    git -C "$services" init -q -b main
+    git -C "$services" add -- . ':!src/Greenhouse.AppHost'
+    GIT_AUTHOR_DATE="2026-10-12T09:30:00+00:00" GIT_COMMITTER_DATE="2026-10-12T09:30:00+00:00" \
+        git -C "$services" commit -q -m "The greenhouse's API and the sensors that ask it"
+    git -C "$services" add -- src/Greenhouse.AppHost
+    GIT_AUTHOR_DATE="2026-10-13T10:15:00+00:00" GIT_COMMITTER_DATE="2026-10-13T10:15:00+00:00" \
+        git -C "$services" commit -q -m "Both run by an Aspire AppHost"
+    unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+    dotnet build "$services/GreenhouseServices.slnx" -nologo -v:q -clp:ErrorsOnly
+    services_prepared=1
+}
+
 # One picture: a fresh state of its own (layout, breakpoints, logs), the window at the site's size, the scene's steps.
 shot() {
     local name=$1 theme=$2
     shift 2
-    # Under TMPDIR rather than the repository, since the status bar names a profile's snapshot by its path there.
     local state="$tmp/passenger-site-shots/state/$name-$theme" png="$work/png/$name-$theme.png"
     if [[ $name == agent ]]; then
         # The window's agent socket is in its state's mcp/, and macOS keeps a socket's path to 103 bytes.
         state="$tmp/pss-$name-$theme"
+    elif [[ $name == profiler ]]; then
+        # The status bar names a profile's snapshot by its folder, so it is kept in a folder named for the sample at a fixed
+        # place, never the machine's TMPDIR or the repository; one theme's at a time.
+        state=/private/tmp/Greenhouse
     fi
     rm -rf "$state"
     mkdir -p "$state"
-    PASSENGER_SETTINGS="$state" "$passenger" "$folder/Greenhouse.slnx" --theme "$theme" --look passenger \
+    # The sample's solution, unless the scene names another (solution=…, the services scenes').
+    PASSENGER_SETTINGS="$state" "$passenger" "${solution:-$folder/Greenhouse.slnx}" --theme "$theme" --look passenger \
         --size 1200x750 --scale 2 ${extra[@]+"${extra[@]}"} "$@" --screenshot "$png"
-    cwebp -quiet -q "$quality" -m 6 "$png" -o "$images/$name-$theme.webp"
-    if (($(wc -c < "$images/$name-$theme.webp") > most)); then
-        cwebp -quiet -size "$most" -pass 6 -m 6 "$png" -o "$images/$name-$theme.webp"
+    encode "$png" "$images/$name-$theme.webp"
+}
+
+# A capture to the site's WebP: at the quality above, or at the most bytes when a busy picture would take more.
+encode() {
+    local png=$1 webp=$2
+    cwebp -quiet -q "$quality" -m 6 "$png" -o "$webp"
+    if (($(wc -c < "$webp") > most)); then
+        cwebp -quiet -size "$most" -pass 10 -m 6 "$png" -o "$webp"
     fi
-    echo "site-shots: $images/$name-$theme.webp ($(($(wc -c < "$images/$name-$theme.webp") / 1024)) KB)"
+    echo "site-shots: $webp ($(($(wc -c < "$webp") / 1024)) KB)"
+}
+
+# The themes scene: the same window in every look, Themes.cs' Look in its order, each over a copy of the solution file
+# named after its look, so its title bar and Solution view name it; then one window changing look, Passenger's own first,
+# each held a moment, every frame a key frame so each is whole wherever a viewer joins; and Passenger's own look still.
+looks=(Passenger Harbour Sorbet Nocturne Saffron Bonbon Ledger Slate Orbit Nightjar Moss Phosphor)
+themes() {
+    local theme=$1 look lower state
+    mkdir -p "$work/png/themes"
+    for look in "${looks[@]}"; do
+        lower=$(tr '[:upper:]' '[:lower:]' <<< "$look")
+        state="$tmp/passenger-site-shots/state/themes-$lower-$theme"
+        rm -rf "$state"
+        mkdir -p "$state"
+        cp "$folder/Greenhouse.slnx" "$folder/$look.slnx"
+        # The class's doc comment, keywords, types, a lambda and numbers in the editor, the Explorer beside it.
+        if ! PASSENGER_SETTINGS="$state" "$passenger" "$folder/$look.slnx" --theme "$theme" --look "$lower" \
+            --size 932x530 --scale 2 ${extra[@]+"${extra[@]}"} --file src/Greenhouse.Core/WateringPlan.cs \
+            --caret 4:21 --screenshot "$work/png/themes/$lower-$theme.png"; then
+            rm -f "$folder/$look.slnx"
+            exit 1
+        fi
+        # Gone again at once: the other scenes' Commit window would list it as a file never added.
+        rm -f "$folder/$look.slnx"
+    done
+    local frames=()
+    for look in "${looks[@]}"; do
+        frames+=("$work/png/themes/$(tr '[:upper:]' '[:lower:]' <<< "$look")-$theme.png")
+    done
+    img2webp -loop 0 -kmin 0 -kmax 1 -lossy -q 78 -m 6 -d 1800 "${frames[@]}" -o "$images/themes-$theme.webp" > /dev/null
+    echo "site-shots: $images/themes-$theme.webp ($(($(wc -c < "$images/themes-$theme.webp") / 1024)) KB)"
+    encode "$work/png/themes/passenger-$theme.png" "$images/themes-still-$theme.webp"
 }
 
 scene() {
@@ -148,7 +233,7 @@ scene() {
             # The Commit window from its stripe button, then the Git window's log, widened past its dates (its splitter
             # dragged right), with a commit on the merged branch chosen and its details.
             shot "$name" "$theme" --file src/Greenhouse.Core/WateringPlan.cs --caret 26:9 --click 20,95 --key "meta+9" \
-                --drag 808,600,920,600 --click 414,602 --hover 700,200 ;;
+                --drag 808,600,975,600 --click 414,602 --hover 700,200 ;;
         find-in-files)
             # The popup's matches across the solution and the first one's preview.
             shot "$name" "$theme" --file src/Greenhouse.Cli/Program.cs --key "meta+shift+F" --type "Litres" \
@@ -184,6 +269,24 @@ scene() {
                 --agent "python3 -I \"$repo/tools/site-shots/agent.py\"" --key "meta+shift+F12" \
                 --key "meta+shift+A" --type "Live Visual Tree" --key enter --wait 3000 --click 1020,387 --wait 2000 \
                 --key "meta+control+1" --drag 700,444,700,404 --drag 1155,124,1155,148 --wait 1000 --hover 600,300 ;;
+        themes)
+            themes "$theme" ;;
+        aspire)
+            # The AppHost debugged (the toolbar's configuration at first), stopped at a breakpoint in the API's handler
+            # while the sensors run on: a Debug tab for each service, and beside them the Aspire window (its stripe button
+            # dragged to the bottom right), its list narrowed and the API's Details chosen.
+            services_ready
+            solution="$services/GreenhouseServices.slnx" shot "$name" "$theme" --file src/Greenhouse.Api/Program.cs \
+                --caret 32:9 --key F9 --click 16,50 --drag 20,329,900,640 --click-name DebugButton --wait 30000 \
+                --drag 600,600,585,600 --wait 500 --drag 815,640,778,640 --wait 500 --click 870,531 --wait 1500 \
+                --hover 900,120 ;;
+        requests)
+            # The AppHost run, the sensors asking the API each second: the Requests window shown, the Aspire window
+            # minimized and the editor shortened for its room, each thirsty-plants request marked N+1 with its six queries.
+            services_ready
+            solution="$services/GreenhouseServices.slnx" shot "$name" "$theme" --file src/Greenhouse.Api/Program.cs \
+                --caret 31:9 --click 16,50 --click-name RunButton --wait 25000 --key "meta+shift+A" --type "Requests" \
+                --wait 1000 --key enter --click 578,463 --drag 700,444,700,290 --wait 8000 --hover 900,120 ;;
     esac
 }
 

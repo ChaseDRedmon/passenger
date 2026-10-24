@@ -1,12 +1,12 @@
 using System.Diagnostics;
 using Microsoft.Diagnostics.NETCore.Client;
+using Passenger.Core;
 
 namespace Passenger.Debugger;
 
 public static class DiagnosticClientHelper
 {
     /// <summary>What holds a program at its start until a diagnostics client lets it go.</summary>
-    private const string HoldVariable = "DOTNET_DefaultDiagnosticPortSuspend";
 
     /// <summary>Lets go a process held at its start by its diagnostic port, as an attach does once the debugger is registered
     /// for its runtime; one already running is let be, its runtime's answer (<paramref name="answered"/>) ending the wait
@@ -49,11 +49,32 @@ public static class DiagnosticClientHelper
         }
     }
 
+    /// <summary>Lets go a process's runtime held at its start, when its diagnostic port is there to ask, as an attach would
+    /// have: a runtime already running takes the word as done. Null once asked, else why it could not be.</summary>
+    public static string? Resume(int processId)
+    {
+        try
+        {
+            // Looked for first, as above: a client on Windows waits 30 s on a pipe that does not exist.
+            if (!DiagnosticsClient.GetPublishedProcesses().Contains(processId))
+            {
+                return "it has no diagnostic port open";
+            }
+            Release(new DiagnosticsClient(processId));
+            return null;
+        }
+        catch (Exception error) when (error is ServerNotAvailableException or ServerErrorException or IOException or TimeoutException or UnauthorizedAccessException
+            or InvalidOperationException)
+        {
+            return error.Message;
+        }
+    }
+
     private static void Release(DiagnosticsClient client)
     {
         try
         {
-            client.SetEnvironmentVariable(HoldVariable, string.Empty);
+            client.SetEnvironmentVariable(RuntimeVariables.DefaultDiagnosticPortSuspend, string.Empty);
         }
         catch (ServerErrorException)
         {

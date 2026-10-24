@@ -174,9 +174,6 @@ internal sealed class Stripe : Border
     /// <summary>The windows whose buttons the stripe has no room for, which More lists.</summary>
     public IReadOnlyList<ToolWindow> Overflowing => [.. cut.Select(button => buttons.First(b => b.Value == button).Key)];
 
-    /// <summary>Whether More shows, for the windows the stripe has no room for.</summary>
-    public bool ShowsMore => more.IsVisible;
-
     /// <summary>Hides the last buttons while the stripe is too short for them all, More in their place: worked out from the
     /// buttons' own sizes (every one a stripe button's), not from a layout, so hiding one never asks for another pass.</summary>
     private void FitButtons()

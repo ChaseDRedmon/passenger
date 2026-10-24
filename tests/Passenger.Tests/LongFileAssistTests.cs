@@ -9,10 +9,10 @@ using Passenger.Text;
 namespace Passenger.Tests;
 
 /// <summary>The language server's help in a file of 20,000 lines costs a key what the key changed, never the file: its
-/// colours, squiggles and completion as you type, held to what the UI thread allocates and what reaches the server. The
-/// files are the project's from the start, so the class's windows share one warm server, which compiles them once
-/// (<see cref="SharedProject"/>); each test still opens its own window on them as written. Allocations counted, so run
-/// alone.</summary>
+/// colours, squiggles, hints and completion as you type, held to what the UI thread allocates and what reaches the server;
+/// and an answer as large as the solution (usages by the thousand) is read off the UI thread. The files are the project's
+/// from the start, so the class's windows share one warm server, which compiles them once (<see cref="SharedProject"/>);
+/// each test still opens its own window on them as written. Allocations counted, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Project>
 {
@@ -33,7 +33,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
     {
         MainWindow window = project.Open("Dotted.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "        Console");
+        Ui.PlaceAfter(editor, "        Console");
         editor.Focus();
         Ui.Settle();
 
@@ -58,86 +58,15 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         window.Close();
     }
 
-    /// <summary>The server's colours for a file of 20,000 lines are hundreds of thousands of tokens, decoded off the UI
-    /// thread: no frame while they land allocates a quarter of what one decoded copy of them takes, nor a key half of it
-    /// (a key's drawing costs the same in a short file). Through the keys typed before they land, and after, a local keeps
-    /// its colour on its word, on screen and off it.</summary>
-    [AvaloniaFact]
-    public void Semantic_colours_in_a_file_of_twenty_thousand_lines_land_without_decoding_it_on_the_UI_thread_and_stay_on_their_words()
-    {
-        string source = Project.Long;
-        MainWindow window = project.Open("Long.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        OpenDocument document = window.EditorArea.Active!;
-        TokenKind? KindAt(int offset) => document.Highlighter?.GetSpans(document.Text.Snapshot, offset, 1)
-            .Where(s => s.Start == offset).Select(s => (TokenKind?)s.Kind).FirstOrDefault();
-        // A use of a local on screen, below where the keys go, and one at the end of the file.
-        int near = source.IndexOf("value0 * 3", StringComparison.Ordinal);
-        int far = source.LastIndexOf("value98 * 3", StringComparison.Ordinal);
-        Ui.WaitFor(() => KindAt(near) == TokenKind.Local && KindAt(far) == TokenKind.Local, "the server's colours on the locals");
-
-        Passenger.App.CSharp.CSharpDocument csharp = window.CSharpService!.For(document)!;
-        Task<(Passenger.Lsp.SemanticTokens? Tokens, int Version)> asking = csharp.Lsp!.SemanticTokensAsync();
-        Ui.WaitFor(() => asking.IsCompleted, "the whole file's tokens");
-        long decoded = asking.Result.Tokens!.Data.Length / 5 * System.Runtime.CompilerServices.Unsafe.SizeOf<SyntaxSpan>();
-        Assert.True(decoded > 1_000_000, $"The file's tokens decode to only {decoded / 1024} KB");
-
-        // Keys that open no completion, before the first statement's end: everything after them moves.
-        int typing = source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + ".Length;
-        editor.Selections = SelectionSet.Single(typing);
-        editor.Focus();
-        Ui.Settle();
-        long keys = 0;
-        const string Digits = "123";
-        for (int i = 0; i < Digits.Length; i++)
-        {
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            window.KeyTextInput(Digits[i].ToString());
-            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key, whose allocations are measured");
-            keys = Math.Max(keys, GC.GetAllocatedBytesForCurrentThread() - before);
-            Assert.True(KindAt(near + i + 1) == TokenKind.Local, $"After {i + 1} keys the local's use below them lost its colour: {KindAt(near + i + 1)}");
-        }
-
-        // A statement put in at once, whose use of the local only the server colours as one.
-        editor.Selections = SelectionSet.Single(document.Text.Snapshot.ToString().IndexOf("0;", typing, StringComparison.Ordinal) + 2);
-        const string Statement = " int fresh = value0;";
-        window.KeyTextInput(Statement);
-        int fresh = editor.Selections.Primary.Caret - "value0;".Length;
-        int moved = Digits.Length + Statement.Length;
-        long landing = 0;
-        DateTime limit = DateTime.UtcNow + TimeSpan.FromSeconds(90).Scaled();
-        while ((KindAt(fresh) != TokenKind.Local || BackgroundWork.Pending > 0) && DateTime.UtcNow < limit)
-        {
-            Assert.True(KindAt(near + moved) == TokenKind.Local, $"While the server's colours were out the local's use below lost its colour: {KindAt(near + moved)}");
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            Ui.Hold(TimeSpan.FromMilliseconds(10), "one frame, whose allocations are measured");
-            landing = Math.Max(landing, GC.GetAllocatedBytesForCurrentThread() - before);
-        }
-        Assert.True(KindAt(fresh) == TokenKind.Local, "The local used in the statement put in never took the server's colour");
-        Assert.True(KindAt(near + moved) == TokenKind.Local, "The local's use below the keys lost its colour once the server's landed");
-        Assert.True(landing < decoded / 4,
-            $"A frame while the server's colours landed allocated {landing / 1024} KB on the UI thread, a quarter or more of the {decoded / 1024} KB the file's tokens decode to: they were decoded there");
-        Assert.True(keys < decoded / 2, $"A key allocated {keys / 1024} KB on the UI thread, half or more of the {decoded / 1024} KB the file's tokens decode to");
-
-        // Off screen, the whole file's colours are carried through keys until they come again.
-        for (int i = 0; i < Digits.Length; i++)
-        {
-            window.KeyTextInput(Digits[i].ToString());
-            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key");
-            Assert.True(KindAt(far + moved + i + 1) == TokenKind.Local, $"After {i + 1} more keys the local's use at the end of the file lost its colour: {KindAt(far + moved + i + 1)}");
-        }
-        Ui.Settle();
-        Assert.Equal(TokenKind.Local, KindAt(far + moved + Digits.Length));
-        Assert.Equal(TokenKind.Local, KindAt(fresh));
-        window.Close();
-    }
-
     /// <summary>Squiggles in a file of 20,000 lines stay on their words as lines go in above them, and so do the diagnostics
     /// a fix asked for at the caret is given, which are on the server's lines. A key finds those lines from what it changed,
     /// reading a few characters rather than the whole file (twice, once with diagnostics to move and once for the change
-    /// sent to the server).</summary>
+    /// sent to the server). The server's colours, hundreds of thousands of tokens, are decoded off the UI thread: no frame
+    /// while they land allocates a quarter of what one decoded copy of them takes, nor a key half of it (a key's drawing
+    /// costs the same in a short file); through the keys typed before they land, and after, a local keeps its colour on
+    /// its word, on screen and off it. One window, the lines put in first: the keys after them leave a statement unended.</summary>
     [AvaloniaFact]
-    public void Squiggles_in_a_file_of_twenty_thousand_lines_stay_on_their_words_as_lines_go_in_above_and_a_key_reads_only_what_it_changed()
+    public void Squiggles_and_colours_in_a_file_of_twenty_thousand_lines_stay_on_their_words_and_a_key_reads_and_decodes_only_what_it_changed()
     {
         string source = Project.Long;
         MainWindow window = project.Open("Long.cs");
@@ -187,6 +116,150 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
 
         Ui.Settle();
         OnTheirWords("Once the server's diagnostics came again");
+
+        // The server's colours, on the text with those lines in it. A use of a local on screen, below where the keys go,
+        // and one at the end of the file.
+        TokenKind? KindAt(int offset) => document.Highlighter?.GetSpans(document.Text.Snapshot, offset, 1)
+            .Where(s => s.Start == offset).Select(s => (TokenKind?)s.Kind).FirstOrDefault();
+        int near = document.Text.Snapshot.ToString().IndexOf("value0 * 3", StringComparison.Ordinal);
+        int far = document.Text.Snapshot.ToString().LastIndexOf("value98 * 3", StringComparison.Ordinal);
+        Ui.WaitFor(() => KindAt(near) == TokenKind.Local && KindAt(far) == TokenKind.Local, "the server's colours on the locals");
+        Task<(Passenger.Lsp.SemanticTokens? Tokens, int Version)> asking = csharp.Lsp!.SemanticTokensAsync();
+        Ui.WaitFor(() => asking.IsCompleted, "the whole file's tokens");
+        long decoded = asking.Result.Tokens!.Data.Length / 5 * System.Runtime.CompilerServices.Unsafe.SizeOf<SyntaxSpan>();
+        Assert.True(decoded > 1_000_000, $"The file's tokens decode to only {decoded / 1024} KB");
+
+        // Keys that open no completion, before the first statement's end: everything after them moves.
+        int typing = document.Text.Snapshot.ToString().IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + ".Length;
+        editor.Selections = SelectionSet.Single(typing);
+        editor.Focus();
+        Ui.Settle();
+        long keys = 0;
+        const string Digits = "123";
+        for (int i = 0; i < Digits.Length; i++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput(Digits[i].ToString());
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key, whose allocations are measured");
+            keys = Math.Max(keys, GC.GetAllocatedBytesForCurrentThread() - before);
+            Assert.True(KindAt(near + i + 1) == TokenKind.Local, $"After {i + 1} keys the local's use below them lost its colour: {KindAt(near + i + 1)}");
+        }
+
+        // A statement put in at once, whose use of the local only the server colours as one.
+        editor.Selections = SelectionSet.Single(document.Text.Snapshot.ToString().IndexOf("0;", typing, StringComparison.Ordinal) + 2);
+        const string Statement = " int fresh = value0;";
+        window.KeyTextInput(Statement);
+        int fresh = editor.Selections.Primary.Caret - "value0;".Length;
+        int moved = Digits.Length + Statement.Length;
+        long landing = 0;
+        DateTime limit = DateTime.UtcNow + TimeSpan.FromSeconds(90).Scaled();
+        while ((KindAt(fresh) != TokenKind.Local || BackgroundWork.Pending > 0) && DateTime.UtcNow < limit)
+        {
+            Assert.True(KindAt(near + moved) == TokenKind.Local, $"While the server's colours were out the local's use below lost its colour: {KindAt(near + moved)}");
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "one frame, whose allocations are measured");
+            landing = Math.Max(landing, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+        Assert.True(KindAt(fresh) == TokenKind.Local, "The local used in the statement put in never took the server's colour");
+        Assert.True(KindAt(near + moved) == TokenKind.Local, "The local's use below the keys lost its colour once the server's landed");
+        Assert.True(landing < decoded / 4,
+            $"A frame while the server's colours landed allocated {landing / 1024} KB on the UI thread, a quarter or more of the {decoded / 1024} KB the file's tokens decode to: they were decoded there");
+        Assert.True(keys < decoded / 2, $"A key allocated {keys / 1024} KB on the UI thread, half or more of the {decoded / 1024} KB the file's tokens decode to");
+
+        // Off screen, the whole file's colours are carried through keys until they come again.
+        for (int i = 0; i < Digits.Length; i++)
+        {
+            window.KeyTextInput(Digits[i].ToString());
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key");
+            Assert.True(KindAt(far + moved + i + 1) == TokenKind.Local, $"After {i + 1} more keys the local's use at the end of the file lost its colour: {KindAt(far + moved + i + 1)}");
+        }
+        Ui.Settle();
+        Assert.Equal(TokenKind.Local, KindAt(far + moved + Digits.Length));
+        Assert.Equal(TokenKind.Local, KindAt(fresh));
+        window.Close();
+    }
+
+    /// <summary>Keys typed in one place while the server answers no colours (as while its projects load) keep the colours it
+    /// gave last on their words, below the keys and at the file's end, carried through one change for the run of them: a
+    /// change kept for each key, every line drawn carried through all of them, made each key cost more than the one before
+    /// (7 ms a key in #233's measure while a solution loaded).</summary>
+    [AvaloniaFact]
+    public void Keys_typed_while_the_server_gives_no_colours_carry_its_last_through_one_change_for_the_run()
+    {
+        string source = Project.Long;
+        MainWindow window = project.Open("Long.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        TokenKind? KindAt(int offset) => document.Highlighter?.GetSpans(document.Text.Snapshot, offset, 1)
+            .Where(s => s.Start == offset).Select(s => (TokenKind?)s.Kind).FirstOrDefault();
+        int near = source.IndexOf("value0 * 3", StringComparison.Ordinal);
+        int far = source.LastIndexOf("value98 * 3", StringComparison.Ordinal);
+        Ui.WaitFor(() => KindAt(near) == TokenKind.Local && KindAt(far) == TokenKind.Local, "the server's colours on the locals");
+        Ui.Settle();
+        Passenger.Languages.CSharp.SemanticHighlighter colours = Assert.IsType<Passenger.Languages.CSharp.SemanticHighlighter>(document.Highlighter);
+        Passenger.Lsp.LanguageServer server = window.CSharpService!.Session!.Server;
+        _ = server.RefuseNext("textDocument/semanticTokens/range", 1000);
+        _ = server.RefuseNext("textDocument/semanticTokens/full", 1000);
+        try
+        {
+            editor.Selections = SelectionSet.Single(source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + 0".Length);
+            editor.Focus();
+            const int Keys = 12;
+            for (int i = 0; i < Keys; i++)
+            {
+                window.KeyTextInput((i % 10).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                Ui.Settle();
+                Assert.True(KindAt(near + i + 1) == TokenKind.Local, $"After {i + 1} keys the local's use below them lost its colour: {KindAt(near + i + 1)}");
+            }
+            Assert.True(colours.Carrying <= 1, $"The server's last colours were carried through {colours.Carrying} changes, one for each of the {Keys} keys typed in one place");
+            Assert.Equal(TokenKind.Local, KindAt(far + Keys));
+        }
+        finally
+        {
+            _ = server.RefuseNext("textDocument/semanticTokens/range", 0);
+            _ = server.RefuseNext("textDocument/semanticTokens/full", 0);
+        }
+        window.Close();
+    }
+
+    /// <summary>Until the parse catches up with a key (it falls behind while a solution loads), the lines on screen keep the
+    /// colours read for them from the tree before the key, carried through it: a key classifies again the line it changed
+    /// and no other, where every line drawn was classified again at every key; and they are the colours the tree gives once
+    /// the parse has landed. Counted in the characters classified on the UI thread, not a time; the key is an edit made as
+    /// typing makes it, since the window's input runs its loop as a key ends, where a quick parse lands.</summary>
+    [AvaloniaFact]
+    public void Until_the_parse_catches_up_a_key_classifies_again_only_the_line_it_changed()
+    {
+        string source = Project.Long;
+        MainWindow window = project.Open("Long.cs");
+        OpenDocument document = window.EditorArea.Active!;
+        Passenger.Languages.CSharp.CSharpHighlighter syntax = document.Syntax!;
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.Selections = SelectionSet.Single(source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + 0".Length);
+        editor.Focus();
+        Ui.Settle();
+        TextSnapshot text = document.Text.Snapshot;
+        int start = text.GetLineStart(0);
+        int end = text.GetLine(80).EndIncludingBreak;
+        _ = syntax.GetSpans(text, start, end - start);
+
+        // The key made as typing makes it, through the editor but not its input, which runs the window's loop as it ends,
+        // where a quick parse lands: the parse lands only once the loop runs again.
+        long before = syntax.CharactersClassified;
+        int caret = editor.Selections.Primary.Caret;
+        editor.ApplyEdits([new TextEdit(caret, 0, "1")], SelectionSet.Single(caret + 1));
+        TextSnapshot typed = document.Text.Snapshot;
+        Assert.True(syntax.Newest is null, "The key's parse landed before the screen's colours were read");
+        Assert.Equal(text.Length + 1, typed.Length);
+        SyntaxSpan[] carried = [.. syntax.GetSpans(typed, start, end + 1 - start)];
+        long classified = syntax.CharactersClassified - before;
+        Assert.True(classified < (end - start) / 10,
+            $"A key classified {classified} characters again of the {end - start} on screen: it classified every line drawn, not the one it changed");
+
+        Ui.Settle();
+        SyntaxSpan[] landed = [.. syntax.GetSpans(typed, start, end + 1 - start)];
+        Assert.True(carried.SequenceEqual(landed),
+            $"The colours carried through the key differ from the tree's once its parse landed, first at {carried.Zip(landed).FirstOrDefault(pair => pair.First != pair.Second)}");
         window.Close();
     }
 
@@ -269,17 +342,139 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         }
     }
 
-    private static void PlaceAfter(CodeEditor editor, string text)
+    /// <summary>Find Usages' answer, like every answer that grows with the solution, is read into places off the UI thread,
+    /// before what asked resumes there: a method called four thousand times answers as many places, and no frame while its
+    /// answer lands allocates on the UI thread a quarter of what reading that answer takes, nor much past the most a frame
+    /// does while a local's two usages land or while nothing is asked (the caret's blink draws the editor again). What the
+    /// window allocates is the count, not a time a busy machine stretches.</summary>
+    [AvaloniaFact]
+    public void The_usages_of_a_method_called_thousands_of_times_are_read_off_the_UI_thread()
     {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
+        MainWindow window = project.Open("Calls.cs");
+        (int few, long fewLanding, _) = Usages(window, "int total =");
+        (int many, long manyLanding, long read) = Usages(window, "int Of(");
+        long idle = Frames(() => false, 120);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"{few} usages landed in frames of at most {fewLanding / 1024} KB on the UI thread; {many} in {manyLanding / 1024} KB, reading them taking {read / 1024} KB; "
+            + $"a frame with nothing asked allocates up to {idle / 1024} KB");
+        Assert.True(many > 4000, $"The method called four thousand times had {many} usages");
+        Assert.True(manyLanding < read / 4,
+            $"A frame while {many} usages landed allocated {manyLanding / 1024} KB on the UI thread, a quarter or more of the {read / 1024} KB reading them takes: they were read there");
+        Assert.True(manyLanding <= Math.Max(fewLanding, idle) + (64 * 1024),
+            $"A frame while {many} usages landed allocated {manyLanding / 1024} KB on the UI thread, against {fewLanding / 1024} KB for {few} and {idle / 1024} KB with nothing asked");
+        window.Close();
     }
 
-    /// <summary>A small console project on disk with two files of 20,000 lines, restored once for every test, and the warm
-    /// server they share on it, which loads and compiles the files once.</summary>
+    /// <summary>The usages of what the shown file declares in <paramref name="declaration"/> (its own among them): how
+    /// many, the most a frame on the UI thread allocated while they were asked for there and landed, and what reading the
+    /// answer allocates (the same asked for from the thread pool, the window's thread waiting).</summary>
+    private static (int Usages, long Landing, long Read) Usages(MainWindow window, string declaration)
+    {
+        Ui.Settle();
+        OpenDocument document = window.EditorArea.Active!;
+        Passenger.Lsp.LspDocument lsp = window.CSharpService!.For(document)!.Lsp!;
+        int declared = document.Text.Snapshot.ToString().IndexOf(declaration, StringComparison.Ordinal) + "int ".Length;
+        long read = GC.GetTotalAllocatedBytes(precise: true);
+        int usages = Task.Run(() => lsp.ReferencesAsync(declared)).GetAwaiter().GetResult().Count;
+        read = GC.GetTotalAllocatedBytes(precise: true) - read;
+        // What the wait above put off, done before the frames are counted.
+        Ui.Settle();
+        Task<IReadOnlyList<Passenger.Lsp.LspLocation>> asking = lsp.ReferencesAsync(declared);
+        long landing = Frames(() => asking.IsCompleted, int.MaxValue);
+        Assert.True(asking.IsCompletedSuccessfully, $"The usages in {document.Name} never came");
+        Assert.Equal(usages, asking.Result.Count);
+        return (usages, landing, read);
+    }
+
+    /// <summary>The most one frame allocated on the UI thread, of those run until <paramref name="done"/> or
+    /// <paramref name="most"/> frames have run (a minute at most).</summary>
+    private static long Frames(Func<bool> done, int most)
+    {
+        long largest = 0;
+        DateTime limit = DateTime.UtcNow + TimeSpan.FromSeconds(60).Scaled();
+        for (int frame = 0; frame < most && !done() && DateTime.UtcNow < limit; frame++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "one frame, whose allocations are measured");
+            largest = Math.Max(largest, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+        return largest;
+    }
+
+    /// <summary>A key typed above four thousand calls, a parameter's name hint before each argument, costs the UI thread
+    /// about what it does above sixty (a screen of them, the rest naming their parameters), soft-wrapped or not: the hints
+    /// past it are carried in runs, those it reaches moved and the rest shifted whole, never copied, sorted again or, with
+    /// soft wrap on, their lines wrapped again (the key's line is). Each hint still stands before its argument.</summary>
+    [AvaloniaFact]
+    public void A_key_above_thousands_of_hinted_calls_costs_what_it_does_above_a_few_and_wraps_only_its_line()
+    {
+        MainWindow window = project.Open("Few.cs");
+        foreach (bool wrapping in new[] { false, true })
+        {
+            (int few, long fewBytes, long fewWrapped) = HintedKeys(window, "Few.cs", wrapping);
+            (int many, long manyBytes, long manyWrapped) = HintedKeys(window, "Calls.cs", wrapping);
+            string how = wrapping ? "soft-wrapped" : "not wrapped";
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"A key {how} above {few} hints allocated {fewBytes / 1024} KB on the UI thread and wrapped {fewWrapped} characters; above {many}, {manyBytes / 1024} KB and {manyWrapped}");
+            Assert.True(manyBytes <= fewBytes + (32 * 1024),
+                $"A key {how} above {many} hints allocated {manyBytes / 1024} KB on the UI thread, {(manyBytes - fewBytes) / 1024} KB more than above {few}: it copied or sorted every hint");
+            Assert.True(manyWrapped <= fewWrapped,
+                $"A key {how} above {many} hints wrapped {manyWrapped} characters, more than the {fewWrapped} it wraps above {few}: it wrapped the hinted lines again");
+        }
+        window.Close();
+    }
+
+    /// <summary>Keys typed above a file's calls once its hints have come, with soft wrap on or off: how many hints, and the
+    /// bytes each key and the frame after it allocate on the UI thread and the characters each wraps, on average; every hint
+    /// then still stands before its argument.</summary>
+    private (int Hints, long Bytes, long Wrapped) HintedKeys(MainWindow window, string file, bool wrapping)
+    {
+        window.OpenFile(project.PathOf(file));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        int calls = (document.Text.Snapshot.ToString().Length - document.Text.Snapshot.ToString().Replace("Of(3, 4)", string.Empty, StringComparison.Ordinal).Length) / "Of(3, 4)".Length;
+        Ui.WaitFor(() => editor.InlayHints.Count == 2 * calls, $"the hints of {file}'s {calls} calls");
+        if (document.SoftWrap != wrapping)
+        {
+            Ui.Run(window, AppActions.SoftWrap);
+        }
+        Ui.PlaceAfter(editor, "int total = 0");
+        editor.Focus();
+        Ui.Settle();
+        const int Keys = 5;
+        long wrapped = editor.CharactersWrapped;
+        long bytes = 0;
+        for (int i = 0; i < Keys; i++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("1");
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key, whose allocations are measured");
+            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        wrapped = editor.CharactersWrapped - wrapped;
+        TextSnapshot text = document.Text.Snapshot;
+        foreach (InlayHint hint in editor.InlayHints)
+        {
+            string argument = hint.Label == "width:" ? "3" : "4";
+            Assert.True(text.GetText(hint.Offset, 1) == argument,
+                $"After {Keys} keys above them, {file}'s hint '{hint.Label}' stands before '{text.GetText(hint.Offset, Math.Min(8, text.Length - hint.Offset))}' on line {text.GetLineFromOffset(hint.Offset) + 1}");
+        }
+        Assert.Equal(2 * calls, editor.InlayHints.Count);
+        return (2 * calls, bytes / Keys, wrapped / Keys);
+    }
+
+    /// <summary>A small console project on disk with two files of 20,000 lines and two of calls, restored once for every
+    /// test, and the warm server they share on it, which loads and compiles the files once.</summary>
     public sealed class Project : SharedProject
     {
+        /// <summary>Calls.cs: a method of two parameters called by four thousand members with literal arguments, each
+        /// argument with its parameter's name hint before it; Few.cs the same, but for the first sixty, a screen of them,
+        /// the rest naming their parameters, which shows none.</summary>
+        public static readonly string Calls = Called("Calls", 4000, 4000);
+
+        public static readonly string Few = Called("Few", 4000, 60);
+
         /// <summary>Long.cs: two hundred methods of a hundred lines and more, every fiftieth with an error, a string given a number.</summary>
         public static readonly string Long = TwentyThousandLines(errors: true, "Long", "}\n");
 
@@ -290,11 +485,25 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
             : base("long-assist-")
         {
             File.WriteAllText(PathOf("Sample.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
             File.WriteAllText(PathOf("Long.cs"), Long);
             File.WriteAllText(PathOf("Dotted.cs"), Dotted);
+            File.WriteAllText(PathOf("Calls.cs"), Calls);
+            File.WriteAllText(PathOf("Few.cs"), Few);
             Prepare();
+        }
+
+        /// <summary>A method of two parameters and members calling it, each in one of its own, the first
+        /// <paramref name="hinted"/> with literal arguments, which show their parameters' names, the rest naming them.</summary>
+        private static string Called(string name, int calls, int hinted)
+        {
+            StringBuilder text = new($"static class {name}\n{{\n    public static int Of(int width, int height) => width * height;\n\n    public static int Typed()\n    {{\n        int total = 0;\n        return total;\n    }}\n\n");
+            for (int i = 0; i < calls; i++)
+            {
+                text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    public static int Call{i}() => {(i < hinted ? "Of(3, 4)" : "Of(width: 3, height: 4)")};\n");
+            }
+            return text.Append("}\n").ToString();
         }
 
         /// <summary>Two hundred methods of a hundred lines and more: 20,000 lines, as many as Roslyn parses fresh every time.</summary>

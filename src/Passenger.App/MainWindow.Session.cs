@@ -18,6 +18,10 @@ public partial class MainWindow
     /// <summary>Bumped by each folder opened, so an open still waiting for the last session's end gives way to a later one.</summary>
     private int opens;
 
+    /// <summary>The folder an open waiting to begin will open, as of the open <see cref="openingAt"/> counts.</summary>
+    private string? opening;
+    private int openingAt;
+
     /// <summary>The folder open in the window and what it has and runs; one with no folder before any opens.</summary>
     public ProjectSession Session => session;
 
@@ -42,18 +46,41 @@ public partial class MainWindow
     /// warm server it may take up, its consoles, Debug window and tests tree, a test run's build (which the session's builds
     /// and runs make), and the Terminal tab the debugger asks for.</summary>
     private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer, Bottom,
-        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings);
+        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings, work, () => Engine)
+    {
+        DockerHub = DockerHub,
+        StartsLanguageServer = StartsLanguageServer,
+    };
+
+    /// <summary>Where this window's Dockerfile server asks for image tags in Docker Hub's place: a test's stand-in; null for
+    /// the place <c>PASSENGER_DOCKER_HUB</c> names, else Docker Hub's own.</summary>
+    public Uri? DockerHub { get; init; }
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
-        OpenBrowserOnceListening, () => StateFolder);
+        OpenBrowserOnceListening, () => StateFolder, work, ShowAspireEngineAsync)
+    {
+        Reveal = project =>
+        {
+            containersView?.Reveal(project);
+            containersView?.TelemetryChanged();
+        },
+        Tools = () => ToolsSource,
+        DevCertificates = DevCertificates,
+        AskCertificate = AskCertificateAsync,
+        AskReplace = AskReplaceAsync,
+        AsksNoOne = AgentsOwn,
+        ProfileService = RecordRunServiceAsync,
+        ShowFolder = ShowInFileManager,
+    };
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
     /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
     /// read again: its language server and open files are kept. Another folder's session is left first, and the new one
     /// made once what it ran has ended: the task is done once the folder is open (at once when nothing had to end), or
-    /// once a later open has taken its place.</summary>
-    public Task OpenFolder(string path)
+    /// once a later open has taken its place. <paramref name="opener"/> is the agent whose own open it is, which stays let in;
+    /// <paramref name="opened"/> runs once the folder's session has begun (or been read again), never for an open given up.</summary>
+    public Task OpenFolder(string path, Mcp.AgentConnection? opener = null, Action? opened = null)
     {
         UiThread.Check();
         string named = PathNames.Canonical(path);
@@ -62,6 +89,7 @@ public partial class MainWindow
         if (opening == session.Folder)
         {
             ReadAgain(opening, fileNamed ? named : null);
+            opened?.Invoke();
             return Task.CompletedTask;
         }
         // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
@@ -73,18 +101,23 @@ public partial class MainWindow
             }
             EndSession();
         }
+        AgentsGoTo(opening, opener);
         Autosave();
         // The session with no folder ends too, what it ran with it (a program attached to with no folder open); the files
         // open in it stay, the new session's.
         Task none = session.LeaveAsync();
         ending = ending.IsCompleted ? none : Task.WhenAll(ending, none);
+        // The folder's documents read off the window's thread meanwhile, so its restore takes them in with no read.
+        Task reading = keepsWorkspace ? Store().Project(opening).ReadAsync() : Task.CompletedTask;
         int open = ++opens;
-        if (ending.IsCompleted)
+        if (ending.IsCompleted && reading.IsCompleted)
         {
             Begin(opening, fileNamed ? named : null);
+            opened?.Invoke();
             return Task.CompletedTask;
         }
-        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null);
+        (this.opening, openingAt) = (opening, open);
+        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null, reading, opened);
     }
 
     /// <summary>The folder open now, opened again: with the solution it has, read again; with another (a solution or project
@@ -105,15 +138,17 @@ public partial class MainWindow
         Remember();
     }
 
-    private async Task BeginOnceEndedAsync(int open, string folder, string? named)
+    private async Task BeginOnceEndedAsync(int open, string folder, string? named, Task reading, Action? opened)
     {
         // Held while it waits, so a screenshot or a test finds the folder open rather than the moment between.
         using IDisposable held = BackgroundWork.Scope();
         status.Text = $"Opening {Path.GetFileName(folder)}…";
         await ending;
+        await reading;
         if (open == opens && Ended is null)
         {
             Begin(folder, named);
+            opened?.Invoke();
         }
     }
 
@@ -121,6 +156,8 @@ public partial class MainWindow
     /// found from code, what the store kept of the folder, and the folder among the recent ones.</summary>
     private void Begin(string folder, string? named)
     {
+        // Begun, the folder is the session's: kept as opening, a Close Solution after would leave the window holding it.
+        opening = null;
         WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(folder, named);
         // The projects as MSBuild last evaluated them, from the folder's cache, before any is evaluated again.
         ProjectSession opened = ProjectSession.Open(Setup(), folder, named, withSolution, keepsWorkspace ? Store().Project(folder) : null);
@@ -164,7 +201,7 @@ public partial class MainWindow
         Task terminals = Task.CompletedTask;
         if (terminal is { Tabs.Count: > 0 })
         {
-            Dock.Hide("terminal");
+            Dock.Hide(ToolWindowIds.Terminal);
             terminals = terminal.CloseAllAsync();
         }
         ending = leaving.LeaveAsync(("the terminal", terminals));
@@ -179,33 +216,46 @@ public partial class MainWindow
     private void Bind(ProjectSession next)
     {
         session = next;
+        ForgetRunMarks();
         buildRun = new BuildRunController(next, BuildRunParts());
+        BindAspire(next);
         buildRun.RunningChanged += (_, _) =>
         {
             if (session == next)
             {
-                StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
+                ShowStop();
                 ShowHotReloadButtons();
+            }
+        };
+        next.ProfiledChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                ShowStop();
             }
         };
         BindTests(next);
         BindDebug(next);
+        profiler?.Rebind();
         liveTree?.Bind(next);
         bindingValues?.Bind(next);
         overlays?.Bind(next);
         BindVcs(next);
         BindBookmarks(next);
+        BindEndpoints(next);
+        BindMigrations(next);
+        BindContainers(next);
         // Files open as it binds (a file opened with no folder) are its too.
         foreach (Workspace.OpenDocument document in Editors.Documents)
         {
             next.Attach(document);
         }
-        StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
+        ShowStop();
         ShowHotReloadButtons();
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();
         buildRun.ShowBindings();
-        if (Dock["problems"] is { } problemsWindow)
+        if (Dock[ToolWindowIds.Problems] is { } problemsWindow)
         {
             problemsWindow.Title = "Problems";
         }
@@ -232,7 +282,7 @@ public partial class MainWindow
             }
         };
         next.MSBuild.Feed = () => NuGet.FeedAsync(null);
-        next.MSBuild.Vulnerabilities = NuGet.VulnerabilitiesAsync;
+        next.MSBuild.Vulnerabilities = () => NuGet.VulnerabilitiesAsync();
         if (next.Web is { } web)
         {
             web.StateChanged += (_, _) =>
@@ -240,13 +290,14 @@ public partial class MainWindow
                 if (session == next)
                 {
                     status.ShowLanguage(LanguageLabel());
+                    structure?.FollowServer();
                 }
             };
             web.Stopped += (_, message) =>
             {
                 if (session == next)
                 {
-                    Say(message, StatusPlace.Log);
+                    Say(message, LogPlace);
                 }
             };
             web.Message += (_, message) =>
@@ -285,6 +336,8 @@ public partial class MainWindow
                 Explorer.Reload(next.Workspace!);
                 ShowWorkspaceName();
                 FindTests();
+                // Each file's project, which Problems lists the solution's under, as the projects now are.
+                ShowSolutionProblems();
             }
         };
         next.ProjectsEvaluated += (_, evaluated) =>
@@ -308,6 +361,8 @@ public partial class MainWindow
             if (session == next)
             {
                 ShowChosenConfiguration(next.Configurations);
+                // An AppHost evaluated or found since: its open files' resources are read, the others' kept.
+                ReadOpenAspireMarks(again: false);
             }
         };
         if (next.Watcher is { } watcher)
@@ -334,14 +389,14 @@ public partial class MainWindow
         BindHotReload(next);
         debugger.ActionRequested += (_, action) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 Request(action);
             }
         };
         debugger.Message += (_, message) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 // A stop at a binding error says it, and Problems' Bindings lists it.
                 Say(message, debugger.BindingStop is { } stop && message == debugger.Summary ? BindingPlace(stop.Problem.Problem) : null);
@@ -349,9 +404,16 @@ public partial class MainWindow
         };
         debugger.Navigate += (_, target) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 ShowStop(target.Path, target.Position);
+            }
+        };
+        debugger.TextOpened += (_, sql) =>
+        {
+            if (session == next && next.Debug == debugger)
+            {
+                OpenQuerySql(sql);
             }
         };
         debugger.StateChanged += (_, _) =>
@@ -371,9 +433,20 @@ public partial class MainWindow
             service.StateChanged += (_, _) => status.ShowLanguage(LanguageLabel());
             service.StateChanged += (_, _) => usages.Refresh();
             service.StateChanged += (_, _) => OutlineWhenUnseen();
-            service.StateChanged += (_, _) => Structure.FollowServer();
+            service.StateChanged += (_, _) => structure?.FollowServer();
+            service.StateChanged += (_, _) => RoutesServerChanged(service);
+            service.ProjectsLoaded += (_, _) => RoutesProjectsLoaded(service);
+            service.StateChanged += (_, _) =>
+            {
+                // Ready, as it loaded the folder's projects: the open AppHosts' resources are read from it once.
+                if (service == session.CSharp && !session.IsEnded && service.IsReady && aspireMarksFrom != service)
+                {
+                    aspireMarksFrom = service;
+                    ReadOpenAspireMarks(again: true);
+                }
+            };
             // Each stop is logged with why: the log is where to see more.
-            service.Stopped += (_, message) => Say(message, StatusPlace.Log);
+            service.Stopped += (_, message) => Say(message, LogPlace);
             service.Said += (_, said) => status.Say(said.Text, said.Severity, said.Problem is { } problem ? LoadProblemPlace(problem) : null);
             WatchProblems(service);
             service.FollowIndent(Editors.Active);

@@ -38,10 +38,10 @@ public sealed class ChangeSignatureDialog : RefactoringDialog
         NameBox.TextChanged += (_, _) => Update();
         ReturnTypeBox.TextChanged += (_, _) => Update();
 
-        AddButton = Tool("Icon.Add", "Add");
-        RemoveButton = Tool("Icon.Minimize", "Remove");
-        UpButton = Tool("Icon.ArrowUp", "Move Up");
-        DownButton = Tool("Icon.ArrowDown", "Move Down");
+        AddButton = ToolButtons.Of("Icon.Add", "Add");
+        RemoveButton = ToolButtons.Of("Icon.Minimize", "Remove");
+        UpButton = ToolButtons.Of("Icon.ArrowUp", "Move Up");
+        DownButton = ToolButtons.Of("Icon.ArrowDown", "Move Down");
         AddButton.Click += (_, _) => Add();
         RemoveButton.Click += (_, _) => Remove();
         UpButton.Click += (_, _) => Shift(-1);

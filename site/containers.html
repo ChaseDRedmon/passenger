@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Passenger: debug .NET in Docker Compose and Aspire, free</title>
+    <meta name="description" content="Debug, Hot Reload and profile every .NET service of a Docker Compose file, a Dockerfile or an Aspire AppHost, in a free and open-source IDE.">
+    <link rel="canonical" href="https://passenger-ide.net/containers">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Passenger">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:url" content="https://passenger-ide.net/containers">
+    <meta property="og:title" content="Passenger: debug .NET in Docker Compose and Aspire, free">
+    <meta property="og:description" content="Debug, Hot Reload and profile every .NET service of a Docker Compose file, a Dockerfile or an Aspire AppHost, in a free and open-source IDE.">
+    <meta property="og:image" content="https://passenger-ide.net/images/social-622499b6.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Passenger's Requests window beside the words: Debug the whole stack. The free IDE for C# and .NET.">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@Zaneris">
+    <meta name="twitter:creator" content="@Zaneris">
+    <meta name="twitter:title" content="Passenger: debug .NET in Docker Compose and Aspire, free">
+    <meta name="twitter:description" content="Debug, Hot Reload and profile every .NET service of a Docker Compose file, a Dockerfile or an Aspire AppHost, in a free and open-source IDE.">
+    <meta name="twitter:image" content="https://passenger-ide.net/images/social-622499b6.png">
+    <meta name="twitter:image:alt" content="Passenger's Requests window beside the words: Debug the whole stack. The free IDE for C# and .NET.">
+    <meta name="theme-color" content="#0F131C" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#2F6BF2">
+    <link rel="stylesheet" href="/style.css">
+    <script src="/site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="top">
+    <div class="wrap">
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Passenger</a>
+        <nav aria-label="Pages">
+            <a class="wide" href="/">Home</a>
+            <a class="wide" href="#compose">Compose</a>
+            <a class="wide" href="#aspire">Aspire</a>
+            <a class="wide" href="/agents">Agents</a>
+            <a href="/#download">Download</a>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main id="main">
+    <div class="hero page-hero">
+        <div class="wrap">
+            <p class="kicker">Containers and Aspire</p>
+            <h1>Debug and profile .NET services in Docker Compose and Aspire</h1>
+            <p class="lede">A container is one more place a .NET service runs. Passenger runs a compose file's services, a
+                Dockerfile's or an Aspire app's as one, every .NET service under its debugger, Hot Reload and profiler,
+                with nothing to set up beyond the files you have. Free and open source, on Windows, macOS and Linux.</p>
+            <div class="actions">
+                <a class="button primary" href="/#download">Download Passenger</a>
+                <a class="button" href="https://github.com/Zaneris/passenger/releases/tag/v0.2.0">What's new in 0.2.0</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="wrap page-body">
+        <figure class="shot">
+            <picture>
+                <source media="(prefers-color-scheme: light)" srcset="/images/aspire-light.webp" width="2400" height="1500">
+                <img src="/images/aspire-dark.webp" width="2400" height="1500" fetchpriority="high"
+                     alt="An Aspire AppHost debugged in Passenger: the API service stopped at a breakpoint with its values after the lines, a Debug tab for each service, and the Aspire window listing both services running with the API's details">
+            </picture>
+        </figure>
+
+        <section id="compose">
+            <h2>Docker Compose and Dockerfiles</h2>
+            <p class="intro">Passenger works through your own <code>docker</code> command and whatever its context reaches:
+                Docker Desktop, Colima, OrbStack, Rancher Desktop, Podman or a remote engine.</p>
+            <div class="grid two">
+                <div class="card">
+                    <h3>Containers are run configurations</h3>
+                    <p>Each compose file with its override, each project with a Dockerfile, each project that asks the .NET
+                        SDK for its image, and each Docker Compose project (<code>.dcproj</code>) is found as the solution
+                        opens. <code>Docker</code>, <code>DockerCompose</code> and <code>SdkContainer</code> launch profiles
+                        run. Edit Configurations chooses Run, Debug or Don't start for each .NET service.</p>
+                </div>
+                <div class="card">
+                    <h3>Fast, or as deployed</h3>
+                    <p>By default Passenger builds the .NET services itself and runs each from its build, mounted into its
+                        image's runtime stage: a code change needs no image rebuild, and Rerun restarts only the services whose
+                        build changed, on the same ports. Or run the images as Compose builds them.</p>
+                </div>
+                <div class="card">
+                    <h3>Every service debugged at once</h3>
+                    <p>Debug holds each .NET service at its start, attaches Passenger's debugger inside its container and lets
+                        it go, so a breakpoint in <code>Main</code> stops. Each gets a Debug tab with its container's log as
+                        its console. Run with Hot Reload applies your edits to every service as it runs, and an edit it can't
+                        apply rebuilds and restarts only the service that holds it.</p>
+                </div>
+                <div class="card">
+                    <h3>One service at a time</h3>
+                    <p>From a service's row in the Containers window, or the run icon beside it in the compose file: debug it,
+                        attach to it, run it without the debugger, restart or profile it while the others run on. A service
+                        marked Don't start can be started later in the same run.</p>
+                </div>
+                <div class="card">
+                    <h3>Attach to Process, inside containers</h3>
+                    <p>Attach to Process lists the .NET programs in every running container, those Passenger didn't start
+                        too, and debugs the one you choose there.</p>
+                </div>
+                <div class="card">
+                    <h3>Profiled where it runs</h3>
+                    <p>CPU traces and memory snapshots are taken in the container and shown as any others: hot spots at their
+                        lines, snapshots compared. Profile records a service from its first instruction, Attach Profiler one
+                        already running.</p>
+                </div>
+                <div class="card">
+                    <h3>The Containers window</h3>
+                    <p>Compose projects with their services, then every other container, images, volumes and networks, each
+                        with its state, health and ports as links: start, stop, restart, pull, scale, prune and inspect, a
+                        container's log with Find, its stats, files and details, and a shell in a Terminal tab.</p>
+                </div>
+                <div class="card">
+                    <h3>Logs and traces from a compose app</h3>
+                    <p>Turn on Collect logs and traces and Aspire's dashboard runs beside your services: their structured logs
+                        and traces show in the Containers window's Telemetry tab, a request's spans put together across
+                        services.</p>
+                </div>
+                <div class="card">
+                    <h3>Code help in Dockerfiles and compose files</h3>
+                    <p>Language servers for both, BuildKit's own checks, and Compose's own reading as you type: errors on their
+                        lines, each <code>${VAR}</code> followed by what it comes to (a secret as dots), Go to Declaration,
+                        Rename and completion of services, volumes and networks, and fixes for a name nothing declares. A
+                        connection string a service reads but never gets is warned of, with its fix.</p>
+                </div>
+                <div class="card">
+                    <h3>Add Docker Support and Compose</h3>
+                    <p>A Dockerfile and <code>.dockerignore</code> for a project, or the SDK's container properties, and a
+                        <code>compose.yaml</code> with the backing services your packages call for (Postgres, SQL Server,
+                        MongoDB, Redis, RabbitMQ), each with a healthcheck and its connection string. Undo takes either back.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="aspire">
+            <h2>The IDE of your Aspire AppHost</h2>
+            <p class="intro">An AppHost, a project or a single-file <code>apphost.cs</code>, is a run configuration, and
+                Aspire's orchestrator asks Passenger to start each project resource, so every .NET service runs under
+                Passenger.</p>
+            <div class="grid two">
+                <div class="card">
+                    <h3>Run, debug, reload and profile the whole app</h3>
+                    <p>Debug debugs every service at once, a Debug tab each, or those you mark. Hot Reload reaches each;
+                        Profile records the service you choose from its first instruction. Rerun builds and restarts only what
+                        changed, the AppHost too when its own code did.</p>
+                </div>
+                <div class="card">
+                    <h3>The Aspire window</h3>
+                    <p>The AppHost's resources with their state, health and addresses, their details with secrets masked, their
+                        consoles merged into one log with Find, the structured logs and traces they send, and the AppHost's
+                        own log. A resource's commands run from its row, and the AppHost's prompts come up as dialogs.</p>
+                </div>
+                <div class="card">
+                    <h3>Code help across the AppHost</h3>
+                    <p>Resource names complete, <code>AddProject</code> goes to its project, and a connection string's name
+                        in a service goes to the AppHost line that declares it. A service that reads a connection string its
+                        AppHost never gives it is marked with a fix that adds the <code>WithReference</code>, and Rename
+                        renames a resource everywhere it is read.</p>
+                </div>
+                <div class="card">
+                    <h3>Its containers go with it</h3>
+                    <p>The containers an AppHost makes are listed under it in the Containers window and removed with the run,
+                        however it ends. A container you made Persistent stays yours. Add &rsaquo; Aspire Orchestration adds
+                        an AppHost to a solution that has none.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="data">
+            <h2>What your services ask of the database</h2>
+            <div class="feature flip">
+                <div class="text">
+                    <p>The Requests window follows the services of a compose run or an AppHost, as it follows a program you
+                        run: each request they serve, the SQL each ran, N+1s and slow commands marked. The Migrations window
+                        works on the database the run uses, at the port the engine published it on.</p>
+                    <a class="more" href="/#web">Requests, SQL and migrations</a>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/requests-light.webp" width="2400" height="1500">
+                        <img src="/images/requests-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="Passenger's Requests window following an Aspire app's ASP.NET Core API as it runs, under the minimal API handler that loops over the plants: each GET /plants/thirsty request marked N+1, its repeated SQL query marked ×6 with its reads and times">
+                    </picture>
+                </figure>
+            </div>
+        </section>
+
+        <section id="limits">
+            <h2>Good to know</h2>
+            <ul class="limits">
+                <li><strong>Linux containers.</strong> Windows containers aren't supported; while Docker Desktop runs them,
+                    the status bar says so.</li>
+                <li><strong>Podman</strong> works with Docker's command and Compose v2 on its socket, or alone with
+                    <code>podman compose</code> running Docker's Compose v2.</li>
+                <li><strong>The container tools</strong> Passenger debugs and profiles with are downloaded for the container's
+                    system (Linux x64 or Arm64, glibc or musl) from the release the first time, checked against its
+                    checksums.</li>
+                <li><strong>Aspire</strong> 13.6 or a later 13.x.</li>
+            </ul>
+        </section>
+    </div>
+</main>
+
+<footer>
+    <div class="wrap">
+        <p>Passenger is free and open source under the MIT licence. Docker is a trademark of Docker, Inc.</p>
+        <nav aria-label="More">
+            <a href="/">Home</a>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+            <a href="https://x.com/Zaneris">X (@Zaneris)</a>
+            <a href="/agents">Agents</a>
+            <a href="/linux">Linux</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/LICENSE">Licence</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

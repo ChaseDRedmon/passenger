@@ -18,108 +18,142 @@ namespace Passenger.Tests;
 /// build's errors arrive in Problems where they point, and a run's output in the Run window.</summary>
 public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder;
+    private readonly RestoredFolders folders;
 
-    public BuildRunTests(RestoredFolders folders) => folder = folders.Take("build-", made =>
+    /// <summary>The test's own solution, once it has taken one.</summary>
+    private string? taken;
+
+    public BuildRunTests(RestoredFolders folders) => this.folders = folders;
+
+    public void Dispose()
     {
-        Write(made, "Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write(made, "src/Hello/Hello.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write(made, "src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
+        if (taken is not null)
+        {
+            TestFolders.Delete(taken);
+        }
+    }
+
+    /// <summary>The test's own solution of one console project, Hello, restored: taken the first time it is asked for, so a
+    /// test that needs none (one of its own, or an empty folder) restores none.</summary>
+    private string Folder => taken ??= folders.Take("build-", made =>
+    {
+        TestFolders.Write(made, "Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n  </Folder>\n</Solution>\n");
+        TestFolders.Write(made, "src/Hello/Hello.csproj", TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
+        TestFolders.Write(made, "src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
         return Path.Combine(made, "Sample.slnx");
     });
 
-    public void Dispose() => TestFolders.Delete(folder);
-
+    /// <summary>A solution opened by name among the folder's several, its project's framework set by the repository as
+    /// Passenger's own projects have it, built before: the window opens that solution and keeps it as it reads it again; the
+    /// project shows its framework, unloaded is dimmed and leaves the run configurations until reloaded; and the project
+    /// host's design-time build of it writes no apphost, which the SDK makes (and on macOS signs) in Compile's dependencies
+    /// once the assembly is there, so a build begun beside it could have both make and sign that one file at once.</summary>
     [AvaloniaFact]
-    public void The_solution_view_shows_the_solution_its_folders_and_its_projects()
+    public void A_solution_opened_by_name_opens_that_one_shows_its_projects_framework_unloads_it_and_its_design_time_build_leaves_the_apphost()
     {
-        MainWindow window = Open();
-        ExplorerTree tree = window.ExplorerView.Tree;
-        Assert.True(tree.IsSolutionView);
-        Assert.Equal(NodeKind.Solution, tree.Rows[0].Kind);
-        ExplorerNode src = Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src");
-        tree.Expand(src);
-        Assert.Contains(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Opening_a_solution_by_name_opens_that_one_of_the_folders_several()
-    {
-        Write("Zebra.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n</Solution>\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(Path.Combine(folder, "Zebra.slnx"));
-        Ui.Settle();
-        Assert.Equal("Zebra", window.Solution?.Name);
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Zebra.slnx")), window.CSharpService?.Session?.Solution);
-        // Read again (a package added), it stays the one opened, not the one the folder's files would pick.
-        window.ReloadSolution();
-        Assert.Equal("Zebra", window.Solution?.Name);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_project_whose_framework_the_repository_sets_shows_it_beside_its_name()
-    {
-        // As Passenger's own projects are: the framework is in Directory.Build.props, and the project names none.
-        Write("Directory.Build.props", "<Project>\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Zebra.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n  </Folder>\n</Solution>\n");
+        Write("Directory.Build.props", $"<Project>\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
         Write("src/Hello/Hello.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        MainWindow window = Open();
-        ExplorerTree tree = window.ExplorerView.Tree;
-        tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
-        Assert.Equal("net10.0", Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Detail);
-        window.Close();
-    }
+        string project = Path.Combine(Folder, "src", "Hello");
+        Passenger.Core.ChildResult built = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(
+            Passenger.Core.ChildProcesses.DotnetCommand(["build", Path.Combine(project, "Hello.csproj"), "-nologo"]), limit: Restore.Limit)).GetAwaiter().GetResult();
+        Assert.True(built.Succeeded, $"The program did not build before the test:\n{built.Output}{built.Error}");
+        string apphost = Path.Combine(project, "obj", "Debug", TestProjects.Framework, OperatingSystem.IsWindows() ? "apphost.exe" : "apphost");
+        Assert.True(File.Exists(apphost), $"The build made no apphost at {apphost}");
+        File.Delete(apphost);
 
-    [AvaloniaFact]
-    public void A_build_with_an_error_lists_it_in_problems_at_its_file_and_line()
-    {
-        Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
-        MainWindow window = Open();
-        Ui.Press(window, Ui.Shortcut(AppActions.Build));
-        Ui.Settle();
-        Problem problem = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "CS0029");
-        Assert.Equal(ProblemSeverity.Error, problem.Severity);
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), problem.Path);
-        Assert.Equal(1, problem.Position.Line);
-
-        // The status bar's word that it failed is a link to its errors in Problems' Build, the first chosen.
-        Assert.StartsWith("Build failed: 1 error", window.Status, StringComparison.Ordinal);
-        ProblemsView problems = window.BottomPanel.Problems;
-        window.ShowToolWindow("build");
-        problems.Shown = ProblemsTab.File;
-        Button said = window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage");
-        Point at = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
-        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Build && problems.Selected == problem,
-            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab, {problems.Selected?.Code ?? "nothing"} chosen" : "nothing")}, "
-            + "not the build's error in Problems' Build");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_build_error_in_a_folder_whose_name_has_parentheses_is_listed_in_problems_at_its_line()
-    {
-        // A project copied as Finder and Explorer name a copy.
-        Write("Shop (copy)/Shop.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write("Shop (copy)/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
-        window.OpenFolder(Path.Combine(folder, "Shop (copy)"));
+        window.OpenFolder(Path.Combine(Folder, "Zebra.slnx"));
         Ui.Settle();
+        try
+        {
+            Assert.Equal("Zebra", window.Solution?.Name);
+            Assert.Equal(PathNames.Canonical(Path.Combine(Folder, "Zebra.slnx")), window.CSharpService?.Session?.Solution);
+            Ui.WaitFor(() => window.CSharpService?.Session is { IsLoaded: true }, "the language server to load the program's design-time build", TimeSpan.FromMinutes(2));
+            Assert.False(File.Exists(apphost), "The design-time build made the program's apphost, which the build makes (and on macOS signs) beside it");
+            // Read again (a package added), it stays the one opened, not the one the folder's files would pick.
+            window.ReloadSolution();
+            Assert.Equal("Zebra", window.Solution?.Name);
+
+            ExplorerTree tree = window.ExplorerView.Tree;
+            tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
+            ExplorerNode loaded = Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello");
+            Assert.Equal(TestProjects.Framework, loaded.Detail);
+            string hello = loaded.Path!;
+            Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
+
+            window.SetUnloaded(hello, unloaded: true);
+            ExplorerNode unloaded = Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello");
+            Assert.Equal("(unloaded)", unloaded.Detail);
+            Assert.True(unloaded.IsDimmed);
+            Assert.False(unloaded.HasChildren);
+            Assert.Empty(window.Configurations);
+            window.Perform(AppActions.Build);
+            Assert.Equal("Nothing to build: every project is unloaded", window.Status);
+
+            window.SetUnloaded(hello, unloaded: false);
+            Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
+            Assert.Equal(TestProjects.Framework, Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Detail);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>One program with a compiler's error, in a folder named as Finder and Explorer name a copy, built once: its error
+    /// listed in Problems at its file and line, the status bar's word a link there, the Build window's line of it a link to
+    /// its file, line and column; and Run, whose build fails on it too, brings the Build window forward with it and runs
+    /// nothing.</summary>
+    [AvaloniaFact]
+    public void A_build_error_is_listed_in_problems_and_a_link_from_the_build_window_and_a_run_whose_build_fails_runs_nothing()
+    {
+        string shop = Path.Combine(TestFolders.Create("build-error-"), "Shop (copy)");
+        TestFolders.Write(shop, "Shop.csproj", TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
+        TestFolders.Write(shop, "Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
+        string program = PathNames.Canonical(Path.Combine(shop, "Program.cs"));
+        MainWindow window = Ui.OpenFolder(shop);
         Ui.Press(window, Ui.Shortcut(AppActions.Build));
         Ui.Settle();
         Assert.False(window.IsBuilding);
         Problem? problem = window.BottomPanel.Problems.Problems.SingleOrDefault(p => p.Code == "CS0029");
         Assert.True(problem is not null, $"The build failed but Problems has nothing for its error, listing [{string.Join(", ", window.BottomPanel.Problems.Problems.Select(p => $"{p.Code} {p.Path}"))}]");
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Shop (copy)", "Program.cs")), problem.Path);
+        Assert.Equal(ProblemSeverity.Error, problem.Severity);
+        Assert.Equal(program, problem.Path);
         Assert.Equal(new TextPosition(1, 12), problem.Position);
+
+        // The status bar's word that it failed is a link to its errors in Problems' Build, the first chosen.
+        Assert.StartsWith("Build failed: 1 error", window.Status, StringComparison.Ordinal);
+        ProblemsModel problems = window.BottomPanel.Problems;
+        window.ShowToolWindow(ToolWindowIds.Build);
+        problems.Shown = ProblemsTab.File;
+        Button said = window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage");
+        Ui.Click(said);
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.Build && problems.Selected == problem,
+            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {problems.Shown} tab, {problems.Selected?.Code ?? "nothing"} chosen" : "nothing")}, "
+            + "not the build's error in Problems' Build");
+
+        // The Build window's line of the error is a link to its file, line and column.
+        window.ShowToolWindow(ToolWindowIds.Build);
+        Ui.Settle();
+        OutputView build = window.BottomPanel.Build;
+        string output = build.Document.Snapshot.ToString();
+        int error = output.IndexOf("Program.cs(2,13): error CS0029", StringComparison.Ordinal);
+        Assert.True(error >= 0, $"The build window has no error at its place:\n{output}");
+        Click(window, build.Editor, error);
+        Assert.Equal(program, window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(1, 12), window.EditorArea.CodeEditor.CaretPosition);
+
+        // Run's build fails on it too: the Build window comes forward with its error, as Rider's does, and nothing runs.
+        window.ShowToolWindow(ToolWindowIds.Problems);
+        string? refused = Ui.Await(window.RunAsync(), "the run's build", TimeSpan.FromMinutes(2));
+        Assert.StartsWith("Build failed: 1 error", refused, StringComparison.Ordinal);
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "The build before the run failed, but the Build window did not come forward with its error as Rider's does");
+        Assert.Contains("Program.cs(2,13): error CS0029", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.False(window.Runner.IsRunning);
+        Assert.Equal(string.Empty, Output(window));
         window.Close();
     }
 
@@ -129,7 +163,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         // As Avalonia's XAML compiler reports a file it cannot read, its stack trace a line each, and NuGet a downgrade
         // with its dependency chains: MSBuild writes every line of such a message as a line of its own.
         Write("src/Hello/Hello.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
             "  <Target Name=\"Unreadable\" BeforeTargets=\"Build\">\n" +
             "    <Warning File=\"Program.cs\" Code=\"NU1608\" Text=\"Detected package version outside of dependency constraint.%0A Hello -&gt; A -&gt; X (&gt;= 2.0)%0A Hello -&gt; X (&gt;= 1.0)\" />\n" +
             "    <Error File=\"Views/Main.axaml\" Code=\"AVLN1001\" Text=\"File doesn't contain valid XAML: 'Hello' is an unexpected token.%0A   at System.Xml.XmlTextReaderImpl.Throw(Exception e)%0A   at System.Xml.XmlTextReaderImpl.ParseAttributes()\" />\n" +
@@ -148,24 +182,31 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         window.Perform(AppActions.ShowProblems);
         window.BottomPanel.Problems.Shown = ProblemsTab.Build;
         Ui.Settle();
-        TextBlock[] shown = [.. window.BottomPanel.Problems.GetVisualDescendants().OfType<TextBlock>()];
+        TextBlock[] shown = [.. window.ProblemsWindow.GetVisualDescendants().OfType<TextBlock>()];
         Assert.Contains(shown, t => t.Text == "File doesn't contain valid XAML: 'Hello' is an unexpected token.");
         Assert.DoesNotContain(shown, t => t.Text?.Contains("ParseAttributes", StringComparison.Ordinal) == true);
         window.Close();
     }
 
+    /// <summary>One program under dotnet watch, never built before: a saved edit changes what it does with no restart; Apply
+    /// Hot Reload Changes in the Run window saves and says what dotnet watch made of it; a parameter added with a default,
+    /// which leaves the callers calling the method the update deletes, is said as the restart dotnet watch makes; and the
+    /// program dotnet watch started again, and dotnet watch, end with the window.</summary>
     [AvaloniaFact]
-    public void With_hot_reload_a_saved_edit_changes_what_the_running_program_does()
+    public void With_hot_reload_edits_reach_the_running_program_a_signature_change_restarts_it_and_it_ends_with_the_window()
     {
-        Write("src/Hello/Program.cs", "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"before the edit\";\n}\n");
+        string started = Path.Combine(Folder, "program.pid");
+        Write("src/Hello/Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\n"
+            + "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"before the edit\";\n}\n");
         MainWindow window = Open();
         window.ApplySettings(window.Settings with { HotReload = true });
+        bool ending = false;
         try
         {
-            window.OpenFile(Path.Combine(folder, "src", "Hello", "Program.cs"));
+            window.OpenFile(Path.Combine(Folder, "src", "Hello", "Program.cs"));
             Ui.Settle();
             // Never built: the output folder, the program's working folder, is left for dotnet watch's first build to make.
-            TestFolders.Delete(Path.Combine(folder, "src", "Hello", "bin"));
+            TestFolders.Delete(Path.Combine(Folder, "src", "Hello", "bin"));
             window.Perform(AppActions.RunProgram);
             // dotnet watch watches once it has loaded the project, which is after the program has started.
             WaitWatched(window, () => Output(window).Contains("before the edit", StringComparison.Ordinal) && Output(window).Contains("Waiting for changes", StringComparison.Ordinal),
@@ -186,45 +227,32 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             window.Perform(AppActions.ApplyHotReloadChanges);
             Ui.WaitFor(() => Output(window).Contains("applied again", StringComparison.Ordinal), "the applied edit to reach the program", TimeSpan.FromMinutes(1));
             WaitWatched(window, () => window.Status?.Contains("dotnet watch applied the changes", StringComparison.Ordinal) == true, "the status bar to say the changes applied");
-        }
-        finally
-        {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => !window.Runner.IsRunning, "the program to stop");
-            window.ApplySettings(new Passenger.App.Settings.AppSettings());
-            window.Close();
-        }
-    }
 
-    /// <summary>A parameter added with a default leaves the callers as they were, calling the method the update deletes: dotnet
-    /// watch applies it, the program's next call fails, and dotnet watch restarts it, which the status bar says last.</summary>
-    [AvaloniaFact]
-    public void With_hot_reload_a_signature_change_its_callers_still_call_as_it_was_is_said_as_the_restart_dotnet_watch_makes()
-    {
-        Write("src/Hello/Program.cs", "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"talking\";\n}\n");
-        MainWindow window = Open();
-        window.ApplySettings(window.Settings with { HotReload = true });
-        try
-        {
-            window.OpenFile(Path.Combine(folder, "src", "Hello", "Program.cs"));
-            Ui.Settle();
-            window.Perform(AppActions.RunProgram);
-            Ui.WaitFor(() => Output(window).Contains("talking", StringComparison.Ordinal) && Output(window).Contains("Waiting for changes", StringComparison.Ordinal),
-                "the program to run under dotnet watch", TimeSpan.FromMinutes(2));
-
-            Passenger.App.Workspace.OpenDocument program = window.EditorArea.Active!;
-            int at = program.Text.Snapshot.ToString().IndexOf("Say() =>", StringComparison.Ordinal);
+            // A parameter added with a default leaves the callers as they were, calling the method the update deletes: dotnet
+            // watch applies it, the program's next call fails, and dotnet watch restarts it, which the status bar says last.
+            // The Apply before goes on following dotnet watch's words a while after the first; this one waits for it to end.
+            WaitWatched(window, () => window.Actions.Work.Of(AppActions.ApplyHotReloadChanges) is null, "the Apply before to end");
+            int first = Processes.ReadId(started);
+            at = program.Text.Snapshot.ToString().IndexOf("Say() =>", StringComparison.Ordinal);
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "Say() =>".Length, "Say(int times = 1) =>")]);
-            window.Perform(AppActions.ApplyHotReloadChanges);
+            Assert.True(window.Perform(AppActions.ApplyHotReloadChanges), $"Apply Hot Reload Changes could not run: {window.Status}");
             WaitWatched(window, () => window.Status?.Contains("dotnet watch is restarting the application", StringComparison.Ordinal) == true,
                 "the status bar to say dotnet watch restarts the program, whose callers still called the method as it was", TimeSpan.FromMinutes(1));
+            WaitWatched(window, () => Processes.ReadId(started) is int again && again > 0 && again != first, "dotnet watch to start the program again", TimeSpan.FromMinutes(1));
+
+            // The program dotnet watch started again, and dotnet watch with it, end with the window.
+            ending = true;
+            AssertEndsWithTheWindow(window, started, "the program dotnet watch started");
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => !window.Runner.IsRunning, "the program to stop");
+            if (!ending)
+            {
+                window.Perform(AppActions.Stop);
+                Ui.WaitFor(() => !window.Runner.IsRunning, "the program to stop");
+                window.Close();
+            }
             window.ApplySettings(new Passenger.App.Settings.AppSettings());
-            window.Close();
         }
     }
 
@@ -244,41 +272,23 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
+    /// <summary>The Run console over three programs run one after another in one window: what is typed into it is the first
+    /// one's input, Ctrl+D ending it; what the second writes to standard error alone is drawn in the error colour, whatever
+    /// colour codes it writes, none of which shows even split between two reads, and the console's menu clears it with its
+    /// colours; and the third's three megabytes keep Rider's buffer, its oldest lines dropped.</summary>
     [AvaloniaFact]
-    public void What_the_program_writes_to_standard_error_is_drawn_in_the_error_colour_and_its_output_is_not()
-    {
-        Write("src/Hello/Program.cs", "Console.WriteLine(\"to the output\");\nConsole.Out.Flush();\nThread.Sleep(300);\nConsole.Error.WriteLine(\"to the error\");\n");
-        MainWindow window = Open();
-        window.Perform(AppActions.RunProgram);
-        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
-        TextSnapshot text = window.BottomPanel.Run.Document.Snapshot;
-        Passenger.Editor.IHighlighter colours = window.BottomPanel.Run.Editor.Highlighter!;
-        string Coloured() => string.Concat(colours.GetSpans(text, 0, text.Length)
-            .Where(s => s.Kind == Passenger.Editor.TokenKind.ErrorOutput).Select(s => text.GetText(s.Start, s.Length)));
-        Assert.Equal("to the error\n", Coloured());
-
-        // Clear takes the colours with the text.
-        window.BottomPanel.Run.Document.Clear();
-        text = window.BottomPanel.Run.Document.Snapshot;
-        Assert.Empty(colours.GetSpans(text, 0, text.Length));
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_program_reading_its_input_reads_what_is_typed_into_the_run_console_and_ends_when_ctrl_d_ends_it()
+    public void The_run_console_takes_typed_input_never_shows_a_split_colour_code_colours_standard_error_clears_from_its_menu_and_keeps_riders_buffer()
     {
         Write("src/Hello/Program.cs",
             "Console.Write(\"Name? \");\nstring? name = Console.ReadLine();\nConsole.WriteLine($\"Hello, {name}\");\n"
             + "string rest = Console.In.ReadToEnd();\nConsole.WriteLine($\"then {rest.Length} more, and the end of its input\");\n");
         MainWindow window = Open();
+        OutputView run = window.BottomPanel.Run;
         try
         {
             window.Perform(AppActions.RunProgram);
             Ui.WaitFor(() => Output(window).Contains("Name? ", StringComparison.Ordinal), "the program to ask", TimeSpan.FromMinutes(2));
-            Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
-            Point inConsole = run.Editor.TranslatePoint(new Point(run.Editor.Bounds.Width / 2, run.Editor.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(inConsole, Avalonia.Input.MouseButton.Left);
-            window.MouseUp(inConsole, Avalonia.Input.MouseButton.Left);
+            Ui.Click(run.Editor, settle: false);
             window.KeyTextInput("Adx");
             Ui.Press(window, "BACK_SPACE");
             window.KeyTextInput("a");
@@ -295,6 +305,58 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to end at the end of its input");
             Assert.Contains("ok^D\nthen 2 more, and the end of its input\n", Output(window), StringComparison.Ordinal);
             Assert.Contains("exit code 0", Output(window), StringComparison.Ordinal);
+
+            // The first sequence straddles 8,192 characters, where a read ends; the others, and a "\r\n", are cut by a pause in
+            // the writing, on standard output, then standard error a pause later, since the two streams' reads may cross.
+            Write("src/Hello/Program.cs",
+                "Console.Out.Write(new string('x', 8190) + \"\\u001b[32mgreen\\u001b[0m\\n\");\nConsole.Out.Flush();\n"
+                + "Console.Out.Write(\"before \\u001b[3\");\nConsole.Out.Flush();\nThread.Sleep(500);\n"
+                + "Console.Out.Write(\"1mred\\u001b[0m after\\r\");\nConsole.Out.Flush();\nThread.Sleep(300);\nConsole.Out.Write(\"\\n\");\nConsole.Out.Flush();\nThread.Sleep(300);\n"
+                + "Console.Error.Write(\"\\u001b]0;a title\\u0007error \\u001b[1;3\");\nConsole.Error.Flush();\nThread.Sleep(300);\n"
+                + "Console.Error.Write(\"1mbold\\u001b[0m\\n\");\nConsole.Error.Flush();\n");
+            window.Perform(AppActions.RunProgram);
+            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program writing colour codes to finish", TimeSpan.FromMinutes(2));
+            string output = Output(window);
+            Assert.DoesNotContain("Name?", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("\u001b", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("[3", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("1m", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("\r", output, StringComparison.Ordinal);
+            Assert.Contains(new string('x', 8190) + "green\n", output, StringComparison.Ordinal);
+            Assert.Contains("\nbefore red after\n", output, StringComparison.Ordinal);
+            text = run.Document.Snapshot;
+            Passenger.Editor.IHighlighter colours = run.Editor.Highlighter!;
+            Passenger.Editor.SyntaxSpan error = Assert.Single(colours.GetSpans(text, 0, text.Length));
+            Assert.Equal(Passenger.Editor.TokenKind.ErrorOutput, error.Kind);
+            Assert.Equal("error bold\n", text.GetText(error.Start, error.Length));
+
+            // The console's menu clears it, the colours with the text; Copy is greyed with nothing chosen. Below the first
+            // line's top, which is the splitter's to grab.
+            Ui.RightClick(run.Editor, run.Editor.PointOf(14) + new Avalonia.Vector(1, run.Editor.LineHeight / 2));
+            ContextMenu menu = Assert.IsType<ContextMenu>(run.Menu);
+            Assert.Equal(["Copy", "Select All", "Clear All"], menu.Items.OfType<MenuItem>().Select(i => (string?)i.Header));
+            Assert.False(menu.Items.OfType<MenuItem>().First().IsEnabled, "Copy is offered with nothing chosen");
+            Ui.Choose(menu, "Clear All");
+            menu.Close();
+            text = run.Document.Snapshot;
+            Assert.Equal(string.Empty, text.ToString());
+            Assert.Empty(colours.GetSpans(text, 0, text.Length));
+
+            // Three megabytes, two lines of it on standard error, each between pauses since the two streams' reads may cross.
+            Write("src/Hello/Program.cs",
+                "for (int i = 0; i < 50_000; i++)\n{\n    Console.WriteLine($\"line {i:D6} \" + new string('x', 52));\n"
+                + "    if (i is 38_000 or 49_999)\n    {\n        Thread.Sleep(300);\n"
+                + "        Console.Error.WriteLine($\"error {i:D6} \" + new string('e', 51));\n        Thread.Sleep(300);\n    }\n}\n");
+            window.Perform(AppActions.RunProgram);
+            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program writing three megabytes to finish", TimeSpan.FromMinutes(2));
+            text = run.Document.Snapshot;
+            Assert.InRange(text.Length, 900 * 1024, OutputView.DefaultLimitKb * 1024);
+            Assert.Matches(@"^line \d{6} x{52}$", text.GetLineText(0));
+            Assert.DoesNotContain("line 000000 ", text.ToString(), StringComparison.Ordinal);
+            Assert.Contains($"line 049999 {new string('x', 52)}\n", text.ToString(), StringComparison.Ordinal);
+            // The error colour stays on the lines that came on standard error, however much was dropped before them since.
+            IReadOnlyList<Passenger.Editor.SyntaxSpan> errors = colours.GetSpans(text, 0, text.Length);
+            Assert.Equal([$"error 038000 {new string('e', 51)}\n", $"error 049999 {new string('e', 51)}\n"], errors.Select(e => text.GetText(e.Start, e.Length)));
         }
         finally
         {
@@ -305,63 +367,14 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     [AvaloniaFact]
-    public void A_colour_code_split_between_two_reads_never_shows_in_the_run_console()
-    {
-        // The first sequence straddles 8,192 characters, where a read ends; the others, and a "\r\n", are cut by a pause in
-        // the writing, on standard output, then standard error a pause later, since the two streams' reads may cross.
-        Write("src/Hello/Program.cs",
-            "Console.Out.Write(new string('x', 8190) + \"\\u001b[32mgreen\\u001b[0m\\n\");\nConsole.Out.Flush();\n"
-            + "Console.Out.Write(\"before \\u001b[3\");\nConsole.Out.Flush();\nThread.Sleep(500);\n"
-            + "Console.Out.Write(\"1mred\\u001b[0m after\\r\");\nConsole.Out.Flush();\nThread.Sleep(300);\nConsole.Out.Write(\"\\n\");\nConsole.Out.Flush();\nThread.Sleep(300);\n"
-            + "Console.Error.Write(\"\\u001b]0;a title\\u0007error \\u001b[1;3\");\nConsole.Error.Flush();\nThread.Sleep(300);\n"
-            + "Console.Error.Write(\"1mbold\\u001b[0m\\n\");\nConsole.Error.Flush();\n");
-        MainWindow window = Open();
-        window.Perform(AppActions.RunProgram);
-        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
-        string output = Output(window);
-        Assert.DoesNotContain("\u001b", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("[3", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("1m", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("\r", output, StringComparison.Ordinal);
-        Assert.Contains(new string('x', 8190) + "green\n", output, StringComparison.Ordinal);
-        Assert.Contains("\nbefore red after\n", output, StringComparison.Ordinal);
-        TextSnapshot text = window.BottomPanel.Run.Document.Snapshot;
-        Passenger.Editor.SyntaxSpan error = Assert.Single(window.BottomPanel.Run.Editor.Highlighter!.GetSpans(text, 0, text.Length));
-        Assert.Equal("error bold\n", text.GetText(error.Start, error.Length));
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_console_keeps_riders_buffer_of_text_dropping_its_oldest_lines_past_it()
-    {
-        // Three megabytes, two lines of it on standard error, each between pauses since the two streams' reads may cross.
-        Write("src/Hello/Program.cs",
-            "for (int i = 0; i < 50_000; i++)\n{\n    Console.WriteLine($\"line {i:D6} \" + new string('x', 52));\n"
-            + "    if (i is 38_000 or 49_999)\n    {\n        Thread.Sleep(300);\n"
-            + "        Console.Error.WriteLine($\"error {i:D6} \" + new string('e', 51));\n        Thread.Sleep(300);\n    }\n}\n");
-        MainWindow window = Open();
-        window.Perform(AppActions.RunProgram);
-        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
-        TextSnapshot text = window.BottomPanel.Run.Document.Snapshot;
-        Assert.InRange(text.Length, 900 * 1024, Passenger.App.ToolWindows.OutputView.DefaultLimitKb * 1024);
-        Assert.Matches(@"^line \d{6} x{52}$", text.GetLineText(0));
-        Assert.DoesNotContain("line 000000 ", text.ToString(), StringComparison.Ordinal);
-        Assert.Contains($"line 049999 {new string('x', 52)}\n", text.ToString(), StringComparison.Ordinal);
-        // The error colour stays on the lines that came on standard error, however much was dropped before them since.
-        IReadOnlyList<Passenger.Editor.SyntaxSpan> errors = window.BottomPanel.Run.Editor.Highlighter!.GetSpans(text, 0, text.Length);
-        Assert.Equal([$"error 038000 {new string('e', 51)}\n", $"error 049999 {new string('e', 51)}\n"], errors.Select(e => text.GetText(e.Start, e.Length)));
-        window.Close();
-    }
-
-    [AvaloniaFact]
     public void The_projects_chosen_in_the_explorer_build_rebuild_and_clean_on_their_own()
     {
         Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Tools/Tools.csproj", TestProjects.Library());
         Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => \"none\";\n}\n");
-        string hello = Path.Combine(folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll");
-        string tools = Path.Combine(folder, "src", "Tools", "bin", "Debug", "net10.0", "Tools.dll");
-        Restore.Run(Path.Combine(folder, "Sample.slnx"));
+        string hello = Path.Combine(Folder, "src", "Hello", "bin", "Debug", TestProjects.Framework, "Hello.dll");
+        string tools = Path.Combine(Folder, "src", "Tools", "bin", "Debug", TestProjects.Framework, "Tools.dll");
+        Restore.Run(Path.Combine(Folder, "Sample.slnx"));
         MainWindow window = Open();
         ExplorerTree tree = window.ExplorerView.Tree;
         tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
@@ -392,27 +405,21 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 
     /// <summary>dotnet test sets MSBuild's MSBUILDENSURESTDOUTFORTASKPROCESSES for the process it tests, as for an IDE started
     /// under it. MSBuild of the test's own (<see cref="OwnMSBuild"/>) has no node idle to reuse, so Roslyn's restore starts
-    /// one, as on a machine with none idle.</summary>
+    /// one, as on a machine with none idle, and the solution of two projects loads in the language server. Then the build the
+    /// IDE starts, its two projects built at once, so MSBuild starts a node for one, which waits to be reused once the build
+    /// is done: the output the variable would give it is not to be held open with it. Then, in a person's IDE's environment,
+    /// Stop pressed while each project's build runs a step that goes on writing to the project's output folder until it is
+    /// ended, as a code generator, a bundler or tests run in the build would, after a build that left its nodes (and by
+    /// MSBuild's defaults its server) for the next to build in, as the day's first does.</summary>
     [AvaloniaFact]
-    public void A_solution_of_two_projects_opened_under_dotnet_tests_environment_loads_in_the_language_server()
+    public void A_build_under_dotnet_tests_environment_ends_and_stopping_a_build_ends_its_steps_wherever_msbuild_ran_them_and_nothing_more_is_written_after()
     {
         WriteTwoProjects();
-        using OwnMSBuild msbuild = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", "1"));
+        using OwnMSBuild tested = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", "1"));
         // Settling waits for Roslyn to say the projects loaded, which it says once its restore's output has ended.
         MainWindow window = Open();
         Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-        window.Close();
-    }
-
-    /// <summary>The build the IDE starts under dotnet test's environment, its two projects built at once, so MSBuild starts a
-    /// node for one, which waits to be reused once the build is done: the output the variable would give it is not to be
-    /// held open with it.</summary>
-    [AvaloniaFact]
-    public void A_build_of_two_projects_under_dotnet_tests_environment_ends_and_the_build_window_says_so()
-    {
-        WriteTwoProjects();
-        using OwnMSBuild msbuild = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", "1"));
-        MainWindow window = Open();
+        List<int> steps = [];
         try
         {
             window.Perform(AppActions.Build);
@@ -423,30 +430,10 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
                 TimeSpan.FromSeconds(10));
             Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
             Assert.EndsWith("Process finished with exit code 0.\n", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        }
-        finally
-        {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
-            window.Close();
-        }
-    }
 
-    /// <summary>Stop pressed while each project's build runs a step that goes on writing to the project's output folder until
-    /// it is ended, as a code generator, a bundler or tests run in the build would. A build has run before it, as the day's
-    /// first does, which leaves its nodes (and by MSBuild's defaults its server) for the next to build in; the environment
-    /// is a person's IDE's, not dotnet test's.</summary>
-    [AvaloniaFact]
-    public void Stopping_a_build_ends_its_steps_wherever_msbuild_ran_them_and_nothing_more_is_written_after()
-    {
-        WriteTwoProjects();
-        using OwnMSBuild msbuild = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", null));
-        MainWindow window = Open();
-        List<int> steps = [];
-        try
-        {
+            using OwnMSBuild person = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", null));
             window.Perform(AppActions.Build);
-            Ui.WaitFor(() => !window.IsBuilding, "the first build", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => !window.IsBuilding, "the first build in a person's environment", TimeSpan.FromMinutes(2));
             Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
 
             Write("Directory.Build.targets", """
@@ -460,14 +447,14 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             string[] projects = ["Hello", "Tools"];
             int? first = window.Builder.ProcessId;
             window.Perform(AppActions.Build);
-            int command = BuildCommand(window, first);
+            command = BuildCommand(window, first);
             // Both projects build at once; one that waits for the other would never start, its step never ending.
-            _ = Processes.WrittenId([.. projects.Select(p => Path.Combine(folder, "src", p, "step.pid"))], "a project's step to start");
+            _ = Processes.WrittenId([.. projects.Select(p => Path.Combine(Folder, "src", p, "step.pid"))], "a project's step to start");
             // PowerShell on a loaded Windows runner can take more than a second to write its first line. Pumped, not settled:
             // the build, which holds background work until it ends, is still running.
-            Ui.PumpUntil(() => projects.Any(p => File.Exists(Path.Combine(folder, "src", p, "bin", "Debug", "net10.0", "written.txt"))),
+            Ui.PumpUntil(() => projects.Any(p => File.Exists(Path.Combine(Folder, "src", p, "bin", "Debug", TestProjects.Framework, "written.txt"))),
                 "a project's step to write into its output folder", TimeSpan.FromSeconds(60));
-            steps.AddRange(projects.Select(p => Processes.ReadId(Path.Combine(folder, "src", p, "step.pid"))).Where(id => id > 0));
+            steps.AddRange(projects.Select(p => Processes.ReadId(Path.Combine(Folder, "src", p, "step.pid"))).Where(id => id > 0));
             window.Perform(AppActions.Stop);
             Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
             Assert.Equal("Build stopped", window.Status);
@@ -477,7 +464,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
                 Assert.True(Processes.Gone(step), $"After Stop, the build's step {Processes.Describe(step)} went on running: MSBuild ran it in a process that Stop did not end");
             }
             Assert.True(Processes.Gone(command), "After Stop, the build's dotnet command went on running");
-            string[] written = [.. projects.Select(p => Path.Combine(folder, "src", p, "bin", "Debug", "net10.0", "written.txt")).Where(File.Exists)];
+            string[] written = [.. projects.Select(p => Path.Combine(Folder, "src", p, "bin", "Debug", TestProjects.Framework, "written.txt")).Where(File.Exists)];
             Assert.NotEmpty(written);
             long[] lengths = [.. written.Select(f => new FileInfo(f).Length)];
             Ui.Hold(TimeSpan.FromSeconds(2), "long enough for a build still running to write to its output folder again");
@@ -522,7 +509,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             string[] projects = ["Hello", "Tools"];
             foreach (string project in projects)
             {
-                Processes.WrittenId(Path.Combine(folder, "src", project, "step.pid"), $"{project}'s step to start");
+                Processes.WrittenId(Path.Combine(Folder, "src", project, "step.pid"), $"{project}'s step to start");
             }
             Process.GetProcessById(server).Kill();
             Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
@@ -611,7 +598,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         {
             TestFolders.Prepare(() =>
             {
-                File.WriteAllText(Path.Combine(app, "Overlap.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+                File.WriteAllText(Path.Combine(app, "Overlap.csproj"), $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
                     + $"  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Avalonia\" Version=\"{AvaloniaApp.Version}\" />\n"
                     + "    <AvaloniaResource Include=\"Assets/**\" />\n  </ItemGroup>\n</Project>\n");
                 Directory.CreateDirectory(Path.Combine(app, "Assets"));
@@ -661,33 +648,6 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
-    /// <summary>The project host's design-time build of a program built before writes no apphost: the SDK makes
-    /// obj/…/apphost (and on macOS signs it) in Compile's dependencies once the project's assembly is there, so a build
-    /// begun beside a design-time build could have both make and sign that one file at once. The language server has no
-    /// use for it.</summary>
-    [AvaloniaFact]
-    public void A_design_time_build_of_a_program_built_before_leaves_its_apphost_to_the_build()
-    {
-        string project = Path.Combine(folder, "src", "Hello");
-        Passenger.Core.ChildResult built = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(
-            Passenger.Core.ChildProcesses.DotnetCommand(["build", Path.Combine(project, "Hello.csproj"), "-nologo"]), limit: Restore.Limit)).GetAwaiter().GetResult();
-        Assert.True(built.Succeeded, $"The program did not build before the test:\n{built.Output}{built.Error}");
-        string apphost = Path.Combine(project, "obj", "Debug", "net10.0", OperatingSystem.IsWindows() ? "apphost.exe" : "apphost");
-        Assert.True(File.Exists(apphost), $"The build made no apphost at {apphost}");
-        File.Delete(apphost);
-        MainWindow window = Open();
-        try
-        {
-            window.OpenFile(Path.Combine(project, "Program.cs"));
-            Ui.WaitFor(() => window.CSharpService?.Session is { IsLoaded: true }, "the language server to load the program's design-time build", TimeSpan.FromMinutes(2));
-            Assert.False(File.Exists(apphost), "The design-time build made the program's apphost, which the build makes (and on macOS signs) beside it");
-        }
-        finally
-        {
-            window.Close();
-        }
-    }
-
     /// <summary>The dotnet command of the build just begun, once it has started: a build starts it once the project host
     /// has held its design-time builds off. Pumped, not settled, as the build holds background work until it ends.</summary>
     private static int BuildCommand(MainWindow window, int? before)
@@ -714,146 +674,33 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             .Select(words => int.Parse(words[0], System.Globalization.CultureInfo.InvariantCulture))];
     }
 
+    /// <summary>What a program writes in the Run window links where it points: an address opens in the browser, a message
+    /// naming a file of its project in a compiler's shape opens that file (a relative path the project's, though the run's
+    /// working folder is its output folder), and the stack trace of what it threw has each frame's file and line a link.</summary>
     [AvaloniaFact]
-    public void An_unloaded_project_is_dimmed_and_leaves_the_run_configurations_until_it_is_reloaded()
+    public void An_address_a_message_naming_a_file_and_a_stack_trace_a_program_writes_are_links_where_they_point()
     {
-        MainWindow window = Open();
-        ExplorerTree tree = window.ExplorerView.Tree;
-        tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
-        string hello = Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Path!;
-        Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
-
-        window.SetUnloaded(hello, unloaded: true);
-        ExplorerNode unloaded = Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello");
-        Assert.Equal("(unloaded)", unloaded.Detail);
-        Assert.True(unloaded.IsDimmed);
-        Assert.False(unloaded.HasChildren);
-        Assert.Empty(window.Configurations);
-        window.Perform(AppActions.Build);
-        Assert.Equal("Nothing to build: every project is unloaded", window.Status);
-
-        window.SetUnloaded(hello, unloaded: false);
-        Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
-        Assert.Equal("net10.0", Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Detail);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void The_consoles_menu_copies_and_clears_its_output()
-    {
-        MainWindow window = Open();
-        window.ShowToolWindow("run");
-        Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
-        run.Append("first line\nsecond line\n");
-        Ui.Settle();
-        // Below the first line's top, which is the splitter's to grab.
-        Avalonia.Point inText = run.Editor.TranslatePoint(run.Editor.PointOf(14) + new Avalonia.Vector(1, run.Editor.LineHeight / 2), window)!.Value;
-        window.MouseDown(inText, Avalonia.Input.MouseButton.Right);
-        window.MouseUp(inText, Avalonia.Input.MouseButton.Right);
-        Ui.Settle();
-        Avalonia.Controls.ContextMenu menu = Assert.IsType<Avalonia.Controls.ContextMenu>(run.Menu);
-        Assert.Equal(["Copy", "Select All", "Clear All"], menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => (string?)i.Header));
-        Assert.False(menu.Items.OfType<Avalonia.Controls.MenuItem>().First().IsEnabled, "Copy is offered with nothing chosen");
-        menu.Items.OfType<Avalonia.Controls.MenuItem>().Last().RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
-        Ui.Settle();
-        Assert.Equal(string.Empty, run.Document.Snapshot.ToString());
-        menu.Close();
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Running_the_project_shows_its_output_in_the_run_window()
-    {
-        MainWindow window = Open();
-        Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
-        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to run to its end", TimeSpan.FromMinutes(2));
-        string output = Output(window);
-        Assert.Contains("Hello from the run", output, StringComparison.Ordinal);
-        Assert.Contains("exit code 0", output, StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_folder_with_no_solution_and_its_project_below_the_top_builds_and_runs_that_project()
-    {
-        // As many repositories are: src/Hello/Hello.csproj, and no solution at the top to name it.
-        File.Delete(Path.Combine(folder, "Sample.slnx"));
-        MainWindow window = Open();
-        Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
-
-        window.Perform(AppActions.Build);
-        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
-        Assert.True(File.Exists(Path.Combine(folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll")), "Build did not build the folder's project");
-        Assert.Contains("Hello from the run", RunToEnd(window), StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Each_launch_profile_is_a_run_configuration_whose_arguments_and_environment_the_program_gets_in_the_projects_folder()
-    {
-        Write("src/Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}.\");\n");
-        Write("src/Hello/Properties/launchSettings.json", """
-            {
-              // Comments and trailing commas, as Visual Studio writes them.
-              "profiles": {
-                "Greet": { "commandName": "Project", "commandLineArgs": "--name \"Ada Lovelace\"", "environmentVariables": { "GREETING": "Hi" }, },
-                "Docker": { "commandName": "Docker" }
-              }
-            }
-            """);
-        MainWindow window = Open();
-        // A profile that runs something else (a container here) is listed, as Rider lists it, and says why it does not run.
-        Assert.Equal(["Hello: Greet", "Hello: Docker"], window.Configurations.Select(c => c.Name));
-        // A profile that names no working folder runs in the project's, as Run, Debug and Profile all do (one LaunchPlan).
-        Assert.Contains($"Hi [--name|Ada Lovelace] in {Passenger.Core.PathNames.Canonical(Path.Combine(folder, "src", "Hello"))}.", RunToEnd(window), StringComparison.Ordinal);
-
-        // Arguments given for one run replace the profile's, and its environment stays.
-        Ui.Launched(window, window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2));
-        Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
-
-        Assert.True(window.SelectConfiguration("Hello: Docker"));
-        Assert.Equal("Hello: Docker cannot run here: a container profile runs in Docker, which Passenger does not start",
-            Ui.Await(window.RunAsync(), "the run's refusal"));
-        Assert.Equal("Hello: Docker cannot run here: a container profile runs in Docker, which Passenger does not start", window.Status);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_web_project_is_a_run_configuration_and_runs_though_its_file_names_no_output_type()
-    {
-        // As dotnet new web writes it: the Web SDK makes it an executable, the project file never says so.
-        Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
-        Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write("src/Site/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.Urls.Add(\"http://127.0.0.1:0\");\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
-        Restore.Run(Path.Combine(folder, "src", "Site"));
-        MainWindow window = Open();
-        Assert.Equal(["Hello", "Site"], window.Configurations.Select(c => c.Name));
-        try
-        {
-            Assert.True(window.SelectConfiguration("Site"));
-            window.Perform(AppActions.RunProgram);
-            Ui.WaitFor(() => Output(window).Contains("Now listening on: http://127.0.0.1:", StringComparison.Ordinal), "the site to listen", TimeSpan.FromMinutes(2));
-        }
-        finally
-        {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
-            window.Close();
-        }
-    }
-
-    [AvaloniaFact]
-    public void A_program_that_throws_shows_its_stack_trace_in_run_and_a_click_on_a_frame_opens_its_file_at_that_line()
-    {
-        Write("src/Hello/Program.cs", "Console.WriteLine(\"Reading the orders\");\nOrders.Load(\"orders.json\");\n\nstatic class Orders\n{\n"
+        Write("src/Hello/Program.cs", "Console.WriteLine(\"The orders are documented at https://example.com/orders/help?topic=load.\");\n"
+            + "Console.WriteLine(\"Program.cs(2,9): warning ORD001: the orders were checked by the program\");\nOrders.Load(\"orders.json\");\n\nstatic class Orders\n{\n"
             + "    public static void Load(string file)\n    {\n        Parse(file);\n    }\n\n"
             + "    private static void Parse(string file) =>\n        throw new InvalidOperationException($\"No orders in {file}\");\n}\n");
+        // As many repositories are: src/Hello/Hello.csproj, and no solution at the top to name it; Run runs that project.
+        File.Delete(Path.Combine(Folder, "Sample.slnx"));
         MainWindow window = Open();
+        Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
         string output = RunToEnd(window);
+        Assert.Contains("The orders are documented", output, StringComparison.Ordinal);
         OutputView run = window.BottomPanel.Run;
+        Click(window, run.Editor, output.IndexOf("example.com", StringComparison.Ordinal));
+        Assert.Equal(["https://example.com/orders/help?topic=load"], window.Browsed.Select(u => u.AbsoluteUri));
+        Assert.Null(window.EditorArea.Active);
+        Click(window, run.Editor, output.IndexOf("Program.cs(2,9)", StringComparison.Ordinal) + 2);
+        Assert.Equal(PathNames.Canonical(Path.Combine(Folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(1, 8), window.EditorArea.CodeEditor.CaretPosition);
+        Assert.Single(window.Browsed);
+
         string frame = output.Split('\n').FirstOrDefault(l => l.Contains("at Orders.Load(", StringComparison.Ordinal)) ?? string.Empty;
-        Assert.True(frame.EndsWith("Program.cs:line 8", StringComparison.Ordinal), $"The run's output has no frame of Load at its line:\n{output}");
+        Assert.True(frame.EndsWith("Program.cs:line 9", StringComparison.Ordinal), $"The run's output has no frame of Load at its line:\n{output}");
         int start = output.IndexOf(frame, StringComparison.Ordinal);
         string place = frame[(frame.IndexOf(" in ", StringComparison.Ordinal) + 4)..];
         int link = start + frame.Length - place.Length;
@@ -867,123 +714,78 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Contains(run.Editor.Highlighter!.GetSpans(run.Document.Snapshot, start, frame.Length), span => span.Kind == TokenKind.Link && span.Start == link && span.Length == place.Length);
 
         Click(window, run.Editor, link + 3);
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
-        Assert.Equal(new TextPosition(7, 0), window.EditorArea.CodeEditor.CaretPosition);
+        Assert.Equal(PathNames.Canonical(Path.Combine(Folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(8, 0), window.EditorArea.CodeEditor.CaretPosition);
         Assert.True(window.EditorArea.CodeEditor.IsFocused, "The frame's file opened, but the keys stayed in the Run window");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_build_error_in_the_build_window_is_a_link_to_its_file_line_and_column()
-    {
-        Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
-        MainWindow window = Open();
-        window.Perform(AppActions.Build);
-        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        window.ShowToolWindow("build");
-        Ui.Settle();
-        OutputView build = window.BottomPanel.Build;
-        string output = build.Document.Snapshot.ToString();
-        int error = output.IndexOf("Program.cs(2,13): error CS0029", StringComparison.Ordinal);
-        Assert.True(error >= 0, $"The build window has no error at its place:\n{output}");
-        Click(window, build.Editor, error);
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
-        Assert.Equal(new TextPosition(1, 12), window.EditorArea.CodeEditor.CaretPosition);
         window.Close();
     }
 
     /// <summary>Rider's Toolset and Build, Presentation: Build opens the Build window as it starts, unless "when build is
     /// explicitly invoked" is off, and a build's end brings it forward as "Showing build results after build completed"
-    /// says, by default only when errors were received.</summary>
+    /// says, by default only when errors were received; Run's build, which Rider calls implicit, opens it only with "even
+    /// when the build is invoked implicitly".</summary>
     [AvaloniaFact]
     public void Build_opens_the_build_window_as_it_starts_and_its_end_brings_it_forward_as_settings_say()
     {
         MainWindow window = Open();
         try
         {
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
-            Assert.True(window.IsBuilding && window.DockHost.IsShown("build"), "Build Solution started without opening the Build window, which Rider's opens by default");
+            Assert.True(window.IsBuilding && window.DockHost.IsShown(ToolWindowIds.Build), "Build Solution started without opening the Build window, which Rider's opens by default");
             BuildToEnd(window, "Build succeeded");
-            Assert.True(window.DockHost.IsShown("build"), "The Build window Build Solution opened went away as the build ended");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "The Build window Build Solution opened went away as the build ended");
 
             // Explicit builds not opening it, one that succeeds leaves the bottom panel as it was, and one that fails does not.
             window.ApplySettings(window.Settings with { OpenBuildWindowOnBuild = false });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
-            Assert.True(window.IsBuilding && window.DockHost.IsShown("problems"), "With Rider's \"when build is explicitly invoked\" off, Build Solution still opened the Build window");
+            Assert.True(window.IsBuilding && window.DockHost.IsShown(ToolWindowIds.Problems), "With Rider's \"when build is explicitly invoked\" off, Build Solution still opened the Build window");
             BuildToEnd(window, "Build succeeded");
-            Assert.True(window.DockHost.IsShown("problems"), "A build that succeeded brought the Build window forward, which Rider does only for errors by default");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems), "A build that succeeded brought the Build window forward, which Rider does only for errors by default");
             Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
             window.Perform(AppActions.Build);
             BuildToEnd(window, "Build failed");
-            Assert.True(window.DockHost.IsShown("build"), "A build that failed left the Build window behind the Problems window, where Rider brings it forward with its errors");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "A build that failed left the Build window behind the Problems window, where Rider brings it forward with its errors");
 
             window.ApplySettings(window.Settings with { ShowBuildResults = Passenger.App.Settings.BuildResultsMode.Never });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
             BuildToEnd(window, "Build failed");
-            Assert.True(window.DockHost.IsShown("problems"), "With build results shown never, a failed build still brought the Build window forward");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems), "With build results shown never, a failed build still brought the Build window forward");
 
             Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\n");
             window.ApplySettings(window.Settings with { ShowBuildResults = Passenger.App.Settings.BuildResultsMode.Always });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
             BuildToEnd(window, "Build succeeded");
-            Assert.True(window.DockHost.IsShown("build"), "With build results shown always, a build that succeeded did not bring the Build window forward");
-        }
-        finally
-        {
-            window.ApplySettings(new Passenger.App.Settings.AppSettings());
-            window.Close();
-        }
-    }
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "With build results shown always, a build that succeeded did not bring the Build window forward");
 
-    /// <summary>Run's build is one Rider calls implicit: it leaves the bottom panel as it was, the status bar saying what
-    /// builds, and the program's output comes in the Run window; "even when the build is invoked implicitly" opens the
-    /// Build window for it too.</summary>
-    [AvaloniaFact]
-    public void Run_builds_without_taking_the_bottom_panel_and_shows_the_run_window()
-    {
-        MainWindow window = Open();
-        try
-        {
-            window.ShowToolWindow("problems");
+            // Run's build is one Rider calls implicit: it leaves the bottom panel as it was, the status bar saying what builds,
+            // and the program's output comes in the Run window; "even when the build is invoked implicitly" opens the Build
+            // window for it too.
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.RunProgram);
             Ui.PumpUntil(() => window.IsBuilding, "the run's build to start", TimeSpan.FromMinutes(1));
-            Assert.True(window.DockHost.IsShown("problems"), "Run's build took the bottom panel, which Rider leaves as it was for a build before a run");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems), "Run's build took the bottom panel, which Rider leaves as it was for a build before a run");
             Assert.StartsWith("Building Hello", window.Status, StringComparison.Ordinal);
             Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
-            Assert.True(window.DockHost.IsShown("run"), "The program ran, but its Run window is not in front");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Run), "The program ran, but its Run window is not in front");
 
             window.ApplySettings(window.Settings with { OpenBuildWindowOnImplicitBuild = true });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.RunProgram);
             Ui.PumpUntil(() => window.IsBuilding, "the second run's build to start", TimeSpan.FromMinutes(1));
-            Assert.True(window.DockHost.IsShown("build"), "With Rider's \"even when the build is invoked implicitly\" on, Run's build did not open the Build window");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "With Rider's \"even when the build is invoked implicitly\" on, Run's build did not open the Build window");
             Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the second program to finish", TimeSpan.FromMinutes(2));
-            Assert.True(window.DockHost.IsShown("run"), "The program ran after a build in the Build window, but its Run window is not in front");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Run), "The program ran after a build in the Build window, but its Run window is not in front");
         }
         finally
         {
             window.ApplySettings(new Passenger.App.Settings.AppSettings());
             window.Close();
         }
-    }
-
-    [AvaloniaFact]
-    public void A_build_that_fails_before_a_run_brings_the_build_window_forward_with_its_error_and_runs_nothing()
-    {
-        Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
-        MainWindow window = Open();
-        window.ShowToolWindow("problems");
-        string? refused = Ui.Await(window.RunAsync(), "the run's build", TimeSpan.FromMinutes(2));
-        Assert.StartsWith("Build failed: 1 error", refused, StringComparison.Ordinal);
-        Assert.True(window.DockHost.IsShown("build"), "The build before the run failed, but the Build window did not come forward with its error as Rider's does");
-        Assert.Contains("Program.cs(2,13): error CS0029", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        Assert.False(window.Runner.IsRunning);
-        Assert.Equal(string.Empty, Output(window));
-        window.Close();
     }
 
     /// <summary>Waits for the build under way to end, and checks what the status bar says of it.</summary>
@@ -994,51 +796,36 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     [AvaloniaFact]
-    public void An_address_a_program_prints_opens_in_the_browser_and_a_message_naming_a_file_of_its_project_opens_the_file()
-    {
-        // The run's working folder is the project's output folder: a relative path is the project's all the same.
-        Write("src/Hello/Program.cs", "Console.WriteLine(\"The orders are documented at https://example.com/orders/help?topic=load.\");\n"
-            + "Console.WriteLine(\"Program.cs(2,9): warning ORD001: the orders were checked by the program\");\n");
-        MainWindow window = Open();
-        string output = RunToEnd(window);
-        OutputView run = window.BottomPanel.Run;
-        Click(window, run.Editor, output.IndexOf("example.com", StringComparison.Ordinal));
-        Assert.Equal(["https://example.com/orders/help?topic=load"], window.Browsed.Select(u => u.AbsoluteUri));
-        Assert.Null(window.EditorArea.Active);
-
-        Click(window, run.Editor, output.IndexOf("Program.cs(2,9)", StringComparison.Ordinal) + 2);
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
-        Assert.Equal(new TextPosition(1, 8), window.EditorArea.CodeEditor.CaretPosition);
-        Assert.Single(window.Browsed);
-        window.Close();
-    }
-
-    [AvaloniaFact]
     public void A_web_project_whose_profile_launches_the_browser_opens_its_launch_url_once_it_listens_and_not_before()
     {
-        int port = FreePort();
+        // Each profile's port held from now until its site is about to listen there.
+        using HeldPort browse = new();
+        using HeldPort quiet = new();
         Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
-        Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        // A start slow enough to tell opening once it listens from opening once it started.
-        Write("src/Site/Program.cs", "Console.WriteLine(\"Warming up\");\nThread.Sleep(4000);\nWebApplication app = WebApplication.Create(args);\n"
-            + "app.MapGet(\"/orders\", () => \"Orders\");\napp.Run();\n");
+        Write("src/Site/Site.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
+        // Started, it listens only once the test lets it, to tell opening once it listens from opening once it started.
+        string listen = Path.Combine(Folder, "listen");
+        Write("src/Site/Program.cs", $"Console.WriteLine(\"Warming up\");\nwhile (!File.Exists(@\"{listen}\"))\n{{\n    Thread.Sleep(20);\n}}\n"
+            + "WebApplication app = WebApplication.Create(args);\napp.MapGet(\"/orders\", () => \"Orders\");\napp.Run();\n");
         Write("src/Site/Properties/launchSettings.json", "{\n  \"profiles\": {\n"
-            + $"    \"Browse\": {{ \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"orders\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }},\n"
-            + $"    \"Quiet\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }}\n  }}\n}}\n");
-        Restore.Run(Path.Combine(folder, "src", "Site"));
+            + $"    \"Browse\": {{ \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"orders\", \"applicationUrl\": \"http://127.0.0.1:{browse.Port}\" }},\n"
+            + $"    \"Quiet\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{quiet.Port}\" }}\n  }}\n}}\n");
+        Restore.Run(Path.Combine(Folder, "src", "Site"));
         MainWindow window = Open();
         try
         {
+            // As dotnet new web writes it, the project file names no output type: the Web SDK makes it an executable.
+            Assert.Equal(["Hello", "Site: Browse", "Site: Quiet"], window.Configurations.Select(c => c.Name));
             Assert.True(window.SelectConfiguration("Site: Browse"));
             Ui.Launched(window, window.RunAsync(), "the site to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => Output(window).Contains("Warming up", StringComparison.Ordinal), "the site to start", TimeSpan.FromMinutes(2));
-            DateTime warming = DateTime.UtcNow.AddSeconds(2.5);
-            Ui.WaitFor(() => window.Browsed.Count > 0 || DateTime.UtcNow > warming, "the site to warm up");
+            Ui.Hold(TimeSpan.FromSeconds(2), "the site warming up, its port refusing every connection: no browser is to open meanwhile");
             Assert.True(window.Browsed.Count == 0, $"The browser opened {window.Browsed.FirstOrDefault()} before the site listened");
 
+            browse.LetGo(listen);
             Ui.WaitFor(() => window.Browsed.Count > 0, "the browser to open once the site listens", TimeSpan.FromSeconds(60));
             Uri opened = Assert.Single(window.Browsed);
-            Assert.Equal($"http://127.0.0.1:{port}/orders", opened.AbsoluteUri);
+            Assert.Equal($"http://127.0.0.1:{browse.Port}/orders", opened.AbsoluteUri);
             using (System.Net.Http.HttpClient client = new())
             {
                 Assert.Equal("Orders", client.GetStringAsync(opened).GetAwaiter().GetResult());
@@ -1047,11 +834,12 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
 
             // A profile that does not ask for the browser opens none.
+            File.Delete(listen);
             Assert.True(window.SelectConfiguration("Site: Quiet"));
             Ui.Launched(window, window.RunAsync(), "the quiet site to start", TimeSpan.FromMinutes(2));
+            quiet.LetGo(listen);
             Ui.WaitFor(() => Output(window).Contains("Now listening on:", StringComparison.Ordinal), "the quiet site to listen", TimeSpan.FromMinutes(2));
-            DateTime listening = DateTime.UtcNow.AddSeconds(1.5);
-            Ui.WaitFor(() => DateTime.UtcNow > listening, "the quiet site to run a while");
+            Ui.Hold(TimeSpan.FromSeconds(1.5), "the quiet site running a while, listening: no browser is to open meanwhile");
             Assert.Single(window.Browsed);
         }
         finally
@@ -1060,16 +848,6 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
             window.Close();
         }
-    }
-
-    /// <summary>A port nothing listens on now, for a site of the test's own.</summary>
-    private static int FreePort()
-    {
-        System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 
     /// <summary>The pointer brought to rest on a character of a console.</summary>
@@ -1107,7 +885,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     public void A_build_that_cannot_start_says_why_and_leaves_nothing_waiting()
     {
         MainWindow window = Open();
-        TestFolders.Delete(folder);
+        TestFolders.Delete(Folder);
         try
         {
             // The window reads the gone folder (and survives it) before Build is pressed, as the folder watcher has it do;
@@ -1125,34 +903,45 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         }
         finally
         {
-            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(Folder);
             window.Close();
         }
     }
 
+    /// <summary>A program that runs until it is ended: the Run window's Rerun while it runs stops it and runs it again, and the
+    /// one run again, still running when the window closes, ends with it.</summary>
     [AvaloniaFact]
-    public void The_run_windows_rerun_while_the_program_runs_stops_it_and_runs_it_again()
+    public void The_run_windows_rerun_while_the_program_runs_stops_it_and_runs_it_again_and_a_program_still_running_ends_with_the_window()
     {
-        string started = Path.Combine(folder, "program.pids");
-        Write("src/Hello/Program.cs", $"File.AppendAllText(@\"{started}\", Environment.ProcessId + \"\\n\");\nThread.Sleep(Timeout.Infinite);\n");
+        string runs = Path.Combine(Folder, "program.pids");
+        string started = Path.Combine(Folder, "program.pid");
+        Write("src/Hello/Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\n"
+            + $"File.AppendAllText(@\"{runs}\", Environment.ProcessId + \"\\n\");\nThread.Sleep(Timeout.Infinite);\n");
         MainWindow window = Open();
+        bool ending = false;
         try
         {
             window.Perform(AppActions.RunProgram);
-            Ui.WaitFor(() => Runs(started).Length == 1, "the program to start", TimeSpan.FromMinutes(2));
-            int first = Runs(started)[0];
+            Ui.WaitFor(() => Runs(runs).Length == 1, "the program to start", TimeSpan.FromMinutes(2));
+            int first = Runs(runs)[0];
 
             // Rider's Rerun is there while the program runs: it stops it and runs it again, the way to restart after an edit.
             Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Rerun");
             Assert.True(rerun.IsEffectivelyEnabled, "The Run window's Rerun is greyed while its program runs");
-            rerun.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            Ui.WaitFor(() => Runs(started).Length == 2, "the program to run again", TimeSpan.FromMinutes(2));
+            Ui.Click(rerun, settle: false);
+            Ui.WaitFor(() => Runs(runs).Length == 2, "the program to run again", TimeSpan.FromMinutes(2));
             Assert.True(Processes.Gone(first), $"Rerun left the first run going: {Processes.Describe(first)}");
             Assert.True(window.IsRunning, "The program Rerun started again is not running");
+
+            ending = true;
+            AssertEndsWithTheWindow(window, started, "the program Run started again");
         }
         finally
         {
-            window.Close();
+            if (!ending)
+            {
+                window.Close();
+            }
         }
 
         static int[] Runs(string file) => File.Exists(file)
@@ -1160,43 +949,83 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             : [];
     }
 
+    /// <summary>A program Run built, built again by a dotnet build typed in the Terminal window, still starts with no build
+    /// before it, though Passenger was started from a shell whose PWD names the folder through a link: the terminal's shell
+    /// is told its folder as the IDE's builds name it, its real path. A shell keeps an inherited PWD that names its folder,
+    /// dotnet builds by it, and MSBuild's IncrementalClean in a build through another spelling of the project's path deletes
+    /// what the IDE's build wrote and it did not write again, runtimeconfig.json and deps.json, so the program could not
+    /// start (exit code 131, #413).</summary>
     [AvaloniaFact]
-    public void A_program_still_running_when_the_window_closes_ends_with_it()
+    public void A_program_run_built_and_built_again_in_the_terminal_starts_with_no_build_before_it()
     {
-        string started = Path.Combine(folder, "program.pid");
-        Write("src/Hello/Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        string folder = Folder;
+        // Windows' shells read no PWD.
+        string? linked = OperatingSystem.IsWindows() ? null : Path.Combine(TestFolders.Create("build-link-"), "Sample");
+        if (linked is not null)
+        {
+            TestFolders.LinkFolder(linked, PathNames.Canonical(folder));
+        }
         MainWindow window = Open();
-        window.Perform(AppActions.RunProgram);
-        AssertEndsWithTheWindow(window, started, "the program Run started");
-    }
-
-    [AvaloniaFact]
-    public void With_hot_reload_the_program_and_its_watcher_end_when_the_window_closes()
-    {
-        string started = Path.Combine(folder, "program.pid");
-        Write("src/Hello/Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nwhile (true)\n{{\n    Thread.Sleep(200);\n}}\n");
-        MainWindow window = Open();
-        window.ApplySettings(window.Settings with { HotReload = true });
         try
         {
-            window.Perform(AppActions.RunProgram);
-            AssertEndsWithTheWindow(window, started, "the program dotnet watch started");
+            Ui.Launched(window, window.RunAsync(), "the run built before it", TimeSpan.FromMinutes(2));
+            Assert.Contains("Hello from the run", Ended(window), StringComparison.Ordinal);
+
+            window.TerminalPanel.Shell = OperatingSystem.IsWindows() ? ("cmd.exe", []) : ("/bin/sh", []);
+            string? pwd = Environment.GetEnvironmentVariable("PWD");
+            Environment.SetEnvironmentVariable("PWD", linked ?? pwd);
+            try
+            {
+                Ui.Run(window, AppActions.ShowTerminal);
+                Ui.WaitFor(() => window.TerminalPanel.Active is { IsRunning: true }, "the shell to start");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PWD", pwd);
+            }
+            Passenger.Terminal.TerminalSession shell = window.TerminalPanel.Active!;
+            Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the terminal");
+            // Its nodes end with it: what it writes is the same, and nothing of it outlives the test.
+            window.KeyTextInput($"\"{Dotnet.Host()}\" build -nodeReuse:false && echo built-0 || echo built-1");
+            Ui.Press(window, "ENTER");
+            try
+            {
+                Ui.WaitFor(() => Said(shell) is not null, "the terminal's build to end", TimeSpan.FromMinutes(3));
+            }
+            catch (TimeoutException waited)
+            {
+                throw new TimeoutException($"{waited.Message}. The terminal shows:\n{TerminalTests.Screen(shell)}", waited);
+            }
+            Assert.True(Said(shell) == "built-0", $"The build typed in the terminal failed:\n{TerminalTests.Screen(shell)}");
+
+            RunConfigurationsDialog dialog = DialogButtonsTests.Check(window.ShowRunConfigurations());
+            dialog.BuildBox.IsChecked = false;
+            Ui.Settle();
+            Ui.Click(dialog.OkButton);
+            Assert.False(window.Configuration?.BuildBeforeLaunch, "Edit Configurations kept Hello's build before launch");
+            Ui.Launched(window, window.RunAsync(), "the run with no build before it");
+            string output = Ended(window);
+            Assert.True(output.Contains("Hello from the run", StringComparison.Ordinal) && output.Contains("Process finished with exit code 0.", StringComparison.Ordinal),
+                $"After a build in the terminal, Hello did not start as the IDE's build left it:\n{output}");
         }
         finally
         {
-            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.Close();
         }
+
+        static string? Said(Passenger.Terminal.TerminalSession shell) =>
+            TerminalTests.Screen(shell).Split('\n').Select(line => line.Trim()).LastOrDefault(line => line is "built-0" or "built-1");
     }
 
     [AvaloniaFact]
     public void A_build_still_running_when_the_window_closes_ends_with_it()
     {
         // A step of the build that would run for ten minutes, as a slow tool or a hung test would: its process names itself.
-        Write("src/Hello/Hello.csproj", """
+        Write("src/Hello/Hello.csproj", $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>{TestProjects.Framework}</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
               </PropertyGroup>
               <Target Name="Linger" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
@@ -1207,7 +1036,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             """);
         MainWindow window = Open();
         window.Perform(AppActions.Build);
-        AssertEndsWithTheWindow(window, Path.Combine(folder, "src", "Hello", "build.pid"), "the build's step");
+        AssertEndsWithTheWindow(window, Path.Combine(Folder, "src", "Hello", "build.pid"), "the build's step");
     }
 
     /// <summary>Waits for a process the window started to write its id to a file, closes the window, and checks that the
@@ -1239,35 +1068,28 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         {
             Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
         }
-        Ui.WaitFor(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("Process finished", StringComparison.Ordinal), "the run to end");
-        return window.BottomPanel.Run.Document.Snapshot.ToString();
+        return Ended(window);
     }
 
-    private MainWindow Open()
+    /// <summary>The Run console once the run already started has ended; never a run of its own, since a short program can end
+    /// before a test looks, and a Run pressed then would run the configuration again without what the test gave it.</summary>
+    private static string Ended(MainWindow window)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
+        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the run to end");
+        return Output(window);
     }
+
+    private MainWindow Open() => Ui.OpenFolder(Folder);
 
     /// <summary>The solution with a second project, a library, which builds at the same time as the first.</summary>
     private void WriteTwoProjects()
     {
         Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Tools/Tools.csproj", TestProjects.Library());
         Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => 3;\n}\n");
     }
 
-    private void Write(string relative, string text) => Write(folder, relative, text);
-
-    private static void Write(string folder, string relative, string text)
-    {
-        string path = Path.Combine(folder, relative);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
-    }
+    private void Write(string relative, string text) => TestFolders.Write(Folder, relative, text);
 
     /// <summary>MSBuild of a test's own, for what the IDE starts while it lasts (the IDE passes its environment on): a handshake
     /// salt no other build has, so no server or node another left is used and the test's builds start their own, as on a

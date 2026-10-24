@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using Passenger.App.Editors;
 using Passenger.App.MSBuild;
@@ -16,8 +17,33 @@ using Passenger.Xaml.Features;
 namespace Passenger.App.CSharp;
 
 /// <summary>A fix Passenger offers itself at a place in a file, beside the language server's (a running app's failed binding's
-/// nearest member): what Show Context Actions lists, a quieter detail, and the text it puts in place of a range.</summary>
-public sealed record EditorFix(string Title, string Detail, TextRange Range, string Text);
+/// nearest member, a compose file's undefined name): what Show Context Actions lists, a quieter detail, and the text it puts
+/// in place of a range.</summary>
+public sealed record EditorFix(string Title, string Detail, TextRange Range, string Text)
+{
+    /// <summary>The fix worked out again on the file's text as it stands when it is chosen, null when that text no longer
+    /// has what it fixes; none for a fix made as it was offered.</summary>
+    public Func<TextSnapshot, EditorFix?>? Again { get; init; }
+
+    /// <summary>Where the caret goes in <see cref="Text"/> once it is made: its end when none is given.</summary>
+    public int? Caret { get; init; }
+
+    /// <summary>A fix made in another file than the one shown (an AppHost's WithReference, for its service's warning), in
+    /// place of <see cref="Text"/>'s edit: made as it is chosen, given <see cref="Range"/> as it then stands and an agent's
+    /// call's patience, and saying what it came to.</summary>
+    public Func<TextRange, Patience?, Task<RefactorOutcome>>? Elsewhere { get; init; }
+
+    /// <summary>A fix that asks for a value before it is made (an AppHost parameter's), in place of <see cref="Text"/>'s
+    /// edit: what is asked, whether the answer is a secret (masked as it is typed, never said back), and the fix made from it.</summary>
+    public ValueAsked? Asks { get; init; }
+
+    /// <summary>The fix to make on a text now, worked out again where it can be; null when it no longer fits.</summary>
+    public EditorFix? On(TextSnapshot text) => Again is null ? this : Again(text);
+}
+
+/// <summary>What a fix asks before it is made: the question, whether the answer is a secret, and the fix made from the
+/// answer, given an agent's call's patience, saying what it came to (never the answer).</summary>
+public sealed record ValueAsked(string Question, bool Secret, Func<string, Patience?, Task<RefactorOutcome>> Make);
 
 /// <summary>What the language server adds to the editor as you work: completion as you type, a card
 /// when the pointer rests (the diagnostics there and the symbol's description), signature help after
@@ -42,6 +68,17 @@ public sealed partial class CodeAssist
     private Completion? open;
     private Control? modal;
 
+    /// <summary>The pause after the pointer leaves a card of a paused program's value (its word, or the card itself) before
+    /// the card goes: time to reach the card from the word, on which it stays while the pointer or the keys are on it.</summary>
+    private readonly Debounce leaving;
+
+    /// <summary>Takes the card away once the stop its value was read at is gone.</summary>
+    private CancellationTokenRegistration hoverGone;
+
+    /// <summary>Where a card of a value was placed: the line's top it hangs from, in the layer, and whether it stands over
+    /// the line, so a card that grows as its rows open stays beside the line and inside the editor.</summary>
+    private (Point Line, bool Above)? valuesPlace;
+
     /// <summary>What undoes what the open modal showed in the editor, run as it closes however it closes.</summary>
     private Action? modalClosed;
 
@@ -55,17 +92,54 @@ public sealed partial class CodeAssist
             popup.IsVisible = false;
             layer.Children.Add(popup);
         }
+        leaving = new Debounce(TimeSpan.FromMilliseconds(300), () =>
+        {
+            if (!HoverHeld)
+            {
+                HideHover();
+            }
+            return Task.CompletedTask;
+        });
+        hoverCard.PointerEntered += (_, _) => leaving.Stop();
+        hoverCard.PointerExited += (_, _) => LeaveValues();
+        hoverCard.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == InputElement.IsKeyboardFocusWithinProperty && e.NewValue is false)
+            {
+                LeaveValues();
+            }
+        };
+        hoverCard.SizeChanged += (_, _) => KeepValuesPlaced();
+        hoverCard.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape && hoverCard.Values is not null)
+            {
+                HideHover();
+                e.Handled = true;
+            }
+        };
         // Every editor a split makes is wired the same; what it asks is answered for the active one, which it is.
         editors.ForEachEditor(editor =>
         {
             editor.Hovered += (_, e) =>
             {
-                if (editor == Editor)
+                // A value's card in use (its keys, its menu, a value being typed) stays over what else the pointer rests on.
+                if (editor == Editor && !ValuesInUse)
                 {
                     _ = e.Hint is { } hint ? ShowHintHover(hint, e.Point) : ShowHover(e.Offset, e.Point);
                 }
             };
-            editor.HoverEnded += (_, _) => HideHover();
+            editor.HoverEnded += (_, _) =>
+            {
+                if (hoverCard.IsVisible && hoverCard.Values is not null)
+                {
+                    LeaveValues();
+                }
+                else
+                {
+                    HideHover();
+                }
+            };
             editor.Typed += (_, text) =>
             {
                 if (editor == Editor)
@@ -94,7 +168,8 @@ public sealed partial class CodeAssist
             FollowLayer();
         };
         completion.List.DoubleTapped += (_, _) => _ = Commit();
-        completion.List.SelectionChanged += (_, _) => _ = DescribeSelected();
+        completion.SelectedChanged += (_, _) => _ = DescribeSelected();
+        completion.Swatch = Swatch;
     }
 
     /// <summary>A place to go: a file and a line and column (from zero).</summary>
@@ -120,8 +195,28 @@ public sealed partial class CodeAssist
     /// <summary>The completion list's rows, in order, each with the detail it shows on its right, while it shows.</summary>
     public IReadOnlyList<(string Label, string Detail)> CompletionDetails => completion.IsVisible ? [.. completion.Rows.Select(r => (r.Item.Label, r.Detail))] : [];
 
+    /// <summary>What was typed of the name the completion list shows its rows for, while it shows.</summary>
+    public string? CompletionNarrowedBy => completion.IsVisible ? filtered?.Typed : null;
+
+    /// <summary>The controls showing the completion list's rows on screen, while it shows.</summary>
+    public IReadOnlyList<Control> CompletionRowControls => completion.IsVisible
+        ? [.. completion.List.GetRealizedContainers().OfType<ListBoxItem>().Select(row => row.Presenter?.Child).OfType<Control>()]
+        : [];
+
     /// <summary>What the hover card says while it shows, null otherwise.</summary>
     public string? HoverText => hoverCard.IsVisible ? hoverCard.Text : null;
+
+    /// <summary>The rows of a paused program's value the hover card shows, while it shows them.</summary>
+    public Debugging.VariablesList? HoverValues => hoverCard.IsVisible ? hoverCard.Values : null;
+
+    /// <summary>The hover card while it shows, its frame the popups' (<c>Border.popup</c>).</summary>
+    public Border? HoverCard => hoverCard.IsVisible ? hoverCard : null;
+
+    /// <summary>Whether a card of a value is in use: it has the keys, its menu is open, or a value is being typed in it.</summary>
+    private bool ValuesInUse => hoverCard.IsVisible && hoverCard.Values is { } values && (hoverCard.IsKeyboardFocusWithin || values.IsInUse);
+
+    /// <summary>Whether a card of a value stays: in use, or the pointer is on it.</summary>
+    private bool HoverHeld => ValuesInUse || (hoverCard.IsVisible && hoverCard.Values is not null && hoverCard.IsPointerOver);
 
     /// <summary>What Parameter Info's card says, while it shows.</summary>
     public string? SignatureText => signatureCard.IsVisible ? signatureCard.Text : null;
@@ -210,6 +305,12 @@ public sealed partial class CodeAssist
     /// Tab and Escape, and Escape for a card.</summary>
     public bool TakeKey(string action)
     {
+        if (open is not null && action is EditorActions.Up or EditorActions.Down or EditorActions.PageUp or EditorActions.PageDown
+            or EditorActions.NewLine or EditorActions.Indent)
+        {
+            // From the rows of the name as typed, whose filter landing later would have chosen its first row again.
+            FilterNow();
+        }
         if (completion.IsVisible)
         {
             switch (action)
@@ -263,9 +364,9 @@ public sealed partial class CodeAssist
         });
         // Rider's Generate: the server's actions that write code for the type (constructors, equality, interface members,
         // overrides).
-        Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
+        Code(AppActions.Generate, "Generate…", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
             new("Code", 0, 2));
-        Code(AppActions.SurroundWith, "Surround With...", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
+        Code(AppActions.SurroundWith, "Surround With…", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
         // A file Prettier formats (Run on 'Reformat Code' action) needs no language server.
         actions.Add(new IdeAction(AppActions.Reformat, "Reformat Code", "Code", context => _ = Reformat())
         {
@@ -275,39 +376,39 @@ public sealed partial class CodeAssist
         AddLintingActions(actions);
         Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1), markup: true);
         Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
-        Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
+        Code(AppActions.RefactorThis, "Refactor This…", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
             new("Refactor", 0, 0), xaml: true);
-        // IntelliJ's RefactoringMenu: Rename and Change Signature, the Extract and Introduce actions, Inline; Move and Safe
-        // Delete; Pull Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
-        Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0), xaml: true);
-        Code(AppActions.ChangeSignature, "Change Signature...", context => _ = ChangeSignature(), new("Refactor", 1, 1));
-        Code(AppActions.ExtractMethod, "Extract Method...", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
+        // IntelliJ's RefactoringMenu: Rename (the window's, Rider's RenameElement, an Explorer row's too: Rename and
+        // WhyNotRename here) and Change Signature, the Extract and Introduce actions, Inline; Move and Safe Delete; Pull
+        // Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
+        Code(AppActions.ChangeSignature, "Change Signature…", context => _ = ChangeSignature(), new("Refactor", 1, 1));
+        Code(AppActions.ExtractMethod, "Extract Method…", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
             new("Refactor", 1, 2));
-        Code(AppActions.IntroduceVariable, "Introduce Variable...",
+        Code(AppActions.IntroduceVariable, "Introduce Variable…",
             context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 3));
-        Code(AppActions.IntroduceField, "Introduce Field...", context => _ = Refactor(IntroduceField), new("Refactor", 1, 4));
-        Code(AppActions.IntroduceParameter, "Introduce Parameter...", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 5));
-        Code(AppActions.ExtractInterface, "Extract Interface...", context => _ = ExtractInterface(), new("Refactor", 1, 6));
-        Code(AppActions.Inline, "Inline...",
+        Code(AppActions.IntroduceField, "Introduce Field…", context => _ = Refactor(IntroduceField), new("Refactor", 1, 4));
+        Code(AppActions.IntroduceParameter, "Introduce Parameter…", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 5));
+        Code(AppActions.ExtractInterface, "Extract Interface…", context => _ = ExtractInterface(), new("Refactor", 1, 6));
+        Code(AppActions.Inline, "Inline…",
             context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 7));
-        Code(AppActions.Move, "Move...", context => _ = Move(), new("Refactor", 2, 0));
-        Code(AppActions.SafeDelete, "Safe Delete...", context => _ = SafeDelete(), new("Refactor", 2, 1));
-        Code(AppActions.PullMembersUp, "Pull Members Up...", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
-        Code(AppActions.PushMembersDown, "Push Members Down...", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
-        Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
+        Code(AppActions.Move, "Move…", context => _ = Move(), new("Refactor", 2, 0));
+        Code(AppActions.SafeDelete, "Safe Delete…", context => _ = SafeDelete(), new("Refactor", 2, 1));
+        Code(AppActions.PullMembersUp, "Pull Members Up…", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
+        Code(AppActions.PushMembersDown, "Push Members Down…", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
+        Code(AppActions.EncapsulateField, "Encapsulate Field…", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
         // Rider's XAML refactorings, which ask their options in a dialog, in their own group.
-        actions.Add(new IdeAction(AppActions.ExtractResource, "Extract Resource...", "Code", context => _ = ExtractResource())
+        actions.Add(new IdeAction(AppActions.ExtractResource, "Extract Resource…", "Code", context => _ = ExtractResource())
         {
             WhyNot = context => WhyNotXaml(context),
             Menus = [new("Refactor", 4, 0)],
         });
-        actions.Add(new IdeAction(AppActions.ExtractStyle, "Extract Style...", "Code", context => _ = ExtractStyle())
+        actions.Add(new IdeAction(AppActions.ExtractStyle, "Extract Style…", "Code", context => _ = ExtractStyle())
         {
             WhyNot = context => WhyNotXaml(context),
             Menus = [new("Refactor", 4, 1)],
         });
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
-        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true, msbuild: true);
+        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true, msbuild: true, http: true);
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
             new("Navigate", 2, 1));
         Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 2));
@@ -319,18 +420,42 @@ public sealed partial class CodeAssist
         Code(AppActions.ParameterInfo, "Parameter Info", context => _ = ShowSignature(), new("View", 1, 2));
         Code(AppActions.NextError, "Next Highlighted Error", _ => StepToMarker(forward: true), new("Navigate", 3, 0), server: false);
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
-        Code(AppActions.QuickDocumentation, "Quick Documentation", context => _ = ShowHover(Caret, Editor.PointOf(Caret)), new("View", 1, 1), server: false);
+        Code(AppActions.QuickDocumentation, "Quick Documentation", context => QuickDocumentation(), new("View", 1, 1), server: false);
 
-        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
-            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml, markup, msbuild), Menus = [menu] });
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false,
+            bool http = false) =>
+            actions.Add(new IdeAction(id, title, "Code", run)
+            {
+                // An .http file's requests go to their routes, with no language server of its own.
+                WhyNot = context => http && IsHttpFile(context.File) ? null : WhyNot(context, server, syntax, xaml, markup, msbuild),
+                Menus = [menu],
+            });
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
 
+    /// <summary>Rename at the editor's caret: a C# symbol through the server, a XAML name and a compose file's of its own.</summary>
+    public void Rename() => ShowRename();
+
+    /// <summary>Why Rename cannot run at the editor's caret; null when it can.</summary>
+    public string? WhyNotRename(ActionContext context) => WhyNot(context, server: true, xaml: true);
+
+    /// <summary>Quick Documentation: the card for what is at the caret (its problems, a paused program's value, the symbol's
+    /// description); pressed again while a value's card shows, the card takes the keys, its rows to open with the arrows.</summary>
+    private void QuickDocumentation()
+    {
+        if (hoverCard.IsVisible && hoverCard.Values is { } values)
+        {
+            values.FocusRow();
+            return;
+        }
+        _ = ShowHover(Caret, Editor.PointOf(Caret));
+    }
+
     /// <summary>Why an action of a XAML file's alone cannot run: no file, a file not XAML of a project Passenger reads, or
     /// one that cannot be edited.</summary>
     private string? WhyNotXaml(ActionContext context) =>
-        context.File is null ? "No file is open"
+        context.File is null ? Refusals.NoFile
         : XamlOf(context.File) is not { } markup || (markup.Loaded.IsCompleted && !markup.IsLoaded) ? "The file is not XAML of an Avalonia or WPF project"
         : context.Editor.IsReadOnly ? "The file is read-only"
         : null;
@@ -339,7 +464,7 @@ public sealed partial class CodeAssist
     /// the file's syntax, a file not C# or one that cannot be edited. One that also edits XAML (<paramref name="markup"/>)
     /// takes any XAML file that can be edited; XAML and MSBuild files answer those they say they do.</summary>
     private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
-        context.File is null ? "No file is open"
+        context.File is null ? Refusals.NoFile
         : markup && XamlService.IsXaml(context.File.Path) ? (context.Editor.IsReadOnly ? "The file is read-only" : null)
         : xaml && XamlOf(context.File) is { } markupFile && (markupFile.IsLoaded || !markupFile.Loaded.IsCompleted) ? null
         : msbuild && MSBuildOf(context.File) is not null ? null
@@ -387,13 +512,18 @@ public sealed partial class CodeAssist
     /// in Rider, and nothing commits before a letter of the name is typed.</summary>
     private int? CommitsOn(string text)
     {
-        if (open is null || text.Length != 1 || text == " " || completion.Selected is not { } row
-            || templatesOffered.ContainsKey(row.Item) || postfixOffered.ContainsKey(row.Item))
+        if (open is null || text.Length != 1 || text == " ")
         {
             return null;
         }
         int end = Editor.Selections.Primary.Caret - 1;
         if (end <= open.Start || end > Editor.Document.Snapshot.Length || Editor.Document.Snapshot[end] != text[0])
+        {
+            return null;
+        }
+        // The item chosen among the rows of the name as typed before the character, its filter landed or not.
+        FilterNow(end);
+        if (open is null || completion.Selected is not { } row || templatesOffered.ContainsKey(row.Item) || postfixOffered.ContainsKey(row.Item))
         {
             return null;
         }
@@ -497,18 +627,45 @@ public sealed partial class CodeAssist
         }
         if (Current?.Lsp is not { } lsp)
         {
+            // A settings file's keys are Passenger's own, which need no JSON server (none without Node.js).
+            if (WebCurrent is { Kind: WebServerKind.Json } json)
+            {
+                await StartSettingsCompletion(json);
+            }
             return;
         }
         xamlOffered.Clear();
         completing?.Cancel();
         CancellationTokenSource cancel = new();
         completing = cancel;
-        int caret = Editor.Selections.Primary.Caret;
-        TextSnapshot asked = Editor.Document.Snapshot;
         try
         {
+            // An AppHost's or a service's resource names where one is typed; any other file's list is the server's alone.
+            if (await StartAspireCompletion(lsp, cancel.Token))
+            {
+                return;
+            }
+            int caret = Editor.Selections.Primary.Caret;
+            TextSnapshot asked = Editor.Document.Snapshot;
+            Web.WebDocument? web = WebCurrent;
+            // A compose file's own names where one is typed, merged with the server's by label, ahead of them; a settings file's
+            // keys and values from what the code reads, the same way.
+            (int Start, IReadOnlyList<CompletionItem> Items)? named = web is not null ? await ComposeCompletionAsync(web, lsp, asked, caret) : null;
+            (int Start, IReadOnlyList<CompletionItem> Items, string Tail)? settings = named is null && web is not null
+                ? await SettingsCompletionAsync(web, asked, caret, cancel.Token) : null;
+            if (settings is { } configured)
+            {
+                named = (configured.Start, configured.Items);
+            }
             (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token, incomplete);
-            if (cancel.IsCancellationRequested || list is null || list.Items.Count == 0)
+            IReadOnlyList<CompletionItem> served = list?.Items ?? [];
+            if (named is { } own)
+            {
+                HashSet<string> labels = [.. own.Items.Select(i => i.Label)];
+                // A server's item that would replace another stretch than the name's could not go in where the name does.
+                served = [.. served.Where(i => !labels.Contains(i.Label) && (i.TextEdit is not { } replaced || lsp.OffsetOf(replaced.Range.Start) == own.Start))];
+            }
+            if (cancel.IsCancellationRequested || (served.Count == 0 && named is null))
             {
                 if (!cancel.IsCancellationRequested)
                 {
@@ -516,10 +673,9 @@ public sealed partial class CodeAssist
                 }
                 return;
             }
-            Web.WebDocument? web = WebCurrent;
-            int start = list.Items.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
+            int start = named?.Start ?? (served.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
                 ? lsp.OffsetOf(edit.Range.Start)
-                : lsp.IsRazor ? RazorWordStart(caret, list.Items) : web is not null ? WebWordStart(web, caret) : WordStart(caret);
+                : lsp.IsRazor ? RazorWordStart(caret, served) : web is not null ? WebWordStart(web, caret) : WordStart(caret));
             // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share: C#'s.
             TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
             templatesOffered.Clear();
@@ -533,10 +689,10 @@ public sealed partial class CodeAssist
             {
                 postfixOffered[new CompletionItem { Label = postfix.Name, Kind = 15, Detail = postfix.Example, SortText = "~" + postfix.Name }] = (postfix, target);
             }
-            open = new Completion([.. list.Items, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
-                list.ItemDefaults?.CommitCharacters ?? [], list.IsIncomplete)
+            open = new Completion([.. named?.Items ?? [], .. served, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
+                list?.ItemDefaults?.CommitCharacters ?? [], list?.IsIncomplete ?? false)
             {
-                Tail = web is not null ? Tail(asked, list.Items, caret) : string.Empty,
+                Tail = settings is { } settled ? settled.Tail : web is not null ? Tail(asked, served, caret) : string.Empty,
                 Lead = web is not null && start < caret && caret <= asked.Length ? asked.GetText(start, caret - start) : string.Empty,
             };
             Filter();
@@ -551,20 +707,29 @@ public sealed partial class CodeAssist
         }
     }
 
-    /// <summary>The list narrowed to what has been typed since it opened: prefix matches first (an
-    /// exact-case one first of those), then CamelHumps, then anywhere in the name.</summary>
-    private void Filter()
+    /// <summary>What a list is narrowed by: the text typed since it opened, what of it an item with no filter text of its
+    /// own is matched by, and how alike two scores must be to keep the list's own order.</summary>
+    private readonly record struct Narrowing(Completion List, string Typed, string Bare, int Alike);
+
+    /// <summary>How many filters were asked for, the last the only one shown when it lands; and what the rows shown were
+    /// filtered by.</summary>
+    private int filters;
+    private (Completion List, string Typed)? filtered;
+
+    /// <summary>What the open list is narrowed by with the name typed up to <paramref name="end"/> (the caret when not
+    /// given); null, the list closed, once the caret has left the name or what is typed is no name.</summary>
+    private Narrowing? NarrowedBy(int? end = null)
     {
         if (open is null)
         {
-            return;
+            return null;
         }
         TextSnapshot text = Editor.Document.Snapshot;
-        int caret = Editor.Selections.Primary.Caret;
+        int caret = end ?? Editor.Selections.Primary.Caret;
         if (caret < open.Start || Editor.Selections.HasMultiple)
         {
             CloseCompletion();
-            return;
+            return null;
         }
         string typed = text.GetText(open.Start, caret - open.Start);
         // A web server's items may replace what came before the name (TypeScript's the member's dot), there as it asked.
@@ -578,27 +743,134 @@ public sealed partial class CodeAssist
         if (!led && !typed.All(IsWordChar))
         {
             CloseCompletion();
-            return;
+            return null;
         }
         // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
         int alike = msbuildOffered.Count > 0 ? 1000 : 1;
-        List<CompletionRow> rows = open.Items
-            .Select(item => (item, score: Score(led && item.FilterText is null ? typed[skip..] : typed, item.FilterText ?? item.Label)))
-            .Where(x => x.score is not null)
-            .OrderByDescending(x => x.score / alike)
-            .ThenByDescending(x => x.item.Preselect == true)
-            .ThenBy(x => x.item.SortText ?? x.item.Label, StringComparer.Ordinal)
-            .Take(200)
-            .Select(x => Swatched(Row(x.item)))
-            .ToList();
-        if (rows.Count == 0)
+        return new Narrowing(open, typed, led ? typed[skip..] : typed, alike);
+    }
+
+    /// <summary>The list narrowed to what has been typed since it opened: prefix matches first (an exact-case one first of
+    /// those), then CamelHumps, then anywhere in the name. Scored and made into rows on the thread pool, since a
+    /// statement's list is every type in reach, and shown as it lands unless a later key's filter was asked for since.</summary>
+    private void Filter()
+    {
+        if (NarrowedBy() is not { } narrowing)
+        {
+            return;
+        }
+        _ = FilterAsync(narrowing, ++filters);
+    }
+
+    private async Task FilterAsync(Narrowing narrowing, int asked)
+    {
+        CompletionRow[] rows = await BackgroundWork.Run(() => Rows(narrowing));
+        if (asked == filters && open == narrowing.List)
+        {
+            ShowRows(narrowing, rows);
+        }
+    }
+
+    /// <summary>The list shown for the name as typed up to <paramref name="end"/>, filtered here should its filter not have
+    /// landed yet: what commits or moves the choice must find the rows of the name as typed.</summary>
+    private void FilterNow(int? end = null)
+    {
+        if (NarrowedBy(end) is not { } narrowing || filtered == (narrowing.List, narrowing.Typed))
+        {
+            return;
+        }
+        filters++;
+        ShowRows(narrowing, Rows(narrowing));
+    }
+
+    private void ShowRows(Narrowing narrowing, CompletionRow[] rows)
+    {
+        if (rows.Length == 0)
         {
             CloseCompletion();
             return;
         }
+        bool opening = !completion.IsVisible;
         completion.Show(rows);
+        filtered = (narrowing.List, narrowing.Typed);
         completion.IsVisible = true;
-        Place(completion, open.Start, above: false);
+        Place(completion, narrowing.List.Start, above: false);
+        if (opening && msbuildOffered.Count > 0)
+        {
+            // An MSBuild list's first item's documentation beside it as it opens, which its selection came too early to show.
+            _ = DescribeSelected();
+        }
+    }
+
+    /// <summary>The rows a list shows narrowed (<see cref="Shown"/>), each badged by its kind; reads nothing of the window's,
+    /// so it runs off the UI thread.</summary>
+    private static CompletionRow[] Rows(Narrowing narrowing)
+    {
+        CompletionItem[] shown = Shown(narrowing.List.Items, narrowing.Typed, narrowing.Bare, narrowing.Alike);
+        CompletionRow[] rows = new CompletionRow[shown.Length];
+        for (int i = 0; i < shown.Length; i++)
+        {
+            rows[i] = Row(shown[i]);
+        }
+        return rows;
+    }
+
+    /// <summary>The most rows the list shows.</summary>
+    private const int MostShown = 200;
+
+    /// <summary>The items that match what was typed, the best first (the higher score over <paramref name="alike"/>, then
+    /// the one the server preselects, then by its sort text): only the best <see cref="MostShown"/> kept as the items are
+    /// scored, where every match of a statement's list (every type in reach) was sorted at every key. An item with no
+    /// filter text of its own is matched by <paramref name="bare"/>, what was typed less a web server's lead.</summary>
+    private static CompletionItem[] Shown(IReadOnlyList<CompletionItem> items, string typed, string bare, int alike)
+    {
+        PriorityQueue<CompletionItem, (int Score, CompletionItem Item, int Index)> best = new(MostShown + 1, WorstFirst.Instance);
+        for (int i = 0; i < items.Count; i++)
+        {
+            CompletionItem item = items[i];
+            if (FuzzyMatch.Label(item.FilterText is null ? bare : typed, item.FilterText ?? item.Label) is not { } score)
+            {
+                continue;
+            }
+            (int, CompletionItem, int) ranked = (score / alike, item, i);
+            if (best.Count < MostShown)
+            {
+                best.Enqueue(item, ranked);
+            }
+            else if (best.TryPeek(out _, out (int Score, CompletionItem Item, int Index) worst) && WorstFirst.Instance.Compare(ranked, worst) > 0)
+            {
+                best.DequeueEnqueue(item, ranked);
+            }
+        }
+        CompletionItem[] shown = new CompletionItem[best.Count];
+        for (int i = shown.Length - 1; i >= 0; i--)
+        {
+            shown[i] = best.Dequeue();
+        }
+        return shown;
+    }
+
+    /// <summary>Matches in the order they go from the list's best: a lower score, then not preselected, then later by sort
+    /// text, then later in the server's list.</summary>
+    private sealed class WorstFirst : IComparer<(int Score, CompletionItem Item, int Index)>
+    {
+        public static readonly WorstFirst Instance = new();
+
+        public int Compare((int Score, CompletionItem Item, int Index) x, (int Score, CompletionItem Item, int Index) y)
+        {
+            int byScore = x.Score.CompareTo(y.Score);
+            if (byScore != 0)
+            {
+                return byScore;
+            }
+            int byPreselect = (x.Item.Preselect == true).CompareTo(y.Item.Preselect == true);
+            if (byPreselect != 0)
+            {
+                return byPreselect;
+            }
+            int bySort = string.CompareOrdinal(y.Item.SortText ?? y.Item.Label, x.Item.SortText ?? x.Item.Label);
+            return bySort != 0 ? bySort : y.Index.CompareTo(x.Index);
+        }
     }
 
     private async Task Commit()
@@ -617,7 +889,8 @@ public sealed partial class CodeAssist
     /// <summary>The chosen item in place of the name typed, up to <paramref name="end"/> (the caret when not given).</summary>
     private async Task CommitCore(int? end = null)
     {
-        if (open is null || completion.Selected is not { } row)
+        FilterNow(end);
+        if (open is null || !completion.IsVisible || completion.Selected is not { } row)
         {
             return;
         }
@@ -635,7 +908,8 @@ public sealed partial class CodeAssist
             CommitMSBuild(msbuildItem, from);
             return;
         }
-        if (Current?.Lsp is not { } lsp)
+        LspDocument? lsp = Current?.Lsp;
+        if (lsp is null && !open.Settings)
         {
             return;
         }
@@ -659,7 +933,7 @@ public sealed partial class CodeAssist
         int typed = end ?? Editor.Selections.Primary.Caret;
         try
         {
-            if (item.Data is not null && item.AdditionalTextEdits is null)
+            if (item.Data is not null && item.AdditionalTextEdits is null && lsp is not null)
             {
                 item = await lsp.ResolveAsync(item) ?? item;
             }
@@ -880,6 +1154,7 @@ public sealed partial class CodeAssist
         hovering?.Cancel();
         CancellationTokenSource cancel = new();
         hovering = cancel;
+        ForgetValues();
         hoverCard.Clear();
         foreach (Marker marker in Editor.MarkersAt(offset))
         {
@@ -895,13 +1170,31 @@ public sealed partial class CodeAssist
         {
             return;
         }
+        Debugging.VariablesList? values = null;
         if (debuggerValue is not null)
         {
+            if (debuggerValue.Gone.IsCancellationRequested)
+            {
+                hoverCard.IsVisible = false;
+                return;
+            }
             if (debuggerValue.Problem is { } problem)
             {
                 hoverCard.AddText(problem, InfoCard.Brush("Passenger.Error"));
             }
-            if (debuggerValue.Code.Length > 0)
+            if (debuggerValue.Values is { } rows)
+            {
+                values = rows;
+                // The menu closed, the card goes unless the pointer or the keys are still on it.
+                rows.MenuClosed += (_, _) =>
+                {
+                    if (hoverCard.Values == rows)
+                    {
+                        LeaveValues();
+                    }
+                };
+            }
+            else if (debuggerValue.Code.Length > 0)
             {
                 hoverCard.AddCode(debuggerValue.Code);
             }
@@ -940,7 +1233,16 @@ public sealed partial class CodeAssist
                 // The card says what the markers there say, without the symbol's description.
             }
         }
-        if (hoverCard.IsEmpty || completion.IsVisible)
+        // A configuration key's: where a read's is given and with what, or what reads a settings file's.
+        if (debuggerValue is null && XamlCurrent is null && MSBuildCurrent is null && await ConfigurationHoverAsync(offset, cancel.Token) is { } configured)
+        {
+            if (cancel.IsCancellationRequested)
+            {
+                return;
+            }
+            hoverCard.AddText(configured);
+        }
+        if ((hoverCard.IsEmpty && values is null) || completion.IsVisible)
         {
             hoverCard.IsVisible = false;
             return;
@@ -949,7 +1251,75 @@ public sealed partial class CodeAssist
         TextSnapshot text = Editor.Document.Snapshot;
         int lineStart = text.GetLineStart(text.GetLineFromOffset(Math.Min(offset, text.Length)));
         Point anchor = Editor.PointOf(lineStart);
-        Place(hoverCard, new Point(point.X, anchor.Y), above: false);
+        if (values is not null)
+        {
+            PlaceValues(values, new Point(point.X, anchor.Y));
+        }
+        else
+        {
+            Place(hoverCard, new Point(point.X, anchor.Y), above: false);
+        }
+        if (debuggerValue is not null)
+        {
+            // Read at a stop, the value goes with it: the program going on, another program's tab chosen, the folder left.
+            hoverGone = debuggerValue.Gone.Register(HideHover);
+        }
+    }
+
+    /// <summary>Puts a card of a value's rows under the line at <paramref name="at"/> (its top), or over it when the room
+    /// below holds fewer rows than the room above, its rows scrolling past what that room holds.</summary>
+    private void PlaceValues(Debugging.VariablesList values, Point at)
+    {
+        at = Editor.TranslatePoint(at, layer) ?? at;
+        double lineHeight = Editor.LineHeight;
+        double below = layer.Bounds.Height - (at.Y + lineHeight + 2) - 8;
+        double over = at.Y - 2 - 8;
+        bool above = below < ListRow.Height * 8 && over > below;
+        hoverCard.AddValues(values, above ? over : below);
+        valuesPlace = (at, above);
+        hoverCard.Measure(Size.Infinity);
+        Size size = hoverCard.DesiredSize;
+        Canvas.SetLeft(hoverCard, Math.Clamp(at.X - 4, 0, Math.Max(0, layer.Bounds.Width - size.Width - 8)));
+        Canvas.SetTop(hoverCard, above ? Math.Max(0, at.Y - size.Height - 2) : at.Y + lineHeight + 2);
+    }
+
+    /// <summary>A card of a value that grew as its rows opened stays inside the editor, and over its line when it stands over it.</summary>
+    private void KeepValuesPlaced()
+    {
+        if (valuesPlace is not { } place || !hoverCard.IsVisible || hoverCard.Values is null)
+        {
+            return;
+        }
+        Size size = hoverCard.Bounds.Size;
+        double x = Math.Clamp(Canvas.GetLeft(hoverCard), 0, Math.Max(0, layer.Bounds.Width - size.Width - 8));
+        if (x != Canvas.GetLeft(hoverCard))
+        {
+            Canvas.SetLeft(hoverCard, x);
+        }
+        double y = Math.Max(0, place.Line.Y - size.Height - 2);
+        if (place.Above && y != Canvas.GetTop(hoverCard))
+        {
+            Canvas.SetTop(hoverCard, y);
+        }
+    }
+
+    /// <summary>The pointer left a card of a value, or its word, or the keys left the card: it goes after a pause unless
+    /// the pointer comes back to it or it is in use.</summary>
+    private void LeaveValues()
+    {
+        if (hoverCard.IsVisible && hoverCard.Values is not null)
+        {
+            leaving.Restart();
+        }
+    }
+
+    /// <summary>Lets go of the value the card showed: its pause before going, its stop, its place.</summary>
+    private void ForgetValues()
+    {
+        leaving.Stop();
+        hoverGone.Dispose();
+        hoverGone = default;
+        valuesPlace = null;
     }
 
     /// <summary>The card for an inlay hint the pointer rests on: what the server says of it (a type's description, a
@@ -959,6 +1329,7 @@ public sealed partial class CodeAssist
         hovering?.Cancel();
         CancellationTokenSource cancel = new();
         hovering = cancel;
+        ForgetValues();
         hoverCard.Clear();
         if (hint.Data is not LspInlayHint server || Current?.Lsp is not { } lsp)
         {
@@ -1001,7 +1372,18 @@ public sealed partial class CodeAssist
     private void HideHover()
     {
         hovering?.Cancel();
+        bool focused = hoverCard.IsKeyboardFocusWithin;
+        ForgetValues();
         hoverCard.IsVisible = false;
+        if (hoverCard.Values is not null)
+        {
+            hoverCard.Clear();
+        }
+        if (focused)
+        {
+            // The keys go back to the editor the card was over.
+            Editor.Focus();
+        }
     }
 
     private async Task ShowSignature()
@@ -1118,25 +1500,66 @@ public sealed partial class CodeAssist
     /// language server; none by default.</summary>
     public Func<OpenDocument, int, IReadOnlyList<EditorFix>>? EditorFixes { get; set; }
 
+    /// <summary>Asks the person for a value a fix sets (a title, what is asked, whether it is a secret, masked as typed);
+    /// null when they gave none.</summary>
+    public Func<string, string, bool, Task<string?>>? AskValue { get; set; }
+
     internal IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
 
-    /// <summary>Passenger's own fixes at the caret as Rider's list, the one chosen made as one undoable edit; false with none.</summary>
-    private bool ShowOwnFixes(string title)
+    /// <summary>One of Passenger's own fixes made in the file shown, as one undoable edit: worked out again on its text as it
+    /// stands (<see cref="EditorFix.On"/>), and refused, said in the status bar, when the text no longer has what it fixes;
+    /// one made in another file (<see cref="EditorFix.Elsewhere"/>) is that file's command, said as it lands.</summary>
+    private async Task ApplyOwnFix(OpenDocument document, EditorFix fix)
     {
-        if (editors.Active is not { } document || OwnFixes(document, Caret) is not { Count: > 0 } fixes)
+        if (editors.Active != document)
         {
-            return false;
+            return;
         }
-        int at = Caret;
-        ShowModal(new ChoicePopup(title, [.. fixes.Select(f => new Choice(f.Title, f.Detail, f))]), at, "Show Context Actions", choice =>
+        if (fix.On(document.Text.Snapshot) is not { } now)
         {
-            if (choice?.Value is EditorFix chosen && editors.Active == document)
+            Message?.Invoke(this, $"{fix.Title} was not applied: the file changed, so it no longer fits");
+            return;
+        }
+        if (now.Elsewhere is { } elsewhere)
+        {
+            RefactorOutcome outcome = await elsewhere(now.Range, null);
+            Message?.Invoke(this, outcome.Problem ?? outcome.Said);
+            return;
+        }
+        if (now.Asks is { } asks)
+        {
+            // Not awaited: the question holds no background work, so a settle waits on the IDE, never on the person.
+            _ = AskAndMakeAsync(now.Title.TrimEnd('…'), asks);
+            return;
+        }
+        Editor.ApplyEdits([new TextEdit(now.Range.Start, now.Range.Length, now.Text)], SelectionSet.Single(now.Range.Start + (now.Caret ?? now.Text.Length)));
+    }
+
+    /// <summary>A fix's value asked of the person (<see cref="AskValue"/>), then the fix made from it as background work,
+    /// what it came to said; nothing when they give none.</summary>
+    private async Task AskAndMakeAsync(string title, ValueAsked asks)
+    {
+        try
+        {
+            if (AskValue is null || await AskValue(title, asks.Question, asks.Secret) is not { } value)
             {
-                Editor.ApplyEdits([new TextEdit(chosen.Range.Start, chosen.Range.Length, chosen.Text)], SelectionSet.Single(chosen.Range.Start + chosen.Text.Length));
+                return;
             }
-            return Task.CompletedTask;
-        });
-        return true;
+            BackgroundWork.Begin();
+            try
+            {
+                RefactorOutcome made = await asks.Make(value, null);
+                Message?.Invoke(this, made.Problem ?? made.Said);
+            }
+            finally
+            {
+                BackgroundWork.End();
+            }
+        }
+        catch (Exception error)
+        {
+            IdeErrors.Report(error);
+        }
     }
 
     private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
@@ -1147,41 +1570,61 @@ public sealed partial class CodeAssist
             return;
         }
         string what = only is null ? "Show Context Actions" : title;
-        if (only is null && ShowOwnFixes(title))
-        {
-            return;
-        }
-        if (Ask(what) is not { } lsp || Current is not { } current || editors.Active is not { } document)
+        // Passenger's own fixes first, which need no server (a compose file's are its container engine's).
+        IReadOnlyList<EditorFix> own = only is null ? OwnFixes(editors.Active, Caret) : [];
+        if (editors.Active is not { } document)
         {
             return;
         }
         Selection primary = Editor.Selections.Primary;
-        int line = lsp.PositionOf(primary.Caret).Line;
-        List<Diagnostic> here = current.Diagnostics
-            .Where(d => d.Range.Start.Line <= line && line <= d.Range.End.Line)
-            .ToList();
-        try
+        IReadOnlyList<EslintFix> linted = [];
+        IReadOnlyList<CodeAction> actions = [];
+        if (Ask(own.Count > 0 ? null : what) is { } lsp && Current is { } current)
         {
-            // ESLint's fixes for the line first, as Rider lists its linters' before the language's own.
-            IReadOnlyList<EslintFix> linted = only is null ? await LintFixes(document, primary.Caret) : [];
-            IReadOnlyList<CodeAction> actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
-            if (actions.Count == 0 && linted.Count == 0)
+            int line = lsp.PositionOf(primary.Caret).Line;
+            List<Diagnostic> here = current.Diagnostics
+                .Where(d => d.Range.Start.Line <= line && line <= d.Range.End.Line)
+                .ToList();
+            try
             {
-                Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
-                return;
+                // ESLint's fixes for the line first, as Rider lists its linters' before the language's own.
+                linted = only is null ? await LintFixes(document, primary.Caret) : [];
+                actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
             }
-            List<Choice> choices = [.. linted.Select(f => new Choice(f.Title, CodeActionKinds.Shown(f.Action.Kind), f)), .. actions.Select(a => new Choice(a.Title, CodeActionKinds.Shown(a.Kind), a))];
-            ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice => choice?.Value switch
+            catch (LanguageServerFailed failed)
             {
-                EslintFix fix => RunLintFix(document, fix),
-                CodeAction chosen => Carry(document, chosen, primary.Caret, chosen.Title, null),
-                _ => Task.CompletedTask,
-            });
+                if (own.Count == 0)
+                {
+                    Failed(what, failed);
+                    return;
+                }
+            }
         }
-        catch (LanguageServerFailed failed)
+        else if (own.Count == 0)
         {
-            Failed(what, failed);
+            return;
         }
+        if (own.Count == 0 && actions.Count == 0 && linted.Count == 0)
+        {
+            Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
+            return;
+        }
+        List<Choice> choices = [.. own.Select(f => new Choice(f.Title, f.Detail, f)), .. linted.Select(f => new Choice(f.Title, CodeActionKinds.Shown(f.Action.Kind), f)),
+            .. actions.Select(a => new Choice(a.Title, CodeActionKinds.Shown(a.Kind), a))];
+        ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice =>
+        {
+            switch (choice?.Value)
+            {
+                case EditorFix fix:
+                    return ApplyOwnFix(document, fix);
+                case EslintFix fix:
+                    return RunLintFix(document, fix);
+                case CodeAction chosen:
+                    return Carry(document, chosen, primary.Caret, chosen.Title, null);
+                default:
+                    return Task.CompletedTask;
+            }
+        });
     }
 
     /// <summary>A code action chosen, carried out: one that offers choices (a fix-all's scopes, the actions nested under
@@ -1321,9 +1764,22 @@ public sealed partial class CodeAssist
 
     private void ShowRename()
     {
-        if (XamlCurrent is { } xaml && editors.Active is { } shown)
+        if (XamlCurrent is { } xaml && editors.Active is not null)
         {
-            _ = Carried("Rename", () => XamlRename(xaml, shown), closeModal: false);
+            _ = Carried("Rename", () => XamlRename(xaml), closeModal: false);
+            return;
+        }
+        // A compose file's own name: where it is declared and every use, its override's too; else the server's (an anchor's).
+        if (WebCurrent is { Lsp: not null } yaml && editors.Active is { } compose && IsComposeFile(yaml, compose))
+        {
+            int caret = Editor.Selections.Primary.Caret;
+            _ = Carried("Rename", async () =>
+            {
+                if (!await ShowComposeRename(yaml, compose, caret) && editors.Active == compose)
+                {
+                    ShowServerRename();
+                }
+            }, closeModal: false);
             return;
         }
         if (WebCurrent is { Lsp: not null } own && !own.Provides("renameProvider") && editors.Active is { } json)
@@ -1331,6 +1787,25 @@ public sealed partial class CodeAssist
             ShowWebRename(own, json);
             return;
         }
+        // An Aspire resource's name in a string: the AppHost's declaration and its services' reads, else the server's rename.
+        if (AspireRoleOfShown != Aspire.AspireRole.None && editors.Active is { } aspire && MayNameResource(Editor.Selections.Primary.Caret))
+        {
+            int caret = Editor.Selections.Primary.Caret;
+            _ = Carried("Rename", async () =>
+            {
+                if (!await ShowAspireRename(aspire, caret) && editors.Active == aspire)
+                {
+                    ShowServerRename();
+                }
+            }, closeModal: false);
+            return;
+        }
+        ShowServerRename();
+    }
+
+    /// <summary>Rename through the language server at the editor's caret, a type's files offered with it.</summary>
+    private void ShowServerRename()
+    {
         if (Ask("Rename") is null || editors.Active is not { } document)
         {
             return;
@@ -1349,8 +1824,8 @@ public sealed partial class CodeAssist
         ChangeTracker opened = new(Editor.Document);
         ShowModal(box, word.Start, async name =>
         {
+            // Let go as the box closed, just before: what was typed while it was open is still mapped.
             int at = opened.MapOffset(word.Start);
-            opened.Dispose();
             if (name is null)
             {
                 return;
@@ -1387,6 +1862,7 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, $"Rename failed: {failed.Message}");
             }
         });
+        modalClosed = opened.Dispose;
         _ = OfferFileRenames(box, document, word.Start);
     }
 
@@ -1429,6 +1905,10 @@ public sealed partial class CodeAssist
 
     private async Task GoToDefinitionCore(int offset)
     {
+        if (HttpGoTo(offset))
+        {
+            return;
+        }
         if (MSBuildCurrent is { } msbuild)
         {
             await MSBuildGoTo(msbuild, offset);
@@ -1437,6 +1917,15 @@ public sealed partial class CodeAssist
         if (XamlCurrent is { } xaml)
         {
             await XamlGoTo(xaml, offset);
+            return;
+        }
+        if (WebCurrent is { Lsp: not null } compose && editors.Active is { } shown && IsComposeFile(compose, shown) && await ComposeGoTo(compose, offset))
+        {
+            return;
+        }
+        if (WebCurrent is { Kind: WebServerKind.Json } && editors.Active is { } settings && ConfiguredBy?.Invoke(settings.Path) is { Count: > 0 } configured
+            && await SettingsGoTo(settings, configured, offset))
+        {
             return;
         }
         if (WebCurrent is { Lsp: not null } web && !web.Provides("definitionProvider"))
@@ -1450,8 +1939,18 @@ public sealed partial class CodeAssist
         }
         try
         {
+            if (await AspireGoTo(lsp, offset) || await ConfigurationGoTo(lsp, offset))
+            {
+                return;
+            }
             IReadOnlyList<LspLocation> found = await lsp.DefinitionAsync(offset);
-            if (NamedElementOf(found, offset) is { } element)
+            // A FROM's image that names no stage of the file: its registry's page, as a compose file's image goes.
+            if (found.Count == 0 && WebCurrent is { Kind: Passenger.App.Web.WebServerKind.Dockerfile } && FromImageAt(Editor.Document.Snapshot, offset) is { } page)
+            {
+                Browse?.Invoke(this, page);
+                return;
+            }
+            if (await NamedElementOfAsync(found, offset) is { } element)
             {
                 await Arrive(element);
                 return;
@@ -1644,6 +2143,10 @@ public sealed partial class CodeAssist
 
     private async Task FindUsagesCore(int offset)
     {
+        if (RouteUsages(offset))
+        {
+            return;
+        }
         if (XamlCurrent is { } xaml)
         {
             await XamlUsages(xaml, offset);
@@ -1703,14 +2206,15 @@ public sealed partial class CodeAssist
     {
         string root = Root ?? string.Empty;
         Dictionary<string, string> paths = DocumentUris.ToPaths(locations.Select(l => l.Uri));
-        Func<string, int, string> preview = LinePreviews();
+        Func<string, LspPosition, (int Line, string Code)> preview = LinePreviews();
         List<Choice> choices = locations.Select((l, i) =>
         {
             string path = paths[l.Uri];
-            string shown = $"{(root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path))}:{l.Range.Start.Line + 1}";
+            (int line, string code) = preview(path, l.Range.Start);
+            string shown = $"{PathNames.Shown(path, root)}:{line + 1}";
             return names?[i] is { } name
                 ? new Choice(name, shown, l)
-                : new Choice(shown, preview(path, l.Range.Start.Line), l, DetailIsCode: true);
+                : new Choice(shown, code, l, DetailIsCode: true);
         }).ToList();
         ShowModal(new ChoicePopup(title, choices), offset, title, choice =>
         {
@@ -1722,8 +2226,11 @@ public sealed partial class CodeAssist
         });
     }
 
-    private void Arrive(LspLocation location) =>
-        Navigate?.Invoke(this, (DocumentUris.ToPath(location.Uri), new TextPosition(location.Range.Start.Line, location.Range.Start.Character)));
+    private void Arrive(LspLocation location)
+    {
+        string path = DocumentUris.ToPath(location.Uri);
+        Navigate?.Invoke(this, (path, ServerPlaces.PositionOf(editors, path, location.Range.Start)));
+    }
 
     private async Task Reformat()
     {
@@ -1874,6 +2381,7 @@ public sealed partial class CodeAssist
     private RefactorOutcome ApplyEdit(System.Text.Json.JsonElement edit, Asked? asked, string what)
     {
         List<string> dropped = [];
+        IReadOnlyList<RefactoredFile> files = WorkspaceEdits.Files(edit, WorkspaceEdits.Answered(editors, asked));
         try
         {
             WorkspaceEdits.ApplyAsCommand(editors, edit, what, asked, dropped);
@@ -1882,7 +2390,7 @@ public sealed partial class CodeAssist
         {
             return RefactorOutcome.Refused($"{what} was not applied: {failed.Message}");
         }
-        return new RefactorOutcome(string.Empty, null, WorkspaceEdits.Files(edit), dropped);
+        return new RefactorOutcome(string.Empty, null, files, dropped);
     }
 
     /// <summary>Edits answered for a document's text as it was asked about, applied to that document as it is now (through
@@ -2042,30 +2550,16 @@ public sealed partial class CodeAssist
         return start;
     }
 
-    /// <summary>The lines of code a list of places shows, each closed file read once for the list, not once a place, since
-    /// it is read on the UI thread; an open file's from its text.</summary>
-    private Func<string, int, string> LinePreviews()
+    /// <summary>The line of each of a list of places, in the editor's lines, and its code, each closed file read once for
+    /// the list, not once a place, since it is read on the UI thread; an open file's from its text.</summary>
+    private Func<string, LspPosition, (int Line, string Code)> LinePreviews()
     {
-        Dictionary<string, string[]> read = new(StringComparer.Ordinal);
-        return (path, line) =>
+        Func<string, TextSnapshot?> texts = ServerPlaces.Texts(editors);
+        return (path, at) =>
         {
-            if (editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount)
-            {
-                return open.Text.Snapshot.GetLineText(line).Trim();
-            }
-            if (!read.TryGetValue(path, out string[]? lines))
-            {
-                try
-                {
-                    lines = File.ReadAllLines(path);
-                }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                {
-                    lines = [];
-                }
-                read[path] = lines;
-            }
-            return line < lines.Length ? lines[line].Trim() : string.Empty;
+            TextSnapshot? text = texts(path);
+            TextPosition place = ServerPlaces.PositionOf(text, at);
+            return (place.Line, text is not null && place.Line < text.LineCount ? text.GetLineText(place.Line).Trim() : string.Empty);
         };
     }
 
@@ -2076,7 +2570,7 @@ public sealed partial class CodeAssist
 
     /// <summary>A character of the word a completion list narrows by: an identifier's, and in a Razor file a markup
     /// name's too (<c>@onclick</c>, <c>data-enhance-nav</c>, <c>@bind:after</c>).</summary>
-    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
+    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (open?.ResourceNames == true && c == '-') || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
         || (msbuildOffered.Count > 0 && msbuildWordCharacters.Contains(c))
         || (WebCurrent is { } web && IsWebWordChar(web, c));
 
@@ -2103,36 +2597,11 @@ public sealed partial class CodeAssist
         return identifier;
     }
 
-    private static int? Score(string typed, string text)
-    {
-        if (typed.Length == 0)
-        {
-            return 0;
-        }
-        if (text.StartsWith(typed, StringComparison.Ordinal))
-        {
-            return 4000 - text.Length;
-        }
-        if (text.StartsWith(typed, StringComparison.OrdinalIgnoreCase))
-        {
-            return 3000 - text.Length;
-        }
-        if (FuzzyMatch.Score(typed, text) is { } fuzzy && fuzzy >= 850)
-        {
-            return 2000 - text.Length;
-        }
-        if (typed.Length >= 2 && text.Contains(typed, StringComparison.OrdinalIgnoreCase))
-        {
-            return 1000 - text.Length;
-        }
-        return null;
-    }
-
-    /// <summary>A XAML colour's row badged with the colour itself, as Rider shows a colour in its list.</summary>
-    private CompletionRow Swatched(CompletionRow row) =>
-        xamlOffered.TryGetValue(row.Item, out XamlItem? item) && KnownColours.Parse(item.Colour) is { } colour
-            ? row with { Letter = string.Empty, Badge = new SolidColorBrush(Color.FromArgb(colour.A, colour.R, colour.G, colour.B)) }
-            : row;
+    /// <summary>A XAML colour's badge, the colour itself, as Rider shows a colour in its list; null for any other item.</summary>
+    private IBrush? Swatch(CompletionItem item) =>
+        xamlOffered.TryGetValue(item, out XamlItem? offered) && KnownColours.Parse(offered.Colour) is { } colour
+            ? new SolidColorBrush(Color.FromArgb(colour.A, colour.R, colour.G, colour.B))
+            : null;
 
     /// <summary>A row's badge: the letter and colour Rider gives each kind of completion.</summary>
     private static CompletionRow Row(CompletionItem item)
@@ -2159,7 +2628,7 @@ public sealed partial class CodeAssist
             _ => ("·", "Passenger.TextMuted"),
         };
         string detail = item.LabelDetails?.Description ?? item.Detail ?? string.Empty;
-        return new CompletionRow(item, letter, InfoCard.Brush(brush), detail);
+        return new CompletionRow(item, letter, brush, detail);
     }
 
     /// <summary>An open completion list: every item the server gave, and where the word it completes
@@ -2168,6 +2637,11 @@ public sealed partial class CodeAssist
     /// item that names none of its own, and whether the server left items out until more is typed.</summary>
     private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start, IReadOnlyList<string> CommitCharacters, bool IsIncomplete)
     {
+        public bool ResourceNames { get; init; }
+
+        /// <summary>A settings file's keys alone, Passenger's own, offered where its JSON server does not run.</summary>
+        public bool Settings { get; init; }
+
         /// <summary>The text after the caret a web server's items replace as well (a JSON string's closing quote, the rest
         /// of a CSS name the caret is inside), as it stood when the list was asked for; empty for none.</summary>
         public string Tail { get; init; } = string.Empty;
@@ -2190,5 +2664,12 @@ public sealed partial class CodeAssist
 }
 
 /// <summary>What the debugger's hover card says of what the pointer rests on: its value as code, and what went wrong reading
-/// it (a binding that failed), said first in the error colour.</summary>
-public sealed record DebuggerHover(string Code, string? Problem = null);
+/// it (a binding that failed), said first in the error colour; a value with members as its row instead (<see cref="Values"/>).</summary>
+public sealed record DebuggerHover(string Code, string? Problem = null)
+{
+    /// <summary>A value with members as its row of a stop's values, which opens in the card as the Variables view's rows do.</summary>
+    public Debugging.VariablesList? Values { get; init; }
+
+    /// <summary>Cancelled once the stop the value was read at is gone: the card goes with it.</summary>
+    public CancellationToken Gone { get; init; }
+}

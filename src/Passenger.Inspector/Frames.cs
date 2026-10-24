@@ -114,7 +114,8 @@ internal static class FrameRecorder
     private static ActivityListener? listener;
     private static MeterListener? meters;
 
-    /// <summary>Bumped by each start, so what the UI thread kept of a recording before is let go.</summary>
+    /// <summary>Bumped by each start and each end, so what the UI thread kept of a recording before is let go there: a measure
+    /// left open by an end mid-layout would otherwise hold its frame, re-posting its close, for good.</summary>
     private static int recording;
 
     // The app's UI thread's: the recording these are of, the measures and arranges under way, the frame open, the frames told
@@ -141,6 +142,7 @@ internal static class FrameRecorder
             {
                 return;
             }
+            Interlocked.Increment(ref recording);
             if (!on)
             {
                 listener!.Dispose();
@@ -149,7 +151,6 @@ internal static class FrameRecorder
                 meters = null;
                 return;
             }
-            Interlocked.Increment(ref recording);
             listener = new ActivityListener
             {
                 ShouldListenTo = source => source.Name == Activities,
@@ -310,6 +311,7 @@ internal static class FrameRecorder
     /// <summary>The frame told: each control's layout (described first if new), then the frame itself.</summary>
     private static void Close()
     {
+        Sync();
         if (frame is not { } done)
         {
             return;

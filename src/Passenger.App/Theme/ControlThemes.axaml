@@ -16,7 +16,9 @@
 
     <!-- Every scrollbar, as Rider's: a thin rounded thumb over what scrolls, no arrows, no track until the pointer is over
          it, shown only while there is something to scroll (a ScrollViewer's Auto, the editor's own rule). A ScrollViewer
-         lays what it shows under its bars (Fluent's AllowAutoHide, on by default), so a bar takes no room of its own. -->
+         lays what it shows under its upright bar (Fluent's AllowAutoHide, on by default), so that bar takes no room of its
+         own; a sideways bar, and a text box's upright one, take their own while they show (Shell.axaml), so no row or line
+         is ever under one. -->
 
     <!-- How broad a bar is, and its thumb at rest and under the pointer; the editor's bar is broader, as it carries the
          error stripe's marks. -->

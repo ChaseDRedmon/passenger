@@ -11,6 +11,8 @@
     <RootNamespace>Passenger.Host</RootNamespace>
     <RollForward>LatestMajor</RollForward>
     <UseAppHost>false</UseAppHost>
+    <!-- PathNames' own calls to the system (realpath, GetFinalPathNameByHandle). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +20,11 @@
     <PackageReference Include="Microsoft.Build" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Build.Locator" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Passenger.Core's paths, compiled in since its net11.0 is past the host's: the folders walked as the IDE walks them. -->
+    <Compile Include="../Passenger.Core/PathNames.cs" Link="PathNames.cs" />
   </ItemGroup>
 
   <!-- MSBuild's own dependencies come from the SDK with it: copied here, an older one would be loaded in their place. -->

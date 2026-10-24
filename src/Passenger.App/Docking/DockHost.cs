@@ -129,6 +129,10 @@ public sealed class DockHost : Grid
     /// <summary>A window was moved, shown, hidden or resized: the layout to keep has changed.</summary>
     public event EventHandler? LayoutChanged;
 
+    /// <summary>A floating or windowed tool window's own window opened, before it shows: what the IDE puts in each of its
+    /// windows (its keys, its popups) goes into it.</summary>
+    public event EventHandler<Window>? WindowOpened;
+
     public ToolWindow? this[string id] => windows.FirstOrDefault(w => w.Id == id);
 
     /// <summary>The window's actions, which each tool window's show action joins as it is added, and whose keymap gives
@@ -316,6 +320,7 @@ public sealed class DockHost : Grid
         // The tool window outlives its window: the pane lets it go, or it holds that window's whole tree.
         created.Closed += (_, _) => pane.Show(null);
         floats[window] = created;
+        WindowOpened?.Invoke(this, created);
         if (window.Mode == ToolMode.Floating && TopLevel.GetTopLevel(this) is Window owner)
         {
             created.Show(owner);
@@ -466,6 +471,13 @@ public sealed class DockHost : Grid
     }
 
     // Layout.
+
+    /// <summary>The stripes' tips said again with the keymap in force, which a change of keymap or shortcut has replaced.</summary>
+    public void FollowKeys()
+    {
+        leftStripe.Fill(windows);
+        rightStripe.Fill(windows);
+    }
 
     internal void Layout()
     {

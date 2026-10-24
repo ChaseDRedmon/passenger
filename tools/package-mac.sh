@@ -106,10 +106,26 @@ retry_hdiutil() {
     rm -f "$out"
     hdiutil "$@" || fail "hdiutil $1 failed three times"
 }
-trap '[ -z "$mounted" ] || hdiutil detach "$mount" -force -quiet' EXIT
+# The state of the copied app's runs (below), removed with it however the script ends.
+settings=
+trap '[ -z "$mounted" ] || hdiutil detach "$mount" -force -quiet; [ -z "$settings" ] || rm -rf "$settings"' EXIT
 trap 'exit 1' HUP INT TERM
 if [ -d "$mount" ]; then
     hdiutil detach "$mount" -force -quiet 2>/dev/null || true
+fi
+# A mount of the image being replaced (Finder's, from opening it) reads the new file's bytes by its path as its own, and
+# Finder then calls its Passenger.app damaged: such a mount is ejected first, or the package stops saying so.
+if [ -f "$image" ]; then
+    for disk in $(hdiutil info -plist | python3 -I -c '
+import os, plistlib, sys
+for image in plistlib.loads(sys.stdin.buffer.read()).get("images", []):
+    path = image.get("image-path", "")
+    if os.path.exists(path) and os.path.samefile(path, sys.argv[1]):
+        print(min(entity["dev-entry"] for entity in image.get("system-entities", []) if "dev-entry" in entity))
+' "$image"); do
+        hdiutil detach "$disk" -quiet || fail "$image is mounted ($disk) and could not be ejected: eject it, then package again"
+        echo "package-mac: ejected $disk, a mount of the image being replaced" >&2
+    done
 fi
 rm -rf "$work" "$image"
 mkdir -p "$work"
@@ -119,6 +135,10 @@ dotnet publish "$root/src/Passenger.App" -c Release -r "$rid" --self-contained -
     -p:RestoreLockedMode=true -nodeReuse:false -o "$publish" -nologo -v quiet
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp -R "$publish/." "$app/Contents/MacOS/"
+# The web language servers are no code of the bundle's, and codesign takes a folder in Contents/MacOS named with a dot (a
+# package's .github, yaml's dist/schema/yaml-1.1) for a nested bundle and refuses the app: Resources holds them, where
+# WebLanguages.Carried finds them.
+mv "$app/Contents/MacOS/web" "$app/Contents/Resources/web"
 cp "$root/src/Passenger.App/Assets/Passenger.icns" "$app/Contents/Resources/Passenger.icns"
 # The document types are what the Finder's Open With and a drop on the Dock's icon offer Passenger: solutions and C#
 # projects (by extension, having no system type) and folders, never claimed as their default. macOS hands them to the
@@ -312,6 +332,9 @@ said=$(plutil -extract CFBundleVersion raw -o - "$plist")
 for part in roslyn/Microsoft.CodeAnalysis.LanguageServer.dll roslyn-extension/Passenger.Roslyn.Extension.dll debugger/Passenger.DebugAdapter.dll LICENSE.txt THIRD-PARTY-NOTICES.txt; do
     [ -f "$shipped/Contents/MacOS/$part" ] || fail "the app has no $part"
 done
+for part in web/passenger/prettier.cjs web/passenger/docker-hub.cjs web/schemas/compose-spec.json; do
+    [ -f "$shipped/Contents/Resources/$part" ] || fail "the app has no $part in its Resources"
+done
 find "$shipped/Contents/MacOS" -type f -exec file -F '|' {} + | grep '| *Mach-O' | cut -d'|' -f1 > "$work/mach-o"
 [ -s "$work/mach-o" ] || fail "the app has no Mach-O file"
 while IFS= read -r file; do
@@ -324,7 +347,44 @@ if [ -n "$profile" ]; then
     developer spctl --assess --type open --context context:primary-signature --verbose "$image"
     developer spctl --assess --type execute --verbose "$shipped"
 fi
+# A run of the app writes nothing inside it: a file added there breaks the seal, and Gatekeeper then calls a downloaded app
+# damaged (#450; Roslyn's server writes its MEF caches beside itself, so it runs from a copy in the state's cache). The
+# app copied out of the image as a person installs it, signed as shipped, opens a small C# project twice headless (each
+# run waiting for the C# server to load it: the first start writes Razor's cache, the next the MEF composition), and
+# must verify still.
+check="$work/check"
+mkdir -p "$check/Sample"
+ditto "$shipped" "$check/Passenger.app"
 detach
+codesign --verify --deep --strict "$check/Passenger.app" || fail "the app copied out of the image does not verify before it runs"
+# The framework of the SDK the repository's global.json picks, which carries its own reference assemblies: nothing downloaded.
+framework=net$(cd "$check/Sample" && dotnet --version | cut -d. -f1).0
+cat > "$check/Sample/Sample.csproj" <<EOF
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$framework</TargetFramework>
+  </PropertyGroup>
+</Project>
+EOF
+printf 'int unused = 1;\nSystem.Console.WriteLine("Hello");\n' > "$check/Sample/Program.cs"
+# A short state folder of its own (a socket's path holds 104 bytes), never the person's.
+settings=$(mktemp -d /tmp/passenger-package.XXXXXX)
+for run in 1 2; do
+    PASSENGER_SETTINGS="$settings" "$check/Passenger.app/Contents/MacOS/Passenger" "$check/Sample" --file Program.cs \
+        --screenshot "$check/run-$run.png" --size 800x600 > "$check/run-$run.log" 2>&1 \
+        || { cat "$check/run-$run.log" >&2; fail "the app copied out of the image failed its headless run $run"; }
+    loaded=$(grep -c 'C# language server (process [0-9]*) loaded' "$settings/logs/passenger.log" 2>/dev/null || true)
+    if [ "${loaded:-0}" -ne "$run" ]; then
+        tail -n 20 "$settings/logs/passenger.log" >&2 || true
+        fail "the C# language server of the app copied out of the image did not load the sample in run $run"
+    fi
+done
+ls "$settings"/cache/roslyn/*/cache/* > /dev/null 2>&1 \
+    || fail "the C# language server of the app copied out of the image did not run from its copy in the state's cache"
+codesign --verify --deep --strict "$check/Passenger.app" || fail "a run of the app wrote inside it, breaking its seal"
+rm -rf "$settings" "$check"
+settings=
 
 size=$(du -h "$image" | cut -f1 | tr -d ' ')
 if [ -n "$dry_run" ]; then

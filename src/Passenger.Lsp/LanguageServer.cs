@@ -42,6 +42,7 @@ public sealed class LanguageServer : IAsyncDisposable
     private volatile bool hung;
     private volatile bool killed;
     private volatile bool disposing;
+    private volatile string? ended;
 
     /// <summary>The server as a test's quiet wait names it, among the requests in flight (<see cref="InFlight"/>).</summary>
     private readonly string who;
@@ -78,6 +79,8 @@ public sealed class LanguageServer : IAsyncDisposable
         {
             if (!disposing)
             {
+                // Noted before it is told, so a handler added meanwhile hears it or finds it in Ended.
+                ended = e.Description;
                 Exited?.Invoke(this, e.Description);
             }
         };
@@ -85,13 +88,20 @@ public sealed class LanguageServer : IAsyncDisposable
     }
 
     /// <summary>The connection to the server ended without being asked to (it crashed or was killed), with why;
-    /// raised on any thread.</summary>
+    /// raised on any thread, once: a handler added after the server started reads <see cref="Ended"/> after adding it.</summary>
     public event EventHandler<string>? Exited;
+
+    /// <summary>Why the connection ended without being asked to, once <see cref="Exited"/> has been raised; else null.</summary>
+    public string? Ended => ended;
 
     /// <summary>The server stopped answering: a request waited <see cref="SlowRequest"/>, and a question it answers at
     /// once then went unanswered for <see cref="ResponseLimit"/> (it is deadlocked, suspended or thrashing). Raised once,
     /// with what waited, on any thread; the server is left running for the caller to <see cref="Kill"/>.</summary>
     public event EventHandler<string>? NotResponding;
+
+    /// <summary>The copy of Roslyn's server this one runs from, in the state's cache (<see cref="RoslynServerFolder"/>); null
+    /// where it runs from the app's own roslyn/, and for every other server.</summary>
+    public string? ServerCopy { get; private set; }
 
     /// <summary>The server's process, for the IDE's log and for a test to end it; kept once the process is gone.</summary>
     public int ProcessId { get; }
@@ -249,16 +259,20 @@ public sealed class LanguageServer : IAsyncDisposable
         }
     }
 
-    /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the
-    /// app), initializes it for a folder, and returns once it has said what it can do. Cancelled or failed, it leaves no
-    /// process behind, at once rather than once the server answers.</summary>
-    public static async Task<LanguageServer> StartRoslynAsync(string folder, string logFolder, CancellationToken cancel, IReadOnlyDictionary<string, object?>? options = null)
+    /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the app, run from its copy
+    /// in <paramref name="stateCache"/> where it may not write there, <see cref="RoslynServerFolder"/>), initializes it for
+    /// a folder, and returns once it has said what it can do. Cancelled or failed, it leaves no process behind, at once
+    /// rather than once the server answers.</summary>
+    public static async Task<LanguageServer> StartRoslynAsync(string folder, string logFolder, CancellationToken cancel, IReadOnlyDictionary<string, object?>? options = null,
+        string? stateCache = null)
     {
-        string server = Path.Combine(AppContext.BaseDirectory, "roslyn", "Microsoft.CodeAnalysis.LanguageServer.dll");
-        if (!File.Exists(server))
+        string carried = Path.Combine(RoslynServerFolder.Carried, RoslynServerFolder.Assembly);
+        if (!File.Exists(carried))
         {
-            throw new FileNotFoundException("The Roslyn language server is missing from the app's folder.", server);
+            throw new FileNotFoundException("The Roslyn language server is missing from the app's folder.", carried);
         }
+        string? copy = await RoslynServerFolder.CopyAsync(stateCache, cancel).ConfigureAwait(false);
+        string server = Path.Combine(copy ?? RoslynServerFolder.Carried, RoslynServerFolder.Assembly);
         Directory.CreateDirectory(logFolder);
         List<string> arguments =
         [
@@ -282,6 +296,11 @@ public sealed class LanguageServer : IAsyncDisposable
             start.Environment["EnableWindowsTargeting"] = "true";
         }
         LanguageServer server2 = await StartCoreAsync(start, folder, logFolder, ClientCapabilities.Value, null, options, null, null, null, cancel).ConfigureAwait(false);
+        if (copy is not null)
+        {
+            server2.ServerCopy = copy;
+            RoslynServerFolder.Running(copy, server2);
+        }
         try
         {
             try
@@ -480,8 +499,20 @@ public sealed class LanguageServer : IAsyncDisposable
         using IDisposable flight = inFlight ? InFlight.Begin(method, who) : InFlight.None;
         try
         {
-            return Refused(method) ? throw new LanguageServerFailed("the language server refused it: as a test asked", method)
-                : await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel).ConfigureAwait(false);
+            if (Refused(method))
+            {
+                throw new LanguageServerFailed("the language server refused it: as a test asked", method);
+            }
+            Task<T?> answer = rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel);
+            try
+            {
+                return await answer.WaitAsync(cancel).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+            {
+                _ = answer.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                throw;
+            }
         }
         catch (Exception error) when (Failure(method, error, cancel) is { } failed)
         {

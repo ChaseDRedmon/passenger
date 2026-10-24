@@ -21,6 +21,13 @@ public sealed class VcsController : IDisposable
 
     private const string NotInGit = "The folder is not in a Git repository";
 
+    /// <summary>What a commit's work is held under, which the Commit window's button starts and no action names.</summary>
+    public const string Committing = "vcs.commit";
+
+    /// <summary>The window's work under way, which a push, update, fetch or commit shows itself in from its first moment
+    /// until it ends: null with no window to show it in.</summary>
+    public ActionWork? Work { get; set; }
+
     private readonly Dictionary<OpenDocument, Tracked> documents = [];
 
     /// <summary>Files' texts in the commit <see cref="textsOf"/> (null before the first commit), which a read sets once
@@ -494,6 +501,11 @@ public sealed class VcsController : IDisposable
         {
             return new CommitResult(Report(false, "The commit message is empty"), null, null);
         }
+        if (!Begin(Committing, $"Committing {Plural.Of(chosen.Count, "file")}…", out Working? work))
+        {
+            return new CommitResult(Report(false, UnderWay(Committing)), null, null);
+        }
+        using Working? held = work;
         return await OneAtATimeAsync(async () =>
         {
             SaveFirst?.Invoke();
@@ -529,7 +541,11 @@ public sealed class VcsController : IDisposable
         {
             return Report(false, NotInGit);
         }
-        Message?.Invoke(this, "Pushing...");
+        if (!Begin(AppActions.Push, $"Pushing {Branch}…", out Working? work))
+        {
+            return Report(false, UnderWay(AppActions.Push));
+        }
+        using Working? held = work;
         GitResult pushed = await repository.PushAsync();
         return Report(pushed.Succeeded, pushed.Succeeded ? $"Pushed {Branch}" : $"Push failed: {pushed.Message}");
     }
@@ -546,8 +562,12 @@ public sealed class VcsController : IDisposable
         {
             return Report(false, "Unmerged files detected. These conflicts must be resolved before update.");
         }
+        if (!Begin(AppActions.UpdateProject, $"Updating {Branch}…", out Working? work))
+        {
+            return Report(false, UnderWay(AppActions.UpdateProject));
+        }
+        using Working? held = work;
         SaveFirst?.Invoke();
-        Message?.Invoke(this, "Updating...");
         // Named until Git is read again, so the folder watcher has heard of what it changed.
         using IDisposable? named = Activity?.Invoke("Update from VCS");
         GitResult pulled = await repository.PullAsync();
@@ -580,11 +600,26 @@ public sealed class VcsController : IDisposable
         {
             return Report(false, NotInGit);
         }
-        Message?.Invoke(this, "Fetching...");
+        if (!Begin(AppActions.Fetch, "Fetching…", out Working? work))
+        {
+            return Report(false, UnderWay(AppActions.Fetch));
+        }
+        using Working? held = work;
         GitResult fetched = await repository.FetchAsync();
         await RefreshAsync();
         return Report(fetched.Succeeded, fetched.Succeeded ? "Fetched" : $"Fetch failed: {fetched.Message}");
     }
+
+    /// <summary>Begins an operation's work in the window, saying its first stage: false when one of its kind is under way
+    /// already. Git runs no operation Stop could end, so none is stoppable.</summary>
+    private bool Begin(string id, string stage, out Working? work)
+    {
+        work = Work?.Begin(id, stage, stoppable: false);
+        return Work is null || work is not null;
+    }
+
+    /// <summary>What an operation asked for again while it works says.</summary>
+    private string UnderWay(string id) => Work?.Of(id) is { } under ? ActionWork.Busy(under) : "Already under way";
 
     /// <summary>An operation's outcome, told to the status bar in the words it is returned in.</summary>
     private VcsOutcome Report(bool succeeded, string message)
@@ -722,7 +757,11 @@ public sealed class VcsController : IDisposable
         {
             return Report(false, NotInGit);
         }
-        Message?.Invoke(this, "Pushing...");
+        if (!Begin(AppActions.Push, $"Pushing {branch.Name}…", out Working? work))
+        {
+            return Report(false, UnderWay(AppActions.Push));
+        }
+        using Working? held = work;
         GitResult pushed = await repository.PushBranchAsync(branch);
         await RefreshAsync();
         return Report(pushed.Succeeded, pushed.Succeeded ? $"Pushed {branch.Name}" : $"Push failed: {pushed.Message}");
@@ -781,7 +820,7 @@ public sealed class VcsController : IDisposable
             GitResult rolled = await repository.RollbackAsync(changes);
             ReloadOpenFiles();
             await RefreshAsync();
-            return Report(rolled.Succeeded, rolled.Succeeded ? $"Rolled back {Files(changes.Count)}" : rolled.Message);
+            return Report(rolled.Succeeded, rolled.Succeeded ? $"Rolled back {Plural.Of(changes.Count, "file")}" : rolled.Message);
         }, refused => refused);
     }
 
@@ -812,11 +851,11 @@ public sealed class VcsController : IDisposable
     }
 
     /// <summary>The open files take their text from disk again where something else changed it and they have no
-    /// unsaved changes.</summary>
+    /// unsaved changes. A preview, with no text, is decoded again only when the folder watcher hears its file change.</summary>
     public void ReloadOpenFiles()
     {
         UiThread.Check();
-        foreach (OpenDocument document in documents.Keys)
+        foreach (OpenDocument document in documents.Keys.Where(d => d.HoldsText))
         {
             document.Reload();
         }
@@ -1100,7 +1139,6 @@ public sealed class VcsController : IDisposable
 
     private static string FirstLine(string message) => message.Trim().Split('\n')[0].Trim();
 
-    private static string Files(int count) => count == 1 ? "1 file" : $"{count} files";
 
     /// <summary>An open file as Git follows it: one handler for its edits and one for its saves, and one wait each for its
     /// bars and its blame, all dropped with it.</summary>

@@ -12,10 +12,11 @@ namespace Passenger.Inspector;
 public static class Breaks
 {
     /// <summary>A watched property changed: <c>newValue</c>, <c>oldValue</c>, <c>control</c>, <c>property</c>, and
-    /// <c>change</c>, what the IDE says of the stop.</summary>
+    /// <c>change</c>, what the IDE says of the stop; <c>setAt</c>, where an Avalonia app's style that set it is written, is
+    /// null here, as WPF's value source names no style's place.</summary>
     [DebuggerNonUserCode]
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void Changed(int breakpoint, DependencyObject control, DependencyProperty property, object? oldValue, object? newValue, string change)
+    public static void Changed(int breakpoint, DependencyObject control, DependencyProperty property, object? oldValue, object? newValue, string change, string? setAt)
     {
         // Held for the debugger, which reads them where the program stops.
         GC.KeepAlive(control);
@@ -23,6 +24,7 @@ public static class Breaks
         GC.KeepAlive(oldValue);
         GC.KeepAlive(newValue);
         GC.KeepAlive(change);
+        GC.KeepAlive(setAt);
         _ = breakpoint;
     }
 
@@ -67,7 +69,8 @@ public sealed class BindingError
 
     public string Message { get; }
 
-    /// <summary>The element in its XAML, "MainWindow.xaml:8:20", when WPF recorded it.</summary>
+    /// <summary>The element in its XAML, "MainWindow.xaml:8:20", when WPF recorded it: its XAML compiler's line, which
+    /// Passenger's Variables show at the editor's.</summary>
     public string? Xaml { get; }
 
     /// <summary>"TextBlock#Caption.Text to Nmae: BindingExpression path error: 'Nmae' property not found on ...".</summary>

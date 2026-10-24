@@ -114,6 +114,10 @@ public enum InlayHintKind
 
     /// <summary>A type, which ends the name it types: text typed at it goes before it, and so does the caret.</summary>
     Type,
+
+    /// <summary>What the text before it comes to (a compose file's <c>${VAR}</c> as Compose resolves it), which ends that
+    /// text as a type does; shown whatever Settings say of the other two.</summary>
+    Value,
 }
 
 /// <summary>A test's mark in the gutter, as Rider's run icons beside a test method or class: how it last ran.</summary>
@@ -127,6 +131,10 @@ public enum TestMarkKind
 
 /// <summary>A test's run icon on a line (from zero), right of the line numbers; a click on it asks the host to run it.</summary>
 public readonly record struct TestMark(int Line, TestMarkKind Kind);
+
+/// <summary>A run icon on a line (from zero), right of the line numbers, beside the tests' own: something a run
+/// configuration runs (a compose file's service, a Dockerfile's image); a click on it asks the host for its menu.</summary>
+public readonly record struct RunMark(int Line);
 
 /// <summary>A colour a line (from zero) writes or names, shown as a swatch right of the line numbers, as Rider's gutter
 /// shows one; a click on it asks the host for its picker. <see cref="Data"/> is what the host knows it by.</summary>

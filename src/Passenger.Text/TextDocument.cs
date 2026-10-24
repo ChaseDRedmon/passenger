@@ -52,6 +52,11 @@ public sealed class TextDocument
     /// changed on the UI thread alone.</summary>
     public event EventHandler<DocumentChangedEventArgs>? Changed;
 
+    /// <summary>Raised for each change before <see cref="Changed"/>, for what keeps a view of the text in step with it (an
+    /// editor's soft wraps), so a handler of Changed that asks the view where a line is drawn finds it carried through the
+    /// change rather than made again for the whole text.</summary>
+    public event EventHandler<DocumentChangedEventArgs>? ChangedFirst;
+
     public TextSnapshot Snapshot { get; private set; }
 
     /// <summary>Counts every change, undo and redo included; the language server's document version.</summary>
@@ -206,14 +211,15 @@ public sealed class TextDocument
         }
         UndoEntry entry = undo[^1];
         undo.RemoveAt(undo.Count - 1);
+        // On the other stack before anyone hears of the change, so a handler that throws never loses the step.
+        redo.Add(entry);
+        mergeBroken = true;
         for (int i = entry.Steps.Count - 1; i >= 0; i--)
         {
             Step step = entry.Steps[i];
             Snapshot = step.Before;
             Raise(step.After, step.Before, step.Inverse(), ChangeReason.Undo);
         }
-        redo.Add(entry);
-        mergeBroken = true;
         entry.Undone?.Invoke();
         return entry.SelectionsBefore;
     }
@@ -226,13 +232,13 @@ public sealed class TextDocument
         }
         UndoEntry entry = redo[^1];
         redo.RemoveAt(redo.Count - 1);
+        undo.Add(entry);
+        mergeBroken = true;
         foreach (Step step in entry.Steps)
         {
             Snapshot = step.After;
             Raise(step.Before, step.After, step.Edits, ChangeReason.Redo);
         }
-        undo.Add(entry);
-        mergeBroken = true;
         entry.Redone?.Invoke();
         return entry.SelectionsAfter;
     }
@@ -268,7 +274,9 @@ public sealed class TextDocument
     {
         Snapshot = after;
         Version++;
-        Changed?.Invoke(this, new DocumentChangedEventArgs(before, after, SortedEdits.Of(edits), Version, reason));
+        DocumentChangedEventArgs change = new(before, after, SortedEdits.Of(edits), Version, reason);
+        ChangedFirst?.Invoke(this, change);
+        Changed?.Invoke(this, change);
     }
 
     private sealed class UndoEntry(EditKind kind, SelectionSet selectionsBefore, SelectionSet selectionsAfter, long time, List<Step> steps)

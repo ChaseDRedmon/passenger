@@ -2,9 +2,9 @@ using Passenger.Editor;
 
 namespace Passenger.App;
 
-/// <summary>The ids of the IDE's own actions, beside the editor's (<see cref="EditorActions"/>), and the keymap of each
-/// platform that binds both by id: Rider's Visual Studio keymaps for these too. Each action is declared by its feature
-/// (<see cref="IdeAction"/>, in the window's <see cref="ActionRegistry"/>).</summary>
+/// <summary>The ids of the IDE's own actions, beside the editor's (<see cref="EditorActions"/>), and the keymaps of each
+/// platform that bind both by id: Rider's Visual Studio keymaps for these too, and its VS Code keymaps. Each action is
+/// declared by its feature (<see cref="IdeAction"/>, in the window's <see cref="ActionRegistry"/>).</summary>
 public static class AppActions
 {
     public const string Open = "app.open";
@@ -67,6 +67,9 @@ public static class AppActions
     public const string About = "app.about";
     public const string CheckForUpdates = "app.checkForUpdates";
     public const string RestartToUpdate = "app.restartToUpdate";
+
+    // The running version's release notes, as Rider's What's New in Rider: no key of Rider's.
+    public const string WhatsNew = "app.whatsNew";
     public const string ShowNuGet = "app.showNuGet";
     public const string Profile = "app.profile";
     public const string ShowProfiler = "app.showProfiler";
@@ -78,6 +81,65 @@ public static class AppActions
     public const string ShowLiveTree = "app.showLiveTree";
     public const string SelectElement = "app.liveTree.selectElement";
 
+    // Rider's Endpoints window over the folder's .http files, and its Test of the request chosen there: no key of Rider's.
+    public const string ShowEndpoints = "app.showEndpoints";
+    public const string TestEndpoint = "app.endpoints.test";
+
+    // The Requests window over the running web app's live requests and their database commands: no key of Rider's.
+    public const string ShowRequests = "app.showRequests";
+
+    // The Migrations window over the folder's EF Core contexts, its commands, and the fix of what keeps dotnet ef from
+    // working that it shows first: no key of Rider's.
+    public const string ShowMigrations = "app.showMigrations";
+    public const string MigrationsRefresh = "app.migrations.refresh";
+    public const string AddMigration = "app.migrations.add";
+    public const string RemoveLastMigration = "app.migrations.removeLast";
+    public const string UpdateDatabase = "app.migrations.update";
+    public const string UpdateDatabaseTo = "app.migrations.updateTo";
+    public const string ScriptMigrations = "app.migrations.script";
+    public const string BundleMigrations = "app.migrations.bundle";
+    public const string MigrationsFix = "app.migrations.fix";
+
+    // The Containers window over the person's container engine and its actions on the row chosen there: no keys of Rider's,
+    // whose Services window has none in its Visual Studio keymaps.
+    public const string ShowContainers = "app.showContainers";
+    public const string ContainersRefresh = "app.containers.refresh";
+    public const string ContainerStart = "app.containers.start";
+    public const string ContainerStop = "app.containers.stop";
+    public const string ContainerRestart = "app.containers.restart";
+    public const string ContainerPause = "app.containers.pause";
+    public const string ContainerRemove = "app.containers.remove";
+    public const string ContainerScale = "app.containers.scale";
+    public const string ContainerPull = "app.containers.pull";
+    public const string ContainerPrune = "app.containers.prune";
+    public const string ContainerInspect = "app.containers.inspect";
+    public const string ContainerShell = "app.containers.shell";
+
+    // A .NET service of a run of services under way (a container run's, an AppHost's), chosen in the Containers or Aspire
+    // window or by its gutter icon, the run left up: debugged from its start, attached to as it runs, let go by the debugger,
+    // or profiled. No keys of Rider's. The ids each window had for them before they were one set still name them (Formerly).
+    public const string ServiceDebug = "app.service.debug";
+    public const string ServiceAttach = "app.service.attach";
+    public const string ServiceRun = "app.service.runWithoutDebugger";
+    public const string ServiceProfile = "app.service.profile";
+
+    /// <summary>The ids actions had before, by the id each has now: a person's shortcuts kept under one (settings.json's
+    /// <c>shortcuts</c>, read as the new id's) and an agent's <c>ide_action</c> naming one reach the action it is now.</summary>
+    public static IReadOnlyDictionary<string, string> Formerly { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["app.containers.service.debug"] = ServiceDebug,
+        ["app.containers.service.attach"] = ServiceAttach,
+        ["app.containers.service.run"] = ServiceRun,
+        ["app.containers.service.profile"] = ServiceProfile,
+        ["app.aspire.debug"] = ServiceDebug,
+        ["app.aspire.attach"] = ServiceAttach,
+        ["app.aspire.runWithoutDebugger"] = ServiceRun,
+        ["app.aspire.profile"] = ServiceProfile,
+    };
+
+    /// <summary>An action's id now, for one it had before (<see cref="Formerly"/>), else the id itself.</summary>
+    public static string Now(string id) => Formerly.GetValueOrDefault(id, id);
+
     // Avalonia's renderer debug overlays in an app Run, Debug or Profile launched (Avalonia's own names): no key of Rider's.
     public const string OverlayFps = "app.avalonia.overlay.Fps";
     public const string OverlayDirtyRects = "app.avalonia.overlay.DirtyRects";
@@ -88,19 +150,68 @@ public static class AppActions
     public const string FindNext = "app.findNext";
     public const string FindPrevious = "app.findPrevious";
     public const string FocusExplorer = "app.focusExplorer";
+
+    // The Explorer's own actions, on the row its menu opened on or the one chosen while it has the keys: Rider's Project
+    // view's NewFile, NewDir, Class/Interface, the solution's own (New Solution Folder, Existing Project, Existing Item),
+    // Add Reference, Docker Support and Compose, Aspire Orchestration, NuGet, Manage User Secrets (no keys of Rider's), Edit
+    // Project File, Unload and Reload Project, Compare Files (CompareTwoFiles, off macOS sharing the editor's Duplicate keys),
+    // Copy Path (CopyPaths), Reveal in Finder (RevealIn) and Open in Terminal. Rename and Delete are Rename's and the editor's Delete, as Rider's RenameElement and
+    // $Delete are one action wherever they are pressed.
+    public const string NewFile = "app.explorer.newFile";
+    public const string NewFolder = "app.explorer.newFolder";
+    public const string NewType = "app.explorer.newType";
+    public const string NewSolutionFolder = "app.explorer.newSolutionFolder";
+    public const string AddExistingProject = "app.explorer.addExistingProject";
+    public const string AddExistingItem = "app.explorer.addExistingItem";
+    public const string AddReference = "app.explorer.addReference";
+    public const string AddDockerSupport = "app.explorer.addDockerSupport";
+    public const string AddDockerCompose = "app.explorer.addDockerCompose";
+    public const string AddAspireOrchestration = "app.explorer.addAspireOrchestration";
+    public const string ManageNuGet = "app.explorer.manageNuGet";
+    public const string ManageUserSecrets = "app.explorer.manageUserSecrets";
+    public const string EditProjectFile = "app.explorer.editProjectFile";
+    public const string UnloadProject = "app.explorer.unloadProject";
+    public const string ReloadProject = "app.explorer.reloadProject";
+    public const string CompareFiles = "app.explorer.compareFiles";
+    public const string CopyPath = "app.explorer.copyPath";
+    public const string RevealInFileManager = "app.explorer.reveal";
+    public const string OpenInTerminal = "app.explorer.openInTerminal";
+
     public const string Build = "app.build";
     public const string RebuildSolution = "app.build.rebuildSolution";
     public const string CleanSolution = "app.build.cleanSolution";
     public const string BuildSelected = "app.build.selected";
     public const string RebuildSelected = "app.build.rebuildSelected";
     public const string CleanSelected = "app.build.cleanSelected";
+
+    // Publish of the chosen project to a folder through a profile, and again with the profile it last published with: no
+    // keys of Rider's.
+    public const string Publish = "app.build.publish";
+    public const string PublishAgain = "app.build.publishAgain";
     public const string RunProgram = "app.run";
     public const string Debug = "app.debug";
     public const string Stop = "app.stop";
+    public const string StopAll = "app.stopAll";
     public const string Rerun = "app.rerun";
     public const string EditConfigurations = "app.editConfigurations";
     public const string ShowBuild = "app.showBuild";
     public const string ShowRun = "app.showRun";
+    public const string ShowAspire = "app.showAspire";
+    public const string AspireRefresh = "app.aspire.refresh";
+    public const string AspireDiscover = "app.aspire.discover";
+    public const string AspireCommand = "app.aspire.command";
+    public const string AspireLogFind = "app.aspire.logFind";
+    public const string AspireShowTrace = "app.aspire.showTrace";
+    public const string AspireShowRelatedLogs = "app.aspire.showRelatedLogs";
+    public const string AspireResources = "app.aspire.resources";
+    public const string AspireConsole = "app.aspire.console";
+    public const string AspireTelemetry = "app.aspire.telemetry";
+    public const string AspireLogs = "app.aspire.logs";
+    public const string AspireTraces = "app.aspire.traces";
+    public const string AspireAppHostConsole = "app.aspire.appHostConsole";
+    public const string AspireOpenLink = "app.aspire.openLink";
+    public const string AspireSource = "app.aspire.source";
+    public const string AspireContainer = "app.aspire.container";
     public const string ShowProblems = "app.showProblems";
     public const string ShowFind = "app.showFind";
     public const string ToggleSolutionAnalysis = "app.toggleSolutionAnalysis";
@@ -240,6 +351,11 @@ public static class AppActions
     // of its keymaps.
     public const string XamlPreview = "app.editor.xamlPreview";
 
+    // A Markdown file's preview beside its editor, under View and on the editor's tab strip: the Visual Studio keymaps and
+    // their parents give IntelliJ's Editor and Preview layout (TextEditorWithPreview.Layout.EditorAndPreview) no keys; its
+    // VSCode keymaps give it Ctrl+K, V (Cmd+K, V on macOS).
+    public const string MarkdownPreview = "app.editor.markdownPreview";
+
     // Rider's Close Solution (CloseProject) and Restore Default Layout (RiderRestoreDefaultLayout, in Window > Layout
     // Settings): no keys there either; both Visual Studio keymaps take IntelliJ's Shift+F12 off its layout action.
     public const string CloseSolution = "app.closeSolution";
@@ -294,31 +410,39 @@ public static class AppActions
     public const string RecentChanges = "app.localHistory.recentChanges";
     public const string PutLabel = "app.localHistory.putLabel";
 
-    /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
-    /// Settings keeps them. The process's, as Rider's keymap is the application's: every window has the one keymap,
-    /// which the settings' store puts in force (<see cref="Settings.SettingsStore"/>).</summary>
-    public static IReadOnlyDictionary<string, string[]> UserShortcuts
-    {
-        get => userShortcuts;
-        set
-        {
-            userShortcuts = value;
-            inForce = null;
-        }
-    }
+    /// <summary>The keymap the person chose (<see cref="KeymapPreset"/>), the platform's.</summary>
+    public static KeymapPreset Preset { get; private set; }
 
-    private static IReadOnlyDictionary<string, string[]> userShortcuts = new Dictionary<string, string[]>();
+    /// <summary>The person's own shortcuts over the chosen keymap's, by action (an empty list unbinds it), as Settings
+    /// keeps them for that keymap. The process's, as Rider's keymap is the application's: every window has the one keymap,
+    /// which the settings' store puts in force (<see cref="Settings.SettingsStore"/>).</summary>
+    public static IReadOnlyDictionary<string, string[]> UserShortcuts { get; private set; } = new Dictionary<string, string[]>();
+
     private static Keymap? inForce;
 
-    /// <summary>The keymap in force: the platform's Visual Studio keymap with the person's shortcuts over it. Made once
-    /// until those change (the profiler found every tooltip and menu parsing the whole keymap again at startup); a
-    /// caller reads it and never binds into it.</summary>
-    public static Keymap Keymap() => inForce ??= Keymap(UserShortcuts);
-
-    /// <summary>The keymap with these shortcuts over the platform's; one that does not read is passed over.</summary>
-    public static Keymap Keymap(IReadOnlyDictionary<string, string[]> overrides)
+    /// <summary>Puts a keymap and the person's shortcuts over it in force.</summary>
+    public static void Choose(KeymapPreset preset, IReadOnlyDictionary<string, string[]> shortcuts)
     {
-        Keymap keymap = Base();
+        Preset = preset;
+        UserShortcuts = shortcuts;
+        inForce = null;
+    }
+
+    /// <summary>The keymap in force: the chosen keymap with the person's shortcuts over it. Made once until those change
+    /// (the profiler found every tooltip and menu parsing the whole keymap again at startup); a caller reads it and never
+    /// binds into it.</summary>
+    public static Keymap Keymap() => inForce ??= Keymap(Preset, UserShortcuts);
+
+    /// <summary>The Visual Studio keymap with these shortcuts over it.</summary>
+    public static Keymap Keymap(IReadOnlyDictionary<string, string[]> overrides) => Keymap(KeymapPreset.VisualStudio, overrides);
+
+    /// <summary>The keymap settings choose, with their shortcuts for it over it.</summary>
+    public static Keymap Keymap(Settings.AppSettings settings) => Keymap(settings.Keymap, settings.OwnShortcuts());
+
+    /// <summary>A keymap with these shortcuts over the platform's; one that does not read is passed over.</summary>
+    public static Keymap Keymap(KeymapPreset preset, IReadOnlyDictionary<string, string[]> overrides)
+    {
+        Keymap keymap = Base(preset);
         foreach ((string action, string[] shortcuts) in overrides)
         {
             List<Shortcut> parsed = [];
@@ -332,13 +456,17 @@ public static class AppActions
                 {
                 }
             }
-            keymap.Set(action, parsed);
+            keymap.Set(Now(action), parsed);
         }
         return keymap;
     }
 
-    private static Keymap Base()
+    private static Keymap Base(KeymapPreset preset)
     {
+        if (preset == KeymapPreset.VSCode)
+        {
+            return VSCode(DefaultKeymaps.For(preset));
+        }
         Keymap keymap = DefaultKeymaps.ForPlatform();
         if (OperatingSystem.IsMacOS())
         {
@@ -372,6 +500,10 @@ public static class AppActions
                 .Bind(FindNext, "F3", "meta alt PAGE_DOWN")
                 .Bind(FindPrevious, "shift F3", "meta alt PAGE_UP")
                 .Bind(FocusExplorer, "meta 1", "meta alt L")
+                // Rider's CopyPaths and CompareTwoFiles, $default's Ctrl+Shift+C and Ctrl+D as Mac OS X 10.5+ takes them (its
+                // Duplicate is Ctrl+D here, Windows' Ctrl+D the editor's Duplicate, which Compare Files shares there); RevealIn has none.
+                .Bind(CopyPath, "meta shift C")
+                .Bind(CompareFiles, "meta D")
                 .Bind(Build, "meta shift B")
                 .Bind(RunProgram, "control F5")
                 .Bind(Debug, "alt F5")
@@ -422,8 +554,8 @@ public static class AppActions
                 .Bind(ShowGit, "meta 9")
                 .Bind(ShowTerminal, "meta control 1")
                 .Bind(UpdateProject, "meta alt W")
-                .Bind(Back, "meta MINUS")
-                .Bind(Forward, "meta shift MINUS")
+                .Bind(Back, "meta MINUS", "meta SUBTRACT")
+                .Bind(Forward, "meta shift MINUS", "meta shift SUBTRACT")
                 .Bind(Complete, "control SPACE", "control J")
                 .Bind(QuickFix, "alt ENTER")
                 .Bind(Rename, "meta R , R", "meta R , meta R")
@@ -493,6 +625,7 @@ public static class AppActions
             .Bind(FindNext, "F3", "control alt PAGE_DOWN")
             .Bind(FindPrevious, "shift F3", "control alt PAGE_UP")
             .Bind(FocusExplorer, "alt 1", "control alt L")
+            .Bind(CopyPath, "control shift C")
             .Bind(Build, "control shift B")
             .Bind(RunProgram, "control F5")
             .Bind(Debug, "alt F5")
@@ -543,8 +676,8 @@ public static class AppActions
             .Bind(ShowGit, "alt 9")
             .Bind(ShowTerminal, "control alt 1")
             .Bind(UpdateProject, "control alt W")
-            .Bind(Back, "control MINUS")
-            .Bind(Forward, "control shift MINUS")
+            .Bind(Back, "control MINUS", "control SUBTRACT")
+            .Bind(Forward, "control shift MINUS", "control shift SUBTRACT")
             .Bind(Complete, "control SPACE", "control J")
             .Bind(QuickFix, "alt ENTER", "control PERIOD")
             .Bind(Rename, "control R , R", "control R , control R")
@@ -580,5 +713,233 @@ public static class AppActions
             .Bind(ShowWhitespaces, "control R , W", "control R , control W")
             .Bind(NextProjectWindow, "control alt CLOSE_BRACKET")
             .Bind(PreviousProjectWindow, "control alt OPEN_BRACKET");
+    }
+
+    /// <summary>Rider's VSCode and VSCode OSX keymaps, with what they take from $default and Mac OS X 10.5+. A key IntelliJ
+    /// gives two actions, told apart by where it is pressed, goes to one: F5 to Resume (Debug with nothing debugged), Ctrl+D
+    /// to Select Next Occurrence (not Show Diff), Ctrl+Shift+F8 to View Breakpoints; else the keymap's own over the one it
+    /// inherits: Ctrl+; L to Rerun, Ctrl+Shift+W to Close Solution, macOS's Ctrl+Shift+R to Refactor This and Alt+Shift+F5
+    /// to Previous Change (not Run All Tests, Shrink Selection, Run Tests and Attach to Process).</summary>
+    private static Keymap VSCode(Keymap keymap)
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            return keymap
+                .Bind(Open, "meta O")
+                // VS Code's Ctrl+W, Switch Window; Cmd+Q is the application menu's Quit, as in the Visual Studio keymap.
+                .Bind(NextProjectWindow, "control W")
+                .Bind(PreviousProjectWindow, "meta alt shift BACK_QUOTE")
+                .Bind(Save, "meta S")
+                .Bind(SaveAll, "meta alt S")
+                .Bind(CloseTab, "meta W")
+                .Bind(NextTab, "meta shift CLOSE_BRACKET", "meta alt RIGHT")
+                .Bind(PreviousTab, "meta shift OPEN_BRACKET", "meta alt LEFT")
+                .Bind(GoToFile, "meta P")
+                .Bind(GoToLine, "control G")
+                .Bind(GoToSymbol, "meta T")
+                .Bind(FileStructure, "meta alt O", "meta shift O")
+                .Bind(FindAction, "F1", "meta shift P", "meta shift A")
+                .Bind(FindInFiles, "meta shift F")
+                .Bind(RecentFiles, "meta E")
+                .Bind(LastEditLocation, "meta K , meta Q")
+                .Bind(ReplaceInFiles, "meta shift H")
+                .Bind(ShowSettings, "meta COMMA")
+                .Bind(ShowNuGet, "meta alt 7")
+                .Bind(Find, "meta F")
+                .Bind(Replace, "meta alt F")
+                .Bind(FindNext, "meta G", "F3", "meta K , meta D")
+                // Its third, Cmd+Shift+F5, is VS Code's Restart, Rerun here.
+                .Bind(FindPrevious, "meta shift G", "shift F3")
+                .Bind(FocusExplorer, "meta shift E")
+                .Bind(CopyPath, "meta alt C", "meta K , P")
+                .Bind(RevealInFileManager, "meta K , R", "meta alt R")
+                .Bind(Build, "meta shift B")
+                .Bind(RunProgram, "control F5")
+                .Bind(Stop, "shift F5")
+                .Bind(Rerun, "meta SEMICOLON , L", "meta shift F5")
+                .Bind(ShowRun, "meta shift U")
+                .Bind(ShowProblems, "meta shift M")
+                .Bind(ShowFind, "meta 3")
+                .Bind(ShowDebug, "meta shift D", "meta shift Y")
+                .Bind(HideToolWindow, "meta J")
+                .Bind(Back, "control MINUS")
+                .Bind(Forward, "control shift MINUS")
+                .Bind(Complete, "meta I", "alt ESCAPE", "control SPACE")
+                .Bind(QuickFix, "meta PERIOD", "alt ENTER")
+                .Bind(Rename, "F2")
+                .Bind(GoToDeclaration, "F12")
+                .Bind(GoToTypeDeclaration, "control shift B")
+                .Bind(DerivedSymbols, "meta F12")
+                .Bind(FindUsages, "alt shift F12")
+                .Bind(HighlightUsages, "meta shift F7")
+                .Bind(Reformat, "alt shift F")
+                .Bind(ReformatWithPrettier, "meta alt shift P")
+                .Bind(RefactorThis, "control shift R")
+                .Bind(Generate, "control ENTER")
+                .Bind(ExtractMethod, "meta alt M")
+                .Bind(IntroduceVariable, "meta alt V")
+                .Bind(Inline, "meta alt N")
+                .Bind(ParameterInfo, "meta shift SPACE")
+                .Bind(SurroundWith, "meta alt J")
+                .Bind(OptimizeUsings, "alt shift O")
+                .Bind(IntroduceParameter, "meta alt P")
+                .Bind(ChangeSignature, "meta F6")
+                .Bind(QuickDocumentation, "meta K , meta I")
+                .Bind(NextError, "alt F8")
+                .Bind(PreviousError, "shift F8", "alt shift F8")
+                .Bind(ToggleBreakpoint, "F9")
+                .Bind(Resume, "F5")
+                .Bind(Pause, "F6")
+                .Bind(StepOver, "F10")
+                .Bind(StepInto, "F11", "F7")
+                .Bind(SmartStepInto, "shift F7")
+                .Bind(StepOut, "shift F11")
+                .Bind(RunToCursor, "alt F9")
+                .Bind(SetNextStatement, "meta alt shift F9")
+                .Bind(ExtendSelection, "meta control shift RIGHT", "control shift RIGHT")
+                .Bind(CallHierarchy, "alt shift H")
+                .Bind(TypeHierarchy, "control H")
+                .Bind(ShrinkSelection, "meta control shift LEFT")
+                .Bind(ShowExecutionPoint, "alt F10")
+                .Bind(ReattachToProcess, "meta alt shift F5")
+                .Bind(ShowContextMenu, "shift F10")
+                .Bind(RunTests, "meta SEMICOLON , R", "meta SEMICOLON , meta R")
+                .Bind(DebugTests, "meta SEMICOLON , D", "meta SEMICOLON , meta D", "control shift D")
+                .Bind(RunAllTests, "meta SEMICOLON , meta L")
+                .Bind(RunTestsUntilFailure, "meta SEMICOLON , W", "meta SEMICOLON , meta W")
+                .Bind(RerunTests, "meta SEMICOLON , T", "meta SEMICOLON , meta T")
+                .Bind(RerunFailedTests, "meta SEMICOLON , F", "meta SEMICOLON , meta F")
+                .Bind(StopTests, "meta SEMICOLON , S", "meta SEMICOLON , meta S")
+                .Bind(ShowTests, "meta alt 8")
+                .Bind(ShowStructure, "meta 7")
+                .Bind(SplitRight, "meta BACK_SLASH")
+                .Bind(MoveToOppositeGroup, "meta control RIGHT")
+                .Bind(OpenInNewWindow, "meta K , O")
+                .Bind(MarkdownPreview, "meta K , V")
+                .Bind(ReopenClosedTab, "meta shift T")
+                .Bind(PinTab, "meta K , shift ENTER")
+                .Bind(CloseOtherTabs, "meta alt T", "meta K , U")
+                .Bind(CloseAllTabs, "meta K , meta W")
+                .Bind(SoftWrap, "alt Z")
+                .Bind(IncreaseFontSize, "meta EQUALS")
+                .Bind(DecreaseFontSize, "meta MINUS")
+                .Bind(CloseSolution, "meta K , F", "meta shift W")
+                .Bind(ShowTerminal, "control BACK_QUOTE")
+                .Bind(MaximizeToolWindow, "meta shift QUOTE")
+                .Bind(ViewBreakpoints, "meta shift F8")
+                .Bind(ShowCommit, "meta 0")
+                .Bind(NextChange, "alt F3", "alt F5")
+                .Bind(PreviousChange, "alt shift F3", "alt shift F5")
+                .Bind(RollbackLines, "meta alt Z")
+                .Bind(ShowGit, "control shift G")
+                .Bind(RecentChanges, "alt shift C");
+        }
+        return keymap
+            .Bind(Open, "control O")
+            // VS Code's Ctrl+W closes the editor here, its Switch Window macOS's Ctrl+W; Next Project Window has no key.
+            .Bind(Save, "control S")
+            .Bind(SaveAll, "control K , S")
+            .Bind(CloseTab, "control W")
+            .Bind(NextTab, "control PAGE_DOWN")
+            .Bind(PreviousTab, "control PAGE_UP")
+            .Bind(GoToFile, "control P")
+            .Bind(GoToLine, "control G")
+            .Bind(GoToSymbol, "control T")
+            .Bind(GoToEverything, "F1", "control shift A")
+            .Bind(FileStructure, "control shift O")
+            .Bind(FindAction, "control shift P")
+            .Bind(FindInFiles, "control shift F")
+            .Bind(RecentFiles, "control E")
+            .Bind(LastEditLocation, "control K , control Q")
+            .Bind(ReplaceInFiles, "control shift H")
+            .Bind(ShowSettings, "control COMMA")
+            .Bind(ShowNuGet, "alt shift 7")
+            .Bind(Find, "control F")
+            .Bind(Replace, "control H")
+            .Bind(FindNext, "F3", "control K , control D")
+            .Bind(FindPrevious, "shift F3", "control shift F3")
+            .Bind(FocusExplorer, "control shift E")
+            .Bind(CopyPath, "shift alt C", "control K , P")
+            .Bind(RevealInFileManager, "shift alt R", "control K , R")
+            .Bind(Build, "control shift B")
+            .Bind(RunProgram, "control F5")
+            .Bind(Stop, "shift F5")
+            .Bind(Rerun, "control SEMICOLON , L", "control shift F5")
+            .Bind(ShowRun, "control shift U")
+            .Bind(ShowProblems, "control shift M")
+            .Bind(ShowFind, "alt 3")
+            .Bind(ShowDebug, "control shift Y", "control shift D")
+            .Bind(HideToolWindow, "control J")
+            .Bind(Back, "alt LEFT")
+            .Bind(Forward, "alt RIGHT")
+            .Bind(Complete, "control I", "control SPACE")
+            .Bind(QuickFix, "control PERIOD")
+            .Bind(Rename, "F2")
+            .Bind(GoToDeclaration, "F12")
+            .Bind(DerivedSymbols, "control F12")
+            .Bind(FindUsages, "alt shift F12")
+            .Bind(HighlightUsages, "control shift F7")
+            .Bind(Reformat, "alt shift F")
+            .Bind(ReformatWithPrettier, "control alt shift P")
+            .Bind(RefactorThis, "control shift R")
+            .Bind(Generate, "alt INSERT")
+            .Bind(ExtractMethod, "control alt M")
+            .Bind(IntroduceVariable, "control alt V")
+            .Bind(Inline, "control alt N")
+            .Bind(ParameterInfo, "control shift SPACE")
+            .Bind(SurroundWith, "control alt J")
+            .Bind(OptimizeUsings, "alt shift O")
+            .Bind(SafeDelete, "alt DELETE")
+            .Bind(IntroduceField, "control alt F")
+            .Bind(IntroduceParameter, "control alt P")
+            .Bind(ChangeSignature, "control F6")
+            .Bind(QuickDocumentation, "control K , control I")
+            .Bind(NextError, "alt F8")
+            .Bind(PreviousError, "alt shift F8", "shift F8")
+            .Bind(ToggleBreakpoint, "F9")
+            .Bind(Resume, "F5")
+            .Bind(Pause, "F6")
+            .Bind(StepOver, "F10")
+            .Bind(StepInto, "F11")
+            .Bind(SmartStepInto, "shift F7")
+            .Bind(StepOut, "shift F11")
+            .Bind(RunToCursor, "alt F9")
+            .Bind(SetNextStatement, "control alt shift F9")
+            .Bind(ExtendSelection, "alt shift RIGHT")
+            .Bind(CallHierarchy, "alt shift H")
+            .Bind(ShowExecutionPoint, "alt F10")
+            .Bind(AttachToProcess, "control alt F5")
+            .Bind(ReattachToProcess, "control alt shift F5")
+            .Bind(ShowContextMenu, "shift F10", "CONTEXT_MENU")
+            .Bind(RunTests, "control SEMICOLON , R", "control SEMICOLON , control R", "control shift F10")
+            .Bind(DebugTests, "control SEMICOLON , D", "control SEMICOLON , control D")
+            .Bind(RunAllTests, "control SEMICOLON , control L")
+            .Bind(RunTestsUntilFailure, "control SEMICOLON , W", "control SEMICOLON , control W")
+            .Bind(RerunTests, "control SEMICOLON , T", "control SEMICOLON , control T")
+            .Bind(RerunFailedTests, "control SEMICOLON , F", "control SEMICOLON , control F")
+            .Bind(StopTests, "control SEMICOLON , S", "control SEMICOLON , control S")
+            .Bind(ShowTests, "alt shift 8")
+            .Bind(ShowStructure, "alt 7")
+            .Bind(SplitRight, "control BACK_SLASH")
+            .Bind(MoveToOppositeGroup, "control alt RIGHT")
+            .Bind(OpenInNewWindow, "control K , O")
+            .Bind(MarkdownPreview, "control K , V")
+            .Bind(ReopenClosedTab, "control shift T")
+            .Bind(PinTab, "control K , shift ENTER")
+            .Bind(CloseOtherTabs, "control K , U")
+            .Bind(CloseAllTabs, "control K , control W")
+            .Bind(SoftWrap, "alt Z")
+            .Bind(IncreaseFontSize, "control EQUALS")
+            .Bind(DecreaseFontSize, "control MINUS")
+            .Bind(CloseSolution, "control K , F", "control shift W")
+            .Bind(ShowTerminal, "control BACK_QUOTE")
+            .Bind(MaximizeToolWindow, "control shift QUOTE")
+            .Bind(ViewBreakpoints, "control shift F8")
+            .Bind(ShowCommit, "alt 0")
+            .Bind(Branches, "control shift BACK_QUOTE")
+            .Bind(NextChange, "alt F5")
+            .Bind(PreviousChange, "alt shift F5")
+            .Bind(RollbackLines, "control alt Z")
+            .Bind(ShowGit, "control shift G");
     }
 }

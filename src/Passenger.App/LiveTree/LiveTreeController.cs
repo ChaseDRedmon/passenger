@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using Passenger.App.Debugging;
 using Passenger.App.Docking;
+using Passenger.App.Editors;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Inspector;
@@ -8,12 +10,12 @@ using Passenger.Text;
 
 namespace Passenger.App.LiveTree;
 
-/// <summary>What a window lends its Live Visual Tree: the tool windows' frame, the window's actions, the status bar, and
-/// going to a place in a file.</summary>
-public sealed record LiveTreeParts(DockHost Dock, ActionRegistry Actions, Action<string> Say, Action<string, TextPosition> Navigate);
+/// <summary>What a window lends its Live Visual Tree: the tool windows' frame, the window's actions, the status bar, going to
+/// a place in a file, and the editors, whose text the app's XAML places are read in.</summary>
+public sealed record LiveTreeParts(DockHost Dock, ActionRegistry Actions, Action<string> Say, Action<string, TextPosition> Navigate, EditorArea Editors);
 
-/// <summary>The window's Live Visual Tree, over the session it has: it follows the Avalonia or WPF app the session's debugger
-/// launched (<see cref="ProjectSession.LiveApp"/>), shows its window as the app's UI comes up, and asks the app for its tree
+/// <summary>The window's Live Visual Tree, over the session it has: it follows the Avalonia or WPF app of the Debug tab chosen
+/// (<see cref="ProjectSession.LiveApp"/>), shows its window as the app's UI comes up, and asks the app for its tree
 /// (again whenever its controls come and go), for the chosen control's details, for Select Element and for the outline over
 /// the control chosen. While the app is paused nothing is asked, since its UI thread answers nothing: the window keeps what
 /// it last had and says so, and asks again once the app runs. A UI-thread object of the window.</summary>
@@ -23,6 +25,7 @@ public sealed class LiveTreeController
     private readonly ToolWindow window;
     private ProjectSession? session;
     private LiveApp? app;
+    private DebugController? followedDebugger;
     private long? chosen;
 
     /// <summary>Bumped by each ask for the tree, and for details, so an answer that lands after a later ask is dropped.</summary>
@@ -32,10 +35,7 @@ public sealed class LiveTreeController
     /// <summary>The app's tree changed while the window could not ask (paused, hidden).</summary>
     private bool stale;
 
-    /// <summary>The property breakpoints the inspector in the app watches, each with the hit count it was given.</summary>
-    private readonly Dictionary<PropertyBreakpoint, string> watched = [];
-
-    /// <summary>The property breakpoints changed while the app was paused, which its inspector hears of once it runs.</summary>
+    /// <summary>The property breakpoints changed while an app was paused, which its inspector hears of once it runs.</summary>
     private bool watchesStale;
     private bool syncing;
     private bool syncAgain;
@@ -43,27 +43,87 @@ public sealed class LiveTreeController
     /// <summary>The chosen element's properties with a breakpoint, as its rows last showed them.</summary>
     private string watchedShown = string.Empty;
 
+    /// <summary>The window's view once it is first shown or asked for (#441), and what it shows, kept until then.</summary>
+    private LiveTreeView? view;
+    private (string? Message, string? Line) status;
+    private string? banner;
+    private AppTree? tree;
+    private (ElementDetails? Details, string? Problem) details;
+    private bool picking;
+
     public LiveTreeController(LiveTreeParts parts)
     {
         this.parts = parts;
-        View = new LiveTreeView();
-        window = new ToolWindow("liveTree", "Live Visual Tree", "Icon.LiveTree", View, ToolAnchor.RightTop) { Action = AppActions.ShowLiveTree };
+        window = new ToolWindow(ToolWindowIds.LiveTree, "Live Visual Tree", "Icon.LiveTree", Make, ToolAnchor.RightTop) { Action = AppActions.ShowLiveTree };
         parts.Dock.Add(window);
         window.PropertyChanged += OnWindowChanged;
-        parts.Actions.Add(new IdeAction(AppActions.SelectElement, "Select Element", "Debug", context => _ = PickAsync(View.SelectElement.IsChecked != true))
+        parts.Actions.Add(new IdeAction(AppActions.SelectElement, "Select Element", "Debug", context => _ = PickAsync(!picking))
         {
             WhyNot = _ => WhyNotAsk(),
         });
-        View.ElementChosen += (_, id) => _ = ChooseAsync(id);
-        View.PickRequested += (_, on) => _ = PickAsync(on);
-        View.RefreshRequested += (_, _) => _ = RefreshAsync();
-        View.GoToRequested += (_, place) => GoTo(place);
-        View.BreakRequested += (_, value) => ToggleBreak(value);
-        View.Watched = value => View.Details is { } details && session?.Debug.Breakpoints.FindProperty(details.Id, value.Name) is not null;
-        View.WhyNotBreak = () => session?.Debug.IsDebugging == true ? null : "Break When Value Changes needs the app debugged";
+        // What it says before any app is followed, as it says once one has gone from it.
+        ShowState();
     }
 
-    public LiveTreeView View { get; }
+    /// <summary>The Live Visual Tree's view, built as it is asked for.</summary>
+    public LiveTreeView View => view ?? (LiveTreeView)window.Content;
+
+    /// <summary>The view, as it is first shown or asked for, wired and showing what the controller kept for it.</summary>
+    private LiveTreeView Make()
+    {
+        LiveTreeView made = view = new LiveTreeView();
+        made.ElementChosen += (_, id) => _ = ChooseAsync(id);
+        made.PickRequested += (_, on) => _ = PickAsync(on);
+        made.RefreshRequested += (_, _) => _ = RefreshAsync();
+        made.GoToRequested += (_, place) => GoTo(place);
+        made.BreakRequested += (_, value) => ToggleBreak(value);
+        made.Watched = value => details.Details is { } shown && Debugged() is { } debugged && session!.Debug.Breakpoints.FindProperty(debugged, shown.Id, value.Name) is not null;
+        made.WhyNotBreak = () => Debugged() is { State: not DebugState.Ended } ? null : "Break When Value Changes needs the app debugged";
+        made.ShowTree(tree);
+        made.ShowDetails(details.Details, details.Problem);
+        if (chosen is long id && tree is not null)
+        {
+            made.Choose(id);
+        }
+        made.ShowStatus(status.Message, status.Line);
+        made.ShowBanner(banner);
+        made.SelectElement.IsChecked = picking;
+        return made;
+    }
+
+    private void ShowStatus(string? message, string? line)
+    {
+        status = (message, line);
+        view?.ShowStatus(message, line);
+    }
+
+    private void ShowBanner(string? text)
+    {
+        banner = text;
+        view?.ShowBanner(text);
+    }
+
+    private void ShowTree(AppTree? shown)
+    {
+        tree = shown;
+        view?.ShowTree(shown);
+    }
+
+    private void ShowDetails(ElementDetails? shown, string? problem)
+    {
+        details = (shown, problem);
+        view?.ShowDetails(shown, problem);
+    }
+
+    /// <summary>Select Element shown pressed while the app waits for a control to be pointed at.</summary>
+    private void Picking(bool on)
+    {
+        picking = on;
+        if (view is not null)
+        {
+            view.SelectElement.IsChecked = on;
+        }
+    }
 
     /// <summary>The app the window follows, or null.</summary>
     public LiveApp? App => app;
@@ -84,51 +144,70 @@ public sealed class LiveTreeController
         }
     }
 
-    /// <summary>The window follows a session from now: the app its debugger launches, and whether that app is paused.</summary>
+    /// <summary>The session debugging the app the window follows, which its property breakpoints are the elements of.</summary>
+    private DebugSession? Debugged() => app is not null ? session?.Debug.SessionOf(app) : null;
+
+    /// <summary>The window follows a session from now: the app of its chosen Debug tab, and whether that app is paused.</summary>
     public void Bind(ProjectSession next)
     {
         UiThread.Check();
+        if (session is { } previous)
+        {
+            previous.LiveAppChanged -= OnSelectedAppChanged;
+            previous.Debug.SelectionChanged -= OnSelectedAppChanged;
+            previous.Debug.StateChanged -= OnSelectedDebugStateChanged;
+        }
         session = next;
-        next.LiveAppChanged += (_, _) =>
+        next.LiveAppChanged += OnSelectedAppChanged;
+        next.Debug.SelectionChanged += OnSelectedAppChanged;
+        next.Debug.StateChanged += OnSelectedDebugStateChanged;
+        OnSelectedAppChanged(null, EventArgs.Empty);
+    }
+
+    private void OnSelectedAppChanged(object? sender, EventArgs e)
+    {
+        UiThread.Check();
+        if (followedDebugger != session?.Debug)
         {
-            if (session == next)
+            if (followedDebugger is not null)
             {
-                Follow(next.LiveApp);
+                followedDebugger.Breakpoints.PropertiesChanged -= OnPropertiesChanged;
             }
-        };
-        next.Debug.StateChanged += (_, _) =>
-        {
-            if (session == next)
+            followedDebugger = session?.Debug;
+            if (followedDebugger is not null)
             {
-                OnDebugState();
+                followedDebugger.Breakpoints.PropertiesChanged += OnPropertiesChanged;
             }
-        };
-        next.Debug.Breakpoints.PropertiesChanged += (_, _) =>
-        {
-            if (session == next)
-            {
-                ShowWatched();
-                _ = SyncWatchesAsync();
-            }
-        };
-        Follow(next.LiveApp);
+        }
+        Follow(session?.LiveApp);
+        OnDebugState();
+        OnPropertiesChanged(null, EventArgs.Empty);
+    }
+
+    private void OnSelectedDebugStateChanged(object? sender, EventArgs e) => OnDebugState();
+
+    private void OnPropertiesChanged(object? sender, EventArgs e)
+    {
+        UiThread.Check();
+        ShowWatched();
+        _ = SyncWatchesAsync();
     }
 
     /// <summary>Break When Value Changes on a property of the chosen element: a property breakpoint set, or the one there
     /// taken away.</summary>
     private void ToggleBreak(PropertyValue value)
     {
-        if (session is not { } current || View.Details is not { } details)
+        if (session is not { } current || details.Details is not { } shown || Debugged() is not { } debugged)
         {
             return;
         }
         BreakpointStore store = current.Debug.Breakpoints;
-        if (store.FindProperty(details.Id, value.Name) is { } existing)
+        if (store.FindProperty(debugged, shown.Id, value.Name) is { } existing)
         {
             store.Remove(existing);
             return;
         }
-        PropertyBreakpoint added = store.AddProperty(details.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, value.Name);
+        PropertyBreakpoint added = store.AddProperty(debugged, shown.Id, shown.Name is { Length: > 0 } name ? $"{shown.Type}#{name}" : shown.Type, value.Name);
         parts.Say($"Break When Value Changes: the app stops where {added.Location} is changed");
     }
 
@@ -139,20 +218,21 @@ public sealed class LiveTreeController
         if (now != watchedShown)
         {
             watchedShown = now;
-            View.RefreshProperties();
+            view?.RefreshProperties();
         }
     }
 
-    private string WatchedNow() => View.Details is { } details && session is { } current
-        ? string.Join(';', current.Debug.Breakpoints.Properties.Where(p => p.Element == details.Id).Select(p => p.Property).Order(StringComparer.Ordinal))
+    private string WatchedNow() => details.Details is { } shown && session is { } current && Debugged() is { } debugged
+        ? string.Join(';', current.Debug.Breakpoints.Properties.Where(p => p.Session == debugged && p.Element == shown.Id).Select(p => p.Property).Order(StringComparer.Ordinal))
         : string.Empty;
 
-    /// <summary>The inspector in the app told of the property breakpoints as they are now (while the app runs), which an
+    /// <summary>The inspectors in the apps told of the property breakpoints as they are now (while each runs), which an
     /// agent's breakpoint_set waits for, so its next click finds the property watched.</summary>
     public Task Watching { get; private set; } = Task.CompletedTask;
 
-    /// <summary>Tells the inspector in the app which properties to watch, as the property breakpoints that are on (none
-    /// while muted) and their hit counts say; while the app is paused, once it runs. One at a time, the last word winning.</summary>
+    /// <summary>Tells the inspector in each debugged app which of its properties to watch, as the property breakpoints of its
+    /// session that are on (none while muted) and their hit counts say; while an app is paused, once it runs. One at a time,
+    /// the last word winning.</summary>
     private Task SyncWatchesAsync()
     {
         if (syncing)
@@ -184,22 +264,41 @@ public sealed class LiveTreeController
 
     private async Task SyncWatchesOnceAsync()
     {
-        if (session is not { } current || app is not { State: LiveAppState.Connected } live)
+        if (session is not { } current)
         {
-            return;
-        }
-        if (Paused)
-        {
-            watchesStale = true;
             return;
         }
         watchesStale = false;
         BreakpointStore store = current.Debug.Breakpoints;
-        Dictionary<PropertyBreakpoint, string> wanted = store.Muted ? [] : store.Properties.Where(p => p.Enabled).ToDictionary(p => p, p => p.HitCondition ?? string.Empty);
         // Held, so what is done next in the app (a test's, an agent's) finds the property watched.
         using IDisposable held = BackgroundWork.Scope();
+        foreach ((DebugTab tab, LiveApp live) in current.Debug.Apps.ToList())
+        {
+            if (live.State != LiveAppState.Connected || tab.Session is not { State: not DebugState.Ended } debugged)
+            {
+                continue;
+            }
+            if (debugged.State == DebugState.Paused)
+            {
+                watchesStale = true;
+                continue;
+            }
+            await SyncWatchesAsync(current, store, debugged, live);
+        }
+    }
+
+    /// <summary>One app's inspector told of its session's property breakpoints, as <see cref="LiveApp.Watched"/> last said them.</summary>
+    private async Task SyncWatchesAsync(ProjectSession current, BreakpointStore store, DebugSession debugged, LiveApp live)
+    {
+        Dictionary<PropertyBreakpoint, string> wanted = store.Muted ? []
+            : store.Properties.Where(p => p.Enabled && p.Session == debugged).ToDictionary(p => p, p => p.HitCondition ?? string.Empty);
+        Dictionary<PropertyBreakpoint, string> watched = live.Watched;
         foreach (PropertyBreakpoint gone in watched.Keys.Where(p => !wanted.ContainsKey(p)).ToList())
         {
+            if (session != current || current.IsEnded || current.Debug.SessionOf(live) != debugged)
+            {
+                return;
+            }
             watched.Remove(gone);
             try
             {
@@ -212,6 +311,10 @@ public sealed class LiveTreeController
         }
         foreach ((PropertyBreakpoint breakpoint, string hits) in wanted)
         {
+            if (session != current || current.IsEnded || current.Debug.SessionOf(live) != debugged)
+            {
+                return;
+            }
             if (watched.TryGetValue(breakpoint, out string? was) && was == hits)
             {
                 continue;
@@ -223,12 +326,15 @@ public sealed class LiveTreeController
             }
             catch (LiveAppException error)
             {
-                parts.Say($"Break When Value Changes on {breakpoint.Location}: {error.Message}");
+                if (session == current && !current.IsEnded && current.Debug.SessionOf(live) == debugged)
+                {
+                    parts.Say($"Break When Value Changes on {breakpoint.Location}: {error.Message}");
+                }
             }
         }
     }
 
-    private bool Paused => session?.Debug.Session is { State: DebugState.Paused };
+    private bool Paused => Debugged() is { State: DebugState.Paused };
 
     private void Follow(LiveApp? next)
     {
@@ -246,13 +352,10 @@ public sealed class LiveTreeController
         Choose(null);
         treeAsks++;
         detailAsks++;
-        // A new app's inspector watches nothing yet.
-        watched.Clear();
-        watchesStale = false;
-        View.SelectElement.IsChecked = false;
-        View.ShowBanner(null);
-        View.ShowTree(null);
-        View.ShowDetails(null, null);
+        Picking(false);
+        ShowBanner(null);
+        ShowTree(null);
+        ShowDetails(null, null);
         if (next is not null)
         {
             next.StateChanged += OnAppState;
@@ -260,6 +363,12 @@ public sealed class LiveTreeController
             next.Picked += OnPicked;
         }
         ShowState();
+        if (next is { State: LiveAppState.Connected })
+        {
+            // An app up already (another Debug tab's, chosen again): its tree as it is now, or that it is paused.
+            stale = true;
+            OnDebugState();
+        }
     }
 
     /// <summary>What the window says of the app: nothing to inspect, waiting for it, why not, gone, or what it runs.</summary>
@@ -268,23 +377,23 @@ public sealed class LiveTreeController
         switch (app)
         {
             case null:
-                View.ShowStatus("Debug an Avalonia or WPF app to see its windows and controls here.", null);
+                ShowStatus("Debug an Avalonia or WPF app to see its windows and controls here.", null);
                 break;
             case { State: LiveAppState.Waiting }:
-                View.ShowStatus($"Waiting for {app.Name} to show its windows…", null);
+                ShowStatus($"Waiting for {app.Name} to show its windows…", null);
                 break;
             case { State: LiveAppState.Refused }:
-                View.ShowStatus(app.Problem, null);
+                ShowStatus(app.Problem, null);
                 break;
             case { State: LiveAppState.Ended }:
-                View.ShowTree(null);
-                View.ShowDetails(null, null);
-                View.ShowBanner(null);
-                View.SelectElement.IsChecked = false;
-                View.ShowStatus($"{app.Name} has ended.", null);
+                ShowTree(null);
+                ShowDetails(null, null);
+                ShowBanner(null);
+                Picking(false);
+                ShowStatus($"{app.Name} has ended.", null);
                 break;
             default:
-                View.ShowStatus(null, $"{app.Name} · {app.Framework}");
+                ShowStatus(null, $"{app.Name} · {app.Framework}");
                 break;
         }
     }
@@ -345,12 +454,13 @@ public sealed class LiveTreeController
     private void OnDebugState()
     {
         bool paused = Paused && app is { State: LiveAppState.Connected };
-        View.ShowBanner(paused ? $"{app!.Name} is paused: its tree and values are as it last ran, and are asked again once it runs." : null);
+        ShowBanner(paused ? $"{app!.Name} is paused: its tree and values are as it last ran, and are asked again once it runs." : null);
         if (!paused && stale)
         {
             _ = RefreshAsync();
         }
-        if (!Paused && watchesStale)
+        // Any app's session may have run on since its watches changed, the one followed or another.
+        if (watchesStale)
         {
             _ = SyncWatchesAsync();
         }
@@ -395,7 +505,7 @@ public sealed class LiveTreeController
             {
                 // Asked again once the app runs, should it have paused while asked.
                 stale = true;
-                View.ShowStatus(null, error.Message);
+                ShowStatus(null, error.Message);
             }
             return;
         }
@@ -403,7 +513,7 @@ public sealed class LiveTreeController
         {
             return;
         }
-        View.ShowTree(tree);
+        ShowTree(tree);
         ShowState();
         if (chosen is long id)
         {
@@ -414,7 +524,7 @@ public sealed class LiveTreeController
             else
             {
                 Choose(null);
-                View.ShowDetails(null, "The control chosen has left the app.");
+                ShowDetails(null, "The control chosen has left the app.");
             }
         }
     }
@@ -446,9 +556,9 @@ public sealed class LiveTreeController
         }
         if (Paused)
         {
-            if (View.Details?.Id != id)
+            if (details.Details?.Id != id)
             {
-                View.ShowDetails(null, $"{live.Name} is paused: a control's properties show once it runs again.");
+                ShowDetails(null, $"{live.Name} is paused: a control's properties show once it runs again.");
             }
             return;
         }
@@ -459,7 +569,7 @@ public sealed class LiveTreeController
             ElementDetails details = await live.DetailsAsync(id);
             if (ask == detailAsks && app == live)
             {
-                View.ShowDetails(details, null);
+                ShowDetails(AppPlaces.InEditor(details, parts.Editors), null);
                 watchedShown = WatchedNow();
             }
         }
@@ -467,7 +577,7 @@ public sealed class LiveTreeController
         {
             if (ask == detailAsks && app == live)
             {
-                View.ShowDetails(null, error.Message);
+                ShowDetails(null, error.Message);
             }
         }
     }
@@ -476,10 +586,10 @@ public sealed class LiveTreeController
     public async Task PickAsync(bool on)
     {
         UiThread.Check();
-        View.SelectElement.IsChecked = on;
+        Picking(on);
         if (WhyNotAsk() is { } why)
         {
-            View.SelectElement.IsChecked = false;
+            Picking(false);
             parts.Say($"Select Element: {why}");
             return;
         }
@@ -490,7 +600,7 @@ public sealed class LiveTreeController
         }
         catch (LiveAppException error)
         {
-            View.SelectElement.IsChecked = false;
+            Picking(false);
             parts.Say($"Select Element: {error.Message}");
             return;
         }
@@ -522,7 +632,7 @@ public sealed class LiveTreeController
         {
             return;
         }
-        View.SelectElement.IsChecked = false;
+        Picking(false);
         if (id is long element)
         {
             Choose(element);
@@ -531,8 +641,8 @@ public sealed class LiveTreeController
         }
     }
 
-    /// <summary>Opens the XAML a link names: a control's element, a style's selector or a setter, at its line; a root
-    /// recorded by its file alone at its root element.</summary>
+    /// <summary>Opens the XAML a link names: a control's element, a style's selector or a setter, at its line (the details
+    /// shown have the editor's, <see cref="AppPlaces"/>); a root recorded by its file alone at its root element.</summary>
     private void GoTo(SourcePlace place)
     {
         string path = PathNames.Canonical(place.File);
@@ -541,18 +651,19 @@ public sealed class LiveTreeController
             parts.Say($"{place.File} is not on this machine");
             return;
         }
-        TextPosition at = place.Line > 0 ? new TextPosition(place.Line - 1, Math.Max(0, place.Column - 1)) : RootElement(path);
+        TextPosition at = place.Line > 0 ? new TextPosition(place.Line - 1, Math.Max(0, place.Column - 1)) : RootElement(CSharp.ServerPlaces.TextOf(parts.Editors, path));
         parts.Navigate(path, at);
     }
 
-    /// <summary>Where a XAML file's root element starts: its first tag that is no declaration or comment.</summary>
-    private static TextPosition RootElement(string path)
+    /// <summary>Where a XAML file's root element starts in the editor's lines: its first tag that is no declaration or comment.</summary>
+    private static TextPosition RootElement(TextSnapshot? text)
     {
-        string[] lines = File.ReadAllLines(path);
-        for (int line = 0; line < lines.Length; line++)
+        for (int line = 0; text is not null && line < text.LineCount; line++)
         {
-            int tag = lines[line].IndexOf('<', StringComparison.Ordinal);
-            if (tag >= 0 && !lines[line].AsSpan(tag).StartsWith("<?") && !lines[line].AsSpan(tag).StartsWith("<!"))
+            LineSpan span = text.GetLine(line);
+            string shown = text.GetText(span.Start, span.Length);
+            int tag = shown.IndexOf('<', StringComparison.Ordinal);
+            if (tag >= 0 && !shown.AsSpan(tag).StartsWith("<?") && !shown.AsSpan(tag).StartsWith("<!"))
             {
                 return new TextPosition(line, tag + 1);
             }

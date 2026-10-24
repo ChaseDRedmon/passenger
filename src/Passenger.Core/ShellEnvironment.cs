@@ -7,15 +7,19 @@ namespace Passenger.Core;
 /// terminal finds. What the shell sets goes into this process's environment, which every program it starts inherits.</summary>
 public static class ShellEnvironment
 {
-    /// <summary>The longest a slow shell profile holds up the first program started; past it, the environment stays as given.</summary>
+    /// <summary>The longest a slow shell profile holds up the programs started, counted from the read's start, so it is
+    /// waited out once; past it, the environment stays as given.</summary>
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(10);
 
-    private const string Marker = "__PASSENGER_ENVIRONMENT__";
+    /// <summary>The variable naming the file the shell writes its environment to.</summary>
+    private const string Written = "PASSENGER_SHELL_ENVIRONMENT";
 
     /// <summary>What a shell sets for itself, never for the programs an IDE starts.</summary>
-    private static readonly HashSet<string> Own = ["_", "SHLVL", "PWD", "OLDPWD", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID", "PS1", "PS2"];
+    private static readonly HashSet<string> Own = ["_", "SHLVL", "PWD", "OLDPWD", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID", "PS1", "PS2", Written];
 
     private static Task? loading;
+
+    private static long began;
 
     /// <summary>Starts reading it, unless the IDE was started from a terminal (whose environment is the shell's already)
     /// or on Windows (where a program gets the user's whole environment).</summary>
@@ -25,28 +29,41 @@ public static class ShellEnvironment
         {
             return;
         }
+        began = Stopwatch.GetTimestamp();
         loading = Task.Run(ReadAsync);
     }
 
-    /// <summary>Waits for the shell's environment, if it is being read, before a program is looked for or started.</summary>
-    public static void Ready() => loading?.Wait(Limit);
+    /// <summary>Waits for the shell's environment, if it is being read, before a program is looked for or started: until the
+    /// limit from the read's start at most, so a profile that never finishes costs one wait, once.</summary>
+    public static void Ready()
+    {
+        if (loading is { IsCompleted: false } reading)
+        {
+            TimeSpan left = Limit - Stopwatch.GetElapsedTime(began);
+            reading.Wait(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+        }
+    }
 
     private static async Task ReadAsync()
     {
         string shell = Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } named && File.Exists(named) ? named
             : OperatingSystem.IsMacOS() ? "/bin/zsh" : "/bin/sh";
-        // Interactive as well as login, as a terminal's shell is, so what a profile's rc file adds to PATH is there too;
-        // the marker skips whatever the profile prints.
-        ProcessStartInfo start = ChildProcesses.Command(shell, ["-l", "-i", "-c", $"printf '%s\\0' {Marker}; /usr/bin/env -0"]);
+        string? file = null;
         try
         {
+            file = Path.GetTempFileName();
+            // Interactive as well as login, as a terminal's shell is, so what a profile's rc file adds to PATH is there too.
+            // What the profile prints goes nowhere, and so does what a job it leaves running prints, which would otherwise
+            // hold the shell's output open long after the shell ended: the environment comes back in a file.
+            ProcessStartInfo start = ChildProcesses.Command("/bin/sh",
+                ["-c", "exec \"$@\" >/dev/null 2>&1", "sh", shell, "-l", "-i", "-c", "/usr/bin/env -0 > \"$" + Written + "\""]);
+            start.Environment[Written] = file;
             ChildResult read = await ChildProcesses.RunAsync(start, limit: Limit);
-            int begins = read.Output.IndexOf(Marker + "\0", StringComparison.Ordinal);
-            if (!read.Succeeded || begins < 0)
+            if (!read.Succeeded)
             {
                 return;
             }
-            foreach (string pair in read.Output[(begins + Marker.Length + 1)..].Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            foreach (string pair in (await File.ReadAllTextAsync(file)).Split('\0', StringSplitOptions.RemoveEmptyEntries))
             {
                 int equals = pair.IndexOf('=', StringComparison.Ordinal);
                 if (equals > 0 && !Own.Contains(pair[..equals]))
@@ -55,9 +72,24 @@ public static class ShellEnvironment
                 }
             }
         }
-        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or TimeoutException)
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException
+            or TimeoutException)
         {
             // No shell to ask, or one whose profile never finished: the environment stays as the IDE was given it.
+        }
+        finally
+        {
+            if (file is not null)
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    // The system's temporary folder is cleared in time.
+                }
+            }
         }
     }
 }

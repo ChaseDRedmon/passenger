@@ -49,8 +49,7 @@ public sealed class FindTests : IDisposable
         Ui.Settle();
         FindBar bar = window.EditorArea.FindBar;
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "sum";
-        bar.FindControl<Button>("ReplaceAllButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.Equal("sum + sum * sum", editor.Document.Snapshot.ToString());
         editor.TryExecute(EditorActions.Undo);
         Assert.Equal("total + total * total", editor.Document.Snapshot.ToString());
@@ -74,8 +73,7 @@ public sealed class FindTests : IDisposable
         bar.FindControl<TextBox>("Query")!.Text = @"\s+$";
         bar.FindControl<TextBox>("ReplaceWith")!.Text = string.Empty;
         Ui.Settle();
-        bar.FindControl<Button>("ReplaceAllButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         window.Perform(AppActions.Save);
         Assert.Equal("int foo\r\nfoo bar\r\nbar foo\r\nend", File.ReadAllText(Path.Combine(folder, "Notes.txt")));
         window.Close();
@@ -93,12 +91,12 @@ public sealed class FindTests : IDisposable
         Assert.Equal("1/2", bar.CountText);
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "$1_";
 
-        Click(bar, "ReplaceButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceButton")!);
         Assert.True(editor.Document.Snapshot.ToString() == "foo_(1); bar (2); baz(3);",
             $"Replace wrote '{editor.Document.Snapshot}': the group was not filled in from the match its lookahead found");
         editor.TryExecute(EditorActions.Undo);
 
-        Click(bar, "ReplaceAllButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.True(editor.Document.Snapshot.ToString() == "foo_(1); bar (2); baz_(3);",
             $"Replace All wrote '{editor.Document.Snapshot}': the groups were not filled in from the matches their lookahead found");
         window.Close();
@@ -116,7 +114,7 @@ public sealed class FindTests : IDisposable
         Ui.Settle();
         Assert.True(bar.CountText == "1/2", $"The count says {bar.CountText}: cat|dog found a word's part (catalog, hotdog) as a whole word");
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "pet";
-        Click(bar, "ReplaceAllButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.Equal("catalog pet hotdog pet", editor.Document.Snapshot.ToString());
 
         // A stray ')' is the person's regex not reading, never a close of the group Words puts it in.
@@ -143,20 +141,62 @@ public sealed class FindTests : IDisposable
 
         // Replace puts the prefix at the line's start and goes on to the next line's.
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "// ";
-        Click(bar, "ReplaceButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceButton")!);
         Assert.Equal("one\n// \ntwo\n", editor.Document.Snapshot.ToString());
         Assert.Equal(new Selection(8, 8), editor.Selections.Primary);
         editor.TryExecute(EditorActions.Undo);
 
-        Click(bar, "ReplaceAllButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.Equal("// one\n// \n// two\n", editor.Document.Snapshot.ToString());
         window.Close();
     }
 
-    private static void Click(FindBar bar, string button)
+    /// <summary>Keys typed at the top of a file of 20,000 lines with the find bar open allocate on the UI thread under twice
+    /// what they do in one of 200, the match at the end moving with them and still counted: the whole file was searched
+    /// again on the UI thread at every key, read into one string to be.</summary>
+    [AvaloniaFact]
+    public void Typing_with_the_find_bar_open_costs_a_key_in_twenty_thousand_lines_about_what_it_does_in_two_hundred()
     {
-        bar.FindControl<Button>(button)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        long few = KeyWithFindOpen(200);
+        long many = KeyWithFindOpen(20_000);
+        TestContext.Current.TestOutputHelper?.WriteLine($"A key allocated {few:N0} bytes above 200 lines, {many:N0} above 20,000.");
+        Assert.True(many < few * 2,
+            $"With the find bar open a key above 20,000 lines allocated {many / 1024:N0} KB on the UI thread, above 200 {few / 1024:N0} KB: the whole file was searched there");
+    }
+
+    /// <summary>What a key typed at the top of a file of some lines, with the find bar open on a word at its end, allocates on
+    /// the UI thread, its search landing included.</summary>
+    private long KeyWithFindOpen(int lines)
+    {
+        System.Text.StringBuilder text = new();
+        for (int i = 0; i < lines; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"line {i} of the notes\n");
+        }
+        string notes = text.Append("the needle\n").ToString();
+        (MainWindow window, CodeEditor editor) = Open(notes);
+        Ui.Press(window, Ui.Shortcut(AppActions.Find));
+        window.KeyTextInput("needle");
         Ui.Settle();
+        FindBar bar = window.EditorArea.FindBar;
+        Assert.Equal("1/1", bar.CountText);
+        editor.Selections = SelectionSet.Single(0);
+        editor.Focus();
+        Ui.Settle();
+        const int Keys = 5;
+        long bytes = 0;
+        for (int i = 0; i < Keys; i++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("x");
+            Ui.Settle();
+            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        int needle = notes.IndexOf("needle", StringComparison.Ordinal) + Keys;
+        Assert.Equal(new TextRange(needle, "needle".Length), Assert.Single(editor.Highlights));
+        Assert.True(bar.IsVisible && bar.CountText.EndsWith("/1", StringComparison.Ordinal), $"After the keys the bar's count says {bar.CountText}");
+        window.Close();
+        return bytes / Keys;
     }
 
     private (MainWindow Window, CodeEditor Editor) Open(string text)

@@ -41,11 +41,11 @@ public sealed class TitleBarTests : IDisposable
         // What is on the bar keeps its clicks: Windows hands them to it, and a click on Settings opens Settings.
         foreach (Button button in Bar(window).GetVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible && !b.Classes.Contains("windowButton")))
         {
-            Assert.True(ChromeAt(window, Centre(window, button)) == WindowDecorationsElementRole.User,
+            Assert.True(ChromeAt(window, Ui.Centre(button, window)) == WindowDecorationsElementRole.User,
                 $"Windows would take a press on the toolbar's {button.Name ?? ToolTip.GetTip(button)} as one on its caption, moving the window instead of clicking it");
         }
         Button settings = Bar(window).GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Settings");
-        Click(window, Centre(window, settings));
+        Click(window, Ui.Centre(settings, window));
         Assert.IsType<SettingsDialog>(window.Frontmost);
         Assert.True(window.MovesStarted == 1, "A click on the toolbar's Settings moved the window");
         window.Frontmost.Close();
@@ -65,6 +65,34 @@ public sealed class TitleBarTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void The_main_menus_titles_on_the_bar_keep_their_clicks_and_the_space_beside_them_still_moves_the_window()
+    {
+        // macOS shows the main menu in its own menu bar; here the window keeps it on the toolbar as Windows and Linux do.
+        MainWindow.SystemMenuBar = false;
+        try
+        {
+            // Wide enough for several titles beside Windows' own window buttons: at 1200 wide Windows fits three, the rest behind the button.
+            MainWindow window = Open(width: 1600);
+            Assert.SkipUnless(window.TitleBarMerged, $"This desktop keeps the system's title bar: {TitleBars.NotOnThisDesktop}");
+            window.ApplySettings(window.Settings with { MainMenuBar = true });
+            Ui.Settle();
+            Button[] titles = [.. Find<Control>(window, "MainMenuPlace").GetVisualChildren().OfType<Button>().Where(b => b.Tag is string && b.IsHitTestVisible)];
+            Assert.True(titles.Length > 3, $"The bar shows {titles.Length} of the main menu's titles at 1600 wide");
+            foreach (Button title in titles)
+            {
+                Assert.True(ChromeAt(window, Ui.Centre(title, window)) == WindowDecorationsElementRole.User,
+                    $"Windows would take a press on the bar's {title.Content} as one on its caption, moving the window instead of opening the menu");
+            }
+            Assert.Equal(OperatingSystem.IsWindows() ? WindowDecorationsElementRole.TitleBar : null, ChromeAt(window, EmptySpace(window)));
+            window.Close();
+        }
+        finally
+        {
+            MainWindow.SystemMenuBar = OperatingSystem.IsMacOS();
+        }
+    }
+
+    [AvaloniaFact]
     public void The_window_buttons_stand_at_the_bars_right_end_and_minimize_maximize_and_close_the_window()
     {
         Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS's own traffic lights are the window's buttons");
@@ -78,23 +106,23 @@ public sealed class TitleBarTests : IDisposable
         Control root = Find<Control>(window, "Root");
         Assert.Equal(root.TranslatePoint(new Point(root.Bounds.Width, 0), window)!.Value.X, close.TranslatePoint(new Point(close.Bounds.Width, 0), window)!.Value.X, 1);
         // Windows takes them as its own caption buttons: Windows 11's snap layouts open over the maximize button.
-        Assert.Equal(WindowDecorationsElementRole.MinimizeButton, ChromeAt(window, Centre(window, minimize)));
-        Assert.Equal(WindowDecorationsElementRole.MaximizeButton, ChromeAt(window, Centre(window, maximize)));
-        Assert.Equal(WindowDecorationsElementRole.CloseButton, ChromeAt(window, Centre(window, close)));
+        Assert.Equal(WindowDecorationsElementRole.MinimizeButton, ChromeAt(window, Ui.Centre(minimize, window)));
+        Assert.Equal(WindowDecorationsElementRole.MaximizeButton, ChromeAt(window, Ui.Centre(maximize, window)));
+        Assert.Equal(WindowDecorationsElementRole.CloseButton, ChromeAt(window, Ui.Centre(close, window)));
 
-        Click(window, Centre(window, maximize));
+        Click(window, Ui.Centre(maximize, window));
         Assert.Equal(WindowState.Maximized, window.WindowState);
         Assert.True(AutomationProperties.GetName(maximize) == "Restore", "The maximized window's button does not offer to restore it");
-        Click(window, Centre(window, maximize));
+        Click(window, Ui.Centre(maximize, window));
         Assert.Equal(WindowState.Normal, window.WindowState);
-        Click(window, Centre(window, minimize));
+        Click(window, Ui.Centre(minimize, window));
         Assert.Equal(WindowState.Minimized, window.WindowState);
         window.WindowState = WindowState.Normal;
         Ui.Settle();
 
         bool closed = false;
         window.Closed += (_, _) => closed = true;
-        Click(window, Centre(window, close));
+        Click(window, Ui.Centre(close, window));
         Assert.True(closed, "The bar's Close did not close the window");
     }
 
@@ -152,7 +180,7 @@ public sealed class TitleBarTests : IDisposable
         // A right press there asks the window manager for its window menu, as on its own title bar; one on a button not.
         RightClick(window, EmptySpace(window));
         Button settings = Bar(window).GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Settings");
-        RightClick(window, Centre(window, settings));
+        RightClick(window, Ui.Centre(settings, window));
         Assert.True(window.WindowMenusAsked == 1, $"Right presses on the merged bar asked for the window manager's menu {window.WindowMenusAsked} times, not once (on its empty space)");
         Assert.True(window.MovesStarted == 1, "A right press on the merged bar moved the window");
 
@@ -174,10 +202,10 @@ public sealed class TitleBarTests : IDisposable
         window.Close();
     }
 
-    private MainWindow Open()
+    private MainWindow Open(double width = 1200)
     {
         File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = width, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile("One.cs");
@@ -200,9 +228,6 @@ public sealed class TitleBarTests : IDisposable
         Assert.True(right - left > 100, $"The bar has no empty space to take hold of between {left} and {right}");
         return new Point((left + right) / 2, Bar(window).Bounds.Height / 2);
     }
-
-    private static Point Centre(MainWindow window, Control control) =>
-        control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
 
     /// <summary>What Windows is told a press there is: its caption, one of its buttons, the window's own (User), or nothing
     /// of the frame's. Avalonia answers Windows' non-client hit test (and X11's press) from this, which it keeps internal.</summary>

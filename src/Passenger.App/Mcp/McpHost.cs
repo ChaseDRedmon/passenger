@@ -26,94 +26,43 @@ public static partial class McpHost
     /// the platform is: <c>--mcp</c> runs on the headless one alone.</summary>
     public static bool IsHeadless { get; private set; }
 
-    /// <summary>Where windows listen, one socket each, beside the process's <c>PID.open</c>: the state folder's (<see
-    /// cref="SocketFolderFor"/>).</summary>
-    public static string SocketFolder => SocketFolderFor(StateStore.DefaultRoot);
+    /// <summary>The variable a test sets for an <c>--mcp</c> Passenger whose agent asks nothing of C#: <c>off</c> starts no C#
+    /// language server (<see cref="MainWindow.StartsLanguageServer"/>), so the test pays no server's start, load or restore.</summary>
+    public const string LanguageServerVariable = "PASSENGER_MCP_LANGUAGE_SERVER";
 
-    /// <summary>A state folder's agent sockets' folder: in the user's own temporary folder, named by a short hash of the
-    /// user and the state folder, so a socket's path stays within the 104 bytes macOS allows (the state folder's own grew
-    /// past them under a long PASSENGER_SETTINGS, and an agent waited 2 minutes for a window that could not listen) and
-    /// each state, a test run's or the person's, has its own.</summary>
-    public static string SocketFolderFor(string state)
+    /// <summary>Whether <c>--mcp</c>'s IDE starts the C# language server: always, unless <see cref="LanguageServerVariable"/>
+    /// says <c>off</c>; a value other than <c>off</c> or <c>on</c> is fatal as Passenger starts, as a malformed flag is.</summary>
+    public static bool StartsLanguageServer => Environment.GetEnvironmentVariable(LanguageServerVariable) switch
     {
-        string key = $"{Environment.UserName}\n{Path.TrimEndingDirectorySeparator(PathNames.Canonical(state))}";
-        string hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))[..10];
-        return Path.Combine(UserTemp(), $"passenger-{hash}");
-    }
+        null or "" or "on" => true,
+        "off" => false,
+        string other => throw new FormatException($"{LanguageServerVariable} takes off or on, not '{other}'"),
+    };
 
-    /// <summary>The socket folder made the user's alone, or why not: a link, or one another user made first (on Linux's
-    /// shared /tmp), whose mode only its owner may set, is never listened or connected in.</summary>
-    internal static string OwnSocketFolder()
-    {
-        string folder = SocketFolder;
-        if (OperatingSystem.IsWindows())
-        {
-            // The user's temporary folder, under their profile, is theirs alone already.
-            Directory.CreateDirectory(folder);
-            return folder;
-        }
-        const UnixFileMode Owner = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        Directory.CreateDirectory(folder, Owner);
-        if (new DirectoryInfo(folder).LinkTarget is not null)
-        {
-            throw new IOException($"{folder} is a link, not a folder of the user's own");
-        }
-        File.SetUnixFileMode(folder, Owner);
-        return folder;
-    }
+    /// <summary>Where windows listen, one socket each, beside the process's <c>PID.open</c>: the state folder's socket folder
+    /// (<see cref="SocketFolders"/>), where Passenger's other sockets are too.</summary>
+    public static string SocketFolder => SocketFolders.For(StateStore.DefaultRoot);
+
+    /// <summary>A state folder's agent sockets' folder (<see cref="SocketFolders.For"/>).</summary>
+    public static string SocketFolderFor(string state) => SocketFolders.For(state);
+
+    /// <summary>The socket folder made the user's alone, or why not (<see cref="SocketFolders.Own"/>).</summary>
+    internal static string OwnSocketFolder() => SocketFolders.Own(StateStore.DefaultRoot);
 
     /// <summary>The socket folder when it is there and the user's own, else null: the windows an agent may join.</summary>
-    internal static string? FoundSocketFolder()
-    {
-        if (!Directory.Exists(SocketFolder))
-        {
-            return null;
-        }
-        try
-        {
-            return OwnSocketFolder();
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>The user's own temporary folder: macOS's per-user one as the system names it (an agent's environment may
-    /// point TMPDIR elsewhere, where the person's windows would not be found), Linux's XDG_RUNTIME_DIR, else /tmp.</summary>
-    private static string UserTemp()
-    {
-        if (OperatingSystem.IsMacOS() && DarwinUserTemp() is { } own)
-        {
-            return own;
-        }
-        if (OperatingSystem.IsLinux())
-        {
-            return Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is { Length: > 0 } runtime && Path.IsPathFullyQualified(runtime) && Directory.Exists(runtime)
-                ? runtime
-                : "/tmp";
-        }
-        return Path.GetTempPath();
-    }
-
-    private static unsafe string? DarwinUserTemp()
-    {
-        const int DarwinUserTempDir = 65537;
-        byte* buffer = stackalloc byte[1024];
-        nuint length = Confstr(DarwinUserTempDir, buffer, 1024);
-        return length is > 1 and <= 1024 ? System.Text.Encoding.UTF8.GetString(buffer, (int)length - 1) : null;
-    }
-
-    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "confstr")]
-    private static unsafe partial nuint Confstr(int name, byte* buffer, nuint length);
+    internal static string? FoundSocketFolder() => SocketFolders.Found(StateStore.DefaultRoot);
 
     /// <summary>What an agent is told as it connects: how to begin and find its way, and what a person's window asks.</summary>
     internal const string Instructions =
         "Passenger is a C# IDE (with XAML, MSBuild files and the web languages). These tools act on its open workspace as its user would. " +
-        "Lines and columns count from 1; relative paths are the open folder's.\n\n" +
+        "Lines and columns count from 1; relative paths are the open folder's. Parameters several tools share: configuration, a run " +
+        "configuration (the chosen one by default); arguments, a command line in place of its own; waitSeconds, how long a call " +
+        "waits for the program to stop, end or show its UI; session, a debugged program as debug_state's sessions name it (by " +
+        "default the one paused, else the only one); resource, an Aspire resource (name or AppHostPath::name) or a compose " +
+        "service of the run, as workspace lists them.\n\n" +
         "Begin with workspace: the folder and solution open, their projects, run configurations and open files (open opens another folder, " +
         "solution or file). Find your way by meaning rather than by text: find_symbol finds a type or member by name, outline lists a file's " +
-        "types and members with their lines, and symbol_info, definition, usages, implementations and hierarchy follow the symbol at a line " +
+        "types and members with their lines, and symbol_info, definition, usages and hierarchy follow the symbol at a line " +
         "and column; find_in_files searches text. editor_text reads a file with its lines numbered; edit changes one as the editor does " +
         "(an open file the editor has not changed also takes what is written on disk); diagnostics checks it. A file written a moment " +
         "before is waited for (up to 10 s) until the language server has read it, so rename, refactor and code actions work on what was " +
@@ -122,19 +71,21 @@ public static partial class McpHost
         "Change Signature (every call updated), Move, Safe Delete, Extract Interface, Pull Members Up, Push Members Down, Introduce Field or " +
         "Parameter, Encapsulate Field, Optimize Imports and Code Cleanup; refactor with describe true answers what its dialog offers and the " +
         "options to send back, changing nothing. Each change is one step of the IDE's Undo.\n\n" +
-        "build, run, tests_list and tests_run build, run and test. To debug: breakpoint_set, then debug_start (or debug_attach), debug_step, " +
+        "build, run, tests_list and tests_run build (and publish), run and test. To debug: breakpoint_set, then debug_start (or debug_attach), debug_step, " +
         "debug_evaluate, debug_variables and debug_continue, each waiting for the program to stop and saying where, with the top frame's " +
         "locals. An Avalonia or WPF app that run or debug_start starts is looked at and used as a person tests it: app_windows, app_tree, " +
         "app_screenshot, app_click, app_type, app_key, app_scroll, app_binding_errors. Also version control (vcs_status, vcs_diff, " +
         "vcs_commit), NuGet (nuget_search, nuget_install), Problems and Local History (problems, local_history), the settings (settings, " +
-        "settings_set) and the window itself (screenshot, ide_action).\n\n" +
+        "settings_set), the container engine (containers, container_logs, container_exec, container_action) and Passenger's own " +
+        "window (the app_ tools with app ide, ide_action).\n\n" +
         "Attached to a person's Passenger (--mcp-attach), the first call joins the Passenger window open on the agent's folder (the folder " +
         "after --mcp-attach, else the agent's working folder). With none open, it has the running Passenger open that folder, or starts " +
         "Passenger on it, in a window the person sees, and waits for it. Unless the person has turned on Enable MCP Server, or let agents " +
-        "into that folder always, the window asks them to let the agent in, and the call waits for their answer (2 minutes at most); a call " +
-        "they refuse or leave unanswered says so, and a later one asks again. The person is also asked before the agent first uses each tool " +
-        "that changes something (edit, rename, build, run, debug_start, vcs_commit and the like; reading never asks), and before it opens " +
-        "another folder in their window. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
+        "into that folder always, the window asks them to let the agent in. The person is also asked before the agent first uses each tool " +
+        "that changes something (edit, rename, build, run, debug_start, breakpoint_set, debug_evaluate, vcs_commit and the like; reading, " +
+        "save_all, stop and stepping never ask), and before it opens another folder in their window. A call waits for each answer 2 " +
+        "minutes at most, telling its progress meanwhile when asked to; one refused or left unanswered says so, and a later call asks " +
+        "again. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
 
     /// <summary>The server as an agent sees it, whichever way it is reached.</summary>
     internal static Implementation ServerInfo => new()
@@ -158,10 +109,15 @@ public static partial class McpHost
     internal static McpServerToolCreateOptions ToolCreateOptions() => new() { SerializerOptions = AnswerJson };
 
     /// <summary>A tool as every connection and <c>--mcp-attach</c> list it: its schema without what says nothing, an
-    /// optional parameter's null default and null type (left out says as much), which every list paid for some 110 times.</summary>
+    /// optional parameter's null default and null type (left out says as much), which every list paid for some 110 times,
+    /// and its title once, the tool's, where the SDK writes it again in its annotations.</summary>
     internal static McpServerTool Lean(McpServerTool tool)
     {
         Tool shown = tool.ProtocolTool;
+        if (shown.Annotations is { } annotations && annotations.Title == shown.Title)
+        {
+            annotations.Title = null;
+        }
         if (JsonNode.Parse(shown.InputSchema.GetRawText()) is JsonObject schema)
         {
             Trim(schema);
@@ -200,14 +156,32 @@ public static partial class McpHost
         }
     }
 
-    /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>).</summary>
-    public static McpServerOptions Options(MainWindow window, AgentConnection connection)
+    /// <summary>The <see cref="PassengerTools"/> a call reaches: its connection's, which <see cref="ConnectedTool"/> gives the
+    /// call it serves.</summary>
+    internal static readonly AsyncLocal<PassengerTools?> Serving = new();
+
+    /// <summary>The build's tools, each made once a process (its schema read by reflection and trimmed, <see cref="Lean"/>),
+    /// on whichever thread first asks, never the UI thread: every connection shares them, each call reaching its own
+    /// connection's tools through <see cref="Serving"/>, and <c>--mcp-attach</c> lists them.</summary>
+    internal static IReadOnlyList<McpServerTool> Tools => made.Value;
+
+    private static readonly Lazy<McpServerTool[]> made = new(() => [.. ToolMethods().Select(method =>
+        Lean(McpServerTool.Create(method, _ => Serving.Value ?? throw new InvalidOperationException("A Passenger tool ran outside an agent's call"), ToolCreateOptions())))]);
+
+    /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>), made of <see cref="Tools"/>: call off
+    /// the UI thread, which the first connection's would hold while every tool's schema is made.</summary>
+    public static McpServerOptions Options(MainWindow window, AgentConnection connection) =>
+        Options(Task.FromResult(new PassengerTools(window, connection)), window, connection);
+
+    /// <summary>--mcp's server, its tools' list answered at once and each call waiting for the IDE it acts on.</summary>
+    private static McpServerOptions Options(Task<PassengerTools> ready, AgentConnection connection) => Options(ready, null, connection);
+
+    private static McpServerOptions Options(Task<PassengerTools> tools, MainWindow? window, AgentConnection connection)
     {
-        PassengerTools tools = new(window, connection);
         McpServerPrimitiveCollection<McpServerTool> collection = [];
-        foreach (MethodInfo method in ToolMethods())
+        foreach (McpServerTool tool in Tools)
         {
-            collection.Add(new ConnectedTool(Lean(McpServerTool.Create(method, tools, ToolCreateOptions())), window, connection));
+            collection.Add(new ConnectedTool(tool, window, connection, tools));
         }
         return new McpServerOptions
         {
@@ -217,15 +191,61 @@ public static partial class McpHost
         };
     }
 
-    /// <summary><c>--mcp</c>: the IDE with no window, its tools on standard input and output until the
-    /// agent closes them.</summary>
+    /// <summary>How long an MCP mode the system asked to end takes to end as the end of its input ends it, before it goes
+    /// however far it got.</summary>
+    internal static readonly TimeSpan EndLimit = TimeSpan.FromSeconds(3);
+
+    /// <summary>Has the system's request to end the process (SIGTERM, which an agent's client may send a moment after it
+    /// closes the input, as OpenCode 1's does 20 ms after) end it as the end of its input does, <paramref name="end"/>, so
+    /// its state is written and what it started ends, the process going after <see cref="EndLimit"/> at the latest.
+    /// Null where the system has no such signal to take.</summary>
+    internal static System.Runtime.InteropServices.PosixSignalRegistration? EndOnSignal(Action end)
+    {
+        try
+        {
+            return System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGTERM, context =>
+            {
+                context.Cancel = true;
+                end();
+                _ = Task.Delay(EndLimit).ContinueWith(_ => Environment.Exit(143), TaskScheduler.Default);
+            });
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary><c>--mcp</c>: the IDE with no window, its tools on standard input and output until the agent closes them
+    /// or the system asks it to end. Its server answers before the IDE is up (initialize and the tools' list need none of
+    /// it), so an agent asking as it connects finds the tools at once; each call waits for the IDE.</summary>
     public static int RunStdio(LaunchOptions launch)
     {
         IsHeadless = true;
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
-        // Standard output is the protocol's alone: anything else written to the console goes to stderr.
-        Console.SetOut(Console.Error);
+        // Standard output is the protocol's alone, and standard error the agent may never read: the console goes to the log.
+        IdeLog.TakeConsole();
+
+        using CancellationTokenSource done = new();
+        TaskCompletionSource<PassengerTools> ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The agent's own IDE: nobody else is at it to ask.
+        AgentConnection connection = new(done.Token, attached: false);
+        McpServer server = McpServer.Create(new PeerTransport(new StreamServerTransport(input, output, "passenger")), Options(ready.Task, connection));
+        // Not held: it serves for as long as the agent stays, and each tool holds what it starts.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await server.RunAsync(done.Token);
+            }
+            finally
+            {
+                ended.TrySetResult();
+            }
+        });
+        using System.Runtime.InteropServices.PosixSignalRegistration? terminated = EndOnSignal(() => ended.TrySetResult());
 
         AppBuilder.Configure<App>()
             .UseSkia()
@@ -236,26 +256,13 @@ public static partial class McpHost
             .SetupWithoutStarting();
 
         // The agent's own IDE, which no other agent joins.
-        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false };
+        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false, AgentsOwn = true, StartsLanguageServer = StartsLanguageServer };
         window.SetRenderScaling(2);
         window.Show();
         window.Start(launch);
-
-        using CancellationTokenSource done = new();
-        // The agent's own IDE: nobody else is at it to ask.
-        McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(window, new AgentConnection(done.Token, attached: false)));
-        // Not held: it serves for as long as the agent stays, and each tool holds what it starts.
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await server.RunAsync(done.Token);
-            }
-            finally
-            {
-                UiThread.Post(done.Cancel);
-            }
-        });
+        ready.SetResult(new PassengerTools(window, connection));
+        // Posted once the dispatcher is this thread's: the agent may have gone before it was.
+        _ = ended.Task.ContinueWith(_ => UiThread.Post(done.Cancel), TaskScheduler.Default);
         // The UI thread runs the dispatcher's loop, timers and all, until the agent goes.
         Dispatcher.UIThread.MainLoop(done.Token);
         // What the agent left running (a program, a debugger) ends with the windows, as it does with the person's.
@@ -271,7 +278,8 @@ public static partial class McpHost
     {
         IsHeadless = true;
         Stream input = Console.OpenStandardInput();
-        Console.SetOut(Console.Error);
+        // Its starter (a test run's --mcp-attach) reads nothing of its output or error: the console goes to the log.
+        IdeLog.TakeConsole();
         AppBuilder.Configure<App>()
             .UseSkia()
             .UseHarfBuzz()
@@ -286,6 +294,7 @@ public static partial class McpHost
         window.Start(launch);
 
         using CancellationTokenSource done = new();
+        using System.Runtime.InteropServices.PosixSignalRegistration? terminated = EndOnSignal(() => UiThread.Post(done.Cancel));
         // Not held: it waits for the end of the input, which its starter's own end closes.
         _ = Task.Run(() =>
         {

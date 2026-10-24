@@ -5,9 +5,11 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Media;
 using Passenger.App;
+using Passenger.App.LiveTree;
 using Passenger.App.Workspace;
 using Passenger.App.Xaml;
 using Passenger.Editor;
+using Passenger.Inspector;
 using Passenger.Text;
 using static Passenger.Tests.XamlTests;
 
@@ -17,7 +19,7 @@ namespace Passenger.Tests;
 /// merged brushes and heading style, a <c>d:DataContext</c> view model, a button template drawing its background) built and
 /// previewed: the window with App.xaml's resources, an edit followed, broken XAML's error with its line over the last frame,
 /// a user control at its design size with its design-time data and inside a window, an element chosen by a click or the
-/// caret. Elsewhere they skip, as WPF draws only on Windows (<see cref="WpfXamlTests"/> checks what the pane says there).</summary>
+/// caret, content finding the window or page it is drawn in, the project's code in design mode; elsewhere they skip.</summary>
 public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
 {
     private const string OnlyOnWindows = "WPF draws only on Windows, so its previewer runs only there";
@@ -58,11 +60,13 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         Point below = new(panel.Box.Center.X, panel.Box.Bottom - 20);
         Color orange = Color.Parse("#E2A33F");
         Assert.NotEqual(orange, At(below));
-        PlaceAfter(editor, "<StackPanel");
+        Ui.PlaceAfter(editor, "<StackPanel");
         window.KeyTextInput(" Background=\"#E2A33F\"");
         Ui.WaitFor(() => At(below) == orange, "the preview drawing the panel's new background once typing paused", TimeSpan.FromSeconds(30));
 
-        // XAML that does not load leaves the last frame up, the previewer's reason over it with its line.
+        // XAML that does not load leaves the last frame up, the previewer's reason over it with its line, the editor's: the
+        // previewer's XML reader ends a line at the lone '\r' in the window's tag, which the editor reads inside its line.
+        Replace(editor, "Title=\"Gallery\" Height", "Title=\"Gallery\"\r Height");
         Replace(editor, "</StackPanel>", "</StackPane>");
         int line = editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("</StackPane>", StringComparison.Ordinal)) + 1;
         Ui.WaitFor(() => preview.Error is not null, "the previewer saying why the XAML did not load", TimeSpan.FromSeconds(30));
@@ -75,11 +79,13 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         window.Close();
     }
 
+    /// <summary>Its root tag holds a lone '\r', which the previewer's XML reader counts as a line's end and the editor does
+    /// not, so the places its boxes come with run a line ahead of the editor's below it: each still lands on its element.</summary>
     [AvaloniaFact]
     public void A_user_control_previews_at_its_design_size_with_its_design_time_data_context()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
-        string card = app.Write("Card.xaml", Card);
+        string card = app.Write("Card.xaml", Card.Replace("d:DesignWidth=\"320\" d:DesignHeight", "d:DesignWidth=\"320\"\r d:DesignHeight", StringComparison.Ordinal));
         MainWindow window = app.Open(card);
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
@@ -139,7 +145,7 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
-        PlaceAfter(editor, "<Button x:Name=\"G");
+        Ui.PlaceAfter(editor, "<Button x:Name=\"G");
         XamlPreview preview = Previewed(window, document);
         XamlPreviewPane pane = window.PreviewPaneOf(document)!;
         Point OnWindow(Point inFrame) => pane.Frame.TranslatePoint(inFrame, window) ?? throw new InvalidOperationException("The preview's frame is not on the window");
@@ -168,15 +174,139 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
 
         // The caret in another element's tag outlines that one; in the window's resources, which draw nothing of their
         // own, the window itself.
-        PlaceAfter(editor, "<ListBox ItemsSource");
+        Ui.PlaceAfter(editor, "<ListBox ItemsSource");
         Ui.Settle();
         PreviewElement list = ElementOf(preview, editor, "<ListBox ItemsSource");
         Assert.Equal(list.Box, pane.Outlined);
         OutlineAround(window, pane, list);
-        PlaceAfter(editor, "<Window.Resources>");
+        Ui.PlaceAfter(editor, "<Window.Resources>");
         Ui.Settle();
         Assert.Equal(ElementOf(preview, editor, "<Window x:Class").Box, pane.Outlined);
         window.Close();
+    }
+
+    /// <summary>The window is drawn as itself, never shown, so what its content finds of it as the app runs is found in the
+    /// preview too, where its content was drawn outside any window and found nothing.</summary>
+    [AvaloniaFact]
+    public void Content_previewed_in_a_window_finds_the_window_its_binding_shows_the_title_and_window_get_window_answers()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
+        app.Write("WindowFinder.xaml", WindowFinder);
+        app.Write("WindowFinder.xaml.cs", WindowFinderCodeBehind);
+        string titled = app.Write("Titled.xaml", Titled);
+        MainWindow window = app.Open(titled);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        XamlPreview preview = Previewed(window, document);
+        Assert.Null(preview.Error);
+        XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+
+        FindsItsHolder(window, preview, editor, pane, "Window");
+        window.Close();
+    }
+
+    /// <summary>A page is drawn in a window, as an app's page is, so its content finds the page and that window.</summary>
+    [AvaloniaFact]
+    public void Content_previewed_in_a_page_finds_the_page_and_the_window_the_page_is_in()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
+        app.Write("WindowFinder.xaml", WindowFinder);
+        app.Write("WindowFinder.xaml.cs", WindowFinderCodeBehind);
+        string paged = app.Write("Paged.xaml", Paged);
+        MainWindow window = app.Open(paged);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        XamlPreview preview = Previewed(window, document);
+        Assert.Null(preview.Error);
+        XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+
+        FindsItsHolder(window, preview, editor, pane, "Page");
+        window.Close();
+    }
+
+    /// <summary>The preview runs the project's code in design mode, as Visual Studio's designer does, so a control that
+    /// asks as it is made shows what it shows at design time; the app run is not in design mode, and the same control
+    /// shows it is running. The window's WindowChrome, which WPF leaves to a designer in design mode, still makes the
+    /// whole window its content's, as the app draws it, with no title bar drawn above.</summary>
+    [AvaloniaFact]
+    public void A_window_previews_its_controls_in_design_mode_its_window_chrome_kept_and_the_app_run_shows_them_running()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
+        app.Write("ModeSign.xaml", ModeSign);
+        app.Write("ModeSign.xaml.cs", ModeSignCodeBehind);
+        app.Write("MainWindow.xaml.cs", ModesCodeBehind);
+        string modes = app.Write("MainWindow.xaml", Modes);
+        MainWindow window = app.Open(modes);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        XamlPreview preview = Previewed(window, document);
+        Assert.Null(preview.Error);
+        XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+
+        // The chrome makes the whole window the client area: the frame is the window's size, no title bar above it.
+        Assert.True(Math.Abs(preview.FrameSize.Width - 400) <= 1 && Math.Abs(preview.FrameSize.Height - 300) <= 1,
+            $"The window with a WindowChrome is drawn {preview.FrameSize}, not 400 × 300: its chrome was left out and the system's frame drawn");
+
+        // DesignerProperties.GetIsInDesignMode(this) in its constructor: drawn as wide as "design" written out, not "running".
+        PreviewElement sign = ElementOf(preview, editor, "<local:ModeSign");
+        PreviewElement written = ElementOf(preview, editor, "<TextBlock Text=\"design\"");
+        Assert.True(written.Box.Width > 10, $"The word \"design\" written out is drawn {written.Box.Width} wide");
+        Assert.True(Math.Abs(sign.Box.Width - written.Box.Width) < 0.5,
+            $"The control that says whether it is in design mode is drawn {sign.Box.Width} wide, the word \"design\" {written.Box.Width}: the preview ran it out of design mode");
+        // LicenseManager.UsageMode, in its colour.
+        Color licence = Ui.Pixel(window, pane.Frame.TranslatePoint(new Point(sign.Box.X + 3, sign.Box.Bottom - 3), window)!.Value);
+        Assert.True(licence == Found, licence == Missing
+            ? "LicenseManager.UsageMode said Runtime to the control previewed, not Designtime"
+            : $"The control that says LicenseManager's usage mode is drawn {licence}, neither the colour of design time nor of run time");
+
+        // The app itself, run, is not in design mode: the same control in the same window says it is running.
+        Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
+        Ui.WaitFor(() => window.Session.RunApp is { State: LiveAppState.Connected }, $"the app's inspector to say hello ({window.Status})", TimeSpan.FromMinutes(2));
+        Assert.Equal("running", TextOf(window.Session.RunApp!, "Said"));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Runner.IsRunning, "the app to stop");
+        window.Close();
+    }
+
+    /// <summary>What an element of the running app's, by its name, shows as text, once its window has it.</summary>
+    private static string TextOf(LiveApp running, string name)
+    {
+        string? shown = null;
+        Task<AppTree>? asked = null;
+        Ui.WaitFor(() =>
+        {
+            if (asked is { IsCompleted: true })
+            {
+                shown = asked.IsCompletedSuccessfully ? Named(asked.Result.Roots, name)?.Text : null;
+                asked = null;
+            }
+            if (shown is null)
+            {
+                asked ??= running.AgentTreeAsync([]);
+            }
+            return shown is not null;
+        }, $"the running app's window to show its {name}", TimeSpan.FromMinutes(1));
+        return shown!;
+    }
+
+    private static Element? Named(IEnumerable<Element> elements, string name) =>
+        elements.Select(e => e.Name == name ? e : Named(e.Children, name)).FirstOrDefault(e => e is not null);
+
+    /// <summary>The title bound through <c>AncestorType</c> drawn as wide as the same words written out, and the user control
+    /// whose Loaded asks <c>Window.GetWindow</c> drawn in the colour that says it found one.</summary>
+    private static void FindsItsHolder(MainWindow window, XamlPreview preview, CodeEditor editor, XamlPreviewPane pane, string holder)
+    {
+        PreviewElement bound = ElementOf(preview, editor, "<TextBlock Text=\"{Binding Title");
+        PreviewElement written = ElementOf(preview, editor, $"<TextBlock Text=\"{FinderTitle}\"");
+        Assert.True(written.Box.Width > 20, $"The title written out is drawn {written.Box.Width} wide");
+        Assert.True(Math.Abs(bound.Box.Width - written.Box.Width) < 0.5,
+            $"The title bound through AncestorType={holder} is drawn {bound.Box.Width} wide, the same words written out {written.Box.Width}: the binding did not find the {holder.ToLowerInvariant()}");
+        PreviewElement finder = ElementOf(preview, editor, "<local:WindowFinder");
+        Point inside = pane.Frame.TranslatePoint(new Point(finder.Box.X + 3, finder.Box.Y + 3), window)!.Value;
+        Color drawn = Ui.Pixel(window, inside);
+        Assert.True(drawn == Found, drawn == Missing
+            ? "Window.GetWindow found no window for the control in the preview, as it does in the app"
+            : $"The control that asks Window.GetWindow is drawn {drawn}, neither the colour of a window found nor of none");
     }
 
     /// <summary>The outline is drawn on the window just around an element's box.</summary>
@@ -292,6 +422,152 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
                 <local:Badge Margin="0,8" />
             </StackPanel>
         </Window>
+
+        """;
+
+    /// <summary>The title of the window and the page that find themselves.</summary>
+    private const string FinderTitle = "Found by its content";
+
+    private static readonly Color Found = Color.Parse("#2E8B57");
+
+    private static readonly Color Missing = Color.Parse("#B22222");
+
+    /// <summary>A user control that asks for its window as it loads, and says whether it found one in its colour.</summary>
+    private const string WindowFinder = """
+        <UserControl x:Class="Gallery.WindowFinder"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <Border x:Name="Answer" Background="#B22222" Height="30" Padding="8,0">
+                <TextBlock x:Name="Said" Text="No window" VerticalAlignment="Center" Foreground="White" />
+            </Border>
+        </UserControl>
+
+        """;
+
+    private const string WindowFinderCodeBehind = """
+        using System.Windows;
+        using System.Windows.Controls;
+        using System.Windows.Media;
+
+        namespace Gallery;
+
+        public partial class WindowFinder : UserControl
+        {
+            public WindowFinder()
+            {
+                InitializeComponent();
+                Loaded += (_, _) =>
+                {
+                    if (Window.GetWindow(this) is { } window)
+                    {
+                        Answer.Background = new SolidColorBrush(Color.FromRgb(0x2E, 0x8B, 0x57));
+                        Said.Text = "Its window: " + window.Title;
+                    }
+                };
+            }
+        }
+
+        """;
+
+    /// <summary>A window whose content binds its title and asks for it.</summary>
+    private const string Titled = $$$"""
+        <Window x:Class="Gallery.Titled"
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:local="clr-namespace:Gallery"
+                Title="{{{FinderTitle}}}" Height="300" Width="400">
+            <StackPanel Margin="12">
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left" />
+                <TextBlock Text="{{{FinderTitle}}}" HorizontalAlignment="Left" />
+                <local:WindowFinder Margin="0,8" />
+            </StackPanel>
+        </Window>
+
+        """;
+
+    /// <summary>A page whose content binds its title and asks for its window.</summary>
+    private const string Paged = $$$"""
+        <Page x:Class="Gallery.Paged"
+              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:local="clr-namespace:Gallery"
+              Title="{{{FinderTitle}}}" Height="200" Width="360">
+            <StackPanel Margin="12">
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Page}}" HorizontalAlignment="Left" />
+                <TextBlock Text="{{{FinderTitle}}}" HorizontalAlignment="Left" />
+                <local:WindowFinder Margin="0,8" />
+            </StackPanel>
+        </Page>
+
+        """;
+
+    /// <summary>A user control that says, as it is made, whether it is in design mode (its words) and whether
+    /// LicenseManager says design time (its colour: <see cref="Found"/> for design time, <see cref="Missing"/> for run
+    /// time).</summary>
+    private const string ModeSign = """
+        <UserControl x:Class="Gallery.ModeSign"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <Border x:Name="Licence" Background="#B22222" Padding="0,0,0,6">
+                <TextBlock x:Name="Said" Foreground="White" />
+            </Border>
+        </UserControl>
+
+        """;
+
+    private const string ModeSignCodeBehind = """
+        using System.ComponentModel;
+        using System.Windows.Controls;
+        using System.Windows.Media;
+
+        namespace Gallery;
+
+        public partial class ModeSign : UserControl
+        {
+            public ModeSign()
+            {
+                InitializeComponent();
+                Said.Text = DesignerProperties.GetIsInDesignMode(this) ? "design" : "running";
+                if (LicenseManager.UsageMode == LicenseUsageMode.Designtime)
+                {
+                    Licence.Background = new SolidColorBrush(Color.FromRgb(0x2E, 0x8B, 0x57));
+                }
+            }
+        }
+
+        """;
+
+    /// <summary>The app's main window in place of the gallery's: its own chrome, the control, and the word it says
+    /// previewed.</summary>
+    private const string Modes = """
+        <Window x:Class="Gallery.MainWindow"
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:local="clr-namespace:Gallery"
+                Title="Modes" Height="300" Width="400">
+            <WindowChrome.WindowChrome>
+                <WindowChrome CaptionHeight="0" GlassFrameThickness="0" ResizeBorderThickness="0" />
+            </WindowChrome.WindowChrome>
+            <StackPanel Margin="12">
+                <local:ModeSign HorizontalAlignment="Left" />
+                <TextBlock Text="design" HorizontalAlignment="Left" />
+            </StackPanel>
+        </Window>
+
+        """;
+
+    private const string ModesCodeBehind = """
+        using System.Windows;
+
+        namespace Gallery;
+
+        public partial class MainWindow : Window
+        {
+            public MainWindow()
+            {
+                InitializeComponent();
+            }
+        }
 
         """;
 

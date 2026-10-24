@@ -39,6 +39,33 @@ if (args is ["corelib"])
 	CoreLibCalls.Run();
 	return;
 }
+if (args is ["leaves"])
+{
+	Leaves.Run();
+	return;
+}
+if (args is ["lets go"])
+{
+	LetsGo.Run();
+	return;
+}
+if (args is ["locks"])
+{
+	Locks.Run();
+	return;
+}
+if (args is ["finally"])
+{
+	Finally.Run();
+	return;
+}
+if (args is ["named main"])
+{
+	// Main's thread named as an app may name its UI thread: the debugger still knows it for Main's.
+	Thread.CurrentThread.Name = "UI";
+	Threads.Run();
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();
@@ -352,5 +379,162 @@ static class CoreLibCalls
 		{
 			Console.WriteLine($"called by CoreLib with {value}");
 		});
+	}
+}
+
+// A stop whose values are slow to read: a getter that says it runs and never returns, and one that counts its evaluations,
+// which a stop the program has left must never run.
+static class Leaves
+{
+	public static int Counted;
+
+	public static int Count => ++Counted;
+
+	public static int Endless
+	{
+		get
+		{
+			Console.WriteLine("evaluating");
+			while (true)
+			{
+			}
+		}
+	}
+
+	public static void Run()
+	{
+		int turn = 1;
+		Console.WriteLine($"turn {turn}");
+		Console.WriteLine($"counted {Counted}");
+	}
+}
+
+// A program let go a moment after a read of its stop began an evaluation: the let-go waits for that evaluation's end, and
+// the program runs on to its own.
+static class LetsGo
+{
+	public static string Slow
+	{
+		get
+		{
+			Console.WriteLine("evaluating");
+			Thread.Sleep(500);
+			return "slow";
+		}
+	}
+
+	public static void Run()
+	{
+		for (int turn = 1; turn <= 100; turn++)
+		{
+			Thread.Sleep(10); // each turn of the program let go
+		}
+		Console.WriteLine("ran on");
+	}
+}
+
+// A stop while another thread holds a lock: an evaluation that takes it waits there, the holder paused with the program,
+// and cannot end until the program goes on and the holder lets it go, once the evaluation has waited 5 s, longer than the
+// tests give an evaluation. Then the lock is every thread's to take again: another thread's evaluation takes it, and so
+// does that thread.
+static class Locks
+{
+	static readonly object Gate = new();
+	static readonly ManualResetEventSlim Holding = new();
+	static long waitingSince;
+	static int turns;
+
+	// Works a while inside the lock, where an abort left on its thread would find it holding the lock.
+	public static int Taken
+	{
+		get
+		{
+			Interlocked.CompareExchange(ref waitingSince, Stopwatch.GetTimestamp(), 0);
+			Console.WriteLine("taking the lock");
+			lock (Gate)
+			{
+				Thread.SpinWait(100_000);
+				return ++turns;
+			}
+		}
+	}
+
+	static bool WaitedLongEnough() => Volatile.Read(ref waitingSince) is var since && since != 0 && Stopwatch.GetElapsedTime(since) > TimeSpan.FromSeconds(5);
+
+	public static void Run()
+	{
+		Thread holder = new(() =>
+		{
+			lock (Gate)
+			{
+				Holding.Set();
+				Stopwatch held = Stopwatch.StartNew();
+				while (!WaitedLongEnough() && held.Elapsed < TimeSpan.FromSeconds(60))
+				{
+					Thread.Sleep(20);
+				}
+			}
+		});
+		holder.Start();
+		Holding.Wait();
+		Console.WriteLine("the lock is held"); // stop while another thread holds the lock
+		holder.Join();
+		Thread later = new(() =>
+		{
+			Console.WriteLine("a later thread"); // stop on another thread once the program has gone on
+			lock (Gate)
+			{
+				turns++;
+			}
+		});
+		later.Start();
+		Console.WriteLine(later.Join(TimeSpan.FromSeconds(20)) ? $"taken again, {turns} turns" : "the lock was never let go");
+	}
+}
+
+// A stop at which an evaluation spins in a finally block until another thread, paused with the program, lets it out once
+// it has spun 5 s, longer than the tests give an evaluation: the runtime puts an abort off until the block is left, by
+// then after the program has gone on.
+static class Finally
+{
+	static long spinningSince;
+	static int letOut;
+	public static int Turns;
+
+	public static int Spins
+	{
+		get
+		{
+			try
+			{
+				Interlocked.CompareExchange(ref spinningSince, Stopwatch.GetTimestamp(), 0);
+			}
+			finally
+			{
+				while (Volatile.Read(ref letOut) == 0)
+				{
+				}
+			}
+			return ++Turns;
+		}
+	}
+
+	static bool SpunLongEnough() => Volatile.Read(ref spinningSince) is var since && since != 0 && Stopwatch.GetElapsedTime(since) > TimeSpan.FromSeconds(5);
+
+	public static void Run()
+	{
+		Thread freer = new(() =>
+		{
+			Stopwatch waited = Stopwatch.StartNew();
+			while (!SpunLongEnough() && waited.Elapsed < TimeSpan.FromSeconds(60))
+			{
+				Thread.Sleep(20);
+			}
+			Volatile.Write(ref letOut, 1);
+		});
+		freer.Start();
+		Console.WriteLine("a finally next"); // stop before an evaluation spins in a finally block
+		freer.Join();
+		Console.WriteLine($"let out, {Turns} turns"); // stop once the evaluation has been let out
 	}
 }

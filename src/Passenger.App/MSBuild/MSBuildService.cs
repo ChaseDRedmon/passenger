@@ -53,16 +53,28 @@ public sealed class MSBuildService(Func<string?> folder, Func<WorkspaceModel?> w
         }
     }
 
-    /// <summary>Files changed on disk: each open file whose evaluation read one of them (or that is one) is evaluated again.</summary>
-    public void FilesChanged(IReadOnlyCollection<string> paths)
+    /// <summary>Files changed on disk: each open file whose evaluation read one of them (or that is one) is evaluated again,
+    /// and with files come or gone among them (<paramref name="cameOrWent"/>), each whose wildcards walked a folder they are in.</summary>
+    public void FilesChanged(IReadOnlyCollection<string> paths, bool cameOrWent)
     {
         UiThread.Check();
         foreach (MSBuildDocument document in documents.Values)
         {
-            if (document.Read(paths))
+            if (document.Read(paths, cameOrWent))
             {
                 document.Again();
             }
+        }
+    }
+
+    /// <summary>Files the IDE itself made, moved or deleted, which the folder watcher may take for saves: each open file whose
+    /// evaluation walked folders is evaluated again, the host answering from its cache while none of them changed.</summary>
+    public void FilesCameOrWent()
+    {
+        UiThread.Check();
+        foreach (MSBuildDocument document in documents.Values.Where(d => d.Walks))
+        {
+            document.Again();
         }
     }
 

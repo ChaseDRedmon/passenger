@@ -1,3 +1,4 @@
+using Passenger.App.CSharp;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -14,14 +15,17 @@ public partial class MainWindow
 {
     private FindView? find;
 
-    /// <summary>The Find tool window.</summary>
-    public FindView Find => find!;
+    /// <summary>The Find tool window, built as it is first shown or asked for.</summary>
+    public FindView Find => find ?? (FindView)Dock[ToolWindowIds.Find]!.Content;
 
     private void AddFind()
     {
-        find = new FindView(path => TextOf(path)?.ToString());
-        Dock.Add(new Docking.ToolWindow("find", "Find", "Icon.Search", find, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowFind, ActionTitle = "Find Tool Window" });
-        find.GoToRequested += (_, usage) => NavigateTo(usage.Path, new TextPosition(usage.Line, usage.Column));
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Find, "Find", "Icon.Search", () =>
+        {
+            find = new FindView(path => TextOf(path)?.ToString());
+            find.GoToRequested += (_, usage) => NavigateTo(usage.Path, new TextPosition(usage.Line, usage.Column));
+            return find;
+        }, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowFind, ActionTitle = "Find Tool Window" });
         assist.UsagesFound += (_, found) => ShowUsages(found.Title, found.Usages);
     }
 
@@ -48,7 +52,13 @@ public partial class MainWindow
             List<Usage> found = [];
             foreach ((string path, TextSnapshot? open, ParsedText? syntax, string project, List<LspLocation> here) in files)
             {
-                TextSnapshot snapshot = syntax?.Text ?? open ?? (FileSearch.Read(path) is { } text ? TextSnapshot.From(text) : TextSnapshot.Empty);
+                if ((syntax?.Text ?? open ?? ServerPlaces.Read(path)) is not { } snapshot)
+                {
+                    // A file that cannot be read keeps the server's places, the best there is to say of them.
+                    found.AddRange(here.Select(l => new Usage(path, l.Range.Start.Line, l.Range.Start.Character,
+                        l.Range.End.Line == l.Range.Start.Line ? Math.Max(0, l.Range.End.Character - l.Range.Start.Character) : 0, string.Empty, UsageKind.Other, project)));
+                    continue;
+                }
                 ServerLines lines = ServerLines.Of(snapshot);
                 List<int> offsets = [.. here.Select(l => lines.OffsetOf(l.Range.Start))];
                 IReadOnlyList<UsageKind> kinds = path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
@@ -69,7 +79,7 @@ public partial class MainWindow
             return;
         }
         Find.Show(title, usages);
-        ShowToolWindow("find");
+        ShowToolWindow(ToolWindowIds.Find);
         status.Text = $"{title}: {usages.Count} found";
     }
 }

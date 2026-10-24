@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using Passenger.Dap;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.Interop;
 using Passenger.Debugger.Models;
@@ -44,6 +45,15 @@ public partial class ManagedDebugger
     internal int ModuleSet_Version { get; private set; }
     private bool _isAttached;
     private int? _pendingAttachProcessId;
+
+    /// <summary>The process an attach is to take hold of, from the attach request until its runtime has been let go (or was
+    /// running already); 0 when there is none. One held at its start (DOTNET_DefaultDiagnosticPortSuspend) waits there for
+    /// the debugger, so an attach that fails, or a session that ends first, lets it go (<see cref="ReleaseHeldTarget"/>).</summary>
+    private int _heldTarget;
+
+    /// <summary>Whether the session's program was launched for it (by the adapter, or in the client's terminal) rather than
+    /// attached to: only such a program ends with a client that goes without disconnecting (<see cref="Abandon"/>).</summary>
+    private bool _launched;
     private bool _justMyCode;
     private bool _stopAtEntry;
     private EntryBreakpoint? _entryBreakpoint;
@@ -188,6 +198,22 @@ public partial class ManagedDebugger
     /// engine's lock is asked for, since configurationDone holds that lock while it waits for the program's runtime.</summary>
     public void Ending() => _ = _ending.CancelAsync();
 
+    /// <summary>A request that leaves the stop (a continue, a step, a disconnect, a terminate) has come and waits for the
+    /// engine's lock: an evaluation a read is running for the stop is left at once to end in the program, and no read
+    /// evaluates, until that request holds the lock and calls <see cref="Left"/>. Called once it is in line for it.</summary>
+    public void Leaving() => EvalStatus.Leave();
+
+    /// <summary>The request that called <see cref="Leaving"/> holds the engine's lock.</summary>
+    public void Left() => EvalStatus.Left();
+
+    /// <summary>Set while a read (frames, values, an evaluation the client asked for) holds the engine's lock, whose
+    /// evaluations give way to a request that leaves the stop.</summary>
+    public bool Reading
+    {
+        get => EvalStatus.ForRead;
+        set => EvalStatus.ForRead = value;
+    }
+
     /// <summary>How often the program has been let go, so an event put off for a decompile is dropped when it was let go
     /// meanwhile (<see cref="AfterDecompiling"/>).</summary>
     private int _continued;
@@ -200,7 +226,12 @@ public partial class ManagedDebugger
         _variableManager = new VariableManager();
         _frameReferenceManager = new FrameReferenceManager();
         _callbacks = new CorDebugManagedCallback();
-        EvalStatus = new EvalStatus();
+        EvalStatus = new EvalStatus
+        {
+            AbortWhenDue = (thread, eval, after) => _ = AbortWhenDueAsync(thread, eval, after),
+            WhyNoAbortTakes = WhyNoAbortTakes,
+            Log = logger,
+        };
         _asyncStepper = new AsyncStepper(_modules, this);
         // The runtime's callback thread writes, and so does whichever thread hands back an event put off during an evaluation.
         _runtimeEventChannel = Channel.CreateUnbounded<CorDebugManagedCallbackEventArgs>(new UnboundedChannelOptions
@@ -296,6 +327,7 @@ public partial class ManagedDebugger
     private void LetGoAbandonedEvaluation(CorDebugManagedCallbackEventArgs callbackEvent)
     {
         ICorDebugThread thread = EvaluationThread(callbackEvent)!;
+        EvalStatus.DueAt.Remove(thread.Id);
         if (EvalStatus.Abandoned.Remove(thread.Id, out ICorDebugEval? eval) && eval.TryGetResult(out ICorDebugValue? value) is Cor.S_OK && value is ICorDebugHandleValue handle)
         {
             handle.TryDispose();
@@ -438,13 +470,14 @@ public partial class ManagedDebugger
         try
         {
             _exited.Reset();
-            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, answered => resume(process, answered, _ending.Token), TakeHold,
-                () => process.HasExited, _ending.Token, _logger);
+            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, LetGoAsync, TakeHold, () => process.HasExited, _ending.Token, _logger);
         }
         catch (Exception error)
         {
             process.Dispose();
             _logger?.Invoke($"Attaching to process {processId} failed: {error}");
+            // A program held at its start, which the attach never let go, runs on undebugged rather than wait there for good.
+            ReleaseHeldTarget();
             throw new InvalidOperationException($"Could not attach to process {processId}: {error.Message}", error);
         }
         if (OperatingSystem.IsWindows() && TryHold(process))
@@ -461,6 +494,13 @@ public partial class ManagedDebugger
         _logger?.Invoke($"Attached to process: {processId}");
         OnAttached?.Invoke(processId);
         SendAllBreakpointEvents();
+
+        // Its runtime let go, or running already: nothing of the session's end need let it go again.
+        async Task LetGoAsync(Task answered)
+        {
+            await resume(process, answered, _ending.Token).ConfigureAwait(false);
+            Interlocked.CompareExchange(ref _heldTarget, 0, processId);
+        }
 
         ICorDebugProcess TakeHold(ICorDebug corDebug)
         {
@@ -529,13 +569,13 @@ public partial class ManagedDebugger
         // A step's calls' values are shown at its own stop; one that stops anywhere else stops showing them.
         EndReturnWatch();
         EndSmartStep();
-        if (reason != "step")
+        if (reason != StopReasons.Step)
         {
             ForgetReturnedValues();
         }
         _stopShown = true;
         // A pause holds threads where they stand, and an exception inside its managed dispatch, neither at a patch.
-        _stoppedInDispatch = reason is "pause" or "exception" ? null : threadId;
+        _stoppedInDispatch = reason is StopReasons.Pause or StopReasons.Exception ? null : threadId;
         OnStopped?.Invoke(new StopInfo(threadId, reason, filePath, line, column, hitBreakpointIds, text));
     }
 
@@ -555,6 +595,10 @@ public partial class ManagedDebugger
     /// <summary>Other threads' events queued with the one an evaluation began from, which the runtime hands over before the
     /// evaluation can run: their threads stay suspended where they were until each is handled, in order.</summary>
     private readonly Queue<CorDebugManagedCallbackEventArgs> _deferredEvents = new();
+
+    /// <summary>Other threads' breakpoints handed over just as a step completed, which wait for the step's end to come before
+    /// they join <see cref="_deferredEvents"/>: their threads stay where they stopped meanwhile.</summary>
+    private readonly Queue<CorDebugManagedCallbackEventArgs> _behindStep = new();
 
     /// <summary>An exception that may stop the program: a filter's stop (<see cref="Stops"/>), or its exception breakpoints'
     /// once their hit counts and conditions are tried. Put off as one on another thread when found while an evaluation ran.</summary>
@@ -617,8 +661,9 @@ public partial class ManagedDebugger
     /// handler outside that code which caught it, until the program runs on: a step from the stop steps out of it.</summary>
     private (int ThreadId, StackRange Handler)? _unhandledByUser;
 
-    /// <summary>The thread the step in progress steps, and the stack range of the frame it steps from.</summary>
-    private (int ThreadId, StackRange Frame)? _stepping;
+    /// <summary>The thread the step in progress steps, and the stack range of the frame it steps from (none for a thread
+    /// stepped out to managed code).</summary>
+    private (int ThreadId, StackRange? Frame)? _stepping;
 
     /// <summary>Where a frame lies on its thread's stack: its identity while it lives, as the stack's memory does not move.</summary>
     private readonly record struct StackRange(CORDB_ADDRESS Start, CORDB_ADDRESS End);
@@ -642,7 +687,7 @@ public partial class ManagedDebugger
         }
         step(stepper);
         _stepper = stepper;
-        _stepping = from is not null && RangeOf(from) is { } range ? (thread.Id, range) : null;
+        _stepping = (thread.Id, from is null ? null : RangeOf(from));
         return stepper;
     }
 
@@ -990,10 +1035,12 @@ public partial class ManagedDebugger
 
     // Not intended to implement IDisposable - it is intended that this is called via Disconnect()
     // letGo: the program runs on after (a detach), so no thread may be left inside the runtime's handling of a stop.
-    private void Dispose(bool letGo = false)
+    private void Dispose(bool letGo = false, TimeSpan? within = null)
     {
         // A decompile under way is given up, its temporary file deleted, whether or not a process was ever held.
         _ending.Cancel();
+        // An attach asked for and never made (no configurationDone, or it failed) leaves no program held at its start.
+        ReleaseHeldTarget();
         if (_process is null)
         {
             return; // A client may call Terminate, then Disconnect, both of which call Dispose. Dispose only needs to be run once.
@@ -1001,10 +1048,21 @@ public partial class ManagedDebugger
         // A process that has exited is the runtime's to tear down: nothing below may call into it.
         bool exited = _exited.IsSet;
         // The threads the runtime holds inside its handling of a breakpoint or a step's end, run off it before the detach.
-        List<int> inDispatch = [.. _deferredEvents.Select(DispatchThread).OfType<int>()];
+        List<int> inDispatch = [.. _deferredEvents.Concat(_behindStep).Select(DispatchThread).OfType<int>()];
         if (_stopShown && _stoppedInDispatch is int stopped)
         {
             inDispatch.Insert(0, stopped);
+        }
+        // How long the client gives the let-go, from now; and where each held thread stands before anything below runs it,
+        // so one the wait for an evaluation runs off its stop is seen to have moved on.
+        long? letGoBy = within is { } given ? Stopwatch.GetTimestamp() + (long)(given.TotalSeconds * Stopwatch.Frequency) : null;
+        Dictionary<int, ThreadPlace?> heldAt = [];
+        if (!exited && letGo && _process is { } measured)
+        {
+            foreach (int thread in inDispatch)
+            {
+                heldAt.TryAdd(thread, PlaceOf(measured, thread));
+            }
         }
 
         // Dispose modules, which releases PDB files
@@ -1068,10 +1126,20 @@ public partial class ManagedDebugger
         _stepAfterEvaluation = null;
         _unhandledByUser = null;
         _stopShown = false;
+        if (!exited && letGo && _process is { } held)
+        {
+            // An evaluation left running would hold its thread for good once no debugger is there to go on with it.
+            EndAbandonedEvaluations(held, letGoBy);
+            exited = _exited.IsSet;
+        }
+        // A thread still in an evaluation given up stays there until it returns, so the let-go's rounds never wait on it.
+        HashSet<int> evaluating = [.. EvalStatus.Abandoned.Keys];
         EvalStatus.Abandoned.Clear();
+        EvalStatus.DueAt.Clear();
         EvalStatus.ImplicitOff = null;
         _threads.Clear();
         _deferredEvents.Clear();
+        _behindStep.Clear();
         _mainThreadId = null;
         _initialThreadId = null;
         _exceptionStates.Clear();
@@ -1105,7 +1173,11 @@ public partial class ManagedDebugger
         // Detach from the process, once no thread is left for it to answer; the program may end as it runs off its stop.
         if (!exited && letGo)
         {
-            RunOffDispatch(_process, inDispatch);
+            foreach (int thread in inDispatch)
+            {
+                heldAt.TryAdd(thread, PlaceOf(_process, thread));
+            }
+            RunOffDispatch(_process, heldAt.Where(h => !evaluating.Contains(h.Key)).ToDictionary(), letGoBy);
             exited = _exited.IsSet;
         }
         if (!exited)
@@ -1179,9 +1251,25 @@ internal sealed class EvalStatus
     /// nothing reads them outside the engine's lock.</summary>
     internal CancellationToken Reading { get; set; }
 
-    /// <summary>Evaluations given up that could not be stopped, by their thread: each runs on in the program until it
-    /// returns, and its end, whenever it comes, is let go rather than taken for another's.</summary>
+    /// <summary>Evaluations given up, by their thread, that could not be stopped or were left to a request that left the
+    /// stop: each runs on in the program until it returns, and its end, whenever it comes, is let go rather than taken for
+    /// another's.</summary>
     internal Dictionary<int, ICorDebugEval> Abandoned { get; } = [];
+
+    /// <summary>When the time of each evaluation given up for a request that left its stop is up (a <see cref="System.Diagnostics.Stopwatch"/>
+    /// timestamp), by its thread, which a let-go waits for it to at most; one that could not be stopped has had its time and
+    /// its abort's window already, and has none.</summary>
+    internal Dictionary<int, long> DueAt { get; } = [];
+
+    /// <summary>Aborts an evaluation left running for a request that left its stop once the time it had left is up.</summary>
+    internal Action<int, ICorDebugEval, TimeSpan>? AbortWhenDue { get; init; }
+
+    /// <summary>Why an abort asked of an evaluation's thread, the program held, would not take as the thread goes on; null
+    /// when it would (<see cref="ManagedDebugger.WhyNoAbortTakes"/>).</summary>
+    internal required Func<ICorDebugThread, string?> WhyNoAbortTakes { get; init; }
+
+    /// <summary>The engine's log, for what becomes of an evaluation past its time.</summary>
+    internal Action<string>? Log { get; init; }
 
     /// <summary>Why code the debugger would run of itself (a getter, a ToString, a proxy) is not run, until the program
     /// next runs on, as Visual Studio and Rider stop running it once an evaluation has timed out.</summary>
@@ -1189,4 +1277,55 @@ internal sealed class EvalStatus
 
     /// <summary>Set while an evaluation asked for by name runs (the Evaluate window, a watch), which runs code regardless.</summary>
     internal bool Explicit { get; set; }
+
+    private readonly Lock leavingGate = new();
+    private CancellationTokenSource leaving = new();
+    private int leavers;
+
+    /// <summary>Set while a read (what a stop shows, an evaluation the client asked for) holds the engine's lock: its
+    /// evaluations give way to a request that leaves the stop (<see cref="Leaving"/>).</summary>
+    internal bool ForRead { get; set; }
+
+    /// <summary>Cancelled while a request that leaves the stop (a continue, a step, a stop) waits for the engine's lock, for
+    /// a read's evaluations alone: the one running is left to the program then, and no other starts.</summary>
+    internal CancellationToken Leaving
+    {
+        get
+        {
+            if (!ForRead)
+            {
+                return CancellationToken.None;
+            }
+            lock (leavingGate)
+            {
+                return leaving.Token;
+            }
+        }
+    }
+
+    /// <summary>A request that leaves the stop has come; told on the thread pool, so what the read under way does as it gives
+    /// way never runs on the thread that reads the client's requests.</summary>
+    internal void Leave()
+    {
+        CancellationTokenSource cancelling;
+        lock (leavingGate)
+        {
+            leavers++;
+            cancelling = leaving;
+        }
+        _ = cancelling.CancelAsync();
+    }
+
+    /// <summary>That request has the engine's lock: reads evaluate again once no other such waits.</summary>
+    internal void Left()
+    {
+        lock (leavingGate)
+        {
+            // Not disposed: a read may have taken its token a moment ago.
+            if (--leavers == 0 && leaving.IsCancellationRequested)
+            {
+                leaving = new CancellationTokenSource();
+            }
+        }
+    }
 }

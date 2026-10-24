@@ -74,7 +74,7 @@ public sealed class GoToTests : IClassFixture<GoToTests.Project>
     {
         MainWindow window = project.Open("Program.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "area = sha");
+        Ui.PlaceAfter(editor, "area = sha");
 
         Ui.Run(window, AppActions.GoToTypeDeclaration);
         Ui.WaitFor(() => window.EditorArea.Active?.Name == "Shapes.cs", "Type Declaration to open Shapes.cs");
@@ -124,11 +124,11 @@ public sealed class GoToTests : IClassFixture<GoToTests.Project>
 
         // Rider's Go To submenu, in its order.
         int abstractArea = editor.Document.Snapshot.GetLineStart(7) + "    public abstract double Ar".Length;
-        RightClick(window, editor, abstractArea);
+        Ui.RightClick(editor, editor.PointOf(abstractArea) + new Vector(1, editor.LineHeight / 2));
         Avalonia.Controls.MenuItem goTo = window.OpenContextMenu!.Items.OfType<Avalonia.Controls.MenuItem>().First(i => (string?)i.Header == "Go To");
         Assert.Equal(["Go to Declaration", "Derived Symbols", "Go to Implementation", "Go to Type Declaration", "Base Symbols", "Call Hierarchy", "Type Hierarchy"],
             goTo.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header as string));
-        Choose(window, goTo, "Derived Symbols");
+        Ui.Choose(window.OpenContextMenu, "Go To", "Derived Symbols");
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the overrides of Shape's abstract Area to choose from");
         Assert.Equal(["Shapes.cs:17", "Shapes.cs:24"], window.Assist.Offered);
         Ui.Press(window, "DOWN");
@@ -163,7 +163,7 @@ public sealed class GoToTests : IClassFixture<GoToTests.Project>
     {
         MainWindow window = project.Open("Program.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "shape.Ar");
+        Ui.PlaceAfter(editor, "shape.Ar");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.WaitFor(() => window.EditorArea.Active?.Name == "Shapes.cs", "Go to Declaration to open Square's Area");
         PlaceIn(editor, 12, "Shape");
@@ -267,36 +267,12 @@ public sealed class GoToTests : IClassFixture<GoToTests.Project>
         Ui.Press(window, "ENTER");
     }
 
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
-    }
-
     /// <summary>The caret inside a name on a line, past its first two letters.</summary>
     private static void PlaceIn(CodeEditor editor, int line, string name)
     {
         int column = editor.Document.Snapshot.GetLineText(line).IndexOf(name, StringComparison.Ordinal);
         Assert.True(column >= 0, $"'{name}' is not on line {line + 1}");
         editor.Selections = SelectionSet.Single(editor.Document.Snapshot.GetLineStart(line) + column + 2);
-    }
-
-    private static void RightClick(MainWindow window, CodeEditor editor, int offset)
-    {
-        Point at = editor.TranslatePoint(editor.PointOf(offset) + new Vector(1, editor.LineHeight / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Right);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Right);
-        Ui.Settle();
-    }
-
-    private static void Choose(MainWindow window, Avalonia.Controls.MenuItem submenu, string item)
-    {
-        Avalonia.Controls.MenuItem chosen = submenu.Items.OfType<Avalonia.Controls.MenuItem>().First(i => (string?)i.Header == item);
-        Assert.True(chosen.IsEnabled, $"Go To, {item} is disabled");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
-        window.OpenContextMenu?.Close();
-        Ui.Settle();
     }
 
     /// <summary>The shapes and a program using them, restored once for every test, and the warm server they share on it.</summary>
@@ -306,7 +282,7 @@ public sealed class GoToTests : IClassFixture<GoToTests.Project>
             : base("goto-")
         {
             File.WriteAllText(PathOf("Shapes.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Shapes.cs"), Shapes);
             File.WriteAllText(PathOf("Program.cs"), Program);
             Prepare();

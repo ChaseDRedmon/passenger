@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Passenger.Dap;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger;
@@ -43,6 +44,6 @@ public partial class ManagedDebugger
         // Every frame and value of the thread was invalidated by the move: the stop is new.
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
-        ReportStop(threadId, "goto");
+        ReportStop(threadId, StopReasons.Goto);
     }
 }

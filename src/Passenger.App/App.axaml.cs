@@ -14,10 +14,19 @@ namespace Passenger.App;
 
 public partial class App : Application
 {
+    /// <summary>Whether the class handlers are in, which are the process's (static events), not an App's: the headless tests
+    /// make an App for each test, and each added again would make every template applied anywhere ask each one.</summary>
+    private static bool classHandlersAdded;
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
         Themes.TakeAccentFromTokens(this);
+        if (classHandlersAdded)
+        {
+            return;
+        }
+        classHandlersAdded = true;
         MenuShadow.Install();
         // Every in-window menu writes its keys as the keymap, Find Action and a chord's item do (Keystroke.Display: ⇧⌘R
         // on macOS), where Fluent wrote a KeyGesture its own way ("Shift+Cmd+R") beside them.
@@ -57,6 +66,15 @@ public partial class App : Application
                 IdeErrors.Write(updater is null ? $"Updates: this copy only says when a newer release is out: {notUpdating}"
                     : $"Updates: this copy installs updates, in {updater.Installed}");
                 window.WatchForUpdates();
+                // The notes of a version updated to, once; one an agent started to work in leaves them to the person's next start.
+                if (Mcp.McpProxy.StartedForAgent)
+                {
+                    IdeErrors.Write("What's New: started for an agent, so no notes are shown");
+                }
+                else
+                {
+                    window.ShowWhatsNewOnce();
+                }
                 // The person's windows show their activity in Discord, the one in front, while Settings says so.
                 window.ShowActivityInDiscord();
             };

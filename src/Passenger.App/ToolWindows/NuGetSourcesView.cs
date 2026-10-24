@@ -100,7 +100,7 @@ public sealed class NuGetSourcesView : Grid
         details.Children.Add(Title("Summary", new Thickness(0, 14, 0, 2)));
         if (!sources.Feeds.Any())
         {
-            details.Children.Add(Muted("No feeds: a restore finds no packages"));
+            details.Children.Add(MutedText.Wrapped("No feeds: a restore finds no packages"));
         }
         foreach (FeedSource feed in sources.Feeds)
         {
@@ -108,17 +108,17 @@ public sealed class NuGetSourcesView : Grid
         }
         if (sources.Mapped)
         {
-            details.Children.Add(Muted("Package source mapping:"));
+            details.Children.Add(MutedText.Wrapped("Package source mapping:"));
             foreach ((string feed, IReadOnlyList<string> patterns) in sources.MappingPatterns)
             {
-                details.Children.Add(Muted($"    {feed}: {string.Join(", ", patterns)}"));
+                details.Children.Add(MutedText.Wrapped($"    {feed}: {string.Join(", ", patterns)}"));
             }
         }
     }
 
     private void DrawFile(ConfigFile file)
     {
-        Button add = Tool("Icon.Add", "Add Feed", () => _ = AddAsync(file));
+        Button add = ToolButtons.Of("Icon.Add", "Add Feed", () => _ = AddAsync(file));
         add.IsEnabled = !file.ReadOnly && file.Problem is null;
         add.Name = "AddFeed";
         DockPanel header = new() { Children = { add, Title("Feeds", default) } };
@@ -131,11 +131,11 @@ public sealed class NuGetSourcesView : Grid
         }
         if (file.ReadOnly)
         {
-            details.Children.Add(Muted("A machine-wide file: NuGet reads it and never writes it"));
+            details.Children.Add(MutedText.Wrapped("A machine-wide file: NuGet reads it and never writes it"));
         }
         if (file.Feeds.Count == 0)
         {
-            details.Children.Add(Muted("No feeds in this file"));
+            details.Children.Add(MutedText.Wrapped("No feeds in this file"));
         }
         foreach (ConfigFeed feed in file.Feeds)
         {
@@ -143,7 +143,7 @@ public sealed class NuGetSourcesView : Grid
         }
         if (file.Clears)
         {
-            details.Children.Add(Muted("<clear /> here: the feeds of the files after this one are not used"));
+            details.Children.Add(MutedText.Wrapped("<clear /> here: the feeds of the files after this one are not used"));
         }
         details.Children.Add(Title("Properties", new Thickness(0, 14, 0, 2)));
         details.Children.Add(Property("Global packages folder", file.GlobalPackagesFolder));
@@ -173,8 +173,8 @@ public sealed class NuGetSourcesView : Grid
             ToolTip.SetTip(locked, feed.Username is { } user ? $"Credentials for {user} in this file" : "Credentials in this file");
             Add(row, locked, 3);
         }
-        Button edit = Tool("Icon.Edit", "Edit", () => _ = EditAsync(file, feed));
-        Button delete = Tool("Icon.Clear", "Delete Feed", () => _ = DeleteAsync(file, feed));
+        Button edit = ToolButtons.Of("Icon.Edit", "Edit", () => _ = EditAsync(file, feed));
+        Button delete = ToolButtons.Of("Icon.Clear", "Delete Feed", () => _ = DeleteAsync(file, feed));
         edit.IsEnabled = delete.IsEnabled = !file.ReadOnly;
         Add(row, edit, 4);
         Add(row, delete, 5);
@@ -290,16 +290,6 @@ public sealed class NuGetSourcesView : Grid
         return line;
     }
 
-    private static Button Tool(string icon, string tip, Action click)
-    {
-        PathIcon glyph = new() { Classes = { "small" } };
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-        Button button = new() { Classes = { "tool" }, Content = glyph, VerticalAlignment = VerticalAlignment.Center };
-        ToolTip.SetTip(button, tip);
-        button.Click += (_, _) => click();
-        return button;
-    }
-
     private static void Add(Grid grid, Control control, int column)
     {
         SetColumn(control, column);
@@ -308,7 +298,6 @@ public sealed class NuGetSourcesView : Grid
 
     private static TextBlock Title(string text, Thickness margin) => new() { Classes = { "paneTitle" }, Text = text, Margin = margin, VerticalAlignment = VerticalAlignment.Center };
 
-    private static TextBlock Muted(string text) => new() { Classes = { "muted" }, Text = text, TextWrapping = TextWrapping.Wrap };
 
     private static TextBlock Error(string text)
     {
@@ -321,7 +310,7 @@ public sealed class NuGetSourcesView : Grid
     {
         Grid row = new() { ColumnDefinitions = new ColumnDefinitions("170,*") };
         Add(row, new TextBlock { Text = name }, 0);
-        Add(row, value is null ? Muted("not set") : new TextBlock { Text = value, TextTrimming = TextTrimming.CharacterEllipsis }, 1);
+        Add(row, value is null ? MutedText.Wrapped("not set") : new TextBlock { Text = value, TextTrimming = TextTrimming.CharacterEllipsis }, 1);
         return row;
     }
 }

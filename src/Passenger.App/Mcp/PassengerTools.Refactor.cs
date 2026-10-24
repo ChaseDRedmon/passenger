@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using Passenger.App.CSharp;
 using Passenger.App.Workspace;
 using Passenger.Core;
+using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Roslyn.Extension;
 using Passenger.Text;
@@ -24,31 +25,31 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "refactor", Title = "Refactor across the solution", Destructive = true), Description(
         "Runs one of the IDE's C# refactorings (kind) at path, line, column (a selection to endLine:endColumn), as its command " +
-        "and dialog do, changing every file it touches (callers, implementations, usings, new files) as one step of the IDE's " +
-        "Undo, saved. options is one JSON object, by kind:\nchange_signature (on a method or constructor): {name, returnType, " +
-        "parameters: [{from: \"oldName\", name?, type?, modifier?, defaultValue?} for each kept, in the new order; {type, " +
-        "name, callValue (what every call passes), modifier?, defaultValue?} for a new one]}; a parameter left out is " +
-        "removed.\nmove (on a type): {file: \"Circle.cs\"}, a new file beside its own, or {namespace: \"Shop.Sales\"}, its " +
-        "users following.\nextract_interface (on a class, struct or record): {name, file, members: [...]}, all public members " +
-        "by default.\npull_members_up: {target: a base type, members: [...], abstract: [...]}; push_members_down: {targets: " +
-        "[derived classes], members, abstract}; a member by its text as described (\"Add(int): void\"), its name when that is " +
-        "one member, or its id.\nsafe_delete (on a declaration or a use): refused, listing the usages that would break, unless " +
-        "{deleteAnyway: true}.\nintroduce_field, introduce_parameter (on an expression selected), encapsulate_field (on a " +
-        "field): the language server's own, {action, choice} naming one where it offers several.\noptimize_imports, " +
-        "code_cleanup: {scope: file, project (path's, or a .csproj) or solution}, by default the file path names, a .csproj's " +
-        "project, or the solution without a path; code_cleanup reformats XAML.\nWithout options, change_signature, move, " +
-        "extract_interface, pull_members_up and push_members_down answer their dialog (dialog) with its defaults as options to " +
-        "change and send back; describe true does so for any kind, changing nothing. Applied, it answers each file created, " +
-        "changed, moved or deleted with the lines its edits start on, and what it left alone.")]
+        "and dialog do: every file it touches (callers, implementations, usings, new files) changed as one Undo step, saved. " +
+        "options is one JSON object, by kind:\nchange_signature (a method or constructor): {name, returnType, parameters: " +
+        "[{from: \"oldName\", name?, type?, modifier?, defaultValue?} for each kept, in the new order; {type, name, callValue " +
+        "(what every call passes), modifier?, defaultValue?} for a new one]}; a parameter left out is removed.\nmove (a type): " +
+        "{file: \"Circle.cs\"}, a new file beside its own, or {namespace: \"Shop.Sales\"}.\nextract_interface (a class, struct " +
+        "or record): {name, file, members: [...]}, all public members by default.\npull_members_up: {target: a base type, " +
+        "members: [...], abstract: [...]}; push_members_down: {targets: [derived classes], members, abstract}; a member by its " +
+        "text as described (\"Add(int): void\"), its name when that is one member, or its id.\nsafe_delete (a declaration or " +
+        "use): refused, listing the usages that would break, unless {deleteAnyway: true}.\nintroduce_field, " +
+        "introduce_parameter (an expression selected), encapsulate_field (a field): the language server's, {action, choice} " +
+        "naming one where it offers several.\noptimize_imports, code_cleanup: {scope: file, project or solution}, by default " +
+        "path's file, a .csproj path's project, or with no path the solution; code_cleanup reformats XAML too.\nWithout " +
+        "options, the kinds with a dialog (change_signature, move, extract_interface, pull_members_up, push_members_down) " +
+        "answer it (dialog), its defaults as options to change and send back; describe true does so for any kind, changing " +
+        "nothing. Applied, it answers each file created, changed, moved or deleted, the lines its edits start on, and what it " +
+        "left alone.")]
     public Task<RefactorAnswer> Refactor(
-        [Description(RefactorKinds)] string kind,
-        [Description("The file; for optimize_imports or code_cleanup, a .csproj for its project, or none for the solution")] string? path = null,
-        [Description("The name or expression refactored")] int? line = null,
+        string kind,
+        string? path = null,
+        int? line = null,
         int? column = null,
-        [Description("Where a selection ends (introduce_field, introduce_parameter)")] int? endLine = null,
+        int? endLine = null,
         int? endColumn = null,
-        [Description("The kind's options, as described; left out, a kind with a dialog describes it")] JsonElement? options = null,
-        [Description("Answer what it would show and offer, changing nothing")] bool describe = false,
+        JsonElement? options = null,
+        bool describe = false,
         CancellationToken cancel = default) => OnUi(cancel, () => Patience.RunAsync(async patience =>
     {
         string named = kind.Trim().ToLowerInvariant().Replace(' ', '_').Replace('-', '_');
@@ -278,12 +279,12 @@ public sealed partial class PassengerTools
             if (describing)
             {
                 return new RefactorAnswer("safe_delete", $"Safe Delete would take {what} out of {Relative(doomed.Path)}, "
-                    + (uses.Count == 0 ? "used nowhere else" : $"leaving {uses.Count} usage{(uses.Count == 1 ? "" : "s")} that would no longer compile"), [], [], Usages: uses);
+                    + (uses.Count == 0 ? "used nowhere else" : $"leaving {Plural.Of(uses.Count, "usage")} that would no longer compile"), [], [], Usages: uses);
             }
             bool anyway = options is { } given && given.TryGetProperty("deleteAnyway", out JsonElement value) && value.ValueKind == JsonValueKind.True;
             if (uses.Count > 0 && !anyway)
             {
-                throw new InvalidOperationException($"Safe Delete left {what} where it is: it has {uses.Count} usage{(uses.Count == 1 ? "" : "s")} that would no longer compile "
+                throw new InvalidOperationException($"Safe Delete left {what} where it is: it has {Plural.Of(uses.Count, "usage")} that would no longer compile "
                     + $"once it is deleted ({string.Join("; ", uses.Select(u => $"{u.Path}:{u.Line}: {u.Text}"))}). Fix them first, or give deleteAnyway true");
             }
             return Applied("safe_delete", window.Assist.Delete(doomed)) with { Usages = uses.Count > 0 ? uses : null };
@@ -357,7 +358,7 @@ public sealed partial class PassengerTools
             if (cleanup && Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
             {
                 // XAML's Code Cleanup is its reformatting, by the window's XAML code style.
-                OpenDocument markup = Document(path);
+                OpenDocument markup = await DocumentAsync(path, cancel);
                 if (describe)
                 {
                     return new RefactorAnswer(kind, $"Code Cleanup would reformat {Relative(markup.Path)}", [], []);
@@ -371,36 +372,38 @@ public sealed partial class PassengerTools
             {
                 return new RefactorAnswer(kind, $"{name} would tidy {Relative(document.Path)}", [], []);
             }
-            string before = document.Text.Snapshot.ToString();
+            int before = document.Text.Version;
             string done = await TidyOne(lsp, document, cleanup);
             document.Save();
             return new RefactorAnswer(kind, $"{Relative(document.Path)}: {done}",
-                document.Text.Snapshot.ToString() == before ? [] : [new RefactorFile(Relative(document.Path), "changed", [], done)], []);
+                document.Text.Version == before ? [] : [new RefactorFile(Relative(document.Path), "changed", [], done)], []);
         }
         if (scope is not ("project" or "solution"))
         {
             throw new ArgumentException($"No scope '{scope}'; there are file, project and solution");
         }
-        IReadOnlyList<string> files = CodeFiles(scope, path);
+        IReadOnlyList<string> files = await CodeFilesAsync(scope, path, cancel);
+        HashSet<string> named = new(files, StringComparer.Ordinal);
         if (describe)
         {
-            return new RefactorAnswer(kind, $"{name} would tidy {files.Count} C# file{(files.Count == 1 ? "" : "s")} of the {scope}",
+            return new RefactorAnswer(kind, $"{name} would tidy {Plural.Of(files.Count, "C# file")} of the {scope}",
                 [.. files.Select(f => new RefactorFile(Relative(f), "unchanged", []))], []);
         }
         // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
-        await Until(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel);
+        await When(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel, ServerState());
         CSharpService service = Session.CSharp is { IsReady: true } ready ? ready : throw new TimeoutException($"The language server has not loaded the workspace ({Session.CSharp?.State ?? "none"})");
         List<RefactorFile> tidied = [];
         List<string> left = [];
         // Those open are the person's, each with its own undo; the others are one command.
-        foreach (OpenDocument open in Editors.Documents.Where(d => files.Contains(d.Path)).ToList())
+        foreach (OpenDocument open in Editors.Documents.Where(d => named.Contains(d.Path)).ToList())
         {
             cancel.ThrowIfCancellationRequested();
             await Tidied(open, service.For(open)?.Lsp);
         }
         using (Passenger.App.Editors.CommandHistory.Recording recording = Editors.Commands.Record(name))
         {
-            foreach (string file in files.Where(f => !Editors.Documents.Any(d => d.Path == f)))
+            HashSet<string> shown = new(Editors.Documents.Select(d => d.Path), StringComparer.Ordinal);
+            foreach (string file in files.Where(f => !shown.Contains(f)))
             {
                 cancel.ThrowIfCancellationRequested();
                 recording.Watch(file);
@@ -419,7 +422,7 @@ public sealed partial class PassengerTools
                 }
             }
         }
-        return new RefactorAnswer(kind, $"{name} changed {tidied.Count} of the {files.Count} C# file{(files.Count == 1 ? "" : "s")} of the {scope}", tidied, left);
+        return new RefactorAnswer(kind, $"{name} changed {tidied.Count} of the {Plural.Of(files.Count, "C# file")} of the {scope}", tidied, left);
 
         async Task Tidied(OpenDocument document, LspDocument? lsp)
         {
@@ -428,9 +431,10 @@ public sealed partial class PassengerTools
                 left.Add($"{Relative(document.Path)}: the language server does not read it");
                 return;
             }
-            string before = document.Text.Snapshot.ToString();
+            // Its text's version says whether the tidy changed it, never the text made into a string twice.
+            int before = document.Text.Version;
             string done = await TidyOne(lsp, document, cleanup);
-            if (document.Text.Snapshot.ToString() != before)
+            if (document.Text.Version != before)
             {
                 tidied.Add(new RefactorFile(Relative(document.Path), "changed", [], done));
             }
@@ -449,8 +453,9 @@ public sealed partial class PassengerTools
     }
 
     /// <summary>The C# files of a project (the one a path names or holds) or of the solution, as Find in Files' scopes
-    /// have them: under each project's folder, not a nested project's, nor what builds write.</summary>
-    private IReadOnlyList<string> CodeFiles(string scope, string? path)
+    /// have them: under each project's folder, not a nested project's, nor what builds write. Taken off the UI thread from
+    /// the folder's index (a project outside the folder, or a folder still being walked, walked there as the index walks).</summary>
+    private async Task<IReadOnlyList<string>> CodeFilesAsync(string scope, string? path, CancellationToken cancel)
     {
         IReadOnlyList<ProjectModel> projects = Session.Projects;
         if (projects.Count == 0)
@@ -464,20 +469,35 @@ public sealed partial class PassengerTools
             chosen = [projects.Where(p => p.Path == full || PathNames.IsUnder(full, p.Folder)).OrderByDescending(p => p.Folder.Length).FirstOrDefault()
                 ?? throw new ArgumentException($"{Relative(full)} is in none of the solution's projects")];
         }
-        SortedSet<string> files = new(StringComparer.Ordinal);
-        foreach (ProjectModel project in chosen.Where(p => Directory.Exists(p.Folder)))
+        (string Folder, string[] Nested)[] wanted = [.. chosen.Select(project => (project.Folder,
+            (string[])[.. projects.Where(p => p.Folder != project.Folder && PathNames.IsUnder(p.Folder, project.Folder)).Select(p => p.Folder)]))];
+        string? root = Session.Index.IsWalking ? null : Session.Index.Root;
+        IReadOnlyList<string> indexed = Session.Index.Files;
+        return await BackgroundWork.Run(() =>
         {
-            string[] nested = [.. projects.Where(p => p.Folder != project.Folder && PathNames.IsUnder(p.Folder, project.Folder)).Select(p => p.Folder)];
-            foreach (string file in Directory.EnumerateFiles(project.Folder, "*.cs", SearchOption.AllDirectories))
+            SortedSet<string> files = new(StringComparer.Ordinal);
+            foreach ((string folder, string[] nested) in wanted)
             {
-                string relative = Path.GetRelativePath(project.Folder, file);
-                if (!relative.Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj") && !nested.Any(n => PathNames.IsUnder(file, n)))
+                cancel.ThrowIfCancellationRequested();
+                if (!Directory.Exists(folder))
                 {
-                    files.Add(PathNames.Canonical(file));
+                    continue;
+                }
+                IEnumerable<string> under = root is not null && PathNames.IsUnder(folder, root)
+                    ? indexed.Select(relative => Path.Combine(root, relative)).Where(file => PathNames.IsUnder(file, folder))
+                    : FileIndex.Walk(folder).Select(relative => Path.Combine(folder, relative));
+                foreach (string file in under)
+                {
+                    if (file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+                        && !Path.GetRelativePath(folder, file).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj")
+                        && !nested.Any(n => PathNames.IsUnder(file, n)))
+                    {
+                        files.Add(PathNames.Canonical(file));
+                    }
                 }
             }
-        }
-        return [.. files];
+            return (IReadOnlyList<string>)[.. files];
+        }, cancel);
     }
 
     /// <summary>A refactoring's outcome as the agent reads it: refused with why, or each file it changed and what it left.</summary>

@@ -8,6 +8,7 @@ using Passenger.Text;
 using Passenger.Xaml;
 using Passenger.Xaml.Features;
 using Passenger.Xaml.Syntax;
+using Passenger.Core;
 
 namespace Passenger.App.Mcp;
 
@@ -44,7 +45,7 @@ public sealed partial class PassengerTools
     /// project read, the C# server's workspace loaded. A file no service reads is refused at once, saying which do.</summary>
     private async Task<Served> Serve(string path, CancellationToken cancel)
     {
-        OpenDocument document = Document(path);
+        OpenDocument document = await DocumentAsync(path, cancel);
         string name = Path.GetFileName(document.Path);
         if (XamlService.IsXaml(document.Path))
         {
@@ -64,6 +65,7 @@ public sealed partial class PassengerTools
         if (Session.Web is { } languages && languages.For(document) is { } web)
         {
             // Its server starts with the first file of its kind, and answers once it has; without a Node.js to run on, never.
+            // Looked at every 50 ms: a web server's document comes as the server starts, which raises nothing of it.
             await Until(() => web.Lsp is not null || languages.CannotStart(document), ServerLimit, cancel);
             return web.Lsp is { } server
                 ? new ServerServed(document, LanguageOf(document), server, web)
@@ -75,7 +77,7 @@ public sealed partial class PassengerTools
             return new ServerServed(document, document.Language.Name, lsp);
         }
         throw new InvalidOperationException($"Passenger has no code help for {LanguageOf(document)} files such as {name}: the code tools answer C#, Razor, "
-            + "XAML, JavaScript, TypeScript, HTML, CSS, SCSS, Less, JSON and MSBuild files");
+            + "XAML, JavaScript, TypeScript, HTML, CSS, SCSS, Less, JSON, YAML, Dockerfiles and MSBuild files");
     }
 
     /// <summary>Where Go to Declaration goes from a name in an MSBuild file: where a property was set (the one in force
@@ -142,16 +144,61 @@ public sealed partial class PassengerTools
             "scss" => "SCSS",
             "less" => "Less",
             "json" or "jsonc" => "JSON",
+            "dockerfile" => "Dockerfile",
+            "yaml" => "YAML",
             _ => document.Language.Name,
         };
 
     /// <summary>Go to Declaration in JSON, whose server has none: a package.json dependency's package, a script's run.</summary>
     private async Task<IReadOnlyList<Place>> JsonDefinition(ServerServed json, int offset, CancellationToken cancel)
     {
+        // A settings file's key: the options property it sets, else what reads it, as the window's goes.
+        if (await window.Assist.SettingsDeclarationsAsync(json.Document, offset) is { } settings)
+        {
+            return await PlacesOf(settings, cancel);
+        }
         ((string Path, TextPosition Position)? place, string said) = await CodeAssist.JsonDeclarationAsync(json.Lsp, json.Document, offset);
         return place is { } found ? await PlacesOf([found], cancel)
             : said == CodeAssist.NoDeclaration ? []
             : throw new InvalidOperationException(said);
+    }
+
+    /// <summary>Passenger's own Go to Declaration in a compose file, as the window's goes; null where it finds nothing,
+    /// for the YAML server's own (an alias's anchor) to be asked. An image's registry page is said, not gone to.</summary>
+    private async Task<IReadOnlyList<Place>?> ComposeDefinition(Served served, int offset, CancellationToken cancel)
+    {
+        if (served is not ServerServed { Web.Kind: WebServerKind.Yaml } compose || !ComposeDeclarations.IsCompose(compose.Document.Path))
+        {
+            return null;
+        }
+        ComposeAnswer answer = await CodeAssist.ComposeDeclarationAsync(compose.Lsp, compose.Document, offset,
+            ServerPlaces.Texts(Editors), Session.Workspace?.Projects ?? []);
+        if (answer.Page is { } page)
+        {
+            throw new InvalidOperationException($"{answer.Said} is declared on its registry, not in the folder: its page is {page}");
+        }
+        return answer.Places.Count > 0 ? await PlacesOf([.. answer.Places.Select(p => (p.Path, p.Position))], cancel)
+            : answer.Said == ComposeDeclarations.NoDeclaration ? null
+            : throw new InvalidOperationException(answer.Said);
+    }
+
+    /// <summary>Aspire's Go to Declaration in an AppHost's or a service's C# file, as the window's goes: AddProject's project,
+    /// a connection string's or service's name to the AppHost line declaring it; null elsewhere, for the server's own.</summary>
+    private async Task<IReadOnlyList<Place>?> AspireDefinition(Served served, int offset, CancellationToken cancel) =>
+        served is ServerServed { Web: null, Language: "C#" } csharp && Session.AspireFiles.RoleOf(csharp.Document.Path) != Aspire.AspireRole.None
+            && await CodeAssist.AspireDeclarationAsync(csharp.Lsp, offset, ServerPlaces.Texts(Editors)) is { } place
+            ? await PlacesOf([place], cancel) : null;
+
+    /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, a file reading what an open compose
+    /// file's service lacks or one that may read configuration too, so the fixes Passenger offers on Aspire's, Compose's and
+    /// a configuration key's warnings stand on the text as the agent wrote it, not on a pull still to come.</summary>
+    private async Task AspireMarked(Served served, CancellationToken cancel)
+    {
+        if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { } csharp
+            && (csharp.AspireRole != Aspire.AspireRole.None || csharp.ReadsForCompose || csharp.MayReadConfiguration))
+        {
+            await csharp.PullNowAsync(cancel);
+        }
     }
 
     /// <summary>Rename in JSON, whose server has none: the property's name, and in a package.json's scripts every run of a
@@ -174,7 +221,7 @@ public sealed partial class PassengerTools
         WorkspaceEdits.ApplyTo(Editors, document, placed);
         document.Save();
         int runs = placed.Count - 1;
-        return $"Renamed {old} to {newName} in {Relative(document.Path)}{(runs == 0 ? string.Empty : $", and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it")}";
+        return $"Renamed {old} to {newName} in {Relative(document.Path)}{(runs == 0 ? string.Empty : $", and in {Plural.Of(runs, "script")} that run{(runs == 1 ? "s" : "")} it")}";
     }
 
     /// <summary>ESLint's fixes for the problems on a web file's line, which Show Context Actions lists first; none where ESLint
@@ -280,7 +327,7 @@ public sealed partial class PassengerTools
 
     /// <summary>Waits for the C# server to load the workspace, when one runs: an element's field is found in the code-behind
     /// through it, and before it has loaded none are.</summary>
-    private Task CodeBehindRead(CancellationToken cancel) => Until(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel);
+    private Task CodeBehindRead(CancellationToken cancel) => When(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel, ServerState());
 
     /// <summary>Rename in XAML: an element's name, in its file and where its code-behind uses its field, saved.</summary>
     private async Task<string> XamlRename(XamlServed xaml, int offset, string newName, CancellationToken cancel)
@@ -303,7 +350,7 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException(renamed.Said);
         }
         Editors.SaveAll();
-        return $"Renamed {named.Value} to {newName} in {renamed.Files.Count} file{(renamed.Files.Count == 1 ? "" : "s")}: {string.Join(", ", renamed.Files.Select(Relative))}";
+        return $"Renamed {named.Value} to {newName} in {Plural.Of(renamed.Files.Count, "file")}: {string.Join(", ", renamed.Files.Select(Relative))}";
     }
 
     /// <summary>A XAML file's elements, indented, each with what names it (x:Class, x:Name, x:Key, a style's selector or
@@ -331,6 +378,40 @@ public sealed partial class PassengerTools
                 Write(child, depth + 1);
             }
         }
+    }
+
+    /// <summary>One of Passenger's own fixes made as choosing it makes it: worked out again on the file's text as it stands,
+    /// one undoable edit, the file saved; refused when the text no longer has what it fixes. One made in another file (an
+    /// AppHost's WithReference) is that file's command, told the call's <paramref name="patience"/>.</summary>
+    private async Task<string> ApplyOwnFix(OpenDocument document, EditorFix fix, Patience? patience = null, string? value = null)
+    {
+        if (fix.On(document.Text.Snapshot) is not { } now)
+        {
+            throw new InvalidOperationException($"'{fix.Title}' was not applied: the file changed, so it no longer fits");
+        }
+        if (now.Asks is { } asks)
+        {
+            RefactorOutcome set = await asks.Make(value ?? throw new InvalidOperationException($"'{fix.Title}' sets a value: give it as name"), patience);
+            if (set.Problem is { } refused)
+            {
+                throw new InvalidOperationException(refused);
+            }
+            Editors.SaveAll();
+            return set.Said;
+        }
+        if (now.Elsewhere is { } elsewhere)
+        {
+            RefactorOutcome made = await elsewhere(now.Range, patience);
+            if (made.Problem is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            Editors.SaveAll();
+            return $"Applied '{fix.Title}' to {string.Join(", ", made.Files.Select(f => Relative(f.Path)).Distinct())}";
+        }
+        WorkspaceEdits.ApplyTo(Editors, document, [new TextEdit(now.Range.Start, now.Range.Length, now.Text)]);
+        Editors.SaveAll();
+        return $"Applied '{fix.Title}' to {Relative(document.Path)}";
     }
 
     /// <summary>One of XAML's fixes or refactorings at a place, as code_actions lists it and apply_code_action makes it.</summary>
@@ -362,9 +443,9 @@ public sealed partial class PassengerTools
         return offered;
     }
 
-    private const string ExtractResource = "Extract Resource...";
+    private const string ExtractResource = "Extract Resource…";
 
-    private const string ExtractStyle = "Extract Style...";
+    private const string ExtractStyle = "Extract Style…";
 
     /// <summary>A XAML fix or refactoring made as choosing it in the window makes it, as one command, and the files saved:
     /// Extract Resource and Extract Style take the dialog's defaults (every use replaced; the element's properties that are
@@ -379,12 +460,10 @@ public sealed partial class PassengerTools
         switch (chosen.Made)
         {
             case EditorFix fix:
-                WorkspaceEdits.ApplyTo(Editors, xaml.Document, [new TextEdit(fix.Range.Start, fix.Range.Length, fix.Text)]);
-                Editors.SaveAll();
-                return $"Applied {what} to {Relative(xaml.Document.Path)}";
+                return await ApplyOwnFix(xaml.Document, fix);
             case XamlFix fix:
                 IReadOnlyList<XamlFileChange> changes = [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others];
-                refused = window.Assist.ApplyXamlChanges(fix.Title, changes);
+                refused = window.Assist.ApplyFileChanges(fix.Title, changes);
                 if (refused is not null)
                 {
                     throw new InvalidOperationException($"{what} was not applied: {refused}");
@@ -401,7 +480,7 @@ public sealed partial class PassengerTools
             {
                 throw new InvalidOperationException($"{what} cannot name the resource '{key}': {problem}");
             }
-            refused = window.Assist.ApplyXamlChanges("Extract Resource", XamlRefactorings.ExtractResource(xaml.File, value, key, place, everywhere: true));
+            refused = window.Assist.ApplyFileChanges("Extract Resource", XamlRefactorings.ExtractResource(xaml.File, value, key, place, everywhere: true));
             if (refused is not null)
             {
                 throw new InvalidOperationException($"{what} was not applied: {refused}");
@@ -421,13 +500,13 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"{what} cannot name the style '{style}': {named}");
         }
-        refused = window.Assist.ApplyXamlChanges("Extract Style", XamlRefactorings.ExtractStyle(xaml.File, source, style, properties, into));
+        refused = window.Assist.ApplyFileChanges("Extract Style", XamlRefactorings.ExtractStyle(xaml.File, source, style, properties, into));
         if (refused is not null)
         {
             throw new InvalidOperationException($"{what} was not applied: {refused}");
         }
         Editors.SaveAll();
-        return $"Extracted {properties.Count} {(properties.Count == 1 ? "property" : "properties")} of {source.ElementName} ({string.Join(", ", properties)}) to style '{style}' in {into.Title}";
+        return $"Extracted {Plural.Of(properties.Count, "property", "properties")} of {source.ElementName} ({string.Join(", ", properties)}) to style '{style}' in {into.Title}";
 
         ResourcePlace PlaceChosen(IReadOnlyList<ResourcePlace> places) => choice is null
             ? places.Count == 1 ? places[0] : throw new InvalidOperationException($"{what} needs a choice of where it goes: {string.Join("; ", places.Select(p => p.Title))}")
@@ -436,6 +515,5 @@ public sealed partial class PassengerTools
 
     /// <summary>Places in files as an agent reads them, with each line's text.</summary>
     private Task<IReadOnlyList<Place>> PlacesOf(IReadOnlyList<(string Path, TextPosition Position)> places, CancellationToken cancel) =>
-        Places([.. places.Select(p => new LspLocation(DocumentUris.FromPath(p.Path),
-            new LspRange(new LspPosition(p.Position.Line, p.Position.Column), new LspPosition(p.Position.Line, p.Position.Column))))], cancel);
+        Lines([.. places.Select(p => (DocumentUris.FromPath(p.Path), new LspPosition(p.Position.Line, p.Position.Column), false))], cancel);
 }

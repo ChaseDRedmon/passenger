@@ -1,4 +1,5 @@
 using System.Text;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.VisualTree;
@@ -81,17 +82,118 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_binary_file_is_refused_rather_than_opened_as_text()
+    public void A_binary_file_opens_as_its_bytes_text_read_only_and_typing_never_changes_it()
     {
-        string path = Path.Combine(folder, "image.png");
-        File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x1A, 0x0A]);
+        // A file with no view of its own: an image's name would open it as a preview.
+        string path = Path.Combine(folder, "data.bin");
+        byte[] bytes = [0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x1A, 0x0A];
+        File.WriteAllBytes(path, bytes);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
-        window.OpenFile("image.png");
+        Assert.Null(window.OpenFile("data.bin"));
         Ui.Settle();
-        Assert.Null(window.EditorArea.Active);
+        Assert.True(window.EditorArea.Active is { IsBinary: true, IsReadOnly: true }, "data.bin should open as its bytes' text, read-only");
+
+        Ui.Type(window, "x", "x");
+        window.Perform(AppActions.SaveAll);
+        Ui.Settle();
+        Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)), "Typing in a binary file's tab should never change the file");
         window.Close();
+    }
+
+    /// <summary>A file past what the editor opens as text or bytes (64 MB) is refused at once, nothing of it read, with why in
+    /// the status bar, as a preview past its limit is: opened, a file holds about six and a half times its size.</summary>
+    [AvaloniaFact]
+    public void A_file_too_large_to_open_as_text_or_bytes_is_refused_with_why_in_the_status_bar()
+    {
+        string log = Path.Combine(folder, "huge.log");
+        using (FileStream file = File.Create(log))
+        {
+            file.SetLength(65 * 1024 * 1024);
+        }
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        string? why = window.OpenFile("huge.log");
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Ui.Settle();
+        Assert.Equal("huge.log is 65 MB: the editor opens a file of up to 64 MB as text", why);
+        Assert.Equal(why, window.Status);
+        Assert.Empty(window.EditorArea.Documents);
+        Assert.True(allocated < 16 << 20, $"Refusing huge.log allocated {allocated >> 20} MB on the UI thread: it was read first");
+
+        // Through File, Open too, with nothing open.
+        window.Close();
+        MainWindow front = new() { Width = 1200, Height = 800 };
+        front.Show();
+        Ui.Settle();
+        Assert.Equal("huge.log is 65 MB: the editor opens a file of up to 64 MB as text", front.Open(log));
+        Assert.Empty(front.EditorArea.Documents);
+        front.Close();
+    }
+
+    /// <summary>A binary file's tab shows its bytes drawn as signs, none of the file's text: what reads or changes a file's
+    /// text leaves it alone, as it leaves a preview, or an agent's replace would write the signs over its bytes.</summary>
+    [AvaloniaFact]
+    public void A_binary_files_bytes_are_no_text_for_the_status_bar_an_agent_replace_in_files_or_a_bookmark()
+    {
+        string path = Path.Combine(folder, "data.bin");
+        byte[] bytes = [(byte)'k', (byte)'e', (byte)'y', 0, (byte)'\n', (byte)'k', (byte)'e', (byte)'y', 0xFF];
+        File.WriteAllBytes(path, bytes);
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "key\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("data.bin");
+        Ui.Settle();
+        Assert.True(window.EditorArea.Active is { IsBinary: true, HoldsText: false }, "data.bin did not open as its bytes' text");
+        Assert.Equal("A binary file, shown as its bytes' text, read-only", window.EditorArea.Active!.Origin);
+
+        Assert.False(window.FindControl<Button>("EncodingButton")!.IsVisible, "A binary file's tab shows a text encoding");
+        Assert.False(window.Perform(AppActions.ToggleBookmark), "A bookmark was put on a line of a binary file");
+        Assert.Empty(window.Bookmarks.All);
+        Passenger.App.Mcp.PassengerTools agent = new(window);
+        foreach (Task asked in new Task[] { agent.EditorText("data.bin"), agent.Edit("data.bin", "key", "lock") })
+        {
+            Ui.WaitFor(() => asked.IsCompleted, "the agent's answer");
+            Assert.True(asked.IsFaulted, "An agent read or edited a binary file's bytes as its text");
+            Assert.Contains("data.bin is a binary file, shown as its bytes' text", asked.Exception!.InnerException!.Message, StringComparison.Ordinal);
+        }
+        Task<string> replacing = agent.ReplaceInFiles("key", "lock");
+        Ui.WaitFor(() => replacing.IsCompleted, "replace_in_files' answer");
+        Assert.DoesNotContain("data.bin", replacing.Result, StringComparison.Ordinal);
+        Assert.Equal("lock\n", File.ReadAllText(Path.Combine(folder, "notes.txt")));
+        Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)), "Replace in Files wrote over a binary file's bytes");
+        Assert.False(window.EditorArea.Active.IsModified, "Replace in Files changed a binary file's tab");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Saving_a_file_does_not_follow_a_planted_temporary_file_link()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        string sentinel = Path.Combine(TestFolders.Create("save-sentinel-"), "sentinel.txt");
+        File.WriteAllText(path, "class One { }\n");
+        File.WriteAllText(sentinel, "keep this file\n");
+        string planted = path + Passenger.App.Workspace.FileText.SaveSuffix;
+        TestFolders.Link(planted, sentinel);
+        MainWindow window = Open();
+        try
+        {
+            Edit(window, "One.cs", "public ");
+            Ui.Press(window, Ui.Shortcut(AppActions.Save));
+            Assert.Equal("public class One { }\n", File.ReadAllText(path));
+            Assert.Equal("keep this file\n", File.ReadAllText(sentinel));
+            Assert.NotNull(new FileInfo(planted).LinkTarget);
+            Assert.Equal([planted], Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix));
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
@@ -149,6 +251,28 @@ public sealed class FileTests : IDisposable
         }
         Assert.Equal("public class One { }\n", File.ReadAllText(path));
         Assert.Empty(Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix));
+    }
+
+    /// <summary>A save writes its temporary file under a name of its own, made new: a link a cloned repository carries
+    /// under the name a save once used (One.cs.passenger-save) took the save to whatever it pointed at.</summary>
+    [AvaloniaFact]
+    public void A_save_never_writes_through_a_link_left_where_its_temporary_file_would_go()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        string elsewhere = Path.Combine(TestFolders.Create("save-elsewhere-"), "kept.txt");
+        File.WriteAllText(path, "class One { }\n");
+        File.WriteAllText(elsewhere, "keep this file\n");
+        string planted = path + Passenger.App.Workspace.FileText.SaveSuffix;
+        TestFolders.Link(planted, elsewhere);
+        MainWindow window = Open();
+        Edit(window, "One.cs", "public ");
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+
+        Assert.Equal("public class One { }\n", File.ReadAllText(path));
+        Assert.True(File.ReadAllText(elsewhere) == "keep this file\n", "The save was written through a link beside the file, to the file it points at");
+        Assert.NotNull(new FileInfo(planted).LinkTarget);
+        Assert.Equal([planted], Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix));
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -214,6 +338,37 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public void A_save_on_Windows_keeps_the_files_attributes_its_explicit_access_control_list_and_its_alternate_data_streams()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "File attributes such as Hidden, an explicit ACL and alternate data streams are NTFS's");
+        string path = Path.Combine(folder, "Hidden.cs");
+        File.WriteAllText(path, "class Hidden { }\n");
+        // As a download is marked, and as a person shares one file with everyone or hides it.
+        File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n");
+        FileInfo info = new(path);
+        System.Security.AccessControl.FileSecurity security = info.GetAccessControl();
+        System.Security.Principal.SecurityIdentifier everyone = new(System.Security.Principal.WellKnownSidType.WorldSid, null);
+        security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(everyone, System.Security.AccessControl.FileSystemRights.Read, System.Security.AccessControl.AccessControlType.Allow));
+        info.SetAccessControl(security);
+        File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.Hidden);
+        MainWindow window = Open();
+        Edit(window, "Hidden.cs", "public ");
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+
+        Assert.Equal("public class Hidden { }\n", File.ReadAllText(path));
+        Assert.False(window.EditorArea.Active!.IsModified, $"The hidden file was not saved: {window.Status}");
+        Assert.True(File.GetAttributes(path).HasFlag(FileAttributes.Hidden), $"The save took the file's Hidden attribute away: {File.GetAttributes(path)}");
+        bool shared = new FileInfo(path).GetAccessControl().GetAccessRules(includeExplicit: true, includeInherited: false, typeof(System.Security.Principal.SecurityIdentifier))
+            .OfType<System.Security.AccessControl.FileSystemAccessRule>()
+            .Any(r => r.IdentityReference.Equals(everyone) && r.FileSystemRights.HasFlag(System.Security.AccessControl.FileSystemRights.Read));
+        Assert.True(shared, "The save gave the file its folder's inherited ACL in place of its own, which let everyone read it");
+        Assert.True(File.Exists(path + ":Zone.Identifier") && File.ReadAllText(path + ":Zone.Identifier").Contains("ZoneId=3", StringComparison.Ordinal),
+            "The save took the file's Zone.Identifier stream away");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_read_only_file_is_never_written_by_a_save_and_its_first_edit_and_each_save_ask_to_make_it_writable()
     {
         // As Perforce or TFVC leave a file not checked out: macOS and Linux would let a save move a new file over it.
@@ -269,10 +424,10 @@ public sealed class FileTests : IDisposable
         window.Close();
         ChoiceDialog asked = Asked(window);
         Assert.Contains("Locked.cs (read-only)", asked.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text).OfType<string>().Single(t => t.Contains("could not be saved", StringComparison.Ordinal)), StringComparison.Ordinal);
-        Press(asked, "Cancel");
+        Ui.ClickButton(asked, "Cancel");
         Assert.True(window.IsVisible, "Cancel closed the window, and the file's changes with it");
         window.Close();
-        Press(Asked(window), "Close Without Saving");
+        Ui.ClickButton(Asked(window), "Close Without Saving");
         Ui.WaitFor(() => !window.IsVisible, "the window to close without the file's changes");
         Assert.Equal("class Locked { }\n", File.ReadAllText(path));
         Assert.True(new FileInfo(path).IsReadOnly);
@@ -282,7 +437,7 @@ public sealed class FileTests : IDisposable
         window.Confirm = (_, _, _) => Task.FromResult(false);
         Edit(window, "Locked.cs", "public ");
         window.Close();
-        Press(Asked(window), "Make Writable");
+        Ui.ClickButton(Asked(window), "Make Writable");
         Ui.WaitFor(() => !window.IsVisible, "the window to close once the file was saved");
         Assert.Equal("public class Locked { }\n", File.ReadAllText(path));
         Assert.False(new FileInfo(path).IsReadOnly);
@@ -295,13 +450,6 @@ public sealed class FileTests : IDisposable
         ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
         Assert.Equal("Clear Read-Only Status", asked.Title);
         return asked;
-    }
-
-    private static void Press(Avalonia.Controls.Window dialog, string button)
-    {
-        Avalonia.Controls.Button pressed = dialog.GetVisualDescendants().OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button);
-        pressed.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.Settle();
     }
 
     /// <summary>What a program of the system says, failing when it fails.</summary>
@@ -319,14 +467,7 @@ public sealed class FileTests : IDisposable
         return output;
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(folder);
 
     private static string? EncodingShown(MainWindow window) => Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "EncodingText")!.Text;
 

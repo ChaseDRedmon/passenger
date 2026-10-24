@@ -6,8 +6,9 @@ namespace Passenger.App;
 
 /// <summary>A window's actions, each added once by the feature it belongs to, and the keymap that binds them: what every
 /// list of actions reads (Find Action, the menus, Settings' keymap, an agent's ide_actions) and what every way of running
-/// one goes through (its keys, a menu item, Find Action, ide_action).</summary>
-public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> keymap)
+/// one goes through (its keys, a menu item, Find Action, ide_action). An action whose work is under way starts nothing
+/// more, however it is asked for, and says what is under way.</summary>
+public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> keymap, ActionWork work)
 {
     private readonly Dictionary<string, IdeAction> byId = new(StringComparer.Ordinal);
     private IReadOnlyList<IdeAction>? sorted;
@@ -22,7 +23,11 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
         sorted = null;
     }
 
-    public IdeAction? this[string id] => byId.GetValueOrDefault(id);
+    /// <summary>The action of an id, or of an id it had before (<see cref="AppActions.Formerly"/>).</summary>
+    public IdeAction? this[string id] => byId.GetValueOrDefault(AppActions.Now(id));
+
+    /// <summary>What the window's actions are doing that takes a while.</summary>
+    public ActionWork Work => work;
 
     /// <summary>An action about to run, however it was asked for: Local History names what a refactoring writes by it.</summary>
     public event EventHandler<IdeAction>? Running;
@@ -38,22 +43,31 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
     public ActionContext Context() => context();
 
     /// <summary>An action's first shortcut as Rider shows it ("⌘K, W"), or null with none.</summary>
-    public string? Shortcut(string id) => Keymap.ShortcutsFor(id) is { Count: > 0 } keys ? keys[0].Display() : null;
+    public string? Shortcut(string id) => Keymap.ShortcutsFor(KeysOf(id)) is { Count: > 0 } keys ? keys[0].Display() : null;
 
     /// <summary>An action's one-keystroke shortcut as a menu shows it; none for a chord, which a menu cannot show.</summary>
     public KeyGesture? Gesture(string id) =>
-        Keymap.ShortcutsFor(id).FirstOrDefault(s => s.Second is null) is { } shortcut ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers) : null;
+        Keymap.ShortcutsFor(KeysOf(id)).FirstOrDefault(s => s.Second is null) is { } shortcut ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers) : null;
+
+    /// <summary>An action's one-keystroke shortcut as macOS's menu bar takes it, a key equivalent: none on the keypad, since
+    /// Avalonia gives the bar a keypad key as its character alone, which the main keys' / or - would press too.</summary>
+    public KeyGesture? MenuBarGesture(string id) =>
+        Keymap.ShortcutsFor(KeysOf(id)).FirstOrDefault(s => s.Second is null && !s.First.IsOnKeypad) is { } shortcut
+            ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers) : null;
 
     /// <summary>An action's shortcut in a menu item's column of keys, whoever builds the menu: its one keystroke as the
     /// item's gesture, a chord as its text. The gesture is shown, not bound: the window's keymap runs the keys.</summary>
     public void ShowKeys(MenuItem item, string id)
     {
         item.InputGesture = Gesture(id);
-        if (item.InputGesture is null && Keymap.ShortcutsFor(id).FirstOrDefault() is { Second: not null } chord)
+        if (item.InputGesture is null && Keymap.ShortcutsFor(KeysOf(id)).FirstOrDefault() is { Second: not null } chord)
         {
             ShowChord(item, chord);
         }
     }
+
+    /// <summary>The action whose keys run this one: another's where it shares them (<see cref="IdeAction.KeysOf"/>), else its own.</summary>
+    private string KeysOf(string id) => byId.GetValueOrDefault(id)?.KeysOf?.Invoke() ?? id;
 
     /// <summary>A chord in an item's shortcut column, as Rider's own menus show one ("⌘E, C"): a KeyGesture holds one
     /// keystroke, so the text Fluent's item draws its gesture with is given the chord. macOS's menu bar gets none, since
@@ -85,10 +99,12 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
             .ThenBy(a => a.Title.Length)];
     }
 
-    /// <summary>Null when the action can run in this context, else why not: no action has the id, or what it needs is
-    /// not there.</summary>
+    /// <summary>Null when the action can run in this context, else why not: no action has the id, its work is under way
+    /// already, or what it needs is not there.</summary>
     public string? WhyNot(string id, ActionContext context) =>
-        byId.TryGetValue(id, out IdeAction? action) ? action.WhyNot(context) : $"No action is called {id}";
+        !byId.TryGetValue(AppActions.Now(id), out IdeAction? action) ? $"No action is called {id}"
+        : work.Of(action.WorkId) is { } under ? ActionWork.Busy(under)
+        : action.WhyNot(context);
 
     /// <summary>Runs an action where it is asked for now; null once it has run, else why it could not.</summary>
     public string? Run(string id) => Run(id, Context());
@@ -101,8 +117,9 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
         {
             return why;
         }
-        Running?.Invoke(this, byId[id]);
-        byId[id].Run(context);
+        IdeAction action = byId[AppActions.Now(id)];
+        Running?.Invoke(this, action);
+        action.Run(context);
         return null;
     }
 }

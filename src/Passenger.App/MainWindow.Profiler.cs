@@ -21,20 +21,25 @@ public partial class MainWindow
     public string SnapshotFolder => profiler!.SnapshotFolder;
 
     private void AddProfiler() => profiler = new ProfilerCommands(new ProfilerParts(() => session, () => buildRun, Dock, actions!, Bottom.Run,
-        text => status.Text = text, () => StateFolder, PickSnapshotAsync, NavigateTo, (process, control) => liveTree?.Reveal(process, control) == true));
+        text => status.Text = text, () => StateFolder, PickSnapshotAsync, NavigateTo, NavigateTo, (process, control) => liveTree?.Reveal(process, control) == true, Editors,
+        ChooseProfiledAsync, ProfiledInContainerAsync, ShowInFileManager, ProfileAspireAsync));
 
     /// <summary>Profiles the chosen configuration as Profile does: null once it runs, else what stopped it.</summary>
     public Task<string?> ProfileAsync(string? arguments = null) => profiler!.ProfileAsync(arguments);
 
-    /// <summary>Attach Profiler: the program being debugged (else the one Run runs) profiled from now; null once it is,
-    /// else why not.</summary>
-    public Task<string?> AttachProfilerAsync() => profiler!.AttachAsync();
+    /// <summary>Profiles a configuration not chosen in the toolbar (a gutter icon's one service) as Profile does.</summary>
+    public Task<string?> ProfileAsync(Run.RunConfiguration configuration) => profiler!.ProfileAsync(configuration: configuration);
+
+    /// <summary>Attach Profiler: the program being debugged (else the one Run runs), or a program in a running container
+    /// (as Attach to Process lists it), profiled from now; null once it is, else why not.</summary>
+    public Task<string?> AttachProfilerAsync(Passenger.Core.DotnetProcess? inContainer = null) => profiler!.AttachAsync(inContainer);
 
     /// <summary>Get Snapshot: the run ended and its snapshot read, or why there is none.</summary>
     public Task<SnapshotRead> SnapshotAsync() => profiler!.SnapshotAsync();
 
-    /// <summary>Get Memory Snapshot of the program being profiled.</summary>
-    public Task<MemorySnapshot?> MemorySnapshotAsync() => profiler!.MemorySnapshotAsync();
+    /// <summary>Get Memory Snapshot of the program being profiled; one given up by <paramref name="cancel"/> (an agent's) is
+    /// said so, and the tools taking it in a container are ended.</summary>
+    public Task<MemorySnapshot?> MemorySnapshotAsync(CancellationToken cancel = default) => profiler!.MemorySnapshotAsync(cancel);
 
     /// <summary>Opens a snapshot written before in the profiler window.</summary>
     public Task<Snapshot?> OpenSnapshotAsync(string path) => profiler!.OpenSnapshotAsync(path);
@@ -51,6 +56,4 @@ public partial class MainWindow
         });
         return picked.Count == 1 ? picked[0].TryGetLocalPath() : null;
     }
-
-    private void OnProfileClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Profile);
 }

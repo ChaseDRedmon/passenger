@@ -1,9 +1,11 @@
 using Passenger.App.CSharp;
+using Passenger.App.Aspire;
 using Passenger.App.Debugging;
 using Passenger.App.Editors;
 using Passenger.App.History;
 using Passenger.App.LiveTree;
 using Passenger.App.Navigation;
+using Passenger.App.Profiling;
 using Passenger.App.Run;
 using Passenger.App.State;
 using Passenger.App.Testing;
@@ -20,8 +22,9 @@ namespace Passenger.App;
 /// <summary>What a window lends each session it makes: its editors (whose open files the session's services follow), where
 /// its state and Local History are kept, how folders are watched, the warm language server a test's windows share, the
 /// consoles, Debug window and tests tree its runners, debugger and test runner write to, the build a test run starts with,
-/// the tab of the Terminal window a program the debugger launches there runs in, and the settings as they stand (the
-/// Node.js the web language servers run on, whether remote JSON schemas are downloaded).</summary>
+/// the tab of the Terminal window a program the debugger launches there runs in, the settings as they stand (the
+/// Node.js the web language servers run on, whether remote JSON schemas are downloaded), the window's work under way,
+/// which Git's operations and test runs show themselves in, and the container engine the folder's containers run on.</summary>
 public sealed record SessionSetup(
     EditorArea Editors,
     string StateFolder,
@@ -32,7 +35,16 @@ public sealed record SessionSetup(
     ToolViews Views,
     Func<CancellationToken, Task<BuildOutcome>> BuildForTests,
     Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger,
-    Func<Settings.AppSettings> Settings);
+    Func<Settings.AppSettings> Settings,
+    ActionWork Work,
+    Func<Containers.ContainerEngine> Engine)
+{
+    /// <summary>Where the Dockerfile server asks for image tags in Docker Hub's place: the window's stand-in, a test's.</summary>
+    public Uri? DockerHub { get; init; }
+
+    /// <summary>Whether the session starts the C# language server: the window's <see cref="MainWindow.StartsLanguageServer"/>.</summary>
+    public bool StartsLanguageServer { get; init; } = true;
+}
 
 /// <summary>Projects whose evaluation landed, as the workspace now has them, and whether which projects hold tests, or what
 /// packages the projects reference, changed with them.</summary>
@@ -57,15 +69,20 @@ public sealed class ProjectSession : IAsyncDisposable
     private int reads;
 
     private Task? ending;
+    private bool closing;
 
     private ProjectSession(SessionSetup setup, string? folder)
     {
         this.setup = setup;
         Folder = folder;
-        Configurations = new RunConfigurations(folder);
+        Configurations = new RunConfigurations(folder, () => Workspace);
+        Aspire = new AspireController(this, setup.StateFolder);
+        AspireFiles = new AspireFiles(this);
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
-        Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n"));
+        Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, () => Workspace, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
+        Containers = new Containers.FolderContainers(folder, setup.Engine());
+        Vcs.Work = setup.Work;
         Debug = new DebugController(setup.Editors, setup.Views.Debug)
         {
             RunInTerminal = setup.RunForDebugger,
@@ -74,10 +91,22 @@ public sealed class ProjectSession : IAsyncDisposable
             HotReloadOn = () => setup.Settings().HotReloadWhileDebugging,
             HotReloadOnSave = () => setup.Settings().HotReloadOnSave,
         };
+        Debug.SelectionChanged += (_, _) =>
+        {
+            Aspire.SelectDebugger(Debug.Chosen);
+            LiveAppChanged?.Invoke(this, EventArgs.Empty);
+            InspectedChanged?.Invoke(this, EventArgs.Empty);
+        };
+        Aspire.Changed += (_, _) =>
+        {
+            LiveAppChanged?.Invoke(this, EventArgs.Empty);
+            InspectedChanged?.Invoke(this, EventArgs.Empty);
+        };
         // Kept with the folder from Keep on, while the window keeps state.
         Debug.Breakpoints.Changed += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Debug.Breakpoints.ExceptionsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Debug.Breakpoints.BindingErrorsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
+        Debug.TabsChanged += (_, _) => OnDebugTabsChanged();
         Bookmarks.Changed += (_, _) => State?.Bookmarks.Set(Bookmarks.Capture());
         // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
         Vcs.Activity = name => LocalHistory?.During(name);
@@ -111,9 +140,15 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Workspace = session.Models.Apply(withSolution ?? new WorkspaceModel(folder, null, []));
         session.TimeSolutionView();
         session.Configurations.Configure(session.Projects);
+        // The single-file AppHosts are found among the files the index's walk lists, never by a walk of their own.
+        session.Index.Walked += (_, _) => session.AspireFiles.Walked(folder, session.Index.Files);
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
-        session.Web = new Web.WebLanguages(folder, setup.Settings);
+        session.Web = new Web.WebLanguages(folder, setup.Settings, setup.Engine) { DockerHub = setup.DockerHub };
+        // A compose file's check reads what each .NET service's project reads through the language server, once it is loaded,
+        // and the reads of what a service's environment lacks are marked in its code.
+        session.Web.Checks.Code = () => new Containers.ComposeCode(session.Projects, session.CSharp is { IsReady: true } csharp ? csharp.Session : null);
+        session.Web.Checks.GapsChanged += (_, _) => session.CSharp?.ComposeGapsChanged();
         return session;
     }
 
@@ -138,7 +173,43 @@ public sealed class ProjectSession : IAsyncDisposable
 
     /// <summary>The loaded project a file or folder (a canonical path) belongs to, the nearest one holding it; null outside
     /// them all.</summary>
-    public ProjectModel? ProjectOf(string path) => ProjectModel.Owning(Projects, path);
+    public ProjectModel? ProjectOf(string path) => Workspace is null ? null : ProjectModel.Owning(Workspace.Projects.Where(p => !Unloaded.Contains(p.Path)), path);
+
+    /// <summary>The configuration of the project a file belongs to (<see cref="ConfigurationFiles"/>); null outside them all.</summary>
+    public ConfigurationProject? ConfigurationOf(string path) => ProjectOf(path) is { } project ? ConfigurationOf(project) : null;
+
+    /// <summary>A project's configuration: its evaluated UserSecretsId, the folders from its own up to the folder open whose
+    /// compose files may run it, and the folders of the AppHosts that reference it.</summary>
+    public ConfigurationProject ConfigurationOf(ProjectModel project)
+    {
+        List<string> composing = [];
+        for (string? folder = Path.GetDirectoryName(project.Path); folder is not null; folder = Path.GetDirectoryName(folder))
+        {
+            composing.Add(folder);
+            if (Folder is null || !PathNames.IsUnder(folder, Folder) || PathNames.Same(folder, Folder))
+            {
+                break;
+            }
+        }
+        string[] hosts = [.. Projects.Where(p => p.IsAspireHost && p.ProjectReferences.Any(r => PathNames.Same(r, project.Path))).Select(p => Path.GetDirectoryName(p.Path)!)];
+        return new ConfigurationProject(project.Path, project.Property(Passenger.Host.CarriedProperties.UserSecretsId) is { Length: > 0 } id ? id : null, composing, hosts);
+    }
+
+    /// <summary>The projects whose configuration a settings file gives: an appsettings*.json's, the project whose folder holds
+    /// it; a secrets.json under the user secrets' folder, those whose UserSecretsId names its folder.</summary>
+    public IReadOnlyList<ConfigurationProject> ConfiguredBy(string path)
+    {
+        if (ConfigurationFiles.IsSettings(path))
+        {
+            return ProjectOf(path) is { } project && PathNames.Same(Path.GetDirectoryName(project.Path)!, Path.GetDirectoryName(path)!) ? [ConfigurationOf(project)] : [];
+        }
+        if (ConfigurationFiles.SecretsIdOf(path) is not { } id)
+        {
+            return [];
+        }
+        string secrets = PathNames.Canonical(UserSecrets.FileOf(id)!);
+        return [.. Projects.Select(ConfigurationOf).Where(c => c.SecretsIn(ConfigurationFiles.Disk) is { } own && PathNames.Same(own, secrets))];
+    }
 
     /// <summary>The name of the project a file belongs to, as Find and Problems group by it; outside them all, Rider's
     /// Miscellaneous Files.</summary>
@@ -177,6 +248,14 @@ public sealed class ProjectSession : IAsyncDisposable
 
     public RunConfigurations Configurations { get; }
 
+    public AspireController Aspire { get; }
+
+    /// <summary>The folder's AppHosts, and what each C# file is to them.</summary>
+    public AspireFiles AspireFiles { get; }
+
+    /// <summary>Done once the folder's single-file AppHosts have been read from its first walk.</summary>
+    public Task AspireFilesRead => Folder is null ? Task.CompletedTask : AspireFiles.Read;
+
     /// <summary>The folder's builds, rebuilds and cleans, in the window's Build console.</summary>
     public ProcessRunner Builder { get; }
 
@@ -189,8 +268,60 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The program Run last started in a tab of the Terminal window, until a run in the Run console comes after it.</summary>
     public TerminalRun? InTerminal { get; set; }
 
+    /// <summary>The container configuration Run brought up, its log followed by <see cref="Runner"/>, until Stop takes it
+    /// down (or the next run comes); its containers are the folder's (<see cref="Containers"/>) until then.</summary>
+    public Containers.ContainerRun? ContainerRun { get; set; }
+
+    /// <summary>The starts of runs of services under way (Run's, Debug's or Profile's of a container configuration or an Aspire
+    /// AppHost), each from its first moment until it is up or has given up: a start of what one starts ends it first, and the
+    /// folder's end ends them all, as Stop does.</summary>
+    public List<Run.StartUnderWay> Starting { get; } = [];
+
+    /// <summary>Stop of a container run (the one under way, or <paramref name="which"/>, one a start made): its log no longer
+    /// followed, and its containers taken down (the .NET services alone when backing services are kept, which then go with
+    /// the folder); done once the engine has answered. A run another has replaced is only taken down, its own containers
+    /// alone, the one under way left as it is.</summary>
+    public Task StopContainersAsync(Containers.ContainerRun? which = null)
+    {
+        UiThread.Check();
+        if ((which ?? ContainerRun) is not { } run)
+        {
+            return Task.CompletedTask;
+        }
+        if (run != ContainerRun)
+        {
+            return run.StopAsync(run.IsStopped ? null : run.EndSessionsAsync(Debug));
+        }
+        Runner.Stop();
+        // The services debugged end first, and the one profiled ends its recording: a container taken from under its debugger
+        // would end the adapter as a failure, and from under the profiler's tools the trace without its rundown.
+        Task stopped = run.StopAsync(run.IsStopped ? null : run.EndSessionsAsync(Debug));
+        if (!run.Plan.KeepBacking || run.Plan.Backing.Count == 0)
+        {
+            Containers.EndedProject(run.Plan.Compose);
+        }
+        return stopped;
+    }
+
     /// <summary>The run being profiled, or null.</summary>
     public ProfilingSession? Profiling { get; set; }
+
+    /// <summary>The program Profile started, from its hand-over until its end has landed in the Run console, its snapshot
+    /// taken or not: Kill, Stop and the folder's end end it.</summary>
+    public ProfiledProgram? Profiled
+    {
+        get => profiled;
+        set
+        {
+            profiled = value;
+            ProfiledChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private ProfiledProgram? profiled;
+
+    /// <summary>Profile's program was handed over or has ended: the toolbar's Stop follows.</summary>
+    public event EventHandler? ProfiledChanged;
 
     /// <summary>Ends the Profile still starting (its program running, not yet at the profiler, so not yet <see cref="Profiling"/>),
     /// with the folder as Kill ends it; null when none is.</summary>
@@ -202,23 +333,41 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The folder's debugger, its breakpoints with it.</summary>
     public DebugController Debug { get; }
 
-    /// <summary>The Avalonia or WPF app the debugger launched last, which the Live Visual Tree inspects; null after any other
-    /// program. It ends with its debugging, and with the folder.</summary>
-    public LiveApp? LiveApp { get; private set; }
+    /// <summary>The Avalonia or WPF app of the Debug tab chosen, which the Live Visual Tree, binding values and agents' app
+    /// tools inspect; null while the chosen tab's program is another, or no tab is. Each tab holds its own app
+    /// (<see cref="ToolWindows.DebugTab.App"/>), ended with its debugging, so several debugged at once each keep theirs.</summary>
+    public LiveApp? LiveApp => Aspire.SelectedService is not null ? Aspire.SelectedInspection : Debug.Chosen?.App;
+
+    /// <summary>The chosen Debug tab's app as <see cref="LiveAppChanged"/> last told it.</summary>
+    private LiveApp? liveAppTold;
 
     /// <summary>Another app is being inspected, or none.</summary>
     public event EventHandler? LiveAppChanged;
 
-    /// <summary>A plan as Debug launches it: an Avalonia or WPF app's carries the inspector the Live Visual Tree talks to (its
-    /// startup hook, and a socket of the app's own), any other's is the plan itself.</summary>
-    public LaunchPlan Inspected(LaunchPlan plan)
+    /// <summary>A plan as Debug launches it, and the app it is: an Avalonia or WPF app's carries the inspector the Live Visual
+    /// Tree talks to (its startup hook, and a socket of the app's own), which its Debug tab holds; any other's is the plan
+    /// itself, with no app.</summary>
+    public (LaunchPlan Plan, LiveApp? App) Inspected(LaunchPlan plan)
     {
         UiThread.Check();
-        LiveApp?.Dispose();
-        LiveApp = LiveTree.LiveApp.For(plan, Overlays);
-        LiveAppChanged?.Invoke(this, EventArgs.Empty);
+        LiveApp? app = LiveTree.LiveApp.For(plan, Overlays);
+        return (app?.Plan ?? plan, app);
+    }
+
+    /// <summary>A Debug tab came, went or was chosen: the chosen tab's app may be another, and the apps whose failed bindings
+    /// Problems lists others.</summary>
+    private void OnDebugTabsChanged()
+    {
+        if (IsEnded)
+        {
+            return;
+        }
+        if (LiveApp != liveAppTold)
+        {
+            liveAppTold = LiveApp;
+            LiveAppChanged?.Invoke(this, EventArgs.Empty);
+        }
         InspectedChanged?.Invoke(this, EventArgs.Empty);
-        return LiveApp?.Plan ?? plan;
     }
 
     /// <summary>The Avalonia or WPF app Run started last, inspected for its failed bindings and agents' tools (the Live Visual
@@ -261,15 +410,31 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>Run, Debug or Profile launched another app, inspected or not.</summary>
     public event EventHandler? InspectedChanged;
 
-    /// <summary>The bindings that failed in the apps Run and Debug launched last, each once with its count: those of an app
-    /// that ended stay until the next of its kind launches.</summary>
+    /// <summary>The bindings that failed in the app Run launched last and those of the Debug tabs, each once with its count:
+    /// those of an app that ended stay until the next Run, or while its tab is there.</summary>
     public IEnumerable<(LiveApp App, BindingFailure Failure)> FailedBindings =>
-        new[] { RunApp, LiveApp }.OfType<LiveApp>().SelectMany(app => app.Bindings.Select(failure => (app, failure)));
+        InspectedApps.SelectMany(app => app.Bindings.Select(failure => (app, failure)));
+
+    /// <summary>The app Run launched last and each Debug tab's, with an inspector in them, whose failed bindings Problems lists.</summary>
+    public IEnumerable<LiveApp> InspectedApps => new[] { RunApp }.Concat(Debug.Apps.Select(a => a.App))
+        .Concat(Aspire.Apps.SelectMany(app => app.Services.Select(service => service.Inspection))).OfType<LiveApp>().Distinct();
 
     /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
     public VcsController Vcs { get; } = new();
 
     public BookmarkStore Bookmarks { get; } = new();
+
+    /// <summary>What the folder had the container engine start, and the labels it goes on with: ended with the folder.</summary>
+    public Containers.FolderContainers Containers { get; }
+
+    /// <summary>What the folder's .http requests may take from the person's computer to a host, as they answered.</summary>
+    public Endpoints.EndpointGrants EndpointGrants { get; } = new();
+
+    /// <summary>The routes the folder's web projects declare in their code, as the language server's extension last read them.</summary>
+    public Endpoints.RouteCatalog Routes { get; } = new();
+
+    /// <summary>The profile each project last published with, which Publish Again publishes it with.</summary>
+    public PublishMemory Publishing { get; } = new();
 
     /// <summary>The language server on the folder's projects, or null for a folder with none (or no folder).</summary>
     public CSharpService? CSharp { get; private set; }
@@ -379,6 +544,7 @@ public sealed class ProjectSession : IAsyncDisposable
         bool tests = !before.Projects.Where(p => p.IsTestProject).Select(p => p.Path).SequenceEqual(Workspace.Projects.Where(p => p.IsTestProject).Select(p => p.Path));
         bool packages = before.Projects.Zip(Workspace.Projects).Any(p => changed.Contains(p.First.Path) && !p.First.Packages.SequenceEqual(p.Second.Packages));
         ProjectsEvaluated?.Invoke(this, new EvaluatedProjects([.. Workspace.Projects.Where(p => changed.Contains(p.Path))], tests, packages));
+        Web?.Checks.CodeChanged();
         MSBuild.ProjectsEvaluated();
         TimeSolutionView();
     }
@@ -394,7 +560,7 @@ public sealed class ProjectSession : IAsyncDisposable
     }
 
     /// <summary>Whether the session has been left, or its window closed.</summary>
-    public bool IsEnded => ending is not null;
+    public bool IsEnded => closing || ending is not null;
 
     /// <summary>The folder's documents from now on: what the store kept of the folder's own (its breakpoints, bookmarks,
     /// configurations, Find in Files' scope, unloaded projects, folds and recent files) taken first, so restoring them writes
@@ -404,6 +570,8 @@ public sealed class ProjectSession : IAsyncDisposable
         UiThread.Check();
         Debug.Breakpoints.Restore(kept.Breakpoints.Value);
         Bookmarks.Restore(kept.Bookmarks.Value);
+        EndpointGrants.Keep(kept.Endpoints);
+        Publishing.Keep(kept.Publish);
         FindScope = kept.Find.Value;
         WorkspaceState workspace = kept.Workspace.Value;
         foreach (string project in workspace.UnloadedProjects)
@@ -453,15 +621,27 @@ public sealed class ProjectSession : IAsyncDisposable
         Vcs.Detach(document);
     }
 
-    /// <summary>A file or folder moved: its bookmarks and breakpoints, Git, the recent files, the places and Local History
-    /// follow it, and the language server knows an open file at its new path.</summary>
+    /// <summary>A file or folder moved: its bookmarks and breakpoints, Git, the recent files, the places, Local History and
+    /// the solution or project opened by name follow it, and the language server knows an open file at its new path.</summary>
     public void Moved(FileMove move)
+    {
+        if (NamedSolution is { } named)
+        {
+            NamedSolution = PathNames.Moved(named, move.From, move.To);
+        }
+        Vcs.Moved(move.From, move.To);
+        LocalHistory?.Moved(move.From, move.To);
+        Followed(move);
+    }
+
+    /// <summary>A folder another program moved, which open files followed: its bookmarks and breakpoints, the recent
+    /// files and the places follow it too, and the language servers know the open files at their new paths. Git and
+    /// Local History read that move from the disk themselves.</summary>
+    public void Followed(FileMove move)
     {
         Bookmarks.Move(move.From, move.To);
         Debug.Breakpoints.Move(move.From, move.To);
-        Vcs.Moved(move.From, move.To);
         Navigation.Move(move.From, move.To);
-        LocalHistory?.Moved(move.From, move.To);
         for (int i = 0; i < recent.Count; i++)
         {
             recent[i] = PathNames.Moved(recent[i], move.From, move.To);
@@ -574,12 +754,12 @@ public sealed class ProjectSession : IAsyncDisposable
     }
 
     /// <summary>The language server on the workspace, in place of the one before, the files open its too; none for a
-    /// folder with neither a solution nor a project.</summary>
+    /// folder with neither a solution nor a project, nor in a window a test made without one.</summary>
     private void StartCSharp()
     {
         _ = CSharp?.DisposeAsync();
         CSharp = null;
-        if (!IsEnded && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
+        if (!IsEnded && setup.StartsLanguageServer && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
         {
             CSharp = new CSharpService(setup.WarmServer)
             {
@@ -588,8 +768,25 @@ public sealed class ProjectSession : IAsyncDisposable
                 Feed = DesignTimeBuilds.Feed,
                 // Razor's HTML is the HTML server's to answer.
                 HtmlServer = Web is { } web ? web.HtmlAsync : null,
+                AspireRoleOf = AspireFiles.RoleOf,
+                AspireAppHostOf = path => AspireFiles.AppHostOf(path) is { } host
+                    ? new AspireAppHostSettings(host, Projects.FirstOrDefault(p => PathNames.Same(p.Path, host))?.Property(Passenger.Host.CarriedProperties.UserSecretsId))
+                    : null,
+                ComposeGaps = () => Web?.Checks.Gaps ?? [],
+                ConfigurationOf = ConfigurationOf,
+                Texts = () => ConfigurationFiles.Reader(setup.Editors.Documents),
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
+            CSharpService started = CSharp;
+            bool loaded = false;
+            started.StateChanged += (_, _) =>
+            {
+                // Loaded, the projects' code can be read for what their compose files' services need.
+                if (started.IsReady != loaded && (loaded = started.IsReady) && CSharp == started)
+                {
+                    Web?.Checks.CodeChanged();
+                }
+            };
             CSharp.Start(opening);
             foreach (OpenDocument open in setup.Editors.Documents)
             {
@@ -612,7 +809,8 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             return ending;
         }
-        List<(string What, Task Ending)> parts = [.. with, ("the debugger", Debug.LeaveAsync())];
+        Task debuggers = Debug.LeaveAsync();
+        List<(string What, Task Ending)> parts = [.. with, ("the debuggers", debuggers)];
         // Their ends are posted to the window's thread, which carries on while it waits.
         if (Builder.IsRunning)
         {
@@ -626,7 +824,11 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             parts.Add(("the program in the terminal", inTerminal.Ended));
         }
-        Task ended = Within(MainWindow.EndLimit, Folder, End(parts));
+        if (Profiled is { } program)
+        {
+            parts.Add(("the profiled program", program.Landed));
+        }
+        Task ended = Within(MainWindow.EndLimit, Folder, End(parts, debuggers));
         ending = LetGoOnceEnded();
         return ending;
 
@@ -647,17 +849,19 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             return ending;
         }
-        ending = Within(MainWindow.EndLimit, Folder, End([.. with, ("the debugger", Debug.CloseAsync())]));
+        Task debuggers = Debug.CloseAsync();
+        ending = Within(MainWindow.EndLimit, Folder, End([.. with, ("the debuggers", debuggers)], debuggers));
         LetGo();
         return ending;
     }
 
     public ValueTask DisposeAsync() => new(CloseAsync());
 
-    /// <summary>What ends at once (the store's documents, the watcher, Local History, programs, builds, the profiled run, a
-    /// test run), and what is asked to end: the test runner and the language server, with the parts given.</summary>
-    private List<(string What, Task Ending)> End(List<(string What, Task Ending)> parts)
+    /// <summary>What ends at once (the store's documents, the watcher, Local History, programs, builds, the profiled run and
+    /// its port, a test run), and what is asked to end: the test runner and the language server, with the parts given.</summary>
+    private List<(string What, Task Ending)> End(List<(string What, Task Ending)> parts, Task debuggers)
     {
+        closing = true;
         State = null;
         Models.Close();
         DesignTimeBuilds.Close();
@@ -665,12 +869,28 @@ public sealed class ProjectSession : IAsyncDisposable
         LocalHistory?.Release();
         // A build stopped now says so with nothing of this folder's in Problems, which another folder's take next.
         Problems.Clear();
+        parts.Add(("the Aspire applications", Aspire.DisposeAsync().AsTask()));
         Runner.Stop();
         Builder.Stop();
         InTerminal?.Stop();
         ProfileStarting?.Cancel();
-        Profiling?.Kill();
-        LiveApp?.Dispose();
+        foreach (Run.StartUnderWay start in Starting.ToList())
+        {
+            start.Work.Cancel();
+        }
+        // Profile's program ends with the others, its snapshot taken or not, and each run, read by no one now, leaves no
+        // port listening.
+        Profiled?.Run.Kill();
+        foreach (ProfilingSession run in new[] { Profiling, Profiled?.Run }.OfType<ProfilingSession>().Distinct())
+        {
+            // Not held, and off the window's thread, whose loop may stop first: nothing it does is drawn.
+            parts.Add(("the profiler", Task.Run(() => run.LetGoAsync().AsTask())));
+        }
+        Profiling = null;
+        foreach ((_, LiveApp app) in Debug.Apps)
+        {
+            app.Dispose();
+        }
         RunApp?.Dispose();
         ProfiledApp?.Dispose();
         Tests.Stop();
@@ -679,6 +899,10 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharp = null;
         parts.Add(("the web language servers", Web?.DisposeAsync().AsTask() ?? Task.CompletedTask));
         Web = null;
+        // No child holds a container: what the folder started is ended by asking the engine, once Compose bringing a run up
+        // (ended here) has stopped making them.
+        Task abandoned = ContainerRun?.Abandon() ?? Task.CompletedTask;
+        parts.Add(("the folder's containers", Containers.EndAsync(Task.WhenAll(debuggers, abandoned))));
         Xaml.Dispose();
         MSBuild.Dispose();
         return parts;

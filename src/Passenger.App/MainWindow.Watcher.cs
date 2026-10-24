@@ -39,8 +39,9 @@ public partial class MainWindow
             return;
         }
         session.LocalHistory?.Noticed(changes.Paths);
-        if (changes.Projects)
+        if (changes.Projects || changes.Lost)
         {
+            // Lost changes may have been a project's or the solution's: read again, which shows the whole Explorer anew.
             ReloadSolution();
         }
         else if (changes.Structure)
@@ -49,6 +50,13 @@ public partial class MainWindow
             // A file come or gone may be one a project's wildcards take in: its folder's stamp says which.
             session.Evaluate();
         }
+        else if (changes.Restored.Count > 0)
+        {
+            // A restore writes the props and targets a project imports beside its assets.
+            session.Evaluate();
+        }
+        // A C# file written may have gained or lost the AppHost SDK's line; one come or gone is the index's walk's to find.
+        session.AspireFiles.Changed(changes.Paths, every: changes.Lost);
         if (changes.Structure)
         {
             session.Index.Build(folder);
@@ -61,26 +69,67 @@ public partial class MainWindow
                 document.ReadConventions();
             }
         }
+        // A settings file, a launch profile or a compose file written: the reads of keys nothing gave are looked at again.
+        if (changes.Lost || changes.Paths.Any(p => ConfigurationFiles.IsSettings(p) || Path.GetFileName(p).Equals("launchSettings.json", StringComparison.OrdinalIgnoreCase)
+            || Web.ComposeDeclarations.IsCompose(p)))
+        {
+            session.CSharp?.ConfigurationChanged();
+        }
         PackageSourcesChanged(changes);
         session.Tests.Finder.FolderChanged(changes);
         session.Xaml.FilesChanged(changes.Paths.Concat(changes.Restored));
-        session.MSBuild.FilesChanged(changes.Paths);
+        session.MSBuild.FilesChanged(changes.Paths, changes.Structure);
         session.Web?.FilesChanged(changes.Paths);
-        foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
-        {
-            if (File.Exists(document.Path))
-            {
-                FollowDisk(document);
-            }
-            else
-            {
-                AwaitReturn(document);
-            }
-        }
+        EndpointFilesChanged(changes);
+        FollowOpenFiles(changes.Paths, every: changes.Lost);
         if (changes.Paths.Count > 0 || changes.Git)
         {
             _ = session.Vcs.RefreshAsync();
         }
+    }
+
+    /// <summary>The open files a change names, or names a folder over (a folder moved, renamed or trashed is seen as that
+    /// folder alone): each still there takes the disk's text; one gone follows its folder where a folder just come holds
+    /// it as it was (a move, whose halves may be seen apart), else is awaited as a file deleted. With <paramref name="every"/>
+    /// (changes lost) every open file is looked at so.</summary>
+    private void FollowOpenFiles(IReadOnlySet<string> paths, bool every)
+    {
+        List<string>? come = null;
+        foreach (OpenDocument document in Editors.Documents.ToList())
+        {
+            // A folder still there is named too as a file in it changes (Windows'), which leaves its other files as they are.
+            bool named = every || paths.Contains(document.Path) || paths.Any(p => PathNames.IsUnder(document.Path, p) && !Directory.Exists(p));
+            if (File.Exists(document.Path))
+            {
+                if (named)
+                {
+                    FollowDisk(document);
+                }
+                continue;
+            }
+            come ??= [.. paths.Where(Directory.Exists)];
+            if (!FollowMove(document, come) && named)
+            {
+                AwaitReturn(document);
+            }
+        }
+    }
+
+    /// <summary>Whether an open file gone with a folder followed it to a folder just come, with the other open files in it:
+    /// the highest folder over it that is gone is the one moved, and the new one holds the file as last loaded or saved.</summary>
+    private bool FollowMove(OpenDocument document, IReadOnlyList<string> come)
+    {
+        string? moved = null;
+        for (string? folder = Path.GetDirectoryName(document.Path); folder is not null && !Directory.Exists(folder); folder = Path.GetDirectoryName(folder))
+        {
+            moved = folder;
+        }
+        if (moved is null || come.FirstOrDefault(to => !PathNames.IsUnder(moved, to) && document.IsSavedAt(PathNames.Moved(document.Path, moved, to))) is not { } place)
+        {
+            return false;
+        }
+        Editors.FollowMove(moved, place);
+        return true;
     }
 
     /// <summary>Files a program the IDE ran has just written (dotnet add package's project file): those open take the
@@ -99,7 +148,7 @@ public partial class MainWindow
     /// afterwards which of the two to keep, losing the other. Null once saved, else why not, and nothing is to be written.</summary>
     private string? SaveBeforeWriting(IEnumerable<string> paths)
     {
-        HashSet<string> writing = new(paths.Select(PathNames.Canonical), StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> writing = new(paths.Select(PathNames.Canonical), PathNames.Comparer);
         foreach (OpenDocument document in Editors.Documents.Where(d => d.IsModified && writing.Contains(d.Path)).ToList())
         {
             if (!Editors.Save(document))
@@ -113,6 +162,18 @@ public partial class MainWindow
     /// <summary>An open file changed on disk: its text is taken, or with unsaved edits the person is asked which to keep.</summary>
     private void FollowDisk(OpenDocument document)
     {
+        if (document.IsWorkbook)
+        {
+            // Its tab holds no text to take: its table reads the file again.
+            Tables.TableFile.For(document)?.Follow();
+            return;
+        }
+        if (document.Asset is not null)
+        {
+            // Nor does a preview's: its picture or face is decoded again off the UI thread, the one shown kept until then.
+            document.Reload();
+            return;
+        }
         if (!document.ChangedOnDisk())
         {
             return;

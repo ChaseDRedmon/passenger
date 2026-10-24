@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.App.Packages;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App.ToolWindows;
@@ -62,6 +63,9 @@ public sealed class NuGetView : DockPanel
     private bool choosing;
     private bool busy;
 
+    /// <summary>The package change under way, as its work says it.</summary>
+    private string? changing;
+
     /// <param name="projects">The workspace's projects, whose packages the window lists and changes.</param>
     /// <param name="root">The folder NuGet's configuration is read from: the solution's, else the one open.</param>
     public NuGetView(Func<IReadOnlyList<ProjectModel>> projects, Func<string?> root)
@@ -81,10 +85,8 @@ public sealed class NuGetView : DockPanel
         prerelease = new CheckBox { Content = "Prerelease", VerticalAlignment = VerticalAlignment.Center };
         status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), TextTrimming = TextTrimming.CharacterEllipsis };
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
-        Button refresh = new() { Classes = { "tool" }, Content = new PathIcon(), Margin = new Thickness(6, 0, 0, 0) };
-        ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
-        ToolTip.SetTip(refresh, "Refresh");
-        refresh.Click += (_, _) => _ = ReloadSourcesAsync();
+        Button refresh = ToolButtons.Of("Icon.Rerun", "Refresh", () => _ = ReloadSourcesAsync());
+        refresh.Margin = new Thickness(6, 0, 0, 0);
         typing = new Debounce(Pause, RefreshAsync);
         search.TextChanged += (_, _) => typing.Restart();
         prerelease.IsCheckedChanged += (_, _) => _ = RefreshAsync();
@@ -155,8 +157,9 @@ public sealed class NuGetView : DockPanel
         };
     }
 
-    /// <summary>Raised after a project's packages changed, so the solution is read again.</summary>
-    public event EventHandler? Changed;
+    /// <summary>Raised after a package change, done or not, with the files it changed, so the editors take them from disk and
+    /// the solution is read again before whoever asked for it is answered.</summary>
+    public event EventHandler<PackageOutcome>? Changed;
 
     /// <summary>Saves the open files before a change rewrites a project or a nuget.config, so what is rewritten holds their
     /// edits.</summary>
@@ -302,7 +305,7 @@ public sealed class NuGetView : DockPanel
             }
             else
             {
-                status.Text = $"Searching {feed.Name}...";
+                status.Text = $"Searching {feed.Name}…";
                 FeedSearch answer = feed is FeedSet set
                     ? await set.SearchEachAsync(Query.Trim(), prerelease.IsChecked == true, cancel.Token)
                     : new FeedSearch(await feed.SearchAsync(Query.Trim(), prerelease.IsChecked == true, cancel.Token), [], 0);
@@ -421,10 +424,10 @@ public sealed class NuGetView : DockPanel
     /// feeds that did not say.</summary>
     private static string Counted(IReadOnlyList<PackageRow> found, VulnerabilityData? known)
     {
-        string text = found.Count == 1 ? "1 package installed" : $"{found.Count} packages installed";
+        string text = $"{Plural.Of(found.Count, "package")} installed";
         if (found.Count(r => r.IsVulnerable) is int vulnerable and > 0)
         {
-            text += vulnerable == 1 ? ", 1 vulnerable" : $", {vulnerable} vulnerable";
+            text += $", {vulnerable} vulnerable";
         }
         if (known?.Failed is { Count: > 0 } failed)
         {
@@ -448,17 +451,43 @@ public sealed class NuGetView : DockPanel
         }
         if (answer.Unmapped > 0)
         {
-            said.Add(answer.Unmapped == 1 ? "1 package left out by package source mapping" : $"{answer.Unmapped} packages left out by package source mapping");
+            said.Add($"{Plural.Of(answer.Unmapped, "package")} left out by package source mapping");
         }
         return string.Join("; ", said);
     }
 
     /// <summary>Adds the chosen package to a project at the chosen version, or moves it there.</summary>
-    public Task<bool> InstallAsync(ProjectModel project) =>
-        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version ? ChangeAsync(() => manager.InstallAsync(project.Path, row.Id, version)) : Task.FromResult(false);
+    public async Task<bool> InstallAsync(ProjectModel project) =>
+        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version
+        && (BeforeInstall is null || await BeforeInstall(project, row.Id, version))
+        && (await InstallAsync(project, row.Id, version)).Done;
 
-    public Task<bool> RemoveAsync(ProjectModel project) =>
-        Selected is { } row ? ChangeAsync(() => manager.RemoveAsync(project.Path, row.Id)) : Task.FromResult(false);
+    /// <summary>Asked before the window's own Install or Update of a package in a project, with its id and version: whether
+    /// it goes on as asked (false when the person cancelled, or had it made another way, as EF Core's packages moved with
+    /// their provider).</summary>
+    public Func<ProjectModel, string, string, Task<bool>>? BeforeInstall { get; set; }
+
+    public async Task<bool> RemoveAsync(ProjectModel project) => Selected is { } row && (await RemoveAsync(project, row.Id)).Done;
+
+    /// <summary>Adds a package to a project at a version, or moves it to that version, as the window's Install and Update do
+    /// and an agent's nuget_install: the one way a package goes in (<see cref="ChangeAsync"/>).</summary>
+    public Task<PackageOutcome> InstallAsync(ProjectModel project, string id, string version) =>
+        ChangeAsync($"Installing {id} {version} in {project.Name}…", project, () => manager.InstallAsync(project.Path, id, version));
+
+    /// <summary>Moves several packages of a project to their versions together, as one change of the window's one way
+    /// (<see cref="ChangeAsync"/>): EF Core's packages with the provider that supports them.</summary>
+    public Task<PackageOutcome> InstallSetAsync(ProjectModel project, IReadOnlyList<(string Id, string Version)> packages) =>
+        ChangeAsync($"Moving {string.Join(", ", packages.Select(p => $"{p.Id} to {p.Version}"))} in {project.Name}…", project, () => manager.InstallSetAsync(project.Path, packages));
+
+    /// <summary>Takes a package out of a project, as the window's Remove does and an agent's nuget_remove.</summary>
+    public Task<PackageOutcome> RemoveAsync(ProjectModel project, string id) =>
+        ChangeAsync($"Removing {id} from {project.Name}…", project, () => manager.RemoveAsync(project.Path, id));
+
+    /// <summary>What a package change's work is held under in the window, which no action names.</summary>
+    public const string Changing = "nuget.change";
+
+    /// <summary>The window's work under way, which a package change shows itself in until it ends.</summary>
+    public ActionWork? Work { get; set; }
 
     /// <summary>Ends a package change still under way, as the IDE closes.</summary>
     public void StopChange() => manager.Stop();
@@ -517,29 +546,73 @@ public sealed class NuGetView : DockPanel
         return tab;
     }
 
-    private async Task<bool> ChangeAsync(Func<Task<bool>> change)
+    /// <summary>A package change, whoever asks for it: one at a time (another asked meanwhile is refused, saying what is under
+    /// way), the open files saved first, shown as the window's work under <see cref="Changing"/>, which <see cref="StopChange"/>
+    /// ends; then the files it changed told (<see cref="Changed"/>) and the list read again.</summary>
+    private async Task<PackageOutcome> ChangeAsync(string stage, ProjectModel project, Func<Task<bool>> change)
     {
         if (busy)
         {
-            return false;
+            return new PackageOutcome(false, [], []) { Refused = Work?.Of(Changing) is { } under ? ActionWork.Busy(under) : $"Already under way: {changing}" };
         }
         busy = true;
-        status.Text = "Working...";
+        changing = stage;
+        status.Text = "Working…";
         using IDisposable held = BackgroundWork.Scope();
+        using Working? working = Work?.Begin(Changing, stage, stoppable: false);
+        List<string> said = [];
+        EventHandler<string> heard = (_, line) => said.Add(line);
+        manager.Line += heard;
+        IReadOnlyList<string> files = PackageFiles(project);
+        byte[]?[] before;
         bool done;
         try
         {
             SaveFirst?.Invoke();
+            // Read once the open files are saved: what the save wrote is not the change's.
+            before = [.. files.Select(Bytes)];
             done = await change();
         }
         finally
         {
             busy = false;
+            changing = null;
+            manager.Line -= heard;
         }
+        PackageOutcome outcome = new(done, [.. files.Where((file, i) => !(Bytes(file) ?? []).AsSpan().SequenceEqual(before[i] ?? []))], said);
         status.Text = done ? "Done" : "The change failed; the log says why";
-        Changed?.Invoke(this, EventArgs.Empty);
+        Changed?.Invoke(this, outcome);
         await RefreshAsync();
-        return done;
+        return outcome;
+
+        static byte[]? Bytes(string file)
+        {
+            try
+            {
+                return File.Exists(file) ? File.ReadAllBytes(file) : null;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+    }
+
+    /// <summary>The files a package change can write: the project, and under central package management the nearest
+    /// Directory.Packages.props, where dotnet add package puts the version.</summary>
+    private static IReadOnlyList<string> PackageFiles(ProjectModel project)
+    {
+        List<string> files = [project.Path];
+        for (string? at = Path.GetDirectoryName(project.Path); at is not null; at = Path.GetDirectoryName(at))
+        {
+            string props = Path.Combine(at, "Directory.Packages.props");
+            if (File.Exists(props))
+            {
+                files.Add(PathNames.Canonical(props));
+                break;
+            }
+        }
+        return files;
     }
 
     /// <summary>The packages the projects reference: by package, each project's version (null where only central
@@ -658,8 +731,13 @@ public sealed class NuGetView : DockPanel
         });
         foreach (Advisory advisory in advisories)
         {
-            Button link = new() { Classes = { "link" }, Content = advisory.Url.OriginalString, VerticalAlignment = VerticalAlignment.Center };
-            link.Click += (_, _) => LinkClicked?.Invoke(this, advisory.Url);
+            Control link = new TextBlock { Text = advisory.Address, VerticalAlignment = VerticalAlignment.Center };
+            if (advisory.Link is { } page)
+            {
+                Button button = new() { Classes = { "link" }, Content = advisory.Address, VerticalAlignment = VerticalAlignment.Center };
+                button.Click += (_, _) => LinkClicked?.Invoke(this, page);
+                link = button;
+            }
             said.Children.Add(new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -702,7 +780,7 @@ public sealed class NuGetView : DockPanel
             Panel mark = new() { Width = 14, VerticalAlignment = VerticalAlignment.Center };
             if (affecting.Count > 0)
             {
-                mark.Children.Add(Warning($"Known security vulnerability in {at}: {affecting[0].Severity} severity ({affecting[0].Url.OriginalString})"));
+                mark.Children.Add(Warning($"Known security vulnerability in {at}: {affecting[0].Severity} severity ({affecting[0].Address})"));
             }
             StackPanel line = new()
             {
@@ -751,7 +829,7 @@ public sealed class NuGetView : DockPanel
         }
         if (row.IsVulnerable)
         {
-            PathIcon warning = Warning($"Known security vulnerability: {row.Advisories[0].Severity} severity ({row.Advisories[0].Url.OriginalString})");
+            PathIcon warning = Warning($"Known security vulnerability: {row.Advisories[0].Severity} severity ({row.Advisories[0].Address})");
             warning.Margin = new Thickness(6, 0, 0, 0);
             line.Children.Add(warning);
         }

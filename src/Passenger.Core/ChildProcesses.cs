@@ -36,6 +36,16 @@ public static class ChildProcesses
     /// <summary>The children the IDE is ending, by process id, until their end is told.</summary>
     private static readonly ConcurrentDictionary<int, byte> EndedHere = new();
 
+    /// <summary>How long a child that has exited has its output read before what it left holding it is ended: what is in the
+    /// pipes is read at once, and only a job it left running, which holds them for as long as it lives, takes longer.</summary>
+    private static readonly TimeSpan OutputGrace = TimeSpan.FromSeconds(2);
+
+    /// <summary>How a command line is said wherever Passenger logs or shows one (a child's start and end in the log, what
+    /// this throws, a console's echo of what it runs): <see cref="Display"/> until the IDE gives its mask for secrets as it
+    /// starts, so no program's secret reaches the log or a window, whoever started it. The command line itself, which any
+    /// process on the machine can read, is the starter's to keep secrets off (an environment variable is the child's alone).</summary>
+    public static Func<ProcessStartInfo, string> Shown { get; set; } = Display;
+
     /// <summary>A program and its arguments, to run in a folder (the IDE's own when none is given).</summary>
     public static ProcessStartInfo Command(string program, IEnumerable<string> arguments, string? folder = null)
     {
@@ -79,6 +89,14 @@ public static class ChildProcesses
     /// run needs another); what <see cref="Process.Start()"/> throws when it cannot start, this throws.</summary>
     public static Process Start(ProcessStartInfo start) => Start(start, answers: null);
 
+    /// <summary><see cref="Start(ProcessStartInfo)"/> off the caller's thread when it has a context of its own (the UI
+    /// thread's), on it otherwise: the fork costs a large process tens of milliseconds (#233), which the window would wait
+    /// out. The child is started, its id known, once the task is done; what the start throws, the task throws.</summary>
+    public static Task<Process> StartAsync(ProcessStartInfo start) => StartOffAsync(start, answers: null);
+
+    private static async Task<Process> StartOffAsync(ProcessStartInfo start, IReadOnlyCollection<int>? answers) =>
+        SynchronizationContext.Current is null ? Start(start, answers) : await Task.Run(() => Start(start, answers));
+
     /// <summary><see cref="Start(ProcessStartInfo)"/>, with the exit codes that are the child's answer, not its failure.</summary>
     private static Process Start(ProcessStartInfo start, IReadOnlyCollection<int>? answers)
     {
@@ -99,7 +117,7 @@ public static class ChildProcesses
         string command = Display(start);
         long began = Stopwatch.GetTimestamp();
         Process process = new() { StartInfo = start, EnableRaisingEvents = true };
-        process.Exited += (_, _) => OnExited(process, command, began, answers);
+        process.Exited += (_, _) => OnExited(process, start, command, began, answers);
         try
         {
             process.Start();
@@ -112,7 +130,7 @@ public static class ChildProcesses
         Lifeline.Adopt(process);
         // An id the IDE ended before, whose end went untold (its process disposed first), is another child's now.
         EndedHere.TryRemove(process.Id, out _);
-        Started?.Invoke(null, new ChildStart(process.Id, command, start.WorkingDirectory));
+        Started?.Invoke(null, new ChildStart(process.Id, command, start.WorkingDirectory) { Start = start });
         if (closeInput)
         {
             process.StandardInput.Close();
@@ -129,12 +147,12 @@ public static class ChildProcesses
     {
         Lifeline.AdoptGroup(processId);
         EndedHere.TryRemove(processId, out _);
-        Started?.Invoke(null, new ChildStart(processId, Display(start), start.WorkingDirectory));
+        Started?.Invoke(null, new ChildStart(processId, Display(start), start.WorkingDirectory) { Start = start });
     }
 
     /// <summary>An adopted program's end, for the IDE's log as a child's is told.</summary>
     public static void Exited(int processId, ProcessStartInfo start, int exitCode, TimeSpan time) =>
-        Ended?.Invoke(null, new ChildEnd(processId, Display(start), exitCode, time, EndedHere.TryRemove(processId, out _)));
+        Ended?.Invoke(null, new ChildEnd(processId, Display(start), exitCode, time, EndedHere.TryRemove(processId, out _)) { Start = start });
 
     /// <summary>Says the IDE is ending a child by asking it to (an exit request, its input closed): however it then exits,
     /// a pipe it still writes to closed under it included (SIGPIPE's 141), it did not fail. <see cref="Kill"/> says it too.</summary>
@@ -153,20 +171,29 @@ public static class ChildProcesses
         }
     }
 
+    /// <summary>A one-line shell command run on macOS and Linux once the IDE's process has ended, however it ended, after
+    /// its children are: for what lives outside any child (the containers an engine runs), which only a command ends. It
+    /// takes the place of the one given before; on Windows nothing runs it, and the next start ends what is left.</summary>
+    public static void AtIdeEnd(string command) => Lifeline.AtEnd(command);
+
     /// <summary>Runs a child to its end, its output and errors read whole, <paramref name="input"/> written to it first; an
     /// exit code among <paramref name="answers"/> is its answer (git's "no such file"), not a failure to log. Canceled, or
-    /// still running after <paramref name="limit"/>, it is killed with all it started, and the task is canceled or fails
-    /// with a <see cref="TimeoutException"/>.</summary>
+    /// still running after <paramref name="limit"/>, it is killed with all it started, its output let go, and the task is
+    /// canceled or fails with a <see cref="TimeoutException"/>. Once it has exited it is done, whatever the limit: a job it
+    /// left holding its output open (a hook's <c>daemon &amp;</c>) is given <see cref="OutputGrace"/>, then ended with its group.</summary>
     public static async Task<ChildResult> RunAsync(ProcessStartInfo start, string? input = null, TimeSpan? limit = null, CancellationToken cancel = default,
-        IReadOnlyCollection<int>? answers = null)
+        IReadOnlyCollection<int>? answers = null, int? mostOutput = null)
     {
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        using Process process = Start(start, answers);
-        Task<string> output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
-        Task<string> errors = process.StandardError.ReadToEndAsync(CancellationToken.None);
+        // Started off a caller's own thread (the window's), as every git command the window asks for is.
+        using Process process = await StartOffAsync(start, answers);
         using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        // Output past what the caller reads of it ends the child as an overrun limit does, said by the size it went past.
+        Reading output = new(process.StandardOutput, mostOutput, ending);
+        Reading errors = new(process.StandardError, mostOutput, ending);
+        Task read = Task.WhenAll(output.Done, errors.Done);
         if (limit is { } most)
         {
             ending.CancelAfter(most);
@@ -186,6 +213,7 @@ public static class ChildProcesses
                 // It ended, or closed its input, before reading all it was given: its exit says how it went.
             }
             await process.WaitForExitAsync(ending.Token);
+            await OutputEndsAsync(process, read, cancel);
         }
         catch (OperationCanceledException) when (ending.IsCancellationRequested)
         {
@@ -199,12 +227,113 @@ public static class ChildProcesses
                 KillTree(process);
             }
             // Disposing the process ends the reads; their ends are nobody's to report.
-            Forget(output);
-            Forget(errors);
+            Forget(read);
             cancel.ThrowIfCancellationRequested();
-            throw new TimeoutException($"{Display(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
+            if (output.Overran || errors.Overran)
+            {
+                throw new ChildOutputException($"{Shown(start)} wrote more than the {mostOutput} characters read of it, and was ended");
+            }
+            throw new TimeoutException($"{Shown(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
         }
-        return new ChildResult(process.ExitCode, await output, await errors);
+        // What a job out of the kill's reach still holds (on Windows, which ends a tree, one whose parent has gone) is let go.
+        Forget(read);
+        if (output.Overran || errors.Overran)
+        {
+            throw new ChildOutputException($"{Shown(start)} wrote more than the {mostOutput} characters read of it");
+        }
+        return new ChildResult(process.ExitCode, output.Text, errors.Text);
+    }
+
+    /// <summary>Whether the reads of a child that has exited end: what is in the pipes is read at once, and a job it left
+    /// holding them open (a hook's <c>daemon &amp;</c>, a program's helper) is given <see cref="OutputGrace"/>, then ended with
+    /// the child's group, and given it again. False when something out of the kill's reach (on Windows, which ends a tree,
+    /// one whose parent has gone) still holds them: its output is the caller's to let go.</summary>
+    public static async Task<bool> OutputEndsAsync(Process process, Task read, CancellationToken cancel = default)
+    {
+        if (await EndsWithin(read, cancel))
+        {
+            return true;
+        }
+        KillTree(process);
+        return await EndsWithin(read, cancel);
+    }
+
+    /// <summary>Whether a child's reads, the child exited, end within <see cref="OutputGrace"/>.</summary>
+    private static async Task<bool> EndsWithin(Task read, CancellationToken cancel)
+    {
+        try
+        {
+            await read.WaitAsync(OutputGrace, cancel);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>A child's output or errors read to their end, and what was read so far once the reading is let go; with a
+    /// most, the reading stops past it, <see cref="Overran"/>, and the run is ended through <paramref name="ending"/>.</summary>
+    private sealed class Reading
+    {
+        private readonly StringBuilder text = new();
+        private readonly int? most;
+        private readonly CancellationTokenSource? ending;
+
+        public Reading(StreamReader reader, int? most = null, CancellationTokenSource? ending = null)
+        {
+            this.most = most;
+            this.ending = ending;
+            Done = ReadAsync(reader);
+        }
+
+        public Task Done { get; }
+
+        /// <summary>The child wrote more than the most read of it.</summary>
+        public bool Overran { get; private set; }
+
+        public string Text
+        {
+            get
+            {
+                lock (text)
+                {
+                    return text.ToString();
+                }
+            }
+        }
+
+        private async Task ReadAsync(StreamReader reader)
+        {
+            char[] buffer = new char[16 * 1024];
+            int read;
+            while ((read = await reader.ReadAsync(buffer.AsMemory(), CancellationToken.None)) > 0)
+            {
+                lock (text)
+                {
+                    if (text.Length + read > most)
+                    {
+                        Overran = true;
+                    }
+                    else
+                    {
+                        text.Append(buffer, 0, read);
+                    }
+                }
+                if (Overran)
+                {
+                    try
+                    {
+                        ending?.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // The run was over already.
+                    }
+                    return;
+                }
+            }
+        }
     }
 
     /// <summary>Ends a child and everything it started, now, passing over what has ended: its tree on Windows, but for a
@@ -245,39 +374,9 @@ public static class ChildProcesses
         }
     }
 
-    /// <summary>What an action that reveals a file calls the program it opens: the Finder, Explorer, or on Linux whichever
-    /// file manager the desktop has, which IntelliJ names "File Manager" when it cannot tell.</summary>
-    public static string FileManager { get; } = OperatingSystem.IsMacOS() ? "Finder" : OperatingSystem.IsWindows() ? "Explorer" : "File Manager";
-
-    /// <summary>Shows a file or folder in the Finder (in Explorer on Windows, its folder in the file manager elsewhere).
-    /// The file manager is the person's, not a child: it is never ended with the IDE.</summary>
-    public static void Reveal(string path)
-    {
-        try
-        {
-            if (OperatingSystem.IsMacOS())
-            {
-                Process.Start("open", ["-R", path])?.Dispose();
-            }
-            else if (OperatingSystem.IsWindows())
-            {
-                // Explorer reads its command line its own way: the comma and the quotes are its.
-                Process.Start("explorer.exe", $"/select,\"{path}\"")?.Dispose();
-            }
-            else
-            {
-                Process.Start("xdg-open", [Path.GetDirectoryName(path) ?? path])?.Dispose();
-            }
-        }
-        catch (Win32Exception)
-        {
-            // No file manager to ask.
-        }
-    }
-
-    /// <summary>Starts a program of the person's own that outlives whatever started it, as the file manager <see
-    /// cref="Reveal"/> opens does: the person's Passenger, which an agent's <c>--mcp-attach</c> starts on its folder when
-    /// none is running and the build is in no app bundle LaunchServices could open. A session of its own (never on the
+    /// <summary>Starts a program of the person's own that outlives whatever started it: the person's Passenger, which an
+    /// agent's <c>--mcp-attach</c> starts on its folder when none is running and the build is in no app bundle
+    /// LaunchServices could open. A session of its own (never on the
     /// watchdog's list, nor in a job), its input and output none of the starter's, which is an agent's protocol.</summary>
     public static void StartApart(ProcessStartInfo start)
     {
@@ -290,30 +389,35 @@ public static class ChildProcesses
             start.StartDetached = true;
         }
         using Process process = Process.Start(start) ?? throw new InvalidOperationException($"{start.FileName} did not start");
-        Started?.Invoke(null, new ChildStart(process.Id, Display(start), start.WorkingDirectory));
+        Started?.Invoke(null, new ChildStart(process.Id, Display(start), start.WorkingDirectory) { Start = start });
         // What it writes is nobody's: its pipes closed here, its writes to them fail, which .NET's console passes over.
         process.StandardInput.Close();
         process.StandardOutput.Close();
         process.StandardError.Close();
     }
 
-    /// <summary>A command as a person would type it, each word quoted that needs to be: for the Run window and the log.</summary>
-    public static string Display(ProcessStartInfo start) =>
+    /// <summary>A command as a person would type it, each word quoted that needs to be, as it runs (the log and a console
+    /// say it through <see cref="Shown"/>).</summary>
+    public static string Display(ProcessStartInfo start) => Display(start, word => word);
+
+    /// <summary><see cref="Display(ProcessStartInfo)"/> with each word (the program, each argument, or the arguments whole when
+    /// given as one string) as <paramref name="said"/> says it, before it is quoted.</summary>
+    public static string Display(ProcessStartInfo start, Func<string, string> said) =>
         string.Join(' ', start.ArgumentList.Count > 0 || start.Arguments.Length == 0
-            ? [Quote(start.FileName), .. start.ArgumentList.Select(Quote)]
-            : [Quote(start.FileName), start.Arguments]);
+            ? [Quote(said(start.FileName)), .. start.ArgumentList.Select(a => Quote(said(a)))]
+            : [Quote(said(start.FileName)), said(start.Arguments)]);
 
     private static string Quote(string word) =>
         word.Length > 0 && !word.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'') ? word : $"\"{word.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
-    private static void OnExited(Process process, string command, long began, IReadOnlyCollection<int>? answers)
+    private static void OnExited(Process process, ProcessStartInfo start, string command, long began, IReadOnlyCollection<int>? answers)
     {
         try
         {
             int id = process.Id;
             bool ended = EndedHere.TryRemove(id, out _);
             int code = process.ExitCode;
-            Ended?.Invoke(null, new ChildEnd(id, command, code, Stopwatch.GetElapsedTime(began), ended, answers?.Contains(code) == true));
+            Ended?.Invoke(null, new ChildEnd(id, command, code, Stopwatch.GetElapsedTime(began), ended, answers?.Contains(code) == true) { Start = start });
         }
         catch (InvalidOperationException)
         {
@@ -325,26 +429,38 @@ public static class ChildProcesses
         _ = task.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 }
 
+/// <summary>A child that wrote more than its caller reads of it (a container's tools' answer), ended for it.</summary>
+public sealed class ChildOutputException(string message) : IOException(message);
+
 /// <summary>How a child run to its end went: its exit code, and what it wrote to its output and errors.</summary>
 public sealed record ChildResult(int ExitCode, string Output, string Error)
 {
     public bool Succeeded => ExitCode == 0;
 }
 
-/// <summary>A child's start: its process, the command, and the folder it runs in (the IDE's own when empty).</summary>
+/// <summary>A child's start: its process, the command as it ran, and the folder it runs in (the IDE's own when empty); its
+/// line for the log says the command as <see cref="ChildProcesses.Shown"/> does, its secrets masked.</summary>
 public sealed record ChildStart(int ProcessId, string Command, string Folder)
 {
-    public override string ToString() => $"Process {ProcessId} started{(Folder.Length > 0 ? $" in {Folder}" : string.Empty)}: {Command}";
+    /// <summary>What it was started from, for the words of its command line.</summary>
+    public ProcessStartInfo? Start { get; init; }
+
+    public override string ToString() =>
+        $"Process {ProcessId} started{(Folder.Length > 0 ? $" in {Folder}" : string.Empty)}: {(Start is { } start ? ChildProcesses.Shown(start) : Command)}";
 }
 
-/// <summary>A child's end: its process, the command, its exit code and how long it ran, whether the IDE ended it, and
-/// whether its exit code is its answer to the question it was asked.</summary>
+/// <summary>A child's end: its process, the command as it ran, its exit code and how long it ran, whether the IDE ended it,
+/// and whether its exit code is its answer to the question it was asked; its line for the log says the command as
+/// <see cref="ChildProcesses.Shown"/> does, its secrets masked.</summary>
 public sealed record ChildEnd(int ProcessId, string Command, int ExitCode, TimeSpan Time, bool EndedByIde = false, bool Answered = false)
 {
+    /// <summary>What it was started from, for the words of its command line.</summary>
+    public ProcessStartInfo? Start { get; init; }
+
     /// <summary>Worth a line in the IDE's log: the IDE did not end it, and it failed or ran long enough for a person to wait
     /// on it. Git's quick reads run on every save, and would bury the rest.</summary>
     public bool Notable => !EndedByIde && ((ExitCode != 0 && !Answered) || Time >= TimeSpan.FromSeconds(1));
 
     public override string ToString() =>
-        $"Process {ProcessId} {(EndedByIde ? "ended by the IDE, " : string.Empty)}exited with code {ExitCode} after {Time.TotalSeconds:0.00} s: {Command}";
+        $"Process {ProcessId} {(EndedByIde ? "ended by the IDE, " : string.Empty)}exited with code {ExitCode} after {Time.TotalSeconds:0.00} s: {(Start is { } start ? ChildProcesses.Shown(start) : Command)}";
 }

@@ -1,0 +1,11 @@
+<Project>
+  <!-- What every service of the greenhouse shares. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Company>Greenhouse</Company>
+    <Version>1.4.0</Version>
+  </PropertyGroup>
+</Project>

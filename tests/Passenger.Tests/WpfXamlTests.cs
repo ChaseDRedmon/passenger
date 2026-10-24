@@ -31,7 +31,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<StackPanel Margin=\"12\">");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"12\">");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "WPF's controls offered after a tag's '<'");
@@ -72,11 +72,11 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Assert.EndsWith("<Button HorizontalAlignment=\"Center|\"", CaretLine(editor), StringComparison.Ordinal);
 
         // A trigger's property may be one WPF sets itself; its setter's, one of the element its TargetName names.
-        PlaceAfter(editor, "<Trigger Property=\"");
+        Ui.PlaceAfter(editor, "<Trigger Property=\"");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("IsMouseOver"), "the read-only dependency properties a trigger watches");
         Ui.Press(window, "ESCAPE");
-        PlaceAfter(editor, "<Setter TargetName=\"Chrome\" Property=\"");
+        Ui.PlaceAfter(editor, "<Setter TargetName=\"Chrome\" Property=\"");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("CornerRadius"), "the Border's properties, as TargetName names it");
         window.Close();
@@ -87,7 +87,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"");
+        Ui.PlaceAfter(editor, "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"");
         window.KeyTextInput(" Foreground=");
         window.KeyTextInput("\"");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Red"), "the named colours a brush takes");
@@ -107,7 +107,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Assert.Contains("Gap", window.Assist.CompletionLabels);
         Ui.Press(window, "ESCAPE");
 
-        PlaceAfter(editor, "Text=\"{Binding ");
+        Ui.PlaceAfter(editor, "Text=\"{Binding ");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Greeting"), "the view model's properties, d:DataContext's type's");
         Assert.Contains("Owner", window.Assist.CompletionLabels);
@@ -123,19 +123,19 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Ui.Press(window, "ESCAPE");
 
         // An item template's bindings resolve against the items its list's ItemsSource binds.
-        PlaceAfter(editor, "<TextBlock Text=\"{Binding Name}\" />");
+        Ui.PlaceAfter(editor, "<TextBlock Text=\"{Binding Name}\" />");
         window.KeyTextInput("<TextBlock Text=\"{Binding ");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Age"), "Person's properties, People's items'");
         Ui.Press(window, "ESCAPE");
 
-        PlaceAfter(editor, "Background=\"{x:Static SystemColors.");
+        Ui.PlaceAfter(editor, "Background=\"{x:Static SystemColors.");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("ControlBrushKey"), "SystemColors' static members");
         Ui.Press(window, "ESCAPE");
 
         // A namespace as WPF writes it: the project's own by its name, another assembly's with that assembly's.
-        PlaceAfter(editor, "xmlns:vm=\"clr-namespace:Gallery.ViewModels\"");
+        Ui.PlaceAfter(editor, "xmlns:vm=\"clr-namespace:Gallery.ViewModels\"");
         window.KeyTextInput(" xmlns:items=");
         window.KeyTextInput("\"");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Count > 0, "the namespaces offered in a new xmlns's quotes");
@@ -143,13 +143,13 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("http://schemas.microsoft.com/winfx/2006/xaml/presentation"), "the URIs WPF's assemblies map");
         Ui.Press(window, "ESCAPE");
         Replace(editor, "xmlns:items=\"http", "xmlns:items=\"");
-        PlaceAfter(editor, "xmlns:items=\"");
+        Ui.PlaceAfter(editor, "xmlns:items=\"");
         window.KeyTextInput("clr-namespace:Gal");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("clr-namespace:Gallery.ViewModels"), "the project's own namespace");
         Ui.Press(window, "ESCAPE");
         Replace(editor, "xmlns:items=\"clr-namespace:Gal", "xmlns:items=\"");
-        PlaceAfter(editor, "xmlns:items=\"");
+        Ui.PlaceAfter(editor, "xmlns:items=\"");
         window.KeyTextInput("clr-namespace:System.Collections.Obj");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Any(l => l.StartsWith("clr-namespace:System.Collections.ObjectModel;assembly=", StringComparison.Ordinal)),
@@ -159,12 +159,12 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         // A grid column's binding, and a hierarchical template's own, resolve against the items.
         window.OpenFile(app.PathOf("ListsWindow.xaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "<DataGridTextColumn Header=\"Name\" Binding=\"{Binding ");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "<DataGridTextColumn Header=\"Name\" Binding=\"{Binding ");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Age"), "Person's properties, the grid's items'");
         Assert.DoesNotContain("Roots", window.Assist.CompletionLabels);
         Ui.Press(window, "ESCAPE");
-        PlaceAfter(window.EditorArea.CodeEditor, "<HierarchicalDataTemplate ItemsSource=\"{Binding ");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "<HierarchicalDataTemplate ItemsSource=\"{Binding ");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Children"), "Node's properties, the tree's items'");
         window.Close();
@@ -190,7 +190,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
 
         window.OpenFile(app.PathOf("MainWindow.xaml"));
         Ui.Settle();
-        PlaceAfter(editor, "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"");
+        Ui.PlaceAfter(editor, "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"");
         window.KeyTextInput(" Foregrund=\"Red\" HorizontalAlignment=\"Centre\"");
         Replace(editor, "{Binding Greeting}", "{Binding Greting}");
         Replace(editor, "{StaticResource Accent}", "{StaticResource Acent}");
@@ -213,8 +213,10 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         // A button given two children: MarkupCompile's to find, not the live check's.
-        PlaceAfter(editor, "<StackPanel Margin=\"12\">");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"12\">");
         window.KeyTextInput("\n<Button><TextBlock Text=\"a\" /><TextBlock Text=\"b\" /></Button>");
+        // MarkupCompile counts lines as an XML reader does, ending one at this lone '\r' the editor reads inside its line.
+        Replace(editor, "Title=\"Gallery\" Height", "Title=\"Gallery\"\r Height");
         Ui.Settle();
         Assert.Empty(document.Markers);
         Ui.Run(window, AppActions.Build);
@@ -223,6 +225,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Assert.Equal(PathNames.Canonical(app.PathOf("MainWindow.xaml")), built.Path);
         int line = editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("<Button><TextBlock", StringComparison.Ordinal));
         Assert.Equal(line, built.Position.Line);
+        Assert.Contains($"Line {line + 1} Position ", built.Message, StringComparison.Ordinal);
         Marker marked = Assert.Single(document.Markers);
         Assert.Equal(MarkerKind.Error, marked.Kind);
         Assert.Equal("MC3089: The object 'Button' already has a child and cannot add 'TextBlock'. 'Button' can accept only one child.", marked.Message);
@@ -240,7 +243,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "x:Class=\"Gallery.Main");
+        Ui.PlaceAfter(editor, "x:Class=\"Gallery.Main");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainWindow.xaml.cs", window.EditorArea.Active?.Name);
@@ -249,7 +252,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         window.OpenFile(app.PathOf("MainWindow.xaml"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<StackPanel Margin=\"12\">\n        <TextBl");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"12\">\n        <TextBl");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card describing the tag's type");
         Assert.Equal("class System.Windows.Controls.TextBlock : FrameworkElement", window.Assist.HoverText);
@@ -264,7 +267,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
 
         window.OpenFile(app.PathOf("MainWindow.xaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "{StaticResource Acc");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "{StaticResource Acc");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Brushes.xaml", window.EditorArea.Active?.Name);
@@ -272,7 +275,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
 
         window.OpenFile(app.PathOf("MainWindow.xaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "{Binding Gree");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "{Binding Gree");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainViewModel.cs", window.EditorArea.Active?.Name);
@@ -280,7 +283,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
 
         window.OpenFile(app.PathOf("MainWindow.xaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "Click=\"OnG");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "Click=\"OnG");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainWindow.xaml.cs", window.EditorArea.Active?.Name);
@@ -294,7 +297,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml.cs"));
         CodeEditor code = window.EditorArea.CodeEditor;
         // The field MarkupCompile makes for the button leads to its name in the XAML.
-        PlaceAfter(code, "        G");
+        Ui.PlaceAfter(code, "        G");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainWindow.xaml", window.EditorArea.Active?.Name);
@@ -337,7 +340,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Ui.Settle();
         OpenDocument user = window.EditorArea.Active!;
         Assert.True(user.Markers.Count == 0, $"Its use, with a UserControl's Margin, is marked: {string.Join("; ", user.Markers.Select(m => m.Message))}");
-        PlaceAfter(window.EditorArea.CodeEditor, "<local:Bad");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "<local:Bad");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Badge.xaml", window.EditorArea.Active?.Name);
@@ -400,8 +403,6 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
             : base("wpf-")
         {
             TestFolders.Prepare(() => Make(Folder), Folder);
-            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
-            Directory.CreateDirectory(PathOf("bin"));
             Prepare();
         }
 
@@ -409,6 +410,8 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         internal static void Make(string folder)
         {
             WpfApp.Create(folder, "Gallery");
+            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+            Directory.CreateDirectory(Path.Combine(folder, "bin"));
             Directory.CreateDirectory(Path.Combine(folder, "ViewModels"));
             Directory.CreateDirectory(Path.Combine(folder, "Themes"));
             File.WriteAllText(Path.Combine(folder, "ViewModels/MainViewModel.cs"), MainViewModel);

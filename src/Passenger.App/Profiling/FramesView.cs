@@ -8,6 +8,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Passenger.Profiler;
+using Passenger.Core;
 
 namespace Passenger.App.Profiling;
 
@@ -92,7 +93,7 @@ public sealed class FramesView : DockPanel
         table.DoubleTapped += (_, _) => Open();
         table.KeyDown += OnKey;
         shown = new DockPanel { Children = { band, heading, table } };
-        placeholder = Muted("No Avalonia frames in this run. Passenger records an Avalonia app's frames, layout and rendering when it profiles one it launched (Profile) or one Run or Debug started (Attach Profiler).");
+        placeholder = Muted(NoFrames);
         placeholder.HorizontalAlignment = HorizontalAlignment.Center;
         placeholder.VerticalAlignment = VerticalAlignment.Center;
         placeholder.TextWrapping = TextWrapping.Wrap;
@@ -102,8 +103,20 @@ public sealed class FramesView : DockPanel
         Show([], 0);
     }
 
+    /// <summary>What the page says of a run with no frames.</summary>
+    private const string NoFrames = "No Avalonia frames in this run. Passenger records an Avalonia app's frames, layout and rendering when it profiles one it launched (Profile) or one Run or Debug started (Attach Profiler).";
+
+    /// <summary>Why a run in a container has no frames: Passenger puts its inspector, which records them, in no container.</summary>
+    public static string InContainer(string where) =>
+        $"No Avalonia frames in this run: it ran in container {where}, where Passenger puts no inspector to record an Avalonia app's frames, layout and rendering. "
+        + "Profile the app on this machine (Profile, or Attach Profiler to what Run or Debug started there) for them.";
+
     /// <summary>A control's row opened (double-click, Enter): its XAML, or its place in the Live Visual Tree.</summary>
     public event EventHandler<UiControl>? ControlOpened;
+
+    /// <summary>The line (from one) a control's row names: where its element is in the editor's lines (the app's count is
+    /// its XAML compiler's).</summary>
+    public Func<UiControl, int>? LineOf { get; set; }
 
     /// <summary>The frames shown, in order: the run's, or the stretch's chosen on the timeline.</summary>
     public IReadOnlyList<UiFrame> Frames => frames;
@@ -121,15 +134,19 @@ public sealed class FramesView : DockPanel
     /// <summary>The line over the table: the frames', or the chosen frame's, times.</summary>
     public string Summary => summary.Text ?? string.Empty;
 
+    /// <summary>What the page says in place of frames, while it shows none.</summary>
+    public string? Placeholder => placeholder.IsVisible ? placeholder.Text : null;
+
     /// <summary>Shows some frames, all of them chosen; <paramref name="start"/> is where the run began, which their times are
-    /// said from.</summary>
-    public void Show(IReadOnlyList<UiFrame> shownFrames, double start)
+    /// said from. With none, the page says why: <paramref name="why"/>, else how a run gets them.</summary>
+    public void Show(IReadOnlyList<UiFrame> shownFrames, double start, string? why = null)
     {
         frames = shownFrames;
         origin = start;
         chart.Frames = shownFrames;
         shown.IsVisible = shownFrames.Count > 0;
         placeholder.IsVisible = shownFrames.Count == 0;
+        placeholder.Text = why ?? NoFrames;
         Fill();
     }
 
@@ -182,17 +199,16 @@ public sealed class FramesView : DockPanel
             return string.Empty;
         }
         UiFrame longest = all.MaxBy(f => f.DurationMs)!;
-        return $"{all.Count:N0} frame{(all.Count == 1 ? "" : "s")}: {UiFrames.MedianMs(all):0.0} ms on the UI thread at the median, {longest.DurationMs:0.0} ms at the longest (frame {longest.Number}); "
+        return $"{all.Count:N0} {Plural.Noun(all.Count, "frame")}: {UiFrames.MedianMs(all):0.0} ms on the UI thread at the median, {longest.DurationMs:0.0} ms at the longest (frame {longest.Number}); "
             + $"measuring {all.Sum(f => f.MeasureMs):N1} ms, arranging {all.Sum(f => f.ArrangeMs):N1} ms, rendering {all.Sum(f => f.RecordMs):N1} ms, the compositor {all.Sum(f => f.CompositeMs):N1} ms in all. "
             + "Choose a frame for its own.";
     }
 
     private string Said(UiFrame frame) =>
-        $"Frame {frame.Number} at {frame.StartMs - origin:N0} ms: {frame.DurationMs:0.0} ms on the UI thread, {Count(frame.MeasurePasses, "measure pass", "measure passes")} and "
-        + $"{Count(frame.ArrangePasses, "arrange pass", "arrange passes")} ({Count(frame.Measures, "measure", "measures")}, {Count(frame.Arranges, "arrange", "arranges")}); "
+        $"Frame {frame.Number} at {frame.StartMs - origin:N0} ms: {frame.DurationMs:0.0} ms on the UI thread, {frame.MeasurePasses:N0} {Plural.Noun(frame.MeasurePasses, "measure pass", "measure passes")} and "
+        + $"{frame.ArrangePasses:N0} {Plural.Noun(frame.ArrangePasses, "arrange pass", "arrange passes")} ({frame.Measures:N0} {Plural.Noun(frame.Measures, "measure")}, {frame.Arranges:N0} {Plural.Noun(frame.Arranges, "arrange")}); "
         + $"measuring {frame.MeasureMs:0.0} ms, arranging {frame.ArrangeMs:0.0} ms, rendering {frame.RecordMs:0.0} ms, then the compositor {frame.CompositeMs:0.0} ms.";
 
-    private static string Count(int count, string one, string many) => $"{count:N0} {(count == 1 ? one : many)}";
 
     private void Open()
     {
@@ -235,7 +251,7 @@ public sealed class FramesView : DockPanel
         PathIcon chevron = new() { Classes = { "chevron" }, IsVisible = row.Cost.Controls.Count > 0, RenderTransformOrigin = RelativePoint.Center };
         chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
         chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
-        row.PropertyChanged += (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
+        row.FollowWhileShown(chevron, (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0));
         Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
         toggle.PointerPressed += (_, e) =>
         {
@@ -250,8 +266,8 @@ public sealed class FramesView : DockPanel
             FontWeight = row.Depth == 0 ? FontWeight.SemiBold : FontWeight.Normal,
         };
         ToolTip.SetTip(name, row.Cost.Control is { } control
-            ? $"{control.FullType}{(control.File is { } file ? $"\n{Path.GetFileName(file)}:{control.Line}" : string.Empty)}"
-            : $"{row.Cost.Controls.Count} control{(row.Cost.Controls.Count == 1 ? "" : "s")}");
+            ? $"{control.FullType}{(control.File is { } file ? $"\n{Path.GetFileName(file)}:{LineOf?.Invoke(control) ?? control.Line}" : string.Empty)}"
+            : Plural.Of(row.Cost.Controls.Count, "control"));
         LayoutWork work = row.Cost.Work;
         return Row(columns,
         [
@@ -295,8 +311,8 @@ public sealed class FramesView : DockPanel
 
     private static TextBlock Muted(string text)
     {
-        TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
-        block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
+        TextBlock block = MutedText.Of(text);
+        block.FontSize = 12;
         return block;
     }
 }

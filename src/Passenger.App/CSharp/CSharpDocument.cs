@@ -1,4 +1,4 @@
-using Avalonia.Threading;
+using System.Diagnostics;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
@@ -12,7 +12,7 @@ namespace Passenger.App.CSharp;
 /// Between pulls the markers move with the text, so a squiggle never drifts off its code. Of one server only: a server
 /// started again gives every open file a new one (<see cref="CSharpService"/>), so what asks the server for a file asks
 /// <see cref="CSharpService.For"/> each time rather than keep this or its <see cref="Lsp"/>.</summary>
-public sealed class CSharpDocument : IServerDocument, IDisposable
+public sealed partial class CSharpDocument : IServerDocument, IDisposable
 {
     /// <summary>How long typing must pause before diagnostics are asked for again.</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(600);
@@ -23,21 +23,14 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
 
     private readonly CSharpService service;
     private readonly OpenDocument document;
+    private readonly ServerDiagnostics diagnostics;
     private SemanticHighlighter? semantic;
-    private CancellationTokenSource? pulling;
-
-    /// <summary>The diagnostics as pulled, and each one's range in the text as it stands, moved with every edit since.</summary>
-    private Diagnostic[] pulled = [];
-    private TextRange[] ranges = [];
-
-    /// <summary>The diagnostics placed on the server's lines of the text as it stands, made when first asked for after an
-    /// edit, so a key costs a move of each range rather than a line table of the file.</summary>
-    private IReadOnlyList<Diagnostic>? placed = [];
 
     internal CSharpDocument(CSharpService service, OpenDocument document)
     {
         this.service = service;
         this.document = document;
+        diagnostics = new ServerDiagnostics(document, holdsChecks: false);
         document.Text.Changed += OnChanged;
         document.Saved += OnSaved;
     }
@@ -45,7 +38,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
     public LspDocument? Lsp { get; private set; }
 
     /// <summary>The diagnostics last pulled, moved with the text since, so their lines are the text's as it is now.</summary>
-    public IReadOnlyList<Diagnostic> Diagnostics => placed ??= Placed();
+    public IReadOnlyList<Diagnostic> Diagnostics => diagnostics.Placed;
 
     internal void Connect(RoslynSession session)
     {
@@ -63,6 +56,11 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
     /// asked again as the server's projects load: the one chosen stays while the server still has it.</summary>
     public IReadOnlyList<ProjectContext> Contexts { get; private set; } = [];
 
+    /// <summary>When the server first said it has the file in a project of the folder's, not Miscellaneous Files: when
+    /// it was asked (what it answers asked after that is that project's), when it said so (Stopwatch timestamps) and
+    /// the project; null before. A start's timing reads it.</summary>
+    internal (long Asked, long At, string Project)? Placed { get; private set; }
+
     /// <summary>Asks the server which projects it has the file in, as background work a screenshot waits for.</summary>
     public void FindContexts()
     {
@@ -77,6 +75,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
     {
         try
         {
+            long asked = Stopwatch.GetTimestamp();
             ProjectContextList? found = await lsp.ProjectContextsAsync();
             if (Lsp != lsp || found is null)
             {
@@ -96,6 +95,10 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
             }
             document.ProjectContexts = [.. Contexts.Select(c => c.Label)];
             document.ProjectContext = (kept ?? found.Default)?.Label;
+            if (Placed is null && Contexts.Count > 0)
+            {
+                Placed = (asked, Stopwatch.GetTimestamp(), document.ProjectContext ?? Contexts[0].Label);
+            }
         }
         catch (LanguageServerFailed)
         {
@@ -158,11 +161,13 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
         semantic.Refreshed();
     }
 
+    /// <summary>The server's word that diagnostics may have changed: asked for again, Aspire's warnings with them, whose
+    /// answer replaces those shown.</summary>
     public void RefreshDiagnostics() => Pull(TimeSpan.Zero);
 
     public void Dispose()
     {
-        pulling?.Cancel();
+        diagnostics.Stop();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
         if (semantic is not null)
@@ -178,36 +183,23 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (ranges.Length > 0)
-        {
-            // Moved with the text, as the markers are, so a fix asked for at the caret finds the problems on its line.
-            for (int i = 0; i < ranges.Length; i++)
-            {
-                ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
-            }
-            placed = null;
-        }
+        // Moved with the text, as the markers are, so a fix asked for at the caret finds the problems on its line.
+        diagnostics.Move(e);
         if (document.Markers.Count > 0)
         {
             document.Markers = document.Markers
                 .Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })
                 .ToList();
         }
-        if (document.InlayHints.Count > 0)
-        {
-            // Text typed at a parameter's name goes after it, into the argument; at a type, before it, onto the name.
-            document.InlayHints = [.. document.InlayHints.Select(h => h with
-            {
-                Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: h.Kind == InlayHintKind.Type),
-            })];
-        }
         Pull(Settle);
+        // An AppHost's edit may change what its services are told is missing; any other file's changes only its own.
+        if (AspireRole == Aspire.AspireRole.AppHost)
+        {
+            service.AspireGraphChanged();
+        }
     }
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
-
-    /// <summary>The diagnostics pulled, each on the server's lines where its range has been carried to.</summary>
-    private Diagnostic[] Placed() => DiagnosticMarks.Placed(document.Text.Snapshot, pulled, ranges);
 
     private void Pull(TimeSpan delay)
     {
@@ -215,84 +207,112 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
         {
             return;
         }
-        pulling?.Cancel();
-        CancellationTokenSource cancel = new();
-        pulling = cancel;
-        BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token);
+        diagnostics.Pull(delay, cancel => PullAsync(lsp, cancel));
     }
 
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel)
+    /// <summary>The file's diagnostics, with Aspire's for a service's file (<see cref="AspireDiagnosticsAsync"/>) and an
+    /// AppHost's (<see cref="AspireUnsetParametersAsync"/>), then its
+    /// inlay hints, each for the text as it stands. A later pull (an AppHost's edit, the server's refresh) cancels this one.</summary>
+    private async Task PullAsync(LspDocument lsp, CancellationToken cancel)
     {
-        try
+        if (!await ShowPulledAsync(lsp, cancel))
         {
-            if (delay > TimeSpan.Zero)
-            {
-                await Task.Delay(delay, cancel);
-            }
-            (IReadOnlyList<Diagnostic> found, int version) = await lsp.DiagnosticsAsync(cancel);
-            if (cancel.IsCancellationRequested || version != document.Text.Version)
-            {
-                return;
-            }
-            ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-            pulled = [.. found];
-            ranges = [.. pulled.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
-            placed = found;
-            document.Markers = pulled.Select((d, i) => DiagnosticMarks.Marker(d, ranges[i])).OfType<Marker>().ToList();
-            service.FileProblemsChanged();
-            (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
-            if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
-            {
-                document.InlayHints = Shown(lsp, hints);
-            }
+            return;
         }
-        catch (OperationCanceledException)
+        (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
+        if (cancel.IsCancellationRequested || hinted != document.Text.Version)
         {
-            // Typing went on, or the file was let go.
+            return;
         }
-        catch (LanguageServerFailed)
-        {
-            // The markers stand until the server answers again, or a server started again does.
-        }
-        finally
-        {
-            Dispatcher.UIThread.Post(() => BackgroundWork.End());
-        }
-    }
-
-    /// <summary>The hints Rider would show of those the server gave for the text as it stands: parameter names but those
-    /// that say nothing, and types where Rider puts them (<see cref="TypeHints"/>), each kept with the server's own for
-    /// its hover card.</summary>
-    private IReadOnlyList<InlayHint> Shown(LspDocument lsp, IReadOnlyList<LspInlayHint> hints)
-    {
+        // Placed on the thread pool, in the text and syntax they were asked for: a file of thousands of calls has as many.
+        TextSnapshot text = document.Text.Snapshot;
         ParsedText? syntax = hints.Any(h => h.Kind == 1) ? document.Syntax?.Current : null;
-        List<InlayHint> shown = [];
+        bool razor = lsp.IsRazor;
+        HintList shown = await BackgroundWork.Run(() => Shown(text, syntax, razor, hints), cancel);
+        if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
+        {
+            document.InlayHints = shown;
+        }
+    }
+
+    /// <summary>The server's diagnostics, Aspire's and the open compose files' shown for the text as it stands; false when they
+    /// no longer answer it.</summary>
+    private async Task<bool> ShowPulledAsync(LspDocument lsp, CancellationToken cancel)
+    {
+        if (await diagnostics.PulledAsync(lsp, cancel) is not { } found)
+        {
+            return false;
+        }
+        int version = document.Text.Version;
+        IReadOnlyList<Diagnostic> aspire = await AspireFindingsAsync(lsp, cancel);
+        IReadOnlyList<Diagnostic> compose = await ComposeFindingsAsync(cancel);
+        IReadOnlyList<Diagnostic> configuration = await ConfigurationFindingsAsync([.. aspire, .. compose], cancel);
+        if (cancel.IsCancellationRequested || version != document.Text.Version || Lsp != lsp)
+        {
+            return false;
+        }
+        document.Markers = diagnostics.Take([.. found, .. aspire, .. compose, .. configuration], DiagnosticMarks.Marker);
+        service.FileProblemsChanged(document);
+        return true;
+    }
+
+    /// <summary>Aspire's own diagnostics of the file for the text as it stands: a service's references its AppHost lacks, an
+    /// AppHost's parameters with no value; none for any other file, which asks nothing for them.</summary>
+    internal async Task<IReadOnlyList<Diagnostic>> AspireFindingsAsync(LspDocument lsp, CancellationToken cancel) => AspireRole switch
+    {
+        Aspire.AspireRole.Service => await AspireDiagnosticsAsync(lsp, cancel),
+        Aspire.AspireRole.AppHost => await AspireUnsetParametersAsync(lsp, cancel),
+        _ => [],
+    };
+
+    /// <summary>Passenger's own diagnostics of the file for the text as it stands, as its pull marks them: Aspire's, and its reads
+    /// of configuration keys nothing gives (<see cref="ConfigurationFindingsAsync"/>); an agent's <c>diagnostics</c> lists them.</summary>
+    internal async Task<IReadOnlyList<Diagnostic>> PassengerFindingsAsync(LspDocument lsp, CancellationToken cancel)
+    {
+        IReadOnlyList<Diagnostic> aspire = await AspireFindingsAsync(lsp, cancel);
+        return [.. aspire, .. await ConfigurationFindingsAsync(aspire, cancel)];
+    }
+
+    /// <summary>The file's diagnostics pulled and shown now, Aspire's with them, as a typing pause's pull shows them: for an
+    /// agent's call that reads Passenger's own fixes, which stand on them.</summary>
+    internal async Task PullNowAsync(CancellationToken cancel)
+    {
+        if (Lsp is { } lsp)
+        {
+            await ShowPulledAsync(lsp, cancel);
+        }
+    }
+
+    /// <summary>The hints Rider would show of those the server gave for a text: parameter names but those that say nothing,
+    /// and types where Rider puts them (<see cref="TypeHints"/>, by the text's <paramref name="syntax"/>), each kept with the
+    /// server's own for its hover card. Reads nothing but what it is given, so it runs off the UI thread.</summary>
+    private static HintList Shown(TextSnapshot text, ParsedText? syntax, bool razor, IReadOnlyList<LspInlayHint> hints)
+    {
+        ServerLines lines = ServerLines.Of(text);
+        List<InlayHint> shown = new(hints.Count);
         foreach (LspInlayHint hint in hints)
         {
             string label = hint.Label.Trim();
+            int offset = lines.OffsetOf(hint.Position);
             if (hint.Kind == 1)
             {
-                if (syntax is not null && TypeHints.Place(syntax, lsp.OffsetOf(hint.Position), label) is { } placed)
+                if (syntax is not null && TypeHints.Place(syntax, offset, label) is { } placed)
                 {
                     shown.Add(placed with { Data = hint });
                 }
             }
-            else if (!Generic.Contains(label) && !(lsp.IsRazor && OnDirective(lsp.OffsetOf(hint.Position))))
+            else if (!Generic.Contains(label) && !(razor && OnDirective(text, offset)))
             {
-                shown.Add(new InlayHint(lsp.OffsetOf(hint.Position), label, hint.PaddingLeft, hint.PaddingRight, InlayHintKind.Parameter, hint));
+                shown.Add(new InlayHint(offset, label, hint.PaddingLeft, hint.PaddingRight, InlayHintKind.Parameter, hint));
             }
         }
-        return shown;
+        return HintList.Of(shown);
     }
 
     /// <summary>Whether a place is on a Razor directive's line (<c>@page "/counter"</c>), whose value Razor's generated C#
     /// passes to an attribute: the server names the attribute's parameter there, which Rider never shows.</summary>
-    private bool OnDirective(int offset)
-    {
-        TextSnapshot text = document.Text.Snapshot;
-        return Directive.IsMatch(text.GetLineText(text.GetLineFromOffset(Math.Min(offset, text.Length))));
-    }
+    private static bool OnDirective(TextSnapshot text, int offset) =>
+        Directive.IsMatch(text.GetLineText(text.GetLineFromOffset(Math.Min(offset, text.Length))));
 
     private static readonly System.Text.RegularExpressions.Regex Directive =
         new(@"^\s*@(page|layout|inherits|implements|namespace|attribute|typeparam|rendermode|preservewhitespace|model|inject|section)\b");

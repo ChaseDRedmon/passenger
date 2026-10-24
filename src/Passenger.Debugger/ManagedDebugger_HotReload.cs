@@ -345,9 +345,15 @@ public partial class ManagedDebugger
                 }
                 int remapped = frame.TryRemapFunction((uint)there.Offset);
                 _logger?.Invoke($"Remap of 0x{token:X8} v{from} IL_{remap.OldILOffset:X4} to v{to} IL_{there.Offset:X4}: 0x{remapped:X8}");
+                if (remapped != Cor.S_OK && _restepAfterRemap == remap.Thread.Id)
+                {
+                    // Refused, no FunctionRemapComplete comes: the frame runs on in the old code, where its step goes on.
+                    _restepAfterRemap = null;
+                    SetupStepper(remap.Thread, _lastStep);
+                }
             }
         }
-        catch (COMException error)
+        catch (Exception error) when (error is COMException or InvalidOperationException)
         {
             _logger?.Invoke($"A remap opportunity could not be taken: {error.Message}");
         }

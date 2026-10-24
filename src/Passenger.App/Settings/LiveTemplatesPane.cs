@@ -47,10 +47,10 @@ public sealed class LiveTemplatesPane : DockPanel
         this.templates = [.. templates];
         this.changed = changed;
         Height = 560;
-        NewButton = Tool("Icon.Add", "New Template");
-        CloneButton = Tool("Icon.Copy", "Clone And Edit Template");
-        DeleteButton = Tool("Icon.Minimize", "Delete Template");
-        RestoreButton = Tool("Icon.Rollback", "Restore Default");
+        NewButton = ToolButtons.Of("Icon.Add", "New Template");
+        CloneButton = ToolButtons.Of("Icon.Copy", "Clone And Edit Template");
+        DeleteButton = ToolButtons.Of("Icon.Minimize", "Delete Template");
+        RestoreButton = ToolButtons.Of("Icon.Rollback", "Restore Default");
         NewButton.Click += (_, _) => New();
         CloneButton.Click += (_, _) => Clone();
         DeleteButton.Click += (_, _) => Delete();
@@ -66,7 +66,7 @@ public sealed class LiveTemplatesPane : DockPanel
         ToolTip.SetTip(ReformatBox, "Its lines indented as the code it goes in, a tab in its text the file's indentation; otherwise it goes in as written");
         ReformatBox.IsCheckedChanged += (_, _) => Edit(t => t with { Reformat = ReformatBox.IsChecked == true });
         AvailabilityText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-        AvailabilityButton = new Button { Content = "...", Padding = new Thickness(8, 1), Margin = new Thickness(8, 0, 0, 0) };
+        AvailabilityButton = new Button { Content = "…", Padding = new Thickness(8, 1), Margin = new Thickness(8, 0, 0, 0) };
         ToolTip.SetTip(AvailabilityButton, "Availability configuration");
         AvailabilityButton.Click += (_, _) => _ = ConfigureAvailability();
         GenerationButton = Use("Generation", TemplateUse.Generation);
@@ -191,7 +191,7 @@ public sealed class LiveTemplatesPane : DockPanel
         {
             0 => "nowhere",
             <= 3 => string.Join(", ", names),
-            _ => $"{names[0]}, {names[1]}, and {names.Length - 2} more...",
+            _ => $"{names[0]}, {names[1]}, and {names.Length - 2} more…",
         };
     }
 
@@ -477,13 +477,4 @@ public sealed class LiveTemplatesPane : DockPanel
     }
 
     private static TextBox Field() => new() { Classes = { "search" } };
-
-    private static Button Tool(string icon, string tip)
-    {
-        PathIcon glyph = new();
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-        Button button = new() { Classes = { "tool" }, Content = glyph };
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
 }

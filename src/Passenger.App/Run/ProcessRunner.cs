@@ -19,9 +19,16 @@ public sealed class ProcessRunner : IDisposable
     private readonly bool takesInput;
     private Process? process;
     private bool running;
+    private Task draining = Task.CompletedTask;
+    private Task reading = Task.CompletedTask;
+    private Task? deferredStop;
 
     /// <summary>The wait of a run whose process has yet to start, which Stop ends.</summary>
     private CancellationTokenSource? waiting;
+
+    /// <summary>A start forking off the window's thread (<see cref="StartAsync(ProcessStartInfo, IReadOnlyDictionary{string, string}?)"/>):
+    /// a Stop meanwhile ends the process as it comes.</summary>
+    private bool forking;
     private TaskCompletionSource<int> ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public ProcessRunner(OutputView console, bool takesInput = false)
@@ -47,6 +54,9 @@ public sealed class ProcessRunner : IDisposable
 
     /// <summary>The process ended, with its exit code; UI thread.</summary>
     public event EventHandler<int>? Exited;
+
+    /// <summary>Program output before console formatting, delivered on the UI thread.</summary>
+    public event EventHandler<ProcessOutput>? OutputReceived;
 
     public TextDocument Output => console.Document;
 
@@ -93,13 +103,66 @@ public sealed class ProcessRunner : IDisposable
         return Start(start, environment, after);
     }
 
+    /// <summary><see cref="StartDotnet"/> with no wait, its fork off the window's thread as <see cref="StartAsync(ProcessStartInfo,
+    /// IReadOnlyDictionary{string, string}?)"/>'s is.</summary>
+    public Task<string?> StartDotnetAsync(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        ProcessStartInfo start;
+        try
+        {
+            start = ChildProcesses.DotnetCommand(arguments, folder);
+        }
+        catch (FileNotFoundException missing)
+        {
+            console.Append($"{missing.Message}\n", error: true);
+            return Task.FromResult<string?>(missing.Message);
+        }
+        return StartAsync(start, environment);
+    }
+
     /// <summary>Starts a program; why it could not (a working folder gone, a missing program), or null once it runs.</summary>
     public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null) =>
         Start(ChildProcesses.Command(file, arguments, folder), environment);
 
-    private string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment, Func<CancellationToken, Task>? after = null)
+    public string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment = null, Func<CancellationToken, Task>? after = null)
+    {
+        Prepare(start, environment);
+        if (after is null)
+        {
+            return Launch(start, null);
+        }
+        running = true;
+        _ = LaunchAfterAsync(start, after, ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
+        return null;
+    }
+
+    /// <summary>Starts a program as <see cref="Start(string, IReadOnlyList{string}, string, IReadOnlyDictionary{string, string}?)"/>
+    /// does, its fork off the window's thread, which costs a large process tens of milliseconds (#233): it runs from now as
+    /// its callers see it (<see cref="IsRunning"/>, <see cref="Stop"/>, <see cref="Ended"/>), its id known once the task is
+    /// done; why it could not start, or null.</summary>
+    public Task<string?> StartAsync(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null) =>
+        StartAsync(ChildProcesses.Command(file, arguments, folder), environment);
+
+    /// <inheritdoc cref="StartAsync(string, IReadOnlyList{string}, string, IReadOnlyDictionary{string, string}?)"/>
+    public async Task<string?> StartAsync(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        Prepare(start, environment);
+        running = true;
+        TaskCompletionSource<int> ending = ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if ((Unstarted = await LaunchAsync(start, ending)) is { } refused)
+        {
+            running = false;
+            ending.TrySetResult(-1);
+        }
+        return Unstarted;
+    }
+
+    /// <summary>A start's program made ready to run in this console: its output read, its input the console's when it takes
+    /// one, the environment given put in.</summary>
+    private void Prepare(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment)
     {
         UiThread.Check();
+        ObjectDisposedException.ThrowIf(deferredStop is not null, this);
         if (IsRunning)
         {
             throw new InvalidOperationException("The process is still running.");
@@ -114,13 +177,6 @@ public sealed class ProcessRunner : IDisposable
         {
             start.Environment[key] = value;
         }
-        if (after is null)
-        {
-            return Launch(start, null);
-        }
-        running = true;
-        _ = LaunchAfterAsync(start, after, ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
-        return null;
     }
 
     /// <summary>The process started once its wait is over, unless it was stopped meanwhile.</summary>
@@ -146,7 +202,7 @@ public sealed class ProcessRunner : IDisposable
                 waiting = null;
             }
         }
-        if (WasStopped || (Unstarted = Launch(start, ending)) is not null)
+        if (WasStopped || (Unstarted = await LaunchAsync(start, ending)) is not null)
         {
             running = false;
             ending.TrySetResult(-1);
@@ -156,7 +212,7 @@ public sealed class ProcessRunner : IDisposable
 
     private string? Launch(ProcessStartInfo start, TaskCompletionSource<int>? waited)
     {
-        console.Append($"{ChildProcesses.Display(start)}\n");
+        console.Append($"{ChildProcesses.Shown(start)}\n");
         Process started;
         try
         {
@@ -164,17 +220,60 @@ public sealed class ProcessRunner : IDisposable
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
-            string file = Path.GetFileName(start.FileName);
-            string problem = Directory.Exists(start.WorkingDirectory) ? $"Could not start {file}: {error.Message}" : $"Could not start {file}: the folder {start.WorkingDirectory} is gone";
-            console.Append($"{problem}\n", error: true);
-            return problem;
+            return Refused(start, error);
         }
+        Run(started, waited);
+        return null;
+    }
+
+    /// <summary><see cref="Launch"/> with the fork off the window's thread, held as background work, so what waits for the
+    /// window to be quiet finds the program started; one stopped meanwhile is ended as it comes.</summary>
+    private async Task<string?> LaunchAsync(ProcessStartInfo start, TaskCompletionSource<int> waited)
+    {
+        console.Append($"{ChildProcesses.Shown(start)}\n");
+        Process started;
+        forking = true;
+        BackgroundWork.Begin();
+        try
+        {
+            started = await ChildProcesses.StartAsync(start);
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return Refused(start, error);
+        }
+        finally
+        {
+            forking = false;
+            BackgroundWork.End();
+        }
+        Run(started, waited);
+        if (WasStopped)
+        {
+            ChildProcesses.Kill(started);
+        }
+        return null;
+    }
+
+    /// <summary>Why a program could not start, said in the console.</summary>
+    private string Refused(ProcessStartInfo start, Exception error)
+    {
+        string file = Path.GetFileName(start.FileName);
+        string problem = Directory.Exists(start.WorkingDirectory) ? $"Could not start {file}: {error.Message}" : $"Could not start {file}: the folder {start.WorkingDirectory} is gone";
+        console.Append($"{problem}\n", error: true);
+        return problem;
+    }
+
+    /// <summary>A program started in this console: its output read into it, its input the console's, its end landed.</summary>
+    private void Run(Process started, TaskCompletionSource<int>? waited)
+    {
         process = started;
         running = true;
         TaskCompletionSource<int> ending = waited ?? (ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
-        if (takesInput)
+        ConsoleInput? input = takesInput ? ProgramInput.Of(started.StandardInput) : null;
+        if (input is not null)
         {
-            console.Input = ProgramInput.Of(started.StandardInput);
+            console.Input = input;
         }
         ConsoleSink sink = console.Sink;
         Landing landing = new();
@@ -183,34 +282,61 @@ public sealed class ProcessRunner : IDisposable
         {
             landing.Ended();
         }
-        Task outputs = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output), Pump(started.StandardError, sink, ConsoleStream.Error));
-        _ = outputs.ContinueWith(_ =>
+        CancellationTokenSource letGo = new();
+        Task outputs = reading = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output, letGo.Token), Pump(started.StandardError, sink, ConsoleStream.Error, letGo.Token));
+        draining = LandAsync(started, outputs, letGo, input, ending, landing);
+    }
+
+    /// <summary>Says in the console that the program ended, once it has exited and the console has what it wrote. A job it
+    /// left holding its output (a helper it started) is ended with its group after ChildProcesses' grace, so an ended
+    /// program never runs on in the console; one out of the kill's reach is let go, what it writes dropped.</summary>
+    private async Task LandAsync(Process started, Task outputs, CancellationTokenSource letGo, ConsoleInput? input, TaskCompletionSource<int> ending, Landing landing)
+    {
+        // Off the UI thread from here on, whose dispatcher a test ends: a program still running holds nothing.
+        await started.WaitForExitAsync().ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        // However its reads end, a failed one included, they are over.
+        Task read = outputs.ContinueWith(_ => { }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        if (!await ChildProcesses.OutputEndsAsync(started, read).ConfigureAwait(false))
         {
-            started.WaitForExit();
-            int code = started.ExitCode;
-            UiThread.Post(() =>
+            letGo.Cancel();
+        }
+        int code = started.ExitCode;
+        if (!ReferenceEquals(Volatile.Read(ref process), started))
+        {
+            ending.TrySetResult(code);
+            landing.Landed();
+            return;
+        }
+        UiThread.Post(() =>
+        {
+            try
             {
-                try
+                if (!ReferenceEquals(process, started))
+                {
+                    ending.TrySetResult(code);
+                    return;
+                }
+                // Typing goes on to whatever has had the console since.
+                if (console.Input == input)
                 {
                     console.Input = null;
-                    console.Flush();
-                    if (partialLine.Length > 0)
-                    {
-                        Line?.Invoke(this, partialLine.ToString());
-                        partialLine.Clear();
-                    }
-                    console.Append($"\nProcess finished with exit code {code}.\n");
-                    running = false;
-                    ending.TrySetResult(code);
-                    Exited?.Invoke(this, code);
                 }
-                finally
+                console.Flush();
+                if (partialLine.Length > 0)
                 {
-                    landing.Landed();
+                    Line?.Invoke(this, partialLine.ToString());
+                    partialLine.Clear();
                 }
-            });
-        }, TaskScheduler.Default);
-        return null;
+                console.Append($"\nProcess finished with exit code {code}.\n");
+                running = false;
+                ending.TrySetResult(code);
+                Exited?.Invoke(this, code);
+            }
+            finally
+            {
+                landing.Landed();
+            }
+        }, landing.Landed);
     }
 
     /// <summary>A program's end until the console has all it wrote and says it ended: background work, so a screenshot or
@@ -234,7 +360,8 @@ public sealed class ProcessRunner : IDisposable
             }
         }
 
-        /// <summary>The console says it ended; an end heard only after this holds nothing.</summary>
+        /// <summary>The console says it ended, or never will, its dispatcher gone (a test's, once over); an end heard only
+        /// after this holds nothing.</summary>
         public void Landed()
         {
             lock (gate)
@@ -247,7 +374,7 @@ public sealed class ProcessRunner : IDisposable
     }
 
     /// <summary>Ends the process and all it started, and on macOS and Linux what it left holding its output after it ended,
-    /// which keeps the console running until then.</summary>
+    /// which the console would otherwise end only after its grace.</summary>
     public void Stop()
     {
         UiThread.Check();
@@ -256,6 +383,10 @@ public sealed class ProcessRunner : IDisposable
             WasStopped = true;
             wait.Cancel();
         }
+        else if (running && forking)
+        {
+            WasStopped = true;
+        }
         else if (running && process is { } started)
         {
             WasStopped = true;
@@ -263,17 +394,85 @@ public sealed class ProcessRunner : IDisposable
         }
     }
 
-    /// <summary>Reads a stream into the sink as it comes, a read at a time, and ends the stream's state at its end.</summary>
-    private static async Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream)
+    /// <summary>Transfers this closing runner's process to background cleanup after its owner's prerequisite finishes.
+    /// The runner cannot start again. Completion includes output drainage, without waiting for UI landing.</summary>
+    public Task DeferStopAfter(Task prerequisite)
     {
-        char[] buffer = new char[8192];
-        int read;
-        while ((read = await reader.ReadAsync(buffer)) > 0)
+        UiThread.Check();
+        if (deferredStop is not null)
         {
-            sink.Write(buffer.AsSpan(0, read), stream);
+            return deferredStop;
         }
-        sink.End(stream);
+        if (waiting is not null || forking)
+        {
+            Stop();
+            return deferredStop = Task.CompletedTask;
+        }
+        if (!running || process is not { } owned)
+        {
+            return Task.CompletedTask;
+        }
+        WasStopped = true;
+        running = false;
+        process = null;
+        console.Input = null;
+        Task drained = draining;
+        Task readers = reading;
+        TaskCompletionSource<int> finished = ended;
+        return deferredStop = Task.Run(async () =>
+        {
+            try
+            {
+                await prerequisite.ConfigureAwait(false);
+            }
+            finally
+            {
+                ChildProcesses.Kill(owned);
+                try
+                {
+                    await drained.ConfigureAwait(false);
+                    finished.TrySetResult(owned.ExitCode);
+                }
+                finally
+                {
+                    try
+                    {
+                        owned.StandardOutput.Dispose();
+                        owned.StandardError.Dispose();
+                        if (takesInput)
+                        {
+                            owned.StandardInput.Dispose();
+                        }
+                    }
+                    finally
+                    {
+                        owned.Dispose();
+                        try
+                        {
+                            await readers.ConfigureAwait(false);
+                        }
+                        catch (Exception error) when (error is OperationCanceledException or ObjectDisposedException)
+                        {
+                        }
+                    }
+                }
+            }
+        });
     }
+
+    /// <summary>Reads a stream into the sink as it comes, a read at a time, and ends the stream's state at its end; once let
+    /// go of (its program ended, and what holds the stream is out of the kill's reach), what still comes is nobody's,
+    /// since the console may be another program's by then.</summary>
+    private Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream, CancellationToken letGo)
+        => sink.PumpAsync(reader, stream, letGo, chunks: text =>
+        {
+            if (OutputReceived is null)
+            {
+                return;
+            }
+            ProcessOutput output = new(text, stream == ConsoleStream.Error);
+            UiThread.Post(() => OutputReceived?.Invoke(this, output));
+        });
 
     private void Lines(string text)
     {
@@ -292,3 +491,5 @@ public sealed class ProcessRunner : IDisposable
         partialLine.Append(lines, end + 1, lines.Length - end - 1);
     }
 }
+
+public sealed record ProcessOutput(string Text, bool IsError);

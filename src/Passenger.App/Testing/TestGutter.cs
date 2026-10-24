@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
@@ -16,7 +15,10 @@ public sealed class TestGutter
     private static readonly TimeSpan Throttle = TimeSpan.FromMilliseconds(150);
 
     private readonly TestTree tree;
-    private readonly DispatcherTimer timer;
+
+    /// <summary>The icons coloured a moment after the first result since they last were, while it is due.</summary>
+    private readonly Debounce colouring;
+    private bool due;
     private readonly Dictionary<OpenDocument, Declared> files = [];
 
     /// <summary>The tree's methods by their full names (nested types' '+' as '.'), and by every type they are under.</summary>
@@ -28,22 +30,25 @@ public sealed class TestGutter
     public TestGutter(TestTree tree)
     {
         this.tree = tree;
-        timer = new DispatcherTimer { Interval = Throttle };
-        timer.Tick += (_, _) =>
+        colouring = new Debounce(Throttle, () =>
         {
-            timer.Stop();
+            due = false;
             ColourAll();
-        };
+            return Task.CompletedTask;
+        });
         tree.Updated += (_, _) =>
         {
-            timer.Stop();
+            colouring.Stop();
+            due = false;
             ColourAll();
         };
+        // Never put off by the next result, as a pause would be: the colours follow a long run at least this often.
         tree.ResultApplied += (_, _) =>
         {
-            if (!timer.IsEnabled)
+            if (!due)
             {
-                timer.Start();
+                due = true;
+                colouring.Restart();
             }
         };
     }

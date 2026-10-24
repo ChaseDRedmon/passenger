@@ -48,6 +48,11 @@ public static class HostMethods
     /// compilation or Avalonia's resources starts until the request is cancelled; a <see cref="HoldState"/> partial says it is held once none runs,
     /// after one naming those still running, if any.</summary>
     public const string Hold = "hold";
+
+    /// <summary><see cref="PropertiesParams"/> to <see cref="PropertiesAnswer"/>: the values of some properties of one project
+    /// evaluated with the global properties given (a publish profile's, which the SDK imports by PublishProfile), as a build
+    /// with those properties would see them.</summary>
+    public const string Properties = "properties";
 }
 
 public static class HostJson
@@ -93,6 +98,9 @@ public sealed record EvaluatedProject
     /// <summary>IsTestProject as evaluated (a test SDK's props set it).</summary>
     public bool IsTestProject { get; init; }
 
+    /// <summary>Whether the evaluated project uses Aspire's AppHost SDK.</summary>
+    public bool IsAspireHost { get; init; }
+
     /// <summary>Its packages and project references, a target framework each, or one with none for a project with one.</summary>
     public IReadOnlyList<FrameworkDependencies> Dependencies { get; init; } = [];
 
@@ -100,11 +108,47 @@ public sealed record EvaluatedProject
     public IReadOnlyList<EvaluatedItem> Items { get; init; } = [];
 
     /// <summary>The project file and the files it imports outside the SDK and the package folders (which change only
-    /// with their versions, and so with these), as they were when it was evaluated.</summary>
+    /// with their versions, and so with these), and those it would import were they there (the Directory.* files above it,
+    /// its restore's props and targets), as they were when it was evaluated.</summary>
     public IReadOnlyList<Stamp> Inputs { get; init; } = [];
 
     /// <summary>The folders its items' wildcards walked, as they were: one whose files came or went changed.</summary>
     public IReadOnlyList<Stamp> Folders { get; init; } = [];
+
+    /// <summary>The properties of <see cref="CarriedProperties.Names"/> that have a value, as evaluated: what finds and makes
+    /// its container run configurations, wherever a build would take them from (a Directory.Build.props, an import, a
+    /// condition that holds), never a comment.</summary>
+    public IReadOnlyDictionary<string, EvaluatedProperty> Properties { get; init; } = new Dictionary<string, EvaluatedProperty>();
+}
+
+/// <summary>A property's evaluated value, and whether the project's own files set it (the project, a Directory.Build.props,
+/// an import outside the SDK and the package folders) rather than the SDK's or a package's defaults.</summary>
+public sealed record EvaluatedProperty(string Value, bool Own);
+
+/// <summary>The properties an evaluation carries beyond what the Solution view shows (<see cref="EvaluatedProject.Properties"/>):
+/// Docker's and the .NET SDK container's, by which a project's container run configurations are found and made, and the
+/// user secrets a container of it is given.</summary>
+public static class CarriedProperties
+{
+    public const string EnableSdkContainerSupport = "EnableSdkContainerSupport";
+    public const string ContainerRepository = "ContainerRepository";
+    public const string ContainerImageName = "ContainerImageName";
+    public const string ContainerBaseImage = "ContainerBaseImage";
+    public const string DockerfileFile = "DockerfileFile";
+    public const string DockerfileContext = "DockerfileContext";
+    public const string DockerfileFastModeStage = "DockerfileFastModeStage";
+    public const string ContainerDevelopmentMode = "ContainerDevelopmentMode";
+    public const string DockerDefaultTargetOS = "DockerDefaultTargetOS";
+    public const string UserSecretsId = "UserSecretsId";
+
+    /// <summary>Whether Publish offers the project: an executable's unless it says false, a library's only when it says true.</summary>
+    public const string IsPublishable = "IsPublishable";
+
+    public static readonly IReadOnlyList<string> Names =
+    [
+        EnableSdkContainerSupport, ContainerRepository, ContainerImageName, ContainerBaseImage, DockerfileFile, DockerfileContext,
+        DockerfileFastModeStage, ContainerDevelopmentMode, DockerDefaultTargetOS, UserSecretsId, IsPublishable,
+    ];
 }
 
 public sealed record FrameworkDependencies(string? Framework, IReadOnlyList<PackageDependency> Packages, IReadOnlyList<string> Projects)
@@ -134,8 +178,9 @@ public sealed record BuildParams(IReadOnlyList<string> Projects, IReadOnlyDictio
 public sealed record BuildDone(int Built, double Seconds);
 
 /// <summary>A project's design-time builds as Roslyn's server takes them (a JSON array of its ProjectFileInfo, one a target
-/// framework), what they read (the project file, its imports outside the SDK and package folders, its packages' assets,
-/// its folders), and why they failed, when they did; with the errors and warnings the builds logged.</summary>
+/// framework), what they read (the project file, its imports outside the SDK and package folders and those it would import
+/// were they there, its packages' assets, its folders), and why they failed, when they did; with the errors and warnings
+/// the builds logged.</summary>
 public sealed record BuiltProject(string Path, string Infos, IReadOnlyList<Stamp> Inputs, string? Problem, IReadOnlyList<BuildDiagnostic>? Diagnostics = null);
 
 /// <summary>An error or warning a design-time build logged, with the project file it was logged for.</summary>
@@ -196,8 +241,19 @@ public sealed record ProjectInsight
     /// <summary>The project file and its imports outside <see cref="Installed"/>, as they were when evaluated.</summary>
     public IReadOnlyList<Stamp> Inputs { get; init; } = [];
 
+    /// <summary>The folders its items' wildcards walked, as they were (<see cref="EvaluatedProject.Folders"/>'): a file come
+    /// into or gone from one changes its item counts.</summary>
+    public IReadOnlyList<Stamp> Folders { get; init; } = [];
+
     public double Seconds { get; init; }
 }
+
+/// <summary>A project to evaluate with these global properties (the solution's, and what a build would be given), and the
+/// properties whose values are wanted.</summary>
+public sealed record PropertiesParams(string Project, IReadOnlyDictionary<string, string> Properties, IReadOnlyList<string> Names);
+
+/// <summary>Each property asked for that has a value, as evaluated, or why the project did not evaluate.</summary>
+public sealed record PropertiesAnswer(IReadOnlyDictionary<string, string> Values, string? Problem);
 
 /// <summary>A place in a file of <see cref="ProjectInsight.Files"/>, its line and column from 1 as MSBuild counts them.</summary>
 public sealed record InsightPlace(int File, int Line, int Column);

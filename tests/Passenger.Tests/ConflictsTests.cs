@@ -73,7 +73,7 @@ public sealed class ConflictsTests : IDisposable
 
         // Merge... opens the three-way window over the dialog: yours, the result (as both began) and theirs.
         dialog.Chosen = [dialog.Rows.Single()];
-        Press(dialog, "Merge...");
+        Press(dialog, "Merge…");
         Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
         MergeWindow merge = DialogButtonsTests.Check((MergeWindow)window.Frontmost);
         MergeView view = merge.View;
@@ -119,6 +119,78 @@ public sealed class ConflictsTests : IDisposable
         Assert.Equal("Merge branch 'feature'", Git("log", "-1", "--format=%s").Trim());
         string left = Git("status", "--porcelain").Trim();
         Assert.True(left.Length == 0, $"The merge's commit left changes behind: {left}\n{Git("diff")}");
+        window.Close();
+    }
+
+    /// <summary>A file one side deleted, or that both renamed apart, has nothing to merge: the Commit window's double-click
+    /// and its Merge... show it chosen in the Conflicts dialog, the status bar saying which side keeps it, and there it is
+    /// kept or deleted whole, never written as an empty file.</summary>
+    [AvaloniaFact]
+    public void A_file_a_side_deleted_is_kept_or_deleted_whole_from_the_commit_window_never_merged_into_an_empty_file()
+    {
+        const string Old = "class Old\n{\n}\n";
+        Write("Old.cs", Old);
+        Git("add", "Old.cs");
+        Git("commit", "-q", "-m", "Old");
+        // The feature deletes Shop.cs, changes Prices.cs and renames Old.cs; main the other way round, and renames it apart.
+        Git("switch", "-q", "-c", "feature");
+        Git("rm", "-q", "Shop.cs");
+        Write("Prices.cs", Prices.Replace("Base() => 10", "Base() => 12", StringComparison.Ordinal));
+        Git("mv", "Old.cs", "Feature.cs");
+        Git("commit", "-q", "-am", "Feature");
+        Git("switch", "-q", "main");
+        string mainShop = Shop.Replace("int count", "long count", StringComparison.Ordinal);
+        Write("Shop.cs", mainShop);
+        Git("rm", "-q", "Prices.cs");
+        Git("mv", "Old.cs", "Main.cs");
+        Git("commit", "-q", "-am", "Main");
+        Conflicting("merge", "feature");
+
+        MainWindow window = Open();
+        window.Perform(AppActions.ShowCommit);
+        CommitView commit = window.CommitView;
+        ListBox changes = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(commit).OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, commit.Rows));
+        Ui.Landed(() => commit.Rows.OfType<CommitGroup>().Any(g => g.Name == "Merge Conflicts" && g.Rows.Count == 5), "the five files in conflict under Merge Conflicts");
+
+        // Shop.cs, which theirs deleted, double-clicked: the Conflicts dialog on it, and Accept Yours keeps main's.
+        Ui.DoubleClick(Ui.Row(changes, Row(commit, "Shop.cs")));
+        ConflictsDialog dialog = Chosen(window, "Shop.cs", "Modified Deleted");
+        Assert.Equal("Shop.cs is only in yours, so there is nothing to merge: Accept Yours keeps it, Accept Theirs deletes it", window.Status);
+        Press(dialog, "Accept Yours");
+        Ui.Landed(() => !Unmerged().Contains("Shop.cs"), "Shop.cs resolved");
+        Assert.Equal(mainShop, Read("Shop.cs"));
+        Press(dialog, "Close");
+
+        // Prices.cs, which yours deleted, by the menu's Merge...: Accept Yours deletes it, rather than writing it empty.
+        changes.SelectedItem = Row(commit, "Prices.cs");
+        Ui.ChooseFromMenu(changes, "Merge…");
+        dialog = Chosen(window, "Prices.cs", "Deleted Modified");
+        Assert.Equal("Prices.cs is only in theirs, so there is nothing to merge: Accept Theirs keeps it, Accept Yours deletes it", window.Status);
+        Press(dialog, "Accept Yours");
+        Ui.Landed(() => !Unmerged().Contains("Prices.cs"), "Prices.cs resolved");
+        Assert.False(File.Exists(Path.Combine(folder, "Prices.cs")), "Accept Yours of a file yours deleted left it on disk");
+        Press(dialog, "Close");
+
+        // Old.cs, renamed apart by both, is in neither: Accept Theirs deletes it, never bringing it back empty.
+        Ui.DoubleClick(Ui.Row(changes, Row(commit, "Old.cs")));
+        dialog = Chosen(window, "Old.cs", "Deleted Deleted");
+        Assert.Equal("Old.cs is in neither side, so there is nothing to merge: Accept Yours or Accept Theirs deletes it", window.Status);
+        Press(dialog, "Accept Theirs");
+        Ui.Landed(() => !Unmerged().Contains("Old.cs"), "Old.cs resolved");
+        Assert.False(File.Exists(Path.Combine(folder, "Old.cs")), "Resolving a file both sides deleted brought it back");
+
+        // The renames' new names, each on one side, taken as main named it; with none left the dialog goes.
+        dialog.Chosen = [.. dialog.Rows];
+        Press(dialog, "Accept Yours");
+        Ui.Landed(() => window.ConflictsWindow is null, "the dialog closed with nothing left in conflict");
+        Assert.Empty(Unmerged());
+        Assert.True(window.Frontmost is not MergeWindow, "A merge window opened on a file a side lacks");
+
+        Task<bool> committed = commit.CommitAsync(push: false);
+        Ui.Landed(() => committed.IsCompleted, "the merge committed");
+        Assert.True(committed.Result, window.Status);
+        Assert.Equal(["Main.cs", "Shop.cs"], Git("ls-files").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Equal(Old, Git("show", "HEAD:Main.cs"));
         window.Close();
     }
 
@@ -182,7 +254,7 @@ public sealed class ConflictsTests : IDisposable
         ConflictsDialog dialog = window.ShowConflicts()!;
         Ui.Settle();
         dialog.Chosen = [dialog.Rows.Single()];
-        Press(dialog, "Merge...");
+        Press(dialog, "Merge…");
         Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
         MergeWindow merge = (MergeWindow)window.Frontmost;
         MergeView view = merge.View;
@@ -262,7 +334,7 @@ public sealed class ConflictsTests : IDisposable
 
         // Yours is the commit being rebased, git's "theirs", on the left.
         dialog.Chosen = [dialog.Rows.Single()];
-        Press(dialog, "Merge...");
+        Press(dialog, "Merge…");
         Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
         MergeWindow merge = (MergeWindow)window.Frontmost;
         Assert.Matches("^Rebasing [0-9a-f]{8} from main$", merge.View.Texts.Sides.LeftTitle);
@@ -332,14 +404,31 @@ public sealed class ConflictsTests : IDisposable
         return window.Status ?? string.Empty;
     }
 
+    /// <summary>A file's row in the Commit window's Merge Conflicts.</summary>
+    private static CommitRow Row(CommitView commit, string name)
+    {
+        Ui.Landed(() => commit.Rows.OfType<CommitRow>().Any(r => r.Change.Name == name && r.Change.Kind == ChangeKind.Conflicted), $"{name} under Merge Conflicts");
+        return commit.Rows.OfType<CommitRow>().First(r => r.Change.Name == name && r.Change.Kind == ChangeKind.Conflicted);
+    }
+
+    /// <summary>The Conflicts dialog in front with one file chosen, its sides as said, and no Merge... to press for it.</summary>
+    private static ConflictsDialog Chosen(MainWindow window, string name, string sides)
+    {
+        Ui.Landed(() => window.ConflictsWindow is not null, $"the Conflicts dialog on {name}");
+        ConflictsDialog dialog = window.ConflictsWindow!;
+        Assert.True(window.Frontmost == dialog, $"The Conflicts dialog is not in front of the window, {window.Frontmost?.Title} is");
+        ConflictRow row = Assert.Single(dialog.Chosen);
+        Assert.Equal($"{name} {sides}", $"{row.Conflict.Name} {row.Yours} {row.Theirs}");
+        Button merge = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Button>().First(b => (b.Content as string) == "Merge…");
+        Assert.False(merge.IsEffectivelyEnabled, $"The Conflicts dialog offers Merge… for {name}, which a side lacks");
+        return dialog;
+    }
+
     /// <summary>Clicks a merge window where its view draws something (a change's arrow or X), as the person clicks it.</summary>
     private static void Click(MergeWindow merge, MergeView view, Point? at)
     {
         Assert.True(at is not null, "The merge window draws no arrow or X there");
-        Point point = view.TranslatePoint(at.Value, merge)!.Value;
-        merge.MouseDown(point, MouseButton.Left);
-        merge.MouseUp(point, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(view, at.Value);
     }
 
     /// <summary>Presses a button of a window by its words or its tooltip, as the person clicks it.</summary>
@@ -348,8 +437,7 @@ public sealed class ConflictsTests : IDisposable
         Button? found = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window).OfType<Button>()
             .FirstOrDefault(b => (b.Content as string) == button || ToolTip.GetTip(b) as string == button);
         Assert.True(found is { IsEffectivelyEnabled: true }, $"{window.Title} has no {button} to press{(found is null ? string.Empty : " that is on")}");
-        found!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(found!);
     }
 
     /// <summary>The files git still has in conflict, by name.</summary>

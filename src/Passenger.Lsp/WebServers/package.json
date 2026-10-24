@@ -2,12 +2,14 @@
   "name": "passenger-web-servers",
   "version": "1.0.0",
   "private": true,
-  "description": "The language servers Passenger carries under web/ for JavaScript, TypeScript, HTML, CSS and JSON (WebServers.targets).",
+  "description": "The language servers Passenger carries under web/ for JavaScript, TypeScript, HTML, CSS, JSON, Dockerfiles and YAML (WebServers.targets).",
   "license": "MIT",
   "//": "typescript stays on 6 (6.0.3, the newest 6): 7 is TypeScript's native port, which has no tsserver for typescript-language-server to run.",
   "dependencies": {
+    "dockerfile-language-server-nodejs": "0.15.0",
     "typescript": "6.0.3",
     "typescript-language-server": "6.0.2",
-    "vscode-langservers-extracted": "4.10.0"
+    "vscode-langservers-extracted": "4.10.0",
+    "yaml-language-server": "2.0.0"
   }
 }

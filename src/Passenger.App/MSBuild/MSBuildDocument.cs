@@ -65,10 +65,15 @@ public sealed class MSBuildDocument : IDisposable
         }
     }
 
-    /// <summary>Whether the last evaluation read one of these files, or the file is one of them.</summary>
-    internal bool Read(IReadOnlyCollection<string> paths) =>
+    /// <summary>Whether the last evaluation read one of these files, or the file is one of them; with files come or gone
+    /// among them, whether one is in a folder its wildcards walked.</summary>
+    internal bool Read(IReadOnlyCollection<string> paths, bool cameOrWent) =>
         paths.Any(p => PathNames.Same(p, Document.Path)) || Insight?.Raw.Inputs.Any(i => paths.Any(p => PathNames.Same(p, i.Path))) == true
-            || (Project is { } project && paths.Any(p => PathNames.Same(p, project)));
+            || (Project is { } project && paths.Any(p => PathNames.Same(p, project)))
+            || (cameOrWent && Insight is { } last && paths.Any(last.Walked));
+
+    /// <summary>Whether the last evaluation walked folders, whose files coming or going would change what its items take in.</summary>
+    internal bool Walks => Insight?.Raw.Folders.Count > 0;
 
     /// <summary>Has the file evaluated again once typing would have paused.</summary>
     internal void Again() => inspecting.Restart();
@@ -286,7 +291,7 @@ public sealed class MSBuildDocument : IDisposable
                 AdvisorySeverity.Moderate => "NU1902",
                 AdvisorySeverity.High => "NU1903",
                 _ => "NU1904",
-            }, $"Package '{id}' {version} has a known {gravest.Severity.ToString().ToLowerInvariant()} severity vulnerability, {gravest.Url}")
+            }, $"Package '{id}' {version} has a known {gravest.Severity.ToString().ToLowerInvariant()} severity vulnerability, {gravest.Address}")
             : null;
 
     /// <summary>The evaluation's problems in this file placed on its lines, with the advisories.</summary>

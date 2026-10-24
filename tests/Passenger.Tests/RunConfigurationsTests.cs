@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -5,13 +6,15 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Run;
+using Passenger.App.State;
 using Passenger.Core;
 
 namespace Passenger.Tests;
 
 /// <summary>Run configurations as Rider's Edit Configurations makes them: one added in the dialog runs with what was
-/// typed there and is there when the folder opens again; a generated one is changed by copying it, and stays as its
-/// project makes it; one removed is gone for good. The dialog opens from the Run menu's action and the toolbar's chooser.</summary>
+/// typed there and is there when the folder opens again; a generated one is changed in place, its changes kept with the
+/// folder over its launch profile or written to it, or copied to be the person's own; one removed is gone for good. The
+/// dialog opens from the Run menu's action and the toolbar's chooser.</summary>
 public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDisposable
 {
     private readonly string folder;
@@ -23,10 +26,8 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         string made = string.Empty;
         TestFolders.Prepare(() => made = folders.Take("configs-", root =>
         {
-            Write(root, "Hello/Hello.csproj",
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-            Write(root, "Hello/Program.cs",
-                "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}\");\n");
+            TestFolders.Write(root, "Hello/Hello.csproj", TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
+            TestFolders.Write(root, "Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}\");\n");
             return Path.Combine(root, "Hello");
         }), settings);
         folder = made;
@@ -39,6 +40,62 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         TestFolders.Delete(settings);
     }
 
+    [Fact]
+    public void A_generated_Aspire_override_keeps_linked_AppHost_paths_relative_in_storage()
+    {
+        RunConfiguration source = new() { Name = "Aspire", Project = Path.Combine(folder, "Host", "Host.csproj"), Aspire = true };
+        string linked = Path.Combine(folder, "Linked", "Linked.csproj");
+        JsonObject edit = Assert.IsType<JsonObject>(ConfigurationEdit.Between(source, source with { LinkedAppHosts = [linked] }));
+        JsonObject stored = ConfigurationEdit.Mapped(edit, path => Path.GetRelativePath(folder, path));
+        Assert.Equal(Path.GetRelativePath(folder, linked), stored["linkedAppHosts"]![0]!.GetValue<string>());
+        JsonObject loaded = ConfigurationEdit.Mapped(stored, path => Path.GetFullPath(path, folder));
+        Assert.Equal(new[] { linked }, ConfigurationEdit.Over(source, loaded).LinkedAppHosts);
+    }
+
+    /// <summary>While a run of a configuration is up, the toolbar, its chooser and Edit Configurations' row say "(running)"
+    /// after its name, and stop saying it once the run has ended.</summary>
+    [AvaloniaFact]
+    public void A_configuration_says_it_is_running_in_the_toolbar_its_chooser_and_Edit_Configurations_while_a_run_of_it_is_up()
+    {
+        // A program of its own that runs until stopped, which the class's Hello never does.
+        string waits = PathNames.Canonical(TestFolders.Create("waits-"));
+        TestFolders.Write(waits, "Waits.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
+            + "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        TestFolders.Write(waits, "Program.cs", "Console.WriteLine(\"waiting\");\nThread.Sleep(Timeout.Infinite);\n");
+        Restore.Run(waits);
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
+        window.Show();
+        window.OpenFolder(waits);
+        Ui.Settle();
+        TextBlock shown = window.FindControl<TextBlock>("RunConfigName")!;
+        Ui.WaitFor(() => shown.Text == "Waits", $"the project's configuration to be chosen: {shown.Text}");
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "Waits to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => shown.Text == "Waits (running)", $"the toolbar to say Waits runs: {shown.Text}");
+            Ui.Click(window.FindControl<Button>("RunConfigButton")!);
+            ContextMenu chooser = Assert.IsType<ContextMenu>(window.OpenContextMenu);
+            Assert.Equal(["Waits (running)", "Edit Configurations…"], chooser.Items.OfType<MenuItem>().Select(i => i.Header as string));
+            Ui.Click(chooser.Items.OfType<MenuItem>().Last());
+            chooser.Close();
+            RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
+            Ui.Settle();
+            string[] texts = [.. dialog.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
+            Assert.True(texts.Contains("Waits (running)"), $"Edit Configurations' row does not say Waits runs: {string.Join(" | ", texts.Take(8))}");
+            // The configuration keeps its own name: the words are the row's alone.
+            Assert.Equal("Waits", dialog.Chosen?.Name);
+            dialog.Close();
+            Ui.Settle();
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.IsRunning, "Waits to stop");
+        }
+        Ui.WaitFor(() => shown.Text == "Waits", $"the toolbar to stop saying Waits runs: {shown.Text}");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_configuration_added_in_the_dialog_runs_with_what_was_typed_and_is_there_when_the_folder_opens_again()
     {
@@ -46,15 +103,15 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         Assert.Equal(["Hello"], Names(window));
 
         // The toolbar's chooser lists the configurations, and Edit Configurations below them opens the dialog.
-        Click(window.FindControl<Button>("RunConfigButton")!);
+        Ui.Click(window.FindControl<Button>("RunConfigButton")!);
         ContextMenu chooser = Assert.IsType<ContextMenu>(window.OpenContextMenu);
-        Assert.Equal(["Hello", "Edit Configurations..."], chooser.Items.OfType<MenuItem>().Select(i => (string?)i.Header));
-        Click(chooser.Items.OfType<MenuItem>().Last());
+        Assert.Equal(["Hello", "Edit Configurations…"], chooser.Items.OfType<MenuItem>().Select(i => (string?)i.Header));
+        Ui.Click(chooser.Items.OfType<MenuItem>().Last());
         chooser.Close();
         RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
         Assert.Equal("Hello", dialog.Chosen?.Name);
 
-        Click(dialog.AddButton);
+        Add(dialog);
         Assert.Equal("Unnamed", dialog.Chosen?.Name);
         Assert.True(dialog.NameBox.IsEnabled, "A configuration just added cannot be named");
         Assert.True(dialog.NameBox.IsFocused, "A configuration just added does not have its name ready to type");
@@ -63,12 +120,12 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         Ui.Settle();
         Type(dialog.ArgumentsBox, "one \"two three\"");
         Type(dialog.WorkingDirectoryBox, "$(ProjectDir)");
-        Click(dialog.AddVariableButton);
+        Ui.Click(dialog.AddVariableButton);
         (TextBox name, TextBox value) = Assert.Single(dialog.Variables);
         Type(name, "GREETING");
         Type(value, "Hi");
         Assert.Equal(["Hello", "Greeting"], dialog.Rows.Select(r => r.Name));
-        Click(dialog.OkButton);
+        Ui.Click(dialog.OkButton);
         Ui.Settle();
         Assert.Null(window.RunConfigurationsDialog);
         Assert.Equal(["Hello", "Greeting"], Names(window));
@@ -99,35 +156,68 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         }
     }
 
+    /// <summary>Each launch profile is a generated configuration: one with arguments and variables runs with them in the
+    /// project's folder, arguments given for one run replacing the profile's; a Docker profile is a container configuration
+    /// of its project; and a generated configuration copied is the person's own, the generated one staying as its profile
+    /// makes it.</summary>
     [AvaloniaFact]
-    public void A_generated_configuration_is_changed_by_copying_it_and_stays_as_its_launch_profile_makes_it()
+    public void A_generated_configuration_copied_is_the_persons_own_and_the_generated_one_stays_as_its_launch_profile_makes_it()
     {
-        Write("Hello/Properties/launchSettings.json",
-            "{ \"profiles\": { \"Greet\": { \"commandName\": \"Project\", \"commandLineArgs\": \"--name Ada\", \"environmentVariables\": { \"GREETING\": \"Hi\" } } } }");
+        Write("Hello/Properties/launchSettings.json", """
+            {
+              // Comments and trailing commas, as Visual Studio writes them.
+              "profiles": {
+                "Greet": { "commandName": "Project", "commandLineArgs": "--name \"Ada Lovelace\"", "environmentVariables": { "GREETING": "Hi" }, },
+                "Docker": { "commandName": "Docker" }
+              }
+            }
+            """);
         MainWindow window = Keeping();
         try
         {
-            Assert.Equal(["Hello: Greet"], Names(window));
+            Assert.Equal(["Hello: Greet", "Hello: Docker"], Names(window));
+            // A Docker profile is a container configuration of its project, which runs, not one greyed.
+            RunConfiguration docker = window.Configurations.Single(c => c.Name == "Hello: Docker");
+            Assert.Equal(RunKind.Dockerfile, docker.Kind);
+            Assert.Null(window.WhyNotHere(docker));
+
+            // A profile that names no working folder runs in the project's, as Run, Debug and Profile all do (one LaunchPlan).
+            Ui.Launched(window, window.RunAsync(), "the profile's run to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the profile's run to end");
+            string profiled = window.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(profiled.Contains($"Hi [--name|Ada Lovelace] in {project}", StringComparison.Ordinal),
+                $"The program did not get its launch profile's arguments and variable in the project's folder:\n{profiled}");
+            // Arguments given for one run replace the profile's, and its environment stays.
+            Ui.Launched(window, window.RunAsync("one \"two three\""), "the run with arguments of its own to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run with arguments of its own to end");
+            string given = window.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(given.Contains("Hi [one|two three]", StringComparison.Ordinal), $"The arguments given for one run did not replace the profile's:\n{given}");
+            // Run, Debug and Profile start it in a container (ContainerRunsTests, ContainerRunDebuggingTests, ContainerRunProfilingTests),
+            // which this project, with a Docker profile and no Dockerfile, cannot make: Profile says so rather than profiling it here.
+            Assert.True(window.SelectConfiguration("Hello: Docker"));
+            Assert.Equal("Hello: Docker cannot run: Hello has no Dockerfile", Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
+            Assert.True(window.SelectConfiguration("Hello: Greet"));
+
             Assert.True(window.Perform(AppActions.EditConfigurations));
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
             Assert.Equal("Hello: Greet", dialog.Chosen?.Name);
             Assert.True(dialog.Chosen!.Generated);
-            Assert.False(dialog.ArgumentsBox.IsEnabled, "A generated configuration's arguments can be changed in place, though its launch profile makes them");
+            Assert.False(dialog.NameBox.IsEnabled || dialog.ProfileBox.IsEnabled, "A generated configuration's name or launch profile, what links it to its source, can be changed in place");
             Assert.False(dialog.RemoveButton.IsEnabled, "A generated configuration can be removed, though its project makes it again");
-            Assert.Equal("--name Ada", dialog.ArgumentsBox.Text);
+            Assert.Equal("--name \"Ada Lovelace\"", dialog.ArgumentsBox.Text);
             Assert.Equal("Greet", dialog.ProfileBox.SelectedItem);
 
-            Click(dialog.CopyButton);
+            Ui.Click(dialog.CopyButton);
             Assert.Equal("Hello: Greet (1)", dialog.Chosen?.Name);
             Assert.False(dialog.Chosen!.Generated);
             Assert.True(dialog.ArgumentsBox.IsEnabled, "The copy of a generated configuration cannot be changed");
-            Assert.Equal("--name Ada", dialog.ArgumentsBox.Text);
+            Assert.Equal("--name \"Ada Lovelace\"", dialog.ArgumentsBox.Text);
             Type(dialog.ArgumentsBox, "--name Grace");
-            Click(dialog.OkButton);
+            Ui.Click(dialog.OkButton);
             Ui.Settle();
 
-            Assert.Equal(["Hello: Greet", "Hello: Greet (1)"], Names(window));
-            Assert.Equal("--name Ada", window.Configurations[0].Arguments);
+            Assert.Equal(["Hello: Greet", "Hello: Docker", "Hello: Greet (1)"], Names(window));
+            Assert.Equal("--name \"Ada Lovelace\"", window.Configurations[0].Arguments);
             Assert.Equal("Hello: Greet (1)", window.Configuration?.Name);
             Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run to end");
@@ -140,6 +230,223 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         }
     }
 
+    /// <summary>A generated configuration's arguments changed in place, with no copy, are what Run gives the program, and are
+    /// there when the folder opens again; its launch profile's environment changed on disk then reaches it while the
+    /// arguments stay the person's, and the dialog marks the arguments alone as changed from the profile.</summary>
+    [AvaloniaFact]
+    public void A_generated_configurations_arguments_changed_in_place_are_run_kept_with_the_folder_and_stay_over_its_launch_profile_as_it_changes()
+    {
+        Write("Hello/Properties/launchSettings.json", Greet("Hi"));
+        MainWindow window = Keeping();
+        RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+        Assert.Equal("Hello: Greet", dialog.Chosen?.Name);
+        Assert.True(dialog.ArgumentsBox.IsEnabled, "A generated configuration's arguments cannot be changed in place");
+        Assert.Empty(dialog.Marked);
+        Type(dialog.ArgumentsBox, "--name Grace");
+        Assert.Equal(["Program arguments"], dialog.Marked);
+        Assert.Equal("Changed here from its launch profile: Program arguments.", dialog.Changes);
+        Assert.True(dialog.WriteButton.IsEffectivelyVisible && dialog.ResetButton.IsEffectivelyVisible, "A changed generated configuration offers neither Write to Launch Profile nor Reset");
+        Assert.Equal("Reset to Launch Profile", dialog.ResetButton.Content);
+        DialogButtonsTests.Check(dialog);
+        Ui.Click(dialog.OkButton);
+        Assert.Equal(["Hello: Greet"], Names(window));
+        Assert.Equal("--name Grace", window.Configuration?.Arguments);
+
+        Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2));
+        Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run to end");
+        string ran = window.BottomPanel.Run.Document.Snapshot.ToString();
+        Assert.True(ran.Contains("Hi [--name|Grace] in ", StringComparison.Ordinal), $"The program did not get the arguments changed in place:\n{ran}");
+        window.Close();
+
+        MainWindow again = Keeping();
+        try
+        {
+            RunConfiguration kept = Assert.Single(again.Configurations);
+            Assert.True(kept.Generated && kept.Arguments == "--name Grace", $"The change in place was not kept with the folder: {kept.Name} runs with {kept.Arguments}");
+
+            Write("Hello/Properties/launchSettings.json", Greet("Hello"));
+            Ui.WaitFor(() => again.Configurations[0].Environment.GetValueOrDefault("GREETING") == "Hello", "the launch profile's new variable to reach the configuration");
+            Assert.Equal("--name Grace", again.Configurations[0].Arguments);
+            RunConfigurationsDialog reopened = again.ShowRunConfigurations();
+            Assert.Equal(["Program arguments"], reopened.Marked);
+            reopened.Close();
+            Ui.Settle();
+
+            Ui.Launched(again, again.RunAsync(), "the second run to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => again.Runner.Ended.IsCompleted, "the second run to end");
+            string second = again.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(second.Contains("Hello [--name|Grace] in ", StringComparison.Ordinal), $"The program did not get the profile's new variable with the arguments kept:\n{second}");
+        }
+        finally
+        {
+            again.Close();
+        }
+    }
+
+    /// <summary>Write to Launch Profile puts the arguments and a variable changed in place into the profile, the rest of
+    /// launchSettings.json (the other profile, a comment, the spacing) byte for byte, and keeps here what the file has no
+    /// place for; Undo takes the write back whole: the file as it was, the changes kept with the folder as they were.</summary>
+    [AvaloniaFact]
+    public void Write_to_launch_profile_puts_the_changes_into_launchSettings_json_the_rest_as_it_was_and_Undo_takes_it_back()
+    {
+        string settingsFile = Path.Combine(project, "Properties", "launchSettings.json");
+        Write("Hello/Properties/launchSettings.json", Profiles);
+        MainWindow window = Keeping();
+        try
+        {
+            RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+            Assert.True(dialog.Choose("Hello: Greet"));
+            Type(dialog.ArgumentsBox, "--name \"Grace Hopper\"");
+            Ui.Click(dialog.AddVariableButton);
+            (TextBox name, TextBox value) = dialog.Variables[^1];
+            Type(name, "NEW");
+            Type(value, "1");
+            dialog.ConsoleBox.IsChecked = true;
+            Ui.Settle();
+            Assert.Equal(["Program arguments", "Environment variables", "Use external console"], dialog.Marked);
+            Assert.True(dialog.WriteButton.IsEffectivelyEnabled, "Write to Launch Profile cannot be used for arguments and a variable");
+            Ui.Click(dialog.WriteButton);
+
+            string written = Profiles
+                .Replace("\"commandLineArgs\": \"--name Ada\"", "\"commandLineArgs\": \"--name \\\"Grace Hopper\\\"\"", StringComparison.Ordinal)
+                .Replace("\"GREETING\": \"Hi\"\n", "\"GREETING\": \"Hi\",\n        \"NEW\": \"1\"\n", StringComparison.Ordinal);
+            Assert.Equal(written, File.ReadAllText(settingsFile));
+            Assert.Equal("Written to its launch profile in launchSettings.json: Program arguments, Environment variables. "
+                + "Kept here, as launchSettings.json has no place for it: Use external console.", dialog.Changes);
+            Assert.Equal(["Use external console"], dialog.Marked);
+            Ui.Click(dialog.OkButton);
+            RunConfiguration greet = window.Configurations.Single(c => c.Name == "Hello: Greet");
+            Assert.Equal(("--name \"Grace Hopper\"", "1", ConsoleKind.Terminal), (greet.Arguments, greet.Environment.GetValueOrDefault("NEW"), greet.Console));
+            Assert.Equal("--name \"Grace Hopper\"", greet.Source?.Arguments);
+
+            // Undo, from the Solution view, asked first, takes the file and the configuration back as they were.
+            List<string> asked = [];
+            window.Confirm = (title, question, _) =>
+            {
+                asked.Add(question);
+                return Task.FromResult(true);
+            };
+            window.ExplorerView.Reveal(Path.Combine(project, "Hello.csproj"));
+            Ui.Settle();
+            Ui.ClickRow(window, window.ExplorerView.Tree.Rows.First(r => r.Name.StartsWith("Hello", StringComparison.Ordinal)));
+            Ui.Run(window, Passenger.Editor.EditorActions.Undo);
+            Assert.Equal(["Undo Write Hello: Greet to Its Launch Profile? It changes launchSettings.json and the run configuration Hello: Greet."], asked);
+            Assert.Equal(Profiles, File.ReadAllText(settingsFile));
+            Ui.WaitFor(() => window.Configurations.Single(c => c.Name == "Hello: Greet").Source?.Arguments == "--name Ada", "the configuration to follow launchSettings.json taken back");
+            greet = window.Configurations.Single(c => c.Name == "Hello: Greet");
+            Assert.True((greet.Arguments, greet.Environment.GetValueOrDefault("NEW"), greet.Console) == ("--name \"Grace Hopper\"", "1", ConsoleKind.Terminal),
+                $"Undo did not put the configuration's changes back over its launch profile: {greet.Arguments}, NEW={greet.Environment.GetValueOrDefault("NEW")}, {greet.Console}");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Reset to Launch Profile puts a generated configuration changed in place back as its profile makes it, and
+    /// the folder opened again has no change kept for it.</summary>
+    [AvaloniaFact]
+    public void Reset_to_launch_profile_puts_a_changed_configuration_back_as_its_profile_makes_it_for_good()
+    {
+        Write("Hello/Properties/launchSettings.json", Greet("Hi"));
+        MainWindow window = Keeping();
+        RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+        Type(dialog.ArgumentsBox, "--name Grace");
+        dialog.BuildBox.IsChecked = false;
+        Ui.Settle();
+        Ui.Click(dialog.OkButton);
+        Assert.Equal(("--name Grace", false), (window.Configuration?.Arguments, window.Configuration?.BuildBeforeLaunch));
+
+        dialog = window.ShowRunConfigurations();
+        Assert.Equal(["Program arguments", "Before launch"], dialog.Marked);
+        Ui.Click(dialog.ResetButton);
+        Assert.Empty(dialog.Marked);
+        Assert.Equal(("--name Ada", true), (dialog.ArgumentsBox.Text, dialog.BuildBox.IsChecked == true));
+        Assert.False(dialog.ResetButton.IsEffectivelyVisible, "Reset to Launch Profile is offered for a configuration as its profile makes it");
+        Ui.Click(dialog.OkButton);
+        Assert.Equal(("--name Ada", true), (window.Configuration?.Arguments, window.Configuration?.BuildBeforeLaunch));
+        window.Close();
+
+        MainWindow again = Keeping();
+        try
+        {
+            RunConfiguration reset = Assert.Single(again.Configurations);
+            Assert.True(reset.Source is null && reset.Arguments == "--name Ada", $"The configuration reset to its profile opened again with {reset.Arguments}");
+        }
+        finally
+        {
+            again.Close();
+        }
+    }
+
+    /// <summary>A runConfigurations.json an older Passenger wrote, with a copy the person made of a generated configuration,
+    /// opens as it was; changing the generated one in place leaves the copy in the file as it stood.</summary>
+    [AvaloniaFact]
+    public void An_older_runConfigurations_json_opens_as_it_was_and_keeps_the_persons_copies_as_they_stand()
+    {
+        Write("Hello/Properties/launchSettings.json", Greet("Hi"));
+        JsonArray copies = [new JsonObject
+        {
+            ["name"] = "Hello: Greet (1)", ["kind"] = "Project", ["project"] = "Hello/Hello.csproj", ["framework"] = "", ["launchProfile"] = "Greet", ["program"] = "",
+            ["arguments"] = "--name Grace", ["environment"] = new JsonObject { ["GREETING"] = "Hey" }, ["workingDirectory"] = "$(ProjectDir)",
+            ["buildBeforeLaunch"] = true, ["console"] = "Internal", ["launchBrowser"] = false, ["browserUrl"] = "",
+        }];
+        string file = Path.Combine(ProjectState.FolderOf(settings, PathNames.Canonical(folder)), "runConfigurations.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllText(file, new JsonObject { ["version"] = 2, ["configurations"] = copies.DeepClone(), ["selected"] = "Hello: Greet (1)" }.ToJsonString());
+
+        MainWindow window = Keeping();
+        try
+        {
+            Assert.Equal(["Hello: Greet", "Hello: Greet (1)"], Names(window));
+            Assert.Equal("Hello: Greet (1)", window.Configuration?.Name);
+            RunConfiguration copy = window.Configurations[1];
+            Assert.Equal(("--name Grace", "Hey", false), (copy.Arguments, copy.Environment["GREETING"], copy.Generated));
+            Assert.True(window.Configurations[0] is { Source: null, Arguments: "--name Ada" }, "The generated configuration of an older file opened changed");
+
+            RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+            Assert.True(dialog.Choose("Hello: Greet"));
+            Type(dialog.ArgumentsBox, "--name Ada --loud");
+            Ui.Click(dialog.OkButton);
+        }
+        finally
+        {
+            window.Close();
+        }
+        JsonObject kept = (JsonObject)JsonNode.Parse(File.ReadAllText(file))!;
+        Assert.Equal(3, (int)kept["version"]!);
+        JsonObject keptCopy = kept["configurations"]!.AsArray().Single()!.AsObject();
+        Assert.True(copies[0]!.AsObject().All(p => JsonNode.DeepEquals(p.Value, keptCopy[p.Key])),
+            $"The person's copy changed as the generated configuration was changed in place:\n{keptCopy.ToJsonString()}");
+        Assert.Equal("--name Ada --loud", (string?)kept["edits"]?["Hello: Greet"]?["arguments"]);
+    }
+
+    /// <summary>Hello's launchSettings.json with one profile, Greet, as dotnet new writes one: its arguments and GREETING.</summary>
+    private static string Greet(string greeting) =>
+        $"{{\n  \"profiles\": {{\n    \"Greet\": {{\n      \"commandName\": \"Project\",\n      \"commandLineArgs\": \"--name Ada\",\n"
+        + $"      \"environmentVariables\": {{\n        \"GREETING\": \"{greeting}\"\n      }}\n    }}\n  }}\n}}\n";
+
+    /// <summary>A launchSettings.json of two profiles with a comment and spacing of its own, which a write to one keeps.</summary>
+    private const string Profiles = """
+        {
+          // Kept as written.
+          "profiles": {
+            "Greet": {
+              "commandName": "Project",
+              "commandLineArgs": "--name Ada",
+              "environmentVariables": {
+                "GREETING": "Hi"
+              }
+            },
+            "Other": {
+              "commandName":   "Project",
+              "commandLineArgs": "--other"
+            }
+          }
+        }
+
+        """;
+
     /// <summary>Rider's Use external console, chosen in the dialog for a copy of the generated configuration (whose own stays
     /// the Run window's), runs the program in a tab of the Terminal window named for the configuration, and is still chosen
     /// when the folder opens again.</summary>
@@ -149,15 +456,14 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         MainWindow window = Keeping();
         RunConfigurationsDialog dialog = window.ShowRunConfigurations();
         Assert.Equal("Hello", dialog.Chosen?.Name);
-        Assert.False(dialog.ConsoleBox.IsEnabled, "A generated configuration's console can be changed in place, though its project makes it");
         Assert.False(dialog.ConsoleBox.IsChecked == true, "A generated configuration runs in the terminal");
-        Click(dialog.CopyButton);
+        Ui.Click(dialog.CopyButton);
         Assert.True(dialog.ConsoleBox.IsEnabled, "The copy of a generated configuration cannot choose its console");
         Type(dialog.NameBox, "Hello in the terminal");
         Type(dialog.ArgumentsBox, "one");
         dialog.ConsoleBox.IsChecked = true;
         Ui.Settle();
-        Click(dialog.OkButton);
+        Ui.Click(dialog.OkButton);
         Ui.Settle();
         Assert.Equal(ConsoleKind.Internal, window.Configurations[0].Console);
         Assert.Equal(ConsoleKind.Terminal, window.Configuration?.Console);
@@ -193,13 +499,16 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     [AvaloniaFact]
     public void A_launch_profiles_browser_shows_under_open_browser_and_a_copy_with_it_turned_off_opens_none()
     {
-        System.Net.Sockets.TcpListener probe = new(System.Net.IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
+        // The port held until each run's program, waiting at a gate, is let listen there; it listens until let go.
+        using HeldPort held = new();
+        int port = held.Port;
+        string gates = TestFolders.Create("gates-");
+        string listen = Path.Combine(gates, "listen");
+        string done = Path.Combine(gates, "done");
         Write("Hello/Program.cs", "using System.Net;\nusing System.Net.Sockets;\n\n"
+            + $"while (!File.Exists(@\"{listen}\"))\n{{\n    Thread.Sleep(20);\n}}\n"
             + "TcpListener listener = new(IPAddress.Loopback, int.Parse(Environment.GetEnvironmentVariable(\"PORT\")!));\n"
-            + "listener.Start();\nConsole.WriteLine(\"Listening\");\nThread.Sleep(4000);\n");
+            + $"listener.Start();\nConsole.WriteLine(\"Listening\");\nwhile (!File.Exists(@\"{done}\"))\n{{\n    Thread.Sleep(20);\n}}\n");
         Write("Hello/Properties/launchSettings.json", "{ \"profiles\": { \"Serve\": { \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"status\", "
             + $"\"applicationUrl\": \"http://127.0.0.1:{port}\", \"environmentVariables\": {{ \"PORT\": \"{port}\" }} }} }} }}");
         MainWindow window = Keeping();
@@ -209,29 +518,37 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
             Assert.Equal("Hello: Serve", dialog.Chosen?.Name);
             Assert.True(dialog.BrowserBox.IsChecked == true, "The launch profile's launchBrowser does not show as Open browser after launch");
             Assert.Equal($"http://127.0.0.1:{port}/status", dialog.BrowserUrlBox.Text);
-            Assert.False(dialog.BrowserBox.IsEnabled, "A generated configuration's browser can be changed in place, though its launch profile makes it");
-            Click(dialog.CopyButton);
+            Ui.Click(dialog.CopyButton);
             Assert.True(dialog.BrowserBox.IsEnabled, "The copy of a generated configuration cannot turn its browser off");
             dialog.BrowserBox.IsChecked = false;
             Ui.Settle();
-            Click(dialog.OkButton);
+            Ui.Click(dialog.OkButton);
             Ui.Settle();
             Assert.Equal("Hello: Serve (1)", window.Configuration?.Name);
             Assert.False(window.Configuration!.LaunchBrowser);
 
             Ui.Launched(window, window.RunAsync(), "the copy's run to start", TimeSpan.FromMinutes(2));
+            held.LetGo(listen);
+            Ui.WaitFor(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("Listening", StringComparison.Ordinal), "the copy's program to listen");
+            Ui.Hold(TimeSpan.FromSeconds(1.5), "the copy's program listening: no browser is to open meanwhile");
+            File.WriteAllText(done, string.Empty);
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the copy's run to end");
-            Assert.Contains("Listening", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
             Assert.Empty(window.Browsed);
 
+            File.Delete(done);
+            held.Hold(listen);
             Assert.True(window.SelectConfiguration("Hello: Serve"));
             Ui.Launched(window, window.RunAsync(), "the profile's run to start", TimeSpan.FromMinutes(2));
+            held.LetGo(listen);
             Ui.WaitFor(() => window.Browsed.Count > 0, "the browser to open once the program listens", TimeSpan.FromSeconds(60));
             Assert.Equal([$"http://127.0.0.1:{port}/status"], window.Browsed.Select(u => u.AbsoluteUri));
+            File.WriteAllText(done, string.Empty);
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the profile's run to end");
         }
         finally
         {
+            // A program a failure left listening ends; one still waiting to listen ends with the window.
+            File.WriteAllText(done, string.Empty);
             window.Close();
         }
     }
@@ -250,10 +567,10 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         RunConfigurationsDialog dialog = window.ShowRunConfigurations();
         Assert.Equal("Second", dialog.Chosen?.Name);
         Assert.True(dialog.Choose("First"));
-        Click(dialog.RemoveButton);
+        Ui.Click(dialog.RemoveButton);
         Assert.Equal(["Hello", "Second"], dialog.Rows.Select(r => r.Name));
         Assert.Equal("Second", dialog.Chosen?.Name);
-        Click(dialog.OkButton);
+        Ui.Click(dialog.OkButton);
         Ui.Settle();
         Assert.Equal(["Hello", "Second"], Names(window));
         window.Close();
@@ -270,20 +587,58 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     }
 
     [AvaloniaFact]
+    public void A_compose_configuration_added_in_the_dialog_shows_its_kinds_page_and_is_kept_with_its_files_and_choices()
+    {
+        Write("compose.yaml", "services:\n  web:\n    image: busybox:1.37\n");
+        Write("compose.override.yaml", "services:\n  web:\n    environment: { A: \"1\" }\n");
+        MainWindow window = Keeping();
+        RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+        Ui.Click(dialog.AddButton);
+        Ui.Click(dialog.AddMenu!.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "Docker Compose"));
+        Assert.Equal("Docker Compose", dialog.KindText.Text);
+        // A Compose configuration's page: its files and services, no project's program, framework or working folder.
+        Assert.True(dialog.ComposeFilesBox.IsEffectivelyVisible && dialog.ModeBox.IsEffectivelyVisible && dialog.KeepBackingBox.IsEffectivelyVisible, "The Compose page is not shown");
+        Assert.False(dialog.ProgramBox.IsEffectivelyVisible || dialog.WorkingDirectoryBox.IsEffectivelyVisible || dialog.ProjectBox.IsEffectivelyVisible,
+            "A Compose configuration shows a project's fields");
+        Assert.Equal("compose.yaml; compose.override.yaml", dialog.ComposeFilesBox.Text);
+        Type(dialog.NameBox, "Everything");
+        Type(dialog.ProfilesBox, "tools");
+        dialog.ModeBox.SelectedIndex = 1;
+        dialog.KeepBackingBox.IsChecked = true;
+        Ui.Settle();
+        Ui.Click(dialog.OkButton);
+        Assert.Null(window.RunConfigurationsDialog);
+        RunConfiguration made = window.Configurations.Single(c => c.Name == "Everything");
+        Assert.Equal(RunKind.Compose, made.Kind);
+        Assert.Equal([Path.Combine(PathNames.Canonical(folder), "compose.yaml"), Path.Combine(PathNames.Canonical(folder), "compose.override.yaml")], made.ComposeFiles);
+        Assert.Equal(["tools"], made.Profiles);
+        Assert.Equal(ContainerMode.Images, made.Mode);
+        Assert.True(made.KeepBackingServices, "Keep backing services was not kept");
+        window.Close();
+
+        // The store keeps its files relative to the folder, and the folder opened again has it as it was.
+        MainWindow again = Keeping();
+        RunConfiguration kept = again.Configurations.Single(c => c.Name == "Everything");
+        Assert.Equal(made.ComposeFiles, kept.ComposeFiles);
+        Assert.Equal(ContainerMode.Images, kept.Mode);
+        again.Close();
+    }
+
+    [AvaloniaFact]
     public void A_name_taken_or_missing_is_refused_with_why_and_nothing_changes()
     {
         MainWindow window = Keeping();
         try
         {
             RunConfigurationsDialog dialog = window.ShowRunConfigurations();
-            Click(dialog.AddButton);
+            Add(dialog);
             Type(dialog.NameBox, "Hello");
-            Click(dialog.OkButton);
+            Ui.Click(dialog.OkButton);
             Assert.Equal("Two configurations are named Hello", dialog.Problem);
             Assert.Same(dialog, window.RunConfigurationsDialog);
             Assert.Equal(["Hello"], Names(window));
             Type(dialog.NameBox, string.Empty);
-            Click(dialog.OkButton);
+            Ui.Click(dialog.OkButton);
             Assert.Equal("A configuration needs a name", dialog.Problem);
             dialog.Close();
             Ui.Settle();
@@ -305,9 +660,9 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         try
         {
             RunConfigurationsDialog dialog = window.ShowRunConfigurations();
-            Click(dialog.AddButton);
+            Add(dialog);
             Type(dialog.NameBox, Long);
-            Click(dialog.OkButton);
+            Ui.Click(dialog.OkButton);
             dialog = window.ShowRunConfigurations();
             Ui.Settle();
             ListBox list = dialog.GetVisualDescendants().OfType<ListBox>().First();
@@ -327,7 +682,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     /// <summary>A window that keeps its state in the tests' own store, on the folder.</summary>
     private MainWindow Keeping()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.OpenFolder(folder);
@@ -344,18 +699,14 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         Ui.Settle();
     }
 
-    private static void Click(Control control)
+    /// <summary>Add New Configuration, its menu's .NET Project chosen, as a person adds one; the menu lists every kind.</summary>
+    private static void Add(RunConfigurationsDialog dialog)
     {
-        control.RaiseEvent(new RoutedEventArgs(control is MenuItem ? MenuItem.ClickEvent : Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(dialog.AddButton);
+        ContextMenu kinds = Assert.IsType<ContextMenu>(dialog.AddMenu);
+        Assert.Equal([".NET Project", "Docker Compose", "Dockerfile", "SDK Container"], kinds.Items.OfType<MenuItem>().Select(i => (string?)i.Header));
+        Ui.Click(kinds.Items.OfType<MenuItem>().First());
     }
 
-    private void Write(string relative, string text) => Write(folder, relative, text);
-
-    private static void Write(string folder, string relative, string text)
-    {
-        string path = Path.Combine(folder, relative);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
-    }
+    private void Write(string relative, string text) => TestFolders.Write(folder, relative, text);
 }

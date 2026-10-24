@@ -17,10 +17,10 @@ public partial class MainWindow
     private ToolWindows.GitView? gitView;
 
     /// <summary>The Git tool window's log.</summary>
-    public ToolWindows.GitLogView GitLog => gitView!.Log;
+    public ToolWindows.GitLogView GitLog => GitWindow.Log;
 
     /// <summary>The Git tool window: its Log and the histories Show History opened beside it.</summary>
-    public ToolWindows.GitView GitWindow => gitView!;
+    public ToolWindows.GitView GitWindow => gitView ?? (ToolWindows.GitView)Dock[ToolWindowIds.Git]!.Content;
 
     /// <summary>The open folder's version control, its session's.</summary>
     public VcsController Vcs => session.Vcs;
@@ -40,8 +40,8 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>The Commit tool window.</summary>
-    public ToolWindows.CommitView CommitView => commitView!;
+    /// <summary>The Commit tool window, built as it is first shown or asked for.</summary>
+    public ToolWindows.CommitView CommitView => commitView ?? (ToolWindows.CommitView)Dock[ToolWindowIds.Commit]!.Content;
 
     /// <summary>Asks the person to agree to something that cannot be undone (a rollback): its title, what happens,
     /// and the button that does it. Tests answer for them.</summary>
@@ -57,40 +57,72 @@ public partial class MainWindow
     private Task<bool> ConfirmAsync(string title, string text, string yes, Control? detail) =>
         confirm is { } answer ? answer(title, text, yes) : new ConfirmDialog(title, text, yes, detail: detail).ShowDialog<bool>(this);
 
+    /// <summary>Asks the person for a value a fix sets (an AppHost parameter's), as <see cref="Confirm"/> asks, with a box for
+    /// it under the question, its characters masked for a secret; null when they cancel or give none.</summary>
+    private async Task<string?> AskValueAsync(string title, string text, bool secret)
+    {
+        TextBox box = new() { Name = "AskedValue", PasswordChar = secret ? '•' : default, RevealPassword = false };
+        ConfirmDialog dialog = new(title, text, "Set", detail: box);
+        dialog.Opened += (_, _) => box.Focus();
+        return await dialog.ShowDialog<bool>(this) && box.Text is { Length: > 0 } value ? value : null;
+    }
+
     private void AddVcs()
     {
-        commitView = new ToolWindows.CommitView(session.Vcs);
-        Dock.Add(new Docking.ToolWindow("commit", "Commit", "Icon.Commit", commitView, Docking.ToolAnchor.LeftTop)
+        // Each built as it is first shown or asked for, over the session's Git then.
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Commit, "Commit", "Icon.Commit", MakeCommit, Docking.ToolAnchor.LeftTop)
         {
             Action = AppActions.ShowCommit,
             ActionTitle = "Commit Tool Window",
             Menus = [new MenuPlace("Git", 3, 0)],
         });
-        gitView = new ToolWindows.GitView(session.Vcs);
-        Dock.Add(new Docking.ToolWindow("git", "Git", "Icon.Branch", gitView, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Git, "Git", "Icon.Branch", MakeGit, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowGit,
             Menus = [new MenuPlace("Git", 3, 1)],
-            HeaderTools = gitView.Tabs,
+            Tools = () => gitView?.Tabs,
         });
         AddVcsActions();
         AddHistoryActions();
         AddMergeConflicts();
-        AddBranches();
-        gitView.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
-        gitView.CompareRequested += (_, chosen) => _ = CompareWithAsync(chosen.Local, chosen.Commit.Hash, chosen.Commit.Short, chosen.File.Path);
-        commitView.OpenRequested += (_, path) => OpenFile(path);
-        commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
-        commitView.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
-        commitView.DeleteRequested += async (_, path) => await DeleteAsync(path);
-        commitView.IgnoreRequested += (_, path) => Ignore(path);
-        gitView.NewBranchRequested += (_, commit) =>
+        // Back from another program, the open files take what it changed on disk, and Git is read again (Rider's
+        // synchronize on frame activation).
+        Activated += (_, _) =>
+        {
+            session.Vcs.ReloadOpenFiles();
+            _ = session.Vcs.RefreshAsync();
+        };
+    }
+
+    /// <summary>The Commit window's view, as it is first shown or asked for.</summary>
+    private ToolWindows.CommitView MakeCommit()
+    {
+        ToolWindows.CommitView view = commitView = new ToolWindows.CommitView(session.Vcs);
+        view.OpenRequested += (_, path) => OpenFile(path);
+        view.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
+        view.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
+        view.DeleteRequested += async (_, path) => await DeleteAsync(path);
+        view.IgnoreRequested += (_, path) => Ignore(path);
+        view.ResolveRequested += (_, _) => ShowConflicts();
+        view.MergeRequested += (_, path) => _ = MergeAsync(path);
+        view.Confirm = (title, text, yes) => Confirm(title, text, yes);
+        return view;
+    }
+
+    /// <summary>The Git window's view, as it is first shown or asked for (Show History, a branch's menu, a blamed line's
+    /// commit), its branches panel given the folder's favourites.</summary>
+    private ToolWindows.GitView MakeGit()
+    {
+        ToolWindows.GitView view = gitView = new ToolWindows.GitView(session.Vcs);
+        view.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
+        view.CompareRequested += (_, chosen) => _ = CompareWithAsync(chosen.Local, chosen.Commit.Hash, chosen.Commit.Short, chosen.File.Path);
+        view.NewBranchRequested += (_, commit) =>
         {
             NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, async name => (await session.Vcs.NewBranchAtAsync(name, commit.Hash)).Problem);
             popup.Done += (_, _) => popups.Close();
             popups.Show(popup);
         };
-        gitView.ResetRequested += async (_, reset) =>
+        view.ResetRequested += async (_, reset) =>
         {
             if (reset.Mode == ResetMode.Hard && !await Confirm("Reset Current Branch to Here",
                 $"Move {session.Vcs.Branch ?? "HEAD"} to {reset.Commit.Short} and drop every change since, committed or not?", "Reset"))
@@ -99,14 +131,8 @@ public partial class MainWindow
             }
             await session.Vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
         };
-        Explorer.IsVersioned = path => session.Vcs.Repository?.IsInside(path) == true;
-        // Back from another program, the open files take what it changed on disk, and Git is read again (Rider's
-        // synchronize on frame activation).
-        Activated += (_, _) =>
-        {
-            session.Vcs.ReloadOpenFiles();
-            _ = session.Vcs.RefreshAsync();
-        };
+        FollowBranches(view.Log.Branches!);
+        return view;
     }
 
     /// <summary>A session's Git in the window: its Commit and Git windows, what it says in the status bar, the branch
@@ -180,18 +206,18 @@ public partial class MainWindow
         {
             if (Folder is { } open)
             {
-                menu.Items.Add(Item("Create Git Repository...", () => _ = session.Vcs.InitAsync(open)));
+                menu.Items.Add(Item("Create Git Repository…", () => _ = session.Vcs.InitAsync(open)));
             }
             else
             {
-                menu.Items.Add(new MenuItem { Header = "No folder is open", IsEnabled = false });
+                menu.Items.Add(new MenuItem { Header = Refusals.NoFolder, IsEnabled = false });
             }
             Open(menu, BranchButton);
             return;
         }
         menu.Items.Add(Action(AppActions.UpdateProject));
         menu.Items.Add(Action(AppActions.Fetch));
-        menu.Items.Add(Item("New Branch...", ShowNewBranch));
+        menu.Items.Add(Item("New Branch…", ShowNewBranch));
         menu.Items.Add(Action(AppActions.Commit));
         menu.Items.Add(Action(AppActions.Push));
         menu.Items.Add(Action(AppActions.Stash));
@@ -323,7 +349,7 @@ public partial class MainWindow
                 hold.Dispose();
             };
         }
-        window.Show(this);
+        ShowOwn(window);
         return window;
     }
 
@@ -359,7 +385,7 @@ public partial class MainWindow
         }
         DiffWindow window = new($"{file.Name}: {commit.Short} {commit.Subject}", view);
         window.Closed += (_, _) => colours.ForEach(c => c.Dispose());
-        window.Show(this);
+        ShowOwn(window);
         return window;
     }
 
@@ -457,7 +483,7 @@ public partial class MainWindow
         {
             return;
         }
-        ShowToolWindow("git");
+        ShowToolWindow(ToolWindowIds.Git);
         GitWindow.ShowLog();
         await GitLog.SelectHashAsync(lines[line].Hash);
         status.Text = $"{lines[line].Short} {lines[line].Summary} ({lines[line].Author}, {lines[line].Time.ToLocalTime():f})";
@@ -477,20 +503,20 @@ public partial class MainWindow
     /// file the file shown.</summary>
     private void AddVcsActions()
     {
-        Add(AppActions.Commit, "Commit...", context =>
+        Add(AppActions.Commit, "Commit…", context =>
         {
             // Rider saves every file before a commit, so the window lists what the editors show.
             Editors.SaveAll();
-            ShowToolWindow("commit");
+            ShowToolWindow(ToolWindowIds.Commit);
             _ = session.Vcs.RefreshAsync();
-            commitView!.FocusMessage();
+            CommitView.FocusMessage();
         }, new("Git", 0, 0));
-        Add(AppActions.Push, "Push...", context => _ = session.Vcs.PushAsync(), new("Git", 0, 1));
-        Add(AppActions.UpdateProject, "Update Project...", context => _ = session.Vcs.UpdateAsync(), new("Git", 0, 2));
+        Add(AppActions.Push, "Push…", context => _ = session.Vcs.PushAsync(), new("Git", 0, 1));
+        Add(AppActions.UpdateProject, "Update Project…", context => _ = session.Vcs.UpdateAsync(), new("Git", 0, 2));
         Add(AppActions.Fetch, "Fetch", context => _ = session.Vcs.FetchAsync(), new("Git", 0, 3));
-        Add(AppActions.Branches, "Branches...", _ => ShowBranches(), new("Git", 0, 4));
-        Add(AppActions.Stash, "Stash Changes...", _ => ShowStash(), new("Git", 1, 0));
-        Add(AppActions.Unstash, "Unstash Changes...", context => _ = ShowUnstashAsync(), new("Git", 1, 1));
+        Add(AppActions.Branches, "Branches…", _ => ShowBranches(), new("Git", 0, 4));
+        Add(AppActions.Stash, "Stash Changes…", _ => ShowStash(), new("Git", 1, 0));
+        Add(AppActions.Unstash, "Unstash Changes…", context => _ = ShowUnstashAsync(), new("Git", 1, 1));
         Add(AppActions.ShowDiff, "Show Diff", context => _ = ShowDiffAsync(context.File!.Path), new("Git", 2, 0), onFile: true);
         Add(AppActions.Annotate, "Annotate with Git Blame", context => _ = ToggleAnnotationsAsync(context.File!), new("Git", 2, 1), onFile: true);
         Add(AppActions.RollbackLines, "Rollback Lines", context => _ = RollbackLinesAsync(), new("Git", 2, 2), onFile: true);
@@ -500,7 +526,7 @@ public partial class MainWindow
         void Add(string id, string title, Action<ActionContext> run, MenuPlace menu, bool onFile = false) =>
             actions!.Add(new IdeAction(id, title, "Git", run)
             {
-                WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : onFile ? NeedsFile(context) : null),
+                WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : onFile ? Refusals.NeedsFile(context) : null),
                 Menus = [menu],
             });
     }

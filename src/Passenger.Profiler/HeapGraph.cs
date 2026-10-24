@@ -98,8 +98,8 @@ internal sealed class HeapGraph
     public required int PointerSize { get; init; }
 
     /// <summary>How long the dump's walk took, and the analysis after it.</summary>
-    public TimeSpan Walked { get; private set; }
-    public TimeSpan Analysed { get; private set; }
+    public TimeSpan Walked { get; internal set; }
+    public TimeSpan Analysed { get; internal set; }
 
     public int Count => Address.Length;
 

@@ -78,7 +78,7 @@ internal sealed class WpfPreviewHost : IPreviewHost
         WpfPreviewHost started = new(preview, builder, Path.Combine(shadow, Path.GetFileName(built)), shadow);
         try
         {
-            started.Run(inputs);
+            await started.RunAsync(inputs);
             return started;
         }
         catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or FileNotFoundException)
@@ -89,7 +89,9 @@ internal sealed class WpfPreviewHost : IPreviewHost
         }
     }
 
-    private void Run(ProjectInputs inputs)
+    /// <summary>The previewer started on the copy, its fork off the window's thread (#441), held as background work so a
+    /// screenshot waits for the frame it draws.</summary>
+    private async Task RunAsync(ProjectInputs inputs)
     {
         string name = Path.GetFileNameWithoutExtension(assembly);
         string configuration = Path.Combine(shadow, name + ".runtimeconfig.json");
@@ -112,16 +114,20 @@ internal sealed class WpfPreviewHost : IPreviewHost
         }
         arguments.AddRange([Previewer, "--assembly", assembly]);
         ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments, shadow);
-        start.Environment[WpfPreviewJson.SourceInfoVariable] = "1";
+        start.Environment[RuntimeVariables.XamlDiagnosticsSourceInfo] = "1";
         if (own)
         {
             // Its own configuration rolls forward to the newest runtime, which a project on a preview of .NET needs.
-            start.Environment["DOTNET_ROLL_FORWARD_TO_PRERELEASE"] = "1";
+            start.Environment[RuntimeVariables.RollForwardToPrerelease] = "1";
         }
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        Process started = ChildProcesses.Start(start);
+        Process started;
+        using (BackgroundWork.Scope())
+        {
+            started = await ChildProcesses.StartAsync(start);
+        }
         process = started;
         started.ErrorDataReceived += (_, e) => Heard(e.Data);
         started.Exited += (_, _) => UiThread.Post(() => Ended(started));
@@ -253,12 +259,12 @@ internal sealed class WpfPreviewHost : IPreviewHost
                 // Boxes placed on a text since typed over would land on the wrong elements: the next frame brings them.
                 preview.Elements = sent == preview.Document.Document.Text.Snapshot ? elements : [];
                 preview.Error = null;
-                preview.Status = reply.Note is { } note ? $"Live. {note}" : "Live";
+                preview.Status = reply.Notes is { Count: > 0 } notes
+                    ? $"Live. {string.Join("; ", notes.Select(n => n.Message + XamlPreview.Where(sent ?? preview.Document.Document.Text.Snapshot, n.Line, null)))}"
+                    : "Live";
                 break;
             case WpfPreviewKinds.Error:
-                preview.Error = reply.Line is { } line
-                    ? $"{reply.Message} (line {line}{(reply.Column is { } column ? $", column {column}" : string.Empty)})"
-                    : reply.Message;
+                preview.Error = $"{reply.Message}{XamlPreview.Where(sent ?? preview.Document.Document.Text.Snapshot, reply.Line, reply.Column)}";
                 preview.Status = "The XAML did not load";
                 break;
             default:
@@ -276,19 +282,19 @@ internal sealed class WpfPreviewHost : IPreviewHost
     }
 
     /// <summary>The previewer's boxes on the elements of the text it drew: a box's line and column are its element's name
-    /// (or its '<'), as an XML reader places it.</summary>
+    /// (or its '<'), as an XML reader places it, a lone '\r' ending a line (<see cref="Lsp.ServerLines.OfXml"/>).</summary>
     private static List<PreviewElement> Place(TextSnapshot text, IReadOnlyList<WpfPreviewBox> boxes)
     {
         XmlTree tree = XmlTree.Parse(text.ToString());
+        Lsp.ServerLines lines = Lsp.ServerLines.OfXml(text);
         List<PreviewElement> placed = [];
         foreach (WpfPreviewBox box in boxes)
         {
-            if (box.Line < 1 || box.Line > text.LineCount)
+            if (box.Line < 1 || box.Line > lines.LineCount)
             {
                 continue;
             }
-            LineSpan line = text.GetLine(box.Line - 1);
-            int offset = line.Start + Math.Clamp(box.Column - 1, 0, line.Length);
+            int offset = lines.OffsetOf(box.Line - 1, Math.Max(0, box.Column - 1));
             XmlElement? element = tree.Elements.Where(e => e.Start <= offset && offset <= e.NameEnd).MaxBy(e => e.Start);
             if (element is not null)
             {

@@ -63,7 +63,8 @@ public sealed class EditingSessionTests
     /// moves, Tab, the line and comment commands, case, cut, copy and paste (CRLF text into an LF file), folding, Undo and
     /// Redo. Checked by what holds whatever a key does: no key fails, no caret leaves the text, the line index reads the
     /// text's lines, an undo or redo gives back a text the session had, the rows are a fresh editor's with the same folds,
-    /// and at the end the file undoes to itself as opened and redoes to the session's last text.</summary>
+    /// the folds carried in runs as the open file carries them are those carried one by one, and at the end the file undoes
+    /// to itself as opened and redoes to the session's last text.</summary>
     [AvaloniaTheory]
     [InlineData(3)]
     [InlineData(8)]
@@ -73,28 +74,25 @@ public sealed class EditingSessionTests
         string initial = StartingText(random, lines: 400);
         EditorRig rig = new(initial);
         // Carried through each edit as the open file carries them, the editor told of them, and kept as the editor folds them.
-        List<FoldRegion> folds = [];
+        CarriedFolds folds = new();
         rig.Document.Changed += (_, change) =>
         {
-            if (folds.Count > 0)
+            if (folds.Regions.Count > 0)
             {
-                folds = [.. folds.Select(r => r with
-                {
-                    Start = TextEditing.MapOffset(r.Start, change.Edits, afterInsertions: true),
-                    End = TextEditing.MapOffset(r.End, change.Edits, afterInsertions: true),
-                })];
-                rig.Editor.SetFoldRegions(folds);
+                folds.Through(change.Edits);
+                rig.Editor.SetFoldRegions(folds.Regions);
             }
         };
-        rig.Editor.FoldsToggled += (_, regions) => folds = [.. regions];
+        rig.Editor.FoldsToggled += (_, regions) => folds.Set(regions);
         rig.Window.Width = WrappedWidth;
         rig.Editor.SoftWrap = true;
         Ui.Settle();
         HashSet<string> had = [initial];
         for (int step = 0; step < 1500; step++)
         {
-            string key = AnyKey(random, rig, ref folds);
+            string key = AnyKey(random, rig, folds);
             string where = $"seed {seed}, step {step}, after {key}";
+            folds.Check(where);
             string text = rig.Text;
             Assert.All(rig.Editor.Selections.Items, s => Assert.True(Math.Max(s.Anchor, s.Caret) <= text.Length, $"A caret was left past the text's end ({where})"));
             Assert.True(key is not ("Undo" or "Redo") || had.Contains(text), $"{key} gave a text the session never had ({where})");
@@ -124,7 +122,7 @@ public sealed class EditingSessionTests
     }
 
     /// <summary>One key, a click, a caret added, a paste of text with CRLF breaks, or folds set; what it was.</summary>
-    private static string AnyKey(Random random, EditorRig rig, ref List<FoldRegion> folds)
+    private static string AnyKey(Random random, EditorRig rig, CarriedFolds folds)
     {
         string text = rig.Text;
         int roll = random.Next(100);
@@ -162,8 +160,8 @@ public sealed class EditingSessionTests
         }
         if (roll < 50)
         {
-            folds = Folds(random, rig.Document.Snapshot);
-            rig.Editor.SetFoldRegions(folds);
+            folds.Set(Folds(random, rig.Document.Snapshot));
+            rig.Editor.SetFoldRegions(folds.Regions);
             return "folds set";
         }
         (string keys, string name) = EditingKeys[random.Next(EditingKeys.Length)];
@@ -193,6 +191,34 @@ public sealed class EditingSessionTests
             line = last + 1;
         }
         return [.. made.OrderBy(r => r.Start)];
+    }
+
+    /// <summary>Fold regions carried through each edit as the open file carries them, in a <see cref="FoldList"/>'s runs, and
+    /// region by region beside them, the plain model the runs have to agree with.</summary>
+    private sealed class CarriedFolds
+    {
+        private List<FoldRegion> plain = [];
+
+        public IReadOnlyList<FoldRegion> Regions { get; private set; } = [];
+
+        public void Set(IReadOnlyList<FoldRegion> regions)
+        {
+            Regions = regions;
+            plain = [.. regions];
+        }
+
+        public void Through(IReadOnlyList<TextEdit> edits)
+        {
+            Regions = FoldList.Of(Regions).Through(edits);
+            plain = [.. plain.Select(r => r with
+            {
+                Start = TextEditing.MapOffset(r.Start, edits, afterInsertions: true),
+                End = TextEditing.MapOffset(r.End, edits, afterInsertions: true),
+            })];
+        }
+
+        public void Check(string where) =>
+            Assert.True(Regions.SequenceEqual(plain), $"The folds carried in runs are not those carried one by one ({where}).");
     }
 
     private static void Session(int seed, bool wrapped)

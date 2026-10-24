@@ -3,6 +3,14 @@ using Passenger.Core;
 
 namespace Passenger.App.Packages;
 
+/// <summary>What a package change came to, whoever asked for it (the NuGet window, an agent): whether dotnet did it, the
+/// files it changed (the project, the nearest Directory.Packages.props), what dotnet said, and, for one never begun, why
+/// (another change under way).</summary>
+public sealed record PackageOutcome(bool Done, IReadOnlyList<string> Changed, IReadOnlyList<string> Said)
+{
+    public string? Refused { get; init; }
+}
+
 /// <summary>Adds, updates and removes a project's packages through the .NET command line (dotnet add and remove
 /// package), as the SDK means them to be changed: it restores to check the package fits, and under central package
 /// management it writes the version into Directory.Packages.props. What the command says goes to the log.</summary>
@@ -25,6 +33,24 @@ public sealed class PackageManager
         Refused(id, version) ? Task.FromResult(false) : RunAsync(["add", project, "package", id, "--version", version]);
 
     public Task<bool> RemoveAsync(string project, string id) => Refused(id) ? Task.FromResult(false) : RunAsync(["remove", project, "package", id]);
+
+    /// <summary>Moves several packages to their versions together (EF Core's packages and a provider): each written without a
+    /// restore, so none is refused for a downgrade the others take back, then one restore of the project.</summary>
+    public async Task<bool> InstallSetAsync(string project, IReadOnlyList<(string Id, string Version)> packages)
+    {
+        if (packages.Any(p => Refused(p.Id, p.Version)))
+        {
+            return false;
+        }
+        foreach ((string id, string version) in packages)
+        {
+            if (!await RunAsync(["add", project, "package", id, "--version", version, "--no-restore"]))
+            {
+                return false;
+            }
+        }
+        return await RunAsync(["restore", project]);
+    }
 
     /// <summary>Ends a change still under way, its whole process tree, as the IDE closes.</summary>
     public void Stop()
@@ -52,6 +78,8 @@ public sealed class PackageManager
     private async Task<bool> RunAsync(IReadOnlyList<string> arguments)
     {
         UiThread.Check();
+        // A folder left stops the change under way; the next folder's changes run, retried as ever.
+        stopped = false;
         string folder = Path.GetDirectoryName(arguments[1]) ?? Environment.CurrentDirectory;
         for (int attempt = 1; ; attempt++)
         {
@@ -68,7 +96,7 @@ public sealed class PackageManager
             }
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            Line?.Invoke(this, ChildProcesses.Display(start));
+            Line?.Invoke(this, ChildProcesses.Shown(start));
             (bool succeeded, bool fileInUse) = await RunOnceAsync(start);
             if (succeeded || !fileInUse || attempt == Attempts || stopped)
             {
@@ -87,7 +115,7 @@ public sealed class PackageManager
         Process process;
         try
         {
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
@@ -95,6 +123,11 @@ public sealed class PackageManager
             return (false, false);
         }
         running = process;
+        // A Stop that came as it started found nothing to end.
+        if (stopped)
+        {
+            ChildProcesses.Kill(process);
+        }
         bool fileInUse = false;
         try
         {

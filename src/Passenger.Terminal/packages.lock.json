@@ -59,6 +59,38 @@
         "contentHash": "JR1xAkZbNnAALBjzFpqSwEx7YZfD1LI228jF9j9cgKknBPCiFy9mpphlgH+TpTN8vajTUpcgg9Miy5Y8eUAH9g=="
       }
     },
+    "net11.0/linux-musl-arm64": {
+      "Porta.Pty": {
+        "type": "Direct",
+        "requested": "[2.2.3, )",
+        "resolved": "2.2.3",
+        "contentHash": "Q+U4BOiKQP8AR68Fjy6h+rLlcXcH5ao+qwIO7xAejO0U4MqFqM9/SdtcG/cZwOlQydciagiA0I7HWVRkfealyQ==",
+        "dependencies": {
+          "Microsoft.Windows.Console.ConPTY": "1.24.260710001"
+        }
+      },
+      "Microsoft.Windows.Console.ConPTY": {
+        "type": "Transitive",
+        "resolved": "1.24.260710001",
+        "contentHash": "JR1xAkZbNnAALBjzFpqSwEx7YZfD1LI228jF9j9cgKknBPCiFy9mpphlgH+TpTN8vajTUpcgg9Miy5Y8eUAH9g=="
+      }
+    },
+    "net11.0/linux-musl-x64": {
+      "Porta.Pty": {
+        "type": "Direct",
+        "requested": "[2.2.3, )",
+        "resolved": "2.2.3",
+        "contentHash": "Q+U4BOiKQP8AR68Fjy6h+rLlcXcH5ao+qwIO7xAejO0U4MqFqM9/SdtcG/cZwOlQydciagiA0I7HWVRkfealyQ==",
+        "dependencies": {
+          "Microsoft.Windows.Console.ConPTY": "1.24.260710001"
+        }
+      },
+      "Microsoft.Windows.Console.ConPTY": {
+        "type": "Transitive",
+        "resolved": "1.24.260710001",
+        "contentHash": "JR1xAkZbNnAALBjzFpqSwEx7YZfD1LI228jF9j9cgKknBPCiFy9mpphlgH+TpTN8vajTUpcgg9Miy5Y8eUAH9g=="
+      }
+    },
     "net11.0/linux-x64": {
       "Porta.Pty": {
         "type": "Direct",

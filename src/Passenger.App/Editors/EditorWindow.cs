@@ -12,20 +12,16 @@ public sealed class EditorWindow
     private readonly EditorFrame frame;
     private readonly FloatWindow window;
 
-    internal EditorWindow(EditorFrame frame, FloatWindow window, Panel layers)
+    internal EditorWindow(EditorFrame frame, FloatWindow window)
     {
         this.frame = frame;
         this.window = window;
-        Layers = layers;
     }
 
     public Window Window => window;
 
     /// <summary>Its groups of tabs, in the order of its splits.</summary>
     public IReadOnlyList<EditorGroup> Groups => [.. frame.Groups];
-
-    /// <summary>The panel the window's content is, where what stands over its editors (the IDE's popups) goes.</summary>
-    public Panel Layers { get; }
 
     /// <summary>Where it stands: its place in screen pixels, its size in its own units.</summary>
     internal PixelRect Placement => window.Placement;

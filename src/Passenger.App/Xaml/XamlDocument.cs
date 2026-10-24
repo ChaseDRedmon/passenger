@@ -97,8 +97,21 @@ public sealed class XamlDocument : IDisposable
         return file is null ? null : await BackgroundWork.Run(() => XamlCompletion.At(file, caret), cancel);
     }
 
-    /// <summary>The file checked as it stands, its markers replaced by what is found, unless it changed meanwhile.</summary>
+    /// <summary>The file checked as it stands, its markers replaced by what is found, unless it changed meanwhile; a check
+    /// that fails is reported, as nothing awaits it (a Debounce's work).</summary>
     private async Task AnalyseAsync()
+    {
+        try
+        {
+            await CheckAsync();
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            IdeErrors.Report(error);
+        }
+    }
+
+    private async Task CheckAsync()
     {
         using IDisposable held = BackgroundWork.Scope();
         using IDisposable checking = Document.Checking();
@@ -164,9 +177,9 @@ public sealed class XamlDocument : IDisposable
         return end > at ? TextRange.FromBounds(at, end) : TextRange.FromBounds(start, Math.Max(start, line.End));
     }
 
-    /// <summary>A compiler's message without the place it repeats at its end (Avalonia's "Line 8, position 6.", WPF's
+    /// <summary>A XAML compiler's message without the place it repeats at its end (Avalonia's "Line 8, position 6.", WPF's
     /// MarkupCompile's "Line 8 Position 6.").</summary>
-    private static string Plain(string message)
+    internal static string Plain(string message)
     {
         int at = message.LastIndexOf(" Line ", StringComparison.Ordinal);
         return at > 0 && message.IndexOf(" position ", at, StringComparison.OrdinalIgnoreCase) > at ? message[..at].TrimEnd() : message;

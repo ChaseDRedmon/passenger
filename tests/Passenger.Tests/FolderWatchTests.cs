@@ -56,7 +56,7 @@ public sealed class FolderWatchTests : IDisposable
         Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Name is "bin" or "obj");
 
         Write("obj/project.assets.json", "{}\n");
-        Write("bin/Debug/net10.0/App.dll", "");
+        Write($"bin/Debug/{TestProjects.Framework}/App.dll", "");
         Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Count(r => r.Name is "bin" or "obj" && r.IsDimmed) == 2,
             $"the build's bin and obj, dimmed, in the Explorer (it shows {string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))})");
 
@@ -192,7 +192,7 @@ public sealed class FolderWatchTests : IDisposable
         ConfirmDialog dialog = window.OwnedWindows.OfType<ConfirmDialog>().Single();
         Avalonia.Controls.Button load = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog)
             .OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == "Load File System Changes");
-        load.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(load, settle: false);
         Ui.WaitFor(() => Text(window) == "class One { int disk; }\n", "the disk's text in the editor");
         Assert.False(window.EditorArea.Active!.IsModified);
         window.Close();
@@ -219,6 +219,82 @@ public sealed class FolderWatchTests : IDisposable
         Assert.False(window.EditorArea.Active!.IsModified);
         window.Close();
         Assert.False(window.IsVisible, "The window would not close");
+    }
+
+    /// <summary>A folder renamed elsewhere (mv, git mv, Finder) is seen as that folder alone, not the files in it. Its open
+    /// files stayed on their old paths, and the next save wrote them there, making the old folder again beside the new.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Open_files_follow_their_folder_renamed_elsewhere_and_their_saves_never_make_the_old_folder_again(bool eachFolder)
+    {
+        Assert.SkipWhen(eachFolder && OperatingSystem.IsWindows(), "Windows renames a folder only once its own watch lets go; there one watch covers the tree");
+        string old = Path.Combine(folder, "src", "Old");
+        string renamed = Path.Combine(folder, "src", "New");
+        Write("src/Old/One.cs", "class One { }\n");
+        Write("src/Old/Deep/Two.cs", "class Two { }\n");
+        MainWindow window = Open(eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree);
+        window.OpenFile(Path.Combine(old, "Deep", "Two.cs"));
+        Ui.Settle();
+        Type(window, "sealed ");
+        window.OpenFile(Path.Combine(old, "One.cs"));
+        Ui.Settle();
+
+        Directory.Move(old, renamed);
+        Ui.WaitFor(() => window.EditorArea.Documents.All(d => PathNames.IsUnder(d.Path, renamed)), "the open files to follow their folder to its new name");
+        Assert.Equal(["One.cs", "Two.cs"], window.EditorArea.Documents.Select(d => d.Name).Order(StringComparer.Ordinal));
+        OpenDocument two = window.EditorArea.Documents.Single(d => d.Name == "Two.cs");
+        Assert.True(two.IsModified && two.Text.Snapshot.ToString() == "sealed class Two { }\n", "The file with unsaved edits lost them as it followed its folder");
+
+        // Typed into, both are saved as the window closes: in the folder's new place, and nowhere else.
+        window.EditorArea.CodeEditor.Focus();
+        Type(window, "public ");
+        window.Close();
+        Assert.False(window.IsVisible, $"The window would not close: {window.Status}");
+        Assert.False(Directory.Exists(old), "A save made the folder renamed elsewhere again under its old name");
+        Assert.Equal("public class One { }\n", File.ReadAllText(Path.Combine(renamed, "One.cs")));
+        Assert.Equal("sealed class Two { }\n", File.ReadAllText(Path.Combine(renamed, "Deep", "Two.cs")));
+    }
+
+    /// <summary>Finder's Move to Trash renames a folder out of the one open, seen as that folder gone alone: an open file in
+    /// it with no edits closes as a file deleted does, and one with edits keeps them, never written back there unasked.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_folder_trashed_elsewhere_closes_its_open_files_and_no_autosave_makes_it_again(bool eachFolder)
+    {
+        Assert.SkipWhen(eachFolder && OperatingSystem.IsWindows(), "Windows moves a folder only once its own watch lets go; there one watch covers the tree");
+        string old = Path.Combine(folder, "src", "Old");
+        string trash = TestFolders.Create("trash-");
+        Write("src/Old/One.cs", "class One { }\n");
+        Write("src/Old/Two.cs", "class Two { }\n");
+        MainWindow window = Open(eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree);
+        window.OpenFile(Path.Combine(old, "Two.cs"));
+        Ui.Settle();
+        Type(window, "sealed ");
+        window.OpenFile(Path.Combine(old, "One.cs"));
+        Ui.Settle();
+
+        Directory.Move(old, Path.Combine(trash, "Old"));
+        Ui.WaitFor(() => window.EditorArea.Documents.All(d => d.Name != "One.cs"), "the tab of the file trashed with its folder to close");
+        OpenDocument two = Assert.Single(window.EditorArea.Documents);
+        Assert.Equal("sealed class Two { }\n", two.Text.Snapshot.ToString());
+
+        // Typed into and left for the terminal, which autosaves: the file stays unsaved, and the status bar says why.
+        window.EditorArea.CodeEditor.Focus();
+        Type(window, "public ");
+        Ui.Run(window, AppActions.ShowTerminal);
+        Ui.WaitFor(() => window.Status?.StartsWith("Two.cs could not be saved", StringComparison.Ordinal) == true, "the autosave to say why it left the file");
+        Assert.Equal("Two.cs could not be saved: its folder Old was moved or deleted, and only Save makes it again", window.Status);
+        Assert.False(Directory.Exists(old), "An autosave made the folder trashed elsewhere again");
+        Assert.True(two.IsModified);
+
+        // The person's own Save writes it back there, as asked.
+        window.Perform(AppActions.Save);
+        Ui.WaitFor(() => !two.IsModified, "the person's Save");
+        Assert.Equal("public sealed class Two { }\n", File.ReadAllText(Path.Combine(old, "Two.cs")));
+        window.Close();
+        Assert.False(window.IsVisible, $"The window would not close: {window.Status}");
     }
 
     [AvaloniaFact]
@@ -385,6 +461,41 @@ public sealed class FolderWatchTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A large checkout overflows the system's buffer of changes: those it lost are never heard of, so the window
+    /// reads again what it shows. Its watchers stop while the files change, so the changes are lost as an overflow loses them.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Changes_the_watcher_lost_are_read_again_into_the_open_files_the_explorer_and_go_to_file(bool eachFolder)
+    {
+        Write("One.cs", "class One { }\n");
+        Write("Old/Old.cs", "class Old { }\n");
+        MainWindow window = Open(eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree);
+        window.OpenFile("One.cs");
+        window.OpenFile("Old/Old.cs");
+        Ui.Settle();
+        List<FileSystemWatcher> watchers = [.. window.FolderWatcher!.Watches.Values];
+        watchers.ForEach(w => w.EnableRaisingEvents = false);
+
+        Write("One.cs", "class One { int changed; }\n");
+        Write("Old/Old.cs", "class Old { int changed; }\n");
+        Write("Fresh/Fresh.cs", "class Fresh { }\n");
+        RaiseError(window.FolderWatcher.Watches[folder], new InternalBufferOverflowException("Too many changes at once; directory listing is required."));
+        Ui.WaitFor(() => window.EditorArea.Documents.All(d => d.Text.Snapshot.ToString().Contains("int changed;", StringComparison.Ordinal)),
+            $"every open file to take the text on disk, where they hold [{string.Join(" | ", window.EditorArea.Documents.Select(d => d.Text.Snapshot.ToString().Trim()))}]");
+        Assert.All(window.EditorArea.Documents, d => Assert.False(d.IsModified));
+        Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Any(r => r.Name == "Fresh"),
+            $"the folder made meanwhile in the Explorer (it shows {string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))})");
+        Ui.WaitFor(() => window.FileIndex.Files.Contains(Path.Combine("Fresh", "Fresh.cs")), "the file made meanwhile in Go to File");
+
+        // What changes from then on is heard again, in the folder made meanwhile too. Started only now, since a watcher
+        // started at once can still be told of the changes just made.
+        watchers.ForEach(w => w.EnableRaisingEvents = true);
+        Write("Fresh/Later.cs", "class Later { }\n");
+        Ui.WaitFor(() => window.FileIndex.Files.Contains(Path.Combine("Fresh", "Later.cs")), "a file made after in Go to File");
+        window.Close();
+    }
+
     private static IOException OutOfWatches() =>
         new("The configured user limit (8192) on the number of inotify watches has been reached, or the operating system failed to allocate a required resource.", 28);
 
@@ -412,7 +523,7 @@ public sealed class FolderWatchTests : IDisposable
     {
         Write("App/App.csproj", Project);
         Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n</Solution>\n");
-        MainWindow window = Open();
+        MainWindow window = Open(languageServer: false);
         Assert.Equal(["App"], window.Configurations.Select(c => c.Name));
 
         Write("Tool/Tool.csproj", Project);
@@ -430,7 +541,7 @@ public sealed class FolderWatchTests : IDisposable
         // As dotnet sln migrate leaves a folder, with a project added to the .slnx since.
         Write("App/App.csproj", Project);
         Write("App/Program.cs", "System.Console.WriteLine(\"app\");\n");
-        Write("Extra/Extra.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Extra/Extra.csproj", TestProjects.Library());
         Write("Extra/Helper.cs", "public static class Helper\n{\n    public static string Name => \"extra\";\n}\n");
         Write("Extra/Use.cs", "public static class Use\n{\n    public static int Count()\n    {\n        int count = Helper.Name;\n        return count;\n    }\n}\n");
         Write("Foo.sln", ClassicSolution);
@@ -452,6 +563,52 @@ public sealed class FolderWatchTests : IDisposable
         Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Extra");
         Ui.WaitFor(() => window.CSharpService?.Session?.Solution == sln, "the language server to open the .sln the Explorer shows");
         window.Close();
+    }
+
+    /// <summary>Every look at the open folder's files walks it one way: Go to File lists each file once by its own name though
+    /// links lead to it again, back up the tree or out of the folder, never build output or the system's own files; a folder
+    /// with no solution takes its projects from those files but a hidden folder's (a tool's copy); and a folder another
+    /// program makes, a link back up in it, is kept by Local History file for file as Go to File lists it.</summary>
+    [AvaloniaFact]
+    public void Go_to_file_local_history_and_the_folders_projects_see_its_files_alike_through_links_and_hidden_folders()
+    {
+        Write("App/App.csproj", Project);
+        Write("App/Program.cs", "System.Console.WriteLine(\"app\");\n");
+        Write("App/Thumbs.db", "the system's own\n");
+        Write(".github/ci.yml", "on: push\n");
+        Write(".copy/Copy.csproj", Project);
+        Write("bin/out.txt", "built\n");
+        Write(".DS_Store", "the system's own\n");
+        string outside = TestFolders.Create("watch-outside-");
+        try
+        {
+            File.WriteAllText(Path.Combine(outside, "Far.cs"), "class Far { }\n");
+            // Alias comes before App by name, so the walk reaches App's files through it first.
+            TestFolders.LinkFolder(Path.Combine(folder, "Alias"), Path.Combine(folder, "App"));
+            TestFolders.LinkFolder(Path.Combine(folder, "App", "loop"), Path.Combine(folder, "App"));
+            TestFolders.LinkFolder(Path.Combine(folder, "App", "up"), folder);
+            TestFolders.LinkFolder(Path.Combine(folder, "far"), outside);
+            MainWindow window = Open(languageServer: false);
+            List<string> listed = [Path.Combine(".copy", "Copy.csproj"), Path.Combine(".github", "ci.yml"), Path.Combine("App", "App.csproj"), Path.Combine("App", "Program.cs")];
+            Assert.Equal(listed, window.FileIndex.Files.Order(StringComparer.Ordinal));
+            Assert.Equal([PathNames.Canonical(Path.Combine(folder, "App", "App.csproj"))], window.Projects.Select(p => p.Path));
+
+            string made = Path.Combine(folder, "Made");
+            string note = PathNames.Canonical(Path.Combine(made, "note.txt"));
+            Write("Made/note.txt", "made elsewhere\n");
+            Write("Made/.DS_Store", "the system's own\n");
+            TestFolders.LinkFolder(Path.Combine(made, "again"), folder);
+            Ui.WaitFor(() => window.FileIndex.Files.Contains(Path.Combine("Made", "note.txt")), "the file of the folder made elsewhere in Go to File");
+            Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == note), "Local History to keep the file of the folder made elsewhere");
+            Ui.Settle();
+            Assert.Equal([.. listed, Path.Combine("Made", "note.txt")], window.FileIndex.Files.Order(StringComparer.Ordinal));
+            Assert.Equal([note], window.LocalHistory!.Snapshot().Events.Select(e => e.Path).OfType<string>().Where(p => PathNames.IsUnder(p, made)).Distinct());
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(outside);
+        }
     }
 
     private static IEnumerable<string?> Codes(MainWindow window) =>
@@ -481,7 +638,7 @@ public sealed class FolderWatchTests : IDisposable
 
         """;
 
-    private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+    private static readonly string Project = TestProjects.Console();
 
     private void Write(string relative, string text)
     {
@@ -490,9 +647,11 @@ public sealed class FolderWatchTests : IDisposable
         File.WriteAllText(path, text);
     }
 
-    private MainWindow Open(FolderWatching? watching = null)
+    /// <summary>A window on the folder, watching it the platform's way unless told another; with the C# language server
+    /// only where a test asks C# of it, so a project's folder starts and restores none for nothing.</summary>
+    private MainWindow Open(FolderWatching? watching = null, bool languageServer = true)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Watching = watching ?? FolderWatching.Platform };
+        MainWindow window = new() { Width = 1200, Height = 800, Watching = watching ?? FolderWatching.Platform, StartsLanguageServer = languageServer };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();

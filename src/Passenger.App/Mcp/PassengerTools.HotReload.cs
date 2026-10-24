@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Passenger.App.Debugging;
+using Passenger.App.ToolWindows;
 
 namespace Passenger.App.Mcp;
 
@@ -10,24 +11,23 @@ namespace Passenger.App.Mcp;
 public sealed partial class PassengerTools
 {
     [McpServerTool(Name = "hot_reload", Title = "Apply Hot Reload changes", Destructive = true), Description(
-        "Applies the code edits made since the launch or the last apply to the running program, as Apply Hot Reload Changes " +
-        "does: to one debug_start launched, paused or running (Edit and Continue), or to one run with Hot Reload, saving the " +
-        "files for dotnet watch. The edits are the editors', saved or not. Returns the result (applied, nothingToApply, " +
-        "restartNeeded, errors, failed), what it said, what was updated, each edit it could not apply or that does not compile " +
-        "(file, line, Roslyn's ENC id), and whether the program was restarted for it (restart true, or Settings' Always " +
-        "restart for a rude edit, on by default) and where the new session is. debug_continue and debug_step also apply edits " +
-        "made while paused.")]
+        "Applies the editors' edits (saved or not) since the launch or the last apply to the running program, as Apply Hot " +
+        "Reload Changes does: a debug_start launch, paused or running (Edit and Continue), or a run with Hot Reload (saved for " +
+        "dotnet watch). Returns the result (applied, nothingToApply, restartNeeded, errors, failed), what it said and updated, " +
+        "each edit it could not apply (file, line, ENC id), and whether the program restarted, with its new session. " +
+        "debug_continue and debug_step apply edits made while paused too.")]
     public Task<HotReloadInfo> HotReload(
         [Description("Restart when an edit needs it (true) or keep the code running (false); Settings' choice by default")] bool? restart = null,
-        [Description("After a restart, how long to wait for a stop (an app with a window: its UI)")] int waitSeconds = 30,
+        int waitSeconds = 30,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugController debugger = Session.Debug;
         if (window.HotReloadWatched)
         {
+            AgentCall.Say("Saving the edits for dotnet watch and waiting for what it makes of them");
             HotReloadOutcome? said = await window.SaveForWatchAsync().WaitAsync(cancel);
             return said is null
-                ? new HotReloadInfo("unanswered", "The files were saved, and dotnet watch said nothing of them in 30 s: debug_output or the Run window shows what it printed",
+                ? new HotReloadInfo("unanswered", "The files were saved, and dotnet watch said nothing of them in 30 s: output or the Run window shows what it printed",
                     [], [], 0, [], false, false)
                 : new HotReloadInfo(Result(said.Result), said.Said, [], [], 0, [], said.Result == HotReloadResult.RestartNeeded,
                     said.Result == HotReloadResult.RestartNeeded);
@@ -36,24 +36,30 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"Hot Reload cannot apply changes: {why}");
         }
-        DebugSession before = debugger.Session!;
-        HotReloadOutcome outcome = await debugger.ApplyChangesAsync().WaitAsync(cancel);
-        bool needed = outcome.Result == HotReloadResult.RestartNeeded;
-        bool restarted = false;
-        if (needed && (restart ?? window.Settings.RestartOnRudeEdit))
+        // The window's Apply Hot Reload Changes, its restarts made as the agent asks (else as Settings say) and never asked.
+        DebugSession? before = debugger.Session;
+        bool restarting = restart ?? window.Settings.RestartOnRudeEdit;
+        AgentCall.Follow(window.Actions.Work, AppActions.ApplyHotReloadChanges);
+        HotReloadApplied applied = await window.ApplyHotReloadAsync(async (rude, running) =>
         {
-            restarted = await window.RestartForAgentAsync(outcome);
-        }
-        else if (needed && debugger.HotReload is { } reload)
-        {
-            // Declined, as dotnet watch's No: the next resume goes on in the code it has rather than restarting for these edits.
-            reload.Changed = false;
-        }
+            if (!restarting)
+            {
+                return false;
+            }
+            AgentCall.Say(running ? $"Restarting {string.Join(", ", rude.Restart)} for edits they cannot take running" : "Restarting the program for edits it cannot take running");
+            if (!running)
+            {
+                AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
+            }
+            return await window.RestartForAgentAsync(rude, running);
+        }).WaitAsync(cancel) ?? throw new InvalidOperationException(window.Actions.Work.Of(AppActions.ApplyHotReloadChanges) is { } under
+            ? ActionWork.Busy(under) : "Apply Hot Reload Changes is under way");
+        HotReloadOutcome outcome = applied.Outcome;
         HotReloadInfo answer = new(Result(outcome.Result), outcome.Said, [.. outcome.Files.Select(Relative)], outcome.Modules, outcome.Methods,
             [.. outcome.Problems.Select(p => new Finding(p.Severity == Passenger.App.Run.ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message,
                 p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))],
-            needed, restarted);
-        if (restarted && Session.Debug.Session != before)
+            outcome.Result == HotReloadResult.RestartNeeded, applied.Restarted);
+        if (applied.Restarted && Session.Debug.Session != before)
         {
             return answer with { Debugger = await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel) };
         }

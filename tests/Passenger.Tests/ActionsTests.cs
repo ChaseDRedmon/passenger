@@ -81,6 +81,36 @@ public sealed class ActionsTests : IDisposable
         }
     }
 
+    /// <summary>The Containers and Aspire windows' service actions became one set (#409): a shortcut a person kept under the
+    /// id either window gave Debug before runs Debug Service now, which says why it cannot act here, and an agent's
+    /// ide_action naming a former id reaches the same action.</summary>
+    [AvaloniaFact]
+    public void A_shortcut_kept_under_a_service_actions_former_id_runs_the_one_action_it_is_now()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        string keys = OperatingSystem.IsMacOS() ? "meta alt shift K" : "control alt shift K";
+        window.ApplySettings(window.Settings with { Shortcuts = new() { ["app.aspire.debug"] = [keys] } });
+        try
+        {
+            IReadOnlyList<Shortcut> bound = window.Actions.Keymap.ShortcutsFor(AppActions.ServiceDebug);
+            Assert.True(bound.Count == 1 && bound[0].First.Notation() == Shortcut.Parse(keys).First.Notation(),
+                $"Debug Service's keys are [{string.Join(", ", bound.Select(s => s.Display()))}], not those kept under app.aspire.debug");
+            Ui.Press(window, bound[0].First.Notation());
+            Assert.Equal("No container run is under way: Run, Debug or Profile a container configuration first", window.Status);
+            Assert.Same(window.Actions[AppActions.ServiceDebug], window.Actions["app.containers.service.debug"]);
+            Assert.Same(window.Actions[AppActions.ServiceRun], window.Actions["app.aspire.runWithoutDebugger"]);
+        }
+        finally
+        {
+            // The keymap the views without a window read is the process's; the next test starts on the platform's own.
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void A_windows_branch_menu_and_breakpoint_popup_show_the_shortcuts_its_own_keys_run()
     {
@@ -110,7 +140,7 @@ public sealed class ActionsTests : IDisposable
             Ui.WaitFor(() => window.OpenContextMenu is not null, "the branch menu");
             Ui.Settle();
             // The keys stand in the item's own column, as every menu's do, written as the keymap writes them.
-            MenuItem commitItem = window.OpenContextMenu!.Items.OfType<MenuItem>().Single(i => i.Header as string == "Commit...");
+            MenuItem commitItem = window.OpenContextMenu!.Items.OfType<MenuItem>().Single(i => i.Header as string == "Commit…");
             string[] shown = [.. commitItem.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
             window.OpenContextMenu.Close();
             Assert.True(shown.Contains(commit),
@@ -118,7 +148,7 @@ public sealed class ActionsTests : IDisposable
 
             // The keys it shows run Commit here.
             Ui.Press(window, platforms.ShortcutsFor(AppActions.Commit)[0].First.Notation());
-            Assert.True(window.DockHost.IsShown("commit"), $"{commit}, which the branch menu shows for Commit, did not commit in this window");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Commit), $"{commit}, which the branch menu shows for Commit, did not commit in this window");
 
             Passenger.App.Debugging.LineBreakpoint breakpoint = Toggled(window);
             window.ShowBreakpointPopup(breakpoint);

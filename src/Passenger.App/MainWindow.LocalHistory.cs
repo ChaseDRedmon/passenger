@@ -27,26 +27,26 @@ public partial class MainWindow
     /// <summary>The open folder's Local History, or null with none open.</summary>
     public LocalHistory? LocalHistory => session.LocalHistory;
 
-    /// <summary>The Local History tool window.</summary>
-    public LocalHistoryView LocalHistoryWindow => localHistoryView!;
+    /// <summary>The Local History tool window, built as it is first shown or asked for.</summary>
+    public LocalHistoryView LocalHistoryWindow => localHistoryView ?? (LocalHistoryView)Dock[ToolWindowIds.LocalHistory]!.Content;
 
     private void AddLocalHistory()
     {
-        localHistoryView = new LocalHistoryView();
-        Dock.Add(new Docking.ToolWindow("localHistory", "Local History", "Icon.History", localHistoryView, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.LocalHistory, "Local History", "Icon.History", () => localHistoryView = new LocalHistoryView(),
+            Docking.ToolAnchor.BottomLeft)
         {
-            HeaderTools = localHistoryView.Tabs,
+            Tools = () => localHistoryView?.Tabs,
         });
         // Rider's names: the menus' own, and Find Action's (Show Local History...) beside the Git window's Show History.
-        actions!.Add(new IdeAction(AppActions.ShowLocalHistory, "Show Local History...", "Local History", context => ShowLocalHistory(Target(context, fileOnly: false)!))
+        actions!.Add(new IdeAction(AppActions.ShowLocalHistory, "Show Local History…", "Local History", context => ShowLocalHistory(Target(context, fileOnly: false)!))
         {
-            TitleIn = _ => "Show History...",
+            TitleIn = _ => "Show History…",
             WhyNot = context => NeedsFolder(context) ?? WhyNoTarget(context, fileOnly: false),
             Menus = [new MenuPlace(LocalHistoryMenu, 0, 0)],
         });
-        actions.Add(new IdeAction(AppActions.ShowProjectHistory, "Show Local History for Project...", "Local History", _ => ShowLocalHistory(Folder!))
+        actions.Add(new IdeAction(AppActions.ShowProjectHistory, "Show Local History for Project…", "Local History", _ => ShowLocalHistory(Folder!))
         {
-            TitleIn = _ => "Show Project History...",
+            TitleIn = _ => "Show Project History…",
             WhyNot = NeedsFolder,
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 0)],
         });
@@ -55,7 +55,7 @@ public partial class MainWindow
             WhyNot = NeedsFolder,
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 1)],
         });
-        actions.Add(new IdeAction(AppActions.PutLabel, "Put Label...", "Local History", _ => ShowPutLabel())
+        actions.Add(new IdeAction(AppActions.PutLabel, "Put Label…", "Local History", _ => ShowPutLabel())
         {
             WhyNot = NeedsFolder,
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 2)],
@@ -76,7 +76,8 @@ public partial class MainWindow
     /// <summary>A file the editor opened: its content is what the history knows of it from now.</summary>
     private void LookAt(OpenDocument document)
     {
-        if (session.LocalHistory is not { } history || !history.Keeps(document.Path))
+        // A preview's or a workbook's bytes are no text the history keeps, and an image's run to 64 MB: never read for nothing.
+        if (session.LocalHistory is not { } history || !document.HoldsText || !history.Keeps(document.Path))
         {
             return;
         }
@@ -99,7 +100,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } folder)
         {
-            status.Text = NoFolder;
+            status.Text = Refusals.NoFolder;
             return null;
         }
         string full = PathNames.Canonical(path);
@@ -109,8 +110,8 @@ public partial class MainWindow
             return null;
         }
         bool isFolder = Directory.Exists(full);
-        ShowToolWindow("localHistory");
-        return localHistoryView!.Show(full, Path.GetFileName(Path.TrimEndingDirectorySeparator(full)),
+        ShowToolWindow(ToolWindowIds.LocalHistory);
+        return LocalHistoryWindow.Show(full, Path.GetFileName(Path.TrimEndingDirectorySeparator(full)),
             () => new HistoryTab(history, new HistoryHost(Editors, RevertAsync), full, isFolder));
     }
 
@@ -119,7 +120,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } open)
         {
-            status.Text = NoFolder;
+            status.Text = Refusals.NoFolder;
             return null;
         }
         IReadOnlyList<HistoryEvent> events = history.Snapshot().Events;
@@ -143,7 +144,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history)
         {
-            status.Text = NoFolder;
+            status.Text = Refusals.NoFolder;
             return null;
         }
         NamePopup popup = new("Put Label", string.Empty, name =>
@@ -168,7 +169,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } folder)
         {
-            return NoFolder;
+            return Refusals.NoFolder;
         }
         string full = PathNames.Canonical(path);
         bool isFolder = Directory.Exists(full);
@@ -176,7 +177,7 @@ public partial class MainWindow
         IReadOnlyList<HistoryRow> rows = await BackgroundWork.Run(() => isFolder ? HistoryRows.OfFolder(events, full) : HistoryRows.OfFile(events, known, full));
         if (rows.FirstOrDefault(r => r.Set == set) is not { } row)
         {
-            return $"No change set {set} is in the history of {Path.GetRelativePath(folder, full)}";
+            return $"No change set {set} is in the history of {PathNames.Shown(full, folder)}";
         }
         IReadOnlyList<(string Path, string? Version)> files = isFolder
             ? [.. (await BackgroundWork.Run(() => HistoryRows.Since(events, known, set, full))).Select(f => (f.Path, f.Then))]
@@ -184,14 +185,15 @@ public partial class MainWindow
         return await RevertAsync(files, HistoryTab.RevertName(row));
     }
 
-    /// <summary>Puts files back to versions, as one activity of the history: an open file's text as one undoable step over
-    /// the lines that differ, then saved, as Rider's revert writes the file; a closed one's bytes written as they were; one
-    /// that did not exist then deleted (to the Trash, and kept in the history). Null once all are written, else why not.</summary>
+    /// <summary>Puts files back to versions, as one activity of the history: an open file's text and encoding as one
+    /// undoable step over the lines that differ, written as Rider's revert writes the file (<see cref="OpenDocument.Revert"/>);
+    /// a closed one's bytes written as they were; one that did not exist then deleted (to the Trash, and kept in the
+    /// history). Null once all are written, else why not.</summary>
     private async Task<string?> RevertAsync(IReadOnlyList<(string Path, string? Version)> files, string activity)
     {
         if (session.LocalHistory is not { } history)
         {
-            return NoFolder;
+            return Refusals.NoFolder;
         }
         List<string> refused = [];
         using (history.During(activity))
@@ -212,29 +214,31 @@ public partial class MainWindow
                     refused.Add($"{Path.GetFileName(path)} (its content is no longer kept)");
                     continue;
                 }
-                if (Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path)) is { } open)
-                {
-                    string text = FileText.FromBytes(bytes, open.Encoding)?.Text ?? string.Empty;
-                    string now = open.Text.Snapshot.ToString();
-                    if (text != now)
-                    {
-                        open.Text.BreakUndoGroup();
-                        CSharp.WorkspaceEdits.ApplyTo(Editors, open, LineDiff.Edits(now, text));
-                        open.Text.BreakUndoGroup();
-                    }
-                    if (open.IsModified && !Editors.Save(open))
-                    {
-                        refused.Add(open.Name);
-                    }
-                    continue;
-                }
+                OpenDocument? open = Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path));
                 try
                 {
-                    FileText.Restore(path, bytes);
+                    // A tab holding none of the file's text (a preview's, a workbook's, a binary file's) shows the bytes written.
+                    if (open is not { HoldsText: true })
+                    {
+                        FileText.Restore(path, bytes);
+                        if (open is not null)
+                        {
+                            FollowDisk(open);
+                        }
+                    }
+                    else
+                    {
+                        open.Revert(bytes);
+                    }
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
                     refused.Add($"{Path.GetFileName(path)} ({error.Message})");
+                    continue;
+                }
+                if (open is { IsModified: true } && !Editors.Save(open))
+                {
+                    refused.Add(open.Name);
                 }
             }
         }

@@ -81,7 +81,7 @@ public sealed class WelcomeView : UserControl
         ListMenus.Attach(list, () => list.SelectedItem is not RecentRow chosen ? [] :
         [
             ListMenus.Item("Open", "Enter", () => Chosen?.Invoke(this, chosen)),
-            ListMenus.Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : $"Show in {ChildProcesses.FileManager}", null, () => ChildProcesses.Reveal(chosen.Path), !chosen.Missing),
+            ListMenus.Item(FileManager.Showing, null, () => RevealRequested?.Invoke(this, chosen), !chosen.Missing),
             ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Path)),
             new Separator(),
             ListMenus.Item("Remove from Recent Solutions", OperatingSystem.IsMacOS() ? "Back" : "Delete", () => RemoveRequested?.Invoke(this, chosen)),
@@ -133,6 +133,9 @@ public sealed class WelcomeView : UserControl
 
     /// <summary>One to take off the list, by its key or its menu.</summary>
     public event EventHandler<RecentRow>? RemoveRequested;
+
+    /// <summary>A recent folder or solution to show in the file manager.</summary>
+    public event EventHandler<RecentRow>? RevealRequested;
 
     /// <summary>The New Solution button, for a click on it.</summary>
     public Button NewSolutionButton { get; }
@@ -205,12 +208,7 @@ public sealed class WelcomeView : UserControl
         }
         switch (e.Key)
         {
-            case Key.Down:
-                Move(1);
-                e.Handled = true;
-                break;
-            case Key.Up:
-                Move(-1);
+            case Key.Up or Key.Down or Key.PageUp or Key.PageDown when ListKeys.Move(list, e):
                 e.Handled = true;
                 break;
             case Key.Enter:
@@ -240,16 +238,6 @@ public sealed class WelcomeView : UserControl
             RemoveRequested?.Invoke(this, chosen);
             e.Handled = true;
         }
-    }
-
-    private void Move(int step)
-    {
-        if (list.ItemCount == 0)
-        {
-            return;
-        }
-        list.SelectedIndex = Math.Clamp(list.SelectedIndex + step, 0, list.ItemCount - 1);
-        list.ScrollIntoView(list.SelectedIndex);
     }
 
     private void OpenChosen()

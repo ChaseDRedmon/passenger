@@ -116,7 +116,7 @@ public static class HistoryRows
             HistoryEvent first = s.Events[^1];
             return new HistoryRow(s.Set, first.Time, Title(first, s.Events, single: false), first.Name, first.Kind == HistoryKind.Label, first.System)
             {
-                Files = [.. s.Events.Select(e => e.To ?? e.Path).OfType<string>().Distinct(StringComparer.FromComparison(PathNames.Comparison))],
+                Files = [.. s.Events.Select(e => e.To ?? e.Path).OfType<string>().Distinct(PathNames.Comparer)],
             };
         })];
     }
@@ -133,7 +133,7 @@ public static class HistoryRows
         {
             return [];
         }
-        StringComparer comparer = StringComparer.FromComparison(PathNames.Comparison);
+        StringComparer comparer = PathNames.Comparer;
         Dictionary<string, string?> then = new(known, comparer);
         for (int i = events.Count - 1; i >= first; i--)
         {

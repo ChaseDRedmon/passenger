@@ -105,6 +105,7 @@ public partial class ModuleMetadataReader
         _generations.Add(generation);
         _points.Clear();
         _documents = null;
+        _bestDocuments.Clear();
     }
 
     /// <summary>The metadata the updates made, kept while the module is: what names the members they added.</summary>
@@ -277,6 +278,74 @@ public partial class ModuleMetadataReader
         }
     }
 
+    /// <summary>The methods that may have a sequence point in a document, in <see cref="MethodsWithPoints()"/>'s order: the
+    /// build's with one there, and every method an update brought. What a breakpoint in a file is looked for in, rather than
+    /// every method of the module, each read again for every breakpoint bound.</summary>
+    internal IEnumerable<int> MethodsWithPoints(string document)
+    {
+        int[] built = BuiltMethodsByDocument().GetValueOrDefault(document) ?? [];
+        if (_generations.Count == 0)
+        {
+            return built;
+        }
+        HashSet<int> may = [.. built];
+        foreach (Generation generation in _generations)
+        {
+            may.UnionWith(generation.Relative.Keys);
+        }
+        return MethodsWithPoints().Where(may.Contains);
+    }
+
+    private Dictionary<string, int[]>? _builtMethodsByDocument;
+
+    /// <summary>The build's methods by each document they have a sequence point in, in token order, read once: an update's
+    /// methods are its own, and its moves of lines keep a point in its document.</summary>
+    private Dictionary<string, int[]> BuiltMethodsByDocument()
+    {
+        if (_builtMethodsByDocument is not null)
+        {
+            return _builtMethodsByDocument;
+        }
+        Dictionary<string, List<int>> byDocument = new(StringComparer.Ordinal);
+        if (_pdbMetadataReader is { } reader)
+        {
+            Dictionary<DocumentHandle, string> names = [];
+            foreach (MethodDebugInformationHandle handle in reader.MethodDebugInformation)
+            {
+                MethodDebugInformation info = reader.GetMethodDebugInformation(handle);
+                if (info.SequencePointsBlob.IsNil)
+                {
+                    continue;
+                }
+                int token = MetadataTokens.GetToken(handle.ToDefinitionHandle());
+                DocumentHandle last = default;
+                foreach (SequencePoint point in info.GetSequencePoints())
+                {
+                    // As Read names a point's document.
+                    DocumentHandle document = point.Document.IsNil ? info.Document : point.Document;
+                    if (document.IsNil || document == last)
+                    {
+                        continue;
+                    }
+                    last = document;
+                    if (!names.TryGetValue(document, out string? name))
+                    {
+                        names[document] = name = reader.GetString(reader.GetDocument(document).Name);
+                    }
+                    if (!byDocument.TryGetValue(name, out List<int>? methods))
+                    {
+                        byDocument[name] = methods = [];
+                    }
+                    if (methods.Count == 0 || methods[^1] != token)
+                    {
+                        methods.Add(token);
+                    }
+                }
+            }
+        }
+        return _builtMethodsByDocument = byDocument.ToDictionary(p => p.Key, p => p.Value.ToArray(), StringComparer.Ordinal);
+    }
+
     private string[]? _documents;
 
     /// <summary>The names of every document the module's code is in: the build's, and those updates brought.</summary>
@@ -322,6 +391,32 @@ public partial class ModuleMetadataReader
         }
         MethodDefinition method = _imageMetadataReader.GetMethodDefinition(handle);
         return method.RelativeVirtualAddress == 0 ? null : _peReader.GetMethodBody(method.RelativeVirtualAddress).GetILBytes();
+    }
+
+    /// <summary>Whether an IL offset of a method at a version lies in one of its catch, finally, fault or filter blocks,
+    /// where the runtime puts off an abort until the block is left. False where the body is not read: an update's, whose
+    /// blocks are not kept, and a module's with no image.</summary>
+    internal bool InHandler(int methodToken, int ilOffset, int? version = null)
+    {
+        if (GenerationOf(methodToken, version) > 0 || _peReader is null)
+        {
+            return false;
+        }
+        MethodDefinitionHandle handle = MetadataTokens.MethodDefinitionHandle(methodToken);
+        if (MetadataTokens.GetRowNumber(handle) > _imageMetadataReader.GetTableRowCount(TableIndex.MethodDef)
+            || _imageMetadataReader.GetMethodDefinition(handle).RelativeVirtualAddress is not (> 0 and int rva))
+        {
+            return false;
+        }
+        foreach (ExceptionRegion region in _peReader.GetMethodBody(rva).ExceptionRegions)
+        {
+            int start = region.Kind is ExceptionRegionKind.Filter ? region.FilterOffset : region.HandlerOffset;
+            if (ilOffset >= start && ilOffset < region.HandlerOffset + region.HandlerLength)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>The string a method returns as a constant (its body <c>ldstr; ret</c>), found by its type's full name and

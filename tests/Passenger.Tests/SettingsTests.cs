@@ -137,7 +137,7 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(["Always", "Only if errors or warnings received", "Only if errors received", "Never"], results.Items.Cast<string>());
         Assert.Equal("Only if errors received", results.SelectedItem);
 
-        Click(dialog, explicitly);
+        Ui.Click(explicitly);
         Assert.False(explicitly.IsChecked, "A click did not clear the explicit build's option");
         Assert.False(implicitly.IsEnabled, "The implicit build's option could still be changed with the explicit build's off, which Rider greys");
         results.SelectedIndex = 3;
@@ -154,8 +154,8 @@ public sealed class SettingsTests : IDisposable
         again.Close();
     }
 
-    /// <summary>Appearance's Theme: Passenger's own or Harbour, each in the dark or light the next row says, the window
-    /// dressed in the one chosen the moment it is applied; Editor's Colour scheme: the theme's own or Rider's.</summary>
+    /// <summary>Appearance's Theme: Passenger's own or another (Harbour here), each in the dark or light the next row says,
+    /// the window dressed in the one chosen the moment it is applied; Editor's Colour scheme: the theme's own or Rider's.</summary>
     [AvaloniaFact]
     public void Harbour_chosen_as_the_theme_dresses_the_window_at_once_beside_passengers_own()
     {
@@ -166,14 +166,13 @@ public sealed class SettingsTests : IDisposable
             Ui.Settle();
             Assert.Equal(["Theme", "Dark or light"], dialog.Shown.Take(2));
             ComboBox theme = Editor<ComboBox>(dialog, "Theme");
-            Assert.Equal(["Passenger", "Harbour"], theme.Items.Cast<string>());
             Assert.Equal("Passenger", theme.SelectedItem);
             Assert.Equal(["System", "Dark", "Light"], Editor<ComboBox>(dialog, "Dark or light").Items.Cast<string>());
             Border stripe = window.GetVisualDescendants().OfType<Border>().First(b => b.Classes.Contains("stripeBar") && b.IsEffectivelyVisible);
             Point bare = stripe.TranslatePoint(new Point(stripe.Bounds.Width / 2, stripe.Bounds.Height * 0.45), window)!.Value;
             Color passenger = Ui.Pixel(window, bare);
 
-            theme.SelectedIndex = 1;
+            theme.SelectedItem = "Harbour";
             dialog.Apply();
             Ui.Settle();
             Color harbour = Ui.Pixel(window, bare);
@@ -196,14 +195,6 @@ public sealed class SettingsTests : IDisposable
     /// <summary>What edits an option, beside its label in the page shown.</summary>
     private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
         ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     private MainWindow Open()
     {

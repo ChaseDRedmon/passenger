@@ -32,6 +32,43 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     public void Dispose() => TestFolders.Delete(settings);
 
     [AvaloniaFact]
+    public void Changing_the_scope_cannot_replace_files_from_the_previous_search_before_the_next_search_finishes()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.OpenFile(Full("App/Main.cs"));
+            Ui.Settle();
+            int confirmations = 0;
+            window.Confirm = (_, _, _) =>
+            {
+                confirmations++;
+                return Task.FromResult(true);
+            };
+            Ui.Press(window, Ui.Shortcut(AppActions.ReplaceInFiles));
+            FindInFilesPopup popup = Assert.IsType<FindInFilesPopup>(window.Popup);
+            Search(popup, "total");
+            Assert.True(popup.Matches.Select(m => m.Path).Distinct().Count() > 1);
+            string outside = File.ReadAllText(Full("Lib/Money.cs"));
+            popup.Replacement = "sum";
+            popup.ScopeKind = SearchScopeKind.Scope;
+            popup.NamedScope = "Current File";
+            popup.RequestReplace();
+            Assert.Equal(0, confirmations);
+            Assert.Equal(outside, File.ReadAllText(Full("Lib/Money.cs")));
+            Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the current-file replacement");
+            Assert.Equal("Replaced 2 matches in 1 file", window.Status);
+            Assert.Equal(1, confirmations);
+            Assert.Equal(outside, File.ReadAllText(Full("Lib/Money.cs")));
+            Assert.Contains("sum", window.EditorArea.CodeEditor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_search_in_one_project_finds_only_its_files_and_leaves_a_project_nested_in_it_to_itself()
     {
         MainWindow window = Open();
@@ -64,7 +101,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     public void The_Solution_views_Edit_menu_finds_in_a_folder_a_project_or_a_file_and_nowhere_else()
     {
         MainWindow window = Open();
-        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Find in Files...");
+        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Find in Files…");
         Assert.Equal((SearchScopeKind.Directory, Full("App/Models"), true), (popup.ScopeKind, popup.Directory, popup.Recursive));
         Search(popup, "total");
         string[] models = Found(popup);
@@ -76,14 +113,14 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
         Assert.Equal(["notes.md", "Order.cs"], Found(popup));
         Ui.Press(window, "ESCAPE");
 
-        popup = FromMenu(window, window.ExplorerView.Tree.Rows.First(r => r.Kind == NodeKind.Project && r.Name == "Lib"), "Find in Files...");
+        popup = FromMenu(window, window.ExplorerView.Tree.Rows.First(r => r.Kind == NodeKind.Project && r.Name == "Lib"), "Find in Files…");
         Assert.Equal((SearchScopeKind.Project, Full("Lib/Lib.csproj")), (popup.ScopeKind, popup.Project));
         Search(popup, "total");
         Assert.Equal(["Money.cs", "Money.g.cs"], Found(popup));
         Ui.Press(window, "ESCAPE");
 
         // A file is a scope of its own, named after it as Rider names a selection.
-        popup = FromMenu(window, Reveal(window, "Lib/Money.g.cs"), "Find in Files...");
+        popup = FromMenu(window, Reveal(window, "Lib/Money.g.cs"), "Find in Files…");
         Assert.Equal((SearchScopeKind.Scope, "Money.g.cs"), (popup.ScopeKind, popup.NamedScope));
         Search(popup, "total");
         Assert.Equal(["Money.g.cs"], Found(popup));
@@ -142,7 +179,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     {
         MainWindow window = Open();
         window.Confirm = (_, _, _) => Task.FromResult(true);
-        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Replace in Files...");
+        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Replace in Files…");
         Assert.Equal(SearchScopeKind.Directory, popup.ScopeKind);
         popup.Words = true;
         Search(popup, "total");
@@ -163,6 +200,43 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
         })
         {
             Assert.True(File.ReadAllText(Full(file)) == text, $"Replace in Files on the Models folder changed {file}, outside it");
+        }
+        window.Close();
+    }
+
+    /// <summary>Replace All acts on the query and scope as they stand, though the matches shown for a moment after the
+    /// scope changes are still the last search's: pressed then, it replaced in every file the solution's search had found.</summary>
+    [AvaloniaFact]
+    public void Replace_all_pressed_as_the_scope_changes_replaces_in_the_new_scope_alone()
+    {
+        string[] others = ["App/Models/Order.cs", "App/Plugins/Plugin.cs", "Lib/Money.cs", "Lib/Money.g.cs", "docs/total.md"];
+        Dictionary<string, string> before = others.ToDictionary(f => f, f => File.ReadAllText(Full(f)));
+        MainWindow window = Keeping(folder);
+        window.OpenFile(Full("App/Main.cs"));
+        Ui.Settle();
+        List<string> asked = [];
+        window.Confirm = (_, question, _) =>
+        {
+            asked.Add(question);
+            return Task.FromResult(true);
+        };
+        Ui.Press(window, Ui.Shortcut(AppActions.ReplaceInFiles));
+        FindInFilesPopup popup = Assert.IsType<FindInFilesPopup>(window.Popup);
+        Assert.Equal(SearchScopeKind.Solution, popup.ScopeKind);
+        Search(popup, "total");
+        Assert.Equal(8, Found(popup).Length);
+
+        popup.Replacement = "sum";
+        popup.ScopeKind = SearchScopeKind.Scope;
+        popup.NamedScope = "Current File";
+        popup.RequestReplace();
+        Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the replacement");
+        Assert.Equal("Replaced 2 matches in 1 file", window.Status);
+        Assert.StartsWith("Replace 2 matches in 1 file with 'sum'?", Assert.Single(asked), StringComparison.Ordinal);
+        Assert.Equal("// the sum of the app\nclass Main { int sum; }\n", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        foreach (string file in others)
+        {
+            Assert.True(File.ReadAllText(Full(file)) == before[file], $"Replace All in the current file changed {file}, which the solution's search had found");
         }
         window.Close();
     }
@@ -236,38 +310,26 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     /// <summary>A row's right-click menu, Edit, and an item of it, as clicks on them would; the popup it opens.</summary>
     private static FindInFilesPopup FromMenu(MainWindow window, ExplorerNode row, string item)
     {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control shown = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Solution view does not show {row.Name}");
-        Point at = shown.TranslatePoint(new Point(shown.Bounds.Width / 2, shown.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
-        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException($"No menu opened on {row.Name}");
-        MenuItem edit = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == "Edit")
-            ?? throw new InvalidOperationException($"{row.Name}'s menu has no Edit: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem chosen = edit.Items.OfType<MenuItem>().First(i => (string?)i.Header == item);
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
+        Ui.ChooseFromRowMenu(window, row, "Edit", item);
         return Assert.IsType<FindInFilesPopup>(window.Popup);
     }
 
-    /// <summary>A window on the solution, on the server the class's last window left.</summary>
+    /// <summary>A window on the solution, with no C# language server: Find in Files, its scopes and the Solution view's
+    /// projects ask nothing of C#.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, WarmServer = shop.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
         return window;
     }
 
-    /// <summary>The window a person uses, as the app makes it: one that keeps its state, here in the test's own folder.</summary>
+    /// <summary>The window a person uses, as the app makes it: one that keeps its state, here in the test's own folder; with
+    /// no C# language server, as <see cref="Open"/>.</summary>
     private MainWindow Keeping(string open)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, WarmServer = shop.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.OpenFolder(open);
@@ -278,10 +340,10 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     private string Full(string relative) => PathNames.Canonical(Path.Combine(folder, relative));
 
     /// <summary>A solution of three projects, one nested in another's folder, with "total" in code, notes, generated code and
-    /// docs outside every project; restored once for every test, and the warm server they share on it.</summary>
+    /// docs outside every project, never restored; each test starting on it as written, what a replacement wrote put back.</summary>
     public sealed class Shop : SharedProject
     {
-        private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+        private static readonly string Project = TestProjects.Library();
 
         public Shop()
             : base("scope-")
@@ -298,7 +360,8 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
             Put("Lib/Money.cs", "record Money(decimal Total);\n");
             Put("Lib/Money.g.cs", "// generated: total\n");
             Put("docs/total.md", "total\n");
-            Prepare();
+            // Never restored: no window of the class starts a language server, and the scopes are the projects as evaluated.
+            Prepare(restore: false);
         }
 
         private void Put(string relative, string text)

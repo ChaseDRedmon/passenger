@@ -540,6 +540,7 @@ public sealed partial class CodeEditor
                 tests[test.Line] = test.Kind;
             }
         }
+        HashSet<int> runs = [.. RunMarks.Where(r => r.Line >= first && r.Line <= last).Select(r => r.Line)];
         Dictionary<int, Color> colours = [];
         foreach (ColourMark colour in ColourMarks)
         {
@@ -571,6 +572,11 @@ public sealed partial class CodeEditor
             else if (tests.TryGetValue(line, out TestMarkKind test))
             {
                 DrawTestMark(context, test, right, top);
+            }
+            else if (runs.Contains(line))
+            {
+                // A run configuration's service or image: the run icon a test not yet run has, Rider's green triangle.
+                DrawTestMark(context, TestMarkKind.NotRun, right, top);
             }
             else if (colours.TryGetValue(line, out Color colour))
             {

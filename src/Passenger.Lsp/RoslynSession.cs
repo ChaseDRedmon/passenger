@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Passenger.Roslyn.Extension;
 using Passenger.Text;
@@ -64,6 +65,8 @@ public sealed class RoslynSession : IAsyncDisposable, IDocumentHost
     /// <summary>Roslyn's diagnostics are pulled, from each source it registers.</summary>
     bool IDocumentHost.PullsDiagnostics => true;
 
+    PushPace IDocumentHost.Pushes => PushPace.Latest;
+
     /// <summary>Starts a server on a folder and has it open the solution or projects. Cancelled or failed, it ends the
     /// server it started: one given up (another folder opened) never goes on loading this folder unseen.</summary>
     /// <param name="solution">The solution to open; with none, <paramref name="projects"/> are opened. The caller decides
@@ -75,11 +78,13 @@ public sealed class RoslynSession : IAsyncDisposable, IDocumentHost
     /// file's and those it references), which the server loads alone, so the file being worked on is answered for first.</param>
     /// <param name="feed">The client's design-time builds of the projects: with one, a server that has Passenger's project
     /// loader loads the projects from them rather than building each itself.</param>
+    /// <param name="stateCache">The IDE's state's cache folder, where the server runs from a copy of its own when it may not
+    /// write beside its assemblies (<see cref="RoslynServerFolder"/>); with none it runs where the app carries it.</param>
     public static async Task<RoslynSession> StartAsync(string folder, string? solution, IReadOnlyList<string> projects, string logFolder,
         CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null, Action<LanguageServer>? started = null,
-        Func<Task<IReadOnlyList<string>>>? first = null, IProjectFeed? feed = null)
+        Func<Task<IReadOnlyList<string>>>? first = null, IProjectFeed? feed = null, string? stateCache = null)
     {
-        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options).ConfigureAwait(false);
+        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options, stateCache).ConfigureAwait(false);
         RoslynSession session = new(server, folder, solution, projects);
         try
         {
@@ -235,6 +240,9 @@ internal interface IDocumentHost
     /// <summary>Whether the server's diagnostics are asked for (<c>textDocument/diagnostic</c>), rather than sent as it
     /// finds them (<c>textDocument/publishDiagnostics</c>).</summary>
     bool PullsDiagnostics { get; }
+
+    /// <summary>How the diagnostics it pushes naming no version follow the texts it is sent.</summary>
+    PushPace Pushes { get; }
 }
 
 /// <summary>One document as the server knows it: opened with its text, then sent every change as it
@@ -247,8 +255,22 @@ public sealed class LspDocument : IDisposable
     private readonly Lock gate = new();
     private bool closed;
 
-    /// <summary>The diagnostics a server that pushes them last sent, with the version they are for (null when it said none).</summary>
+    /// <summary>The diagnostics a server that pushes them last sent, with the version they answer (told as they came; null
+    /// before any came).</summary>
     private (IReadOnlyList<Diagnostic> Diagnostics, int? Version) pushed = ([], null);
+
+    /// <summary>The version of the text last sent (opened, or changed) and when it was sent; and, for a server that pushes
+    /// once for each text that changed, the versions it has yet to answer, in order.</summary>
+    private int sent;
+    private long sentAt;
+    private readonly Queue<int> unanswered = new();
+
+    /// <summary>The version a push answers that answers no text the editor has had: one before a debouncing server's rest.</summary>
+    private const int NoVersion = -1;
+
+    /// <summary>When the latest colours and diagnostics the server gave were asked for and when they came.</summary>
+    private (long Asked, long Came) coloured;
+    private (long Asked, long Came) diagnosed;
 
     internal LspDocument(IDocumentHost session, string uri, TextDocument text, string? languageId = null)
     {
@@ -257,9 +279,37 @@ public sealed class LspDocument : IDisposable
         Text = text;
         IsRazor = languageId is null && IsRazorPath(uri);
         LanguageId = languageId ?? (IsRazor ? "aspnetcorerazor" : "csharp");
+        Sent(text.Version, changed: true);
         session.Server.Notify("textDocument/didOpen",
             new DidOpenTextDocumentParams(new TextDocumentItem(uri, LanguageId, text.Version, text.Snapshot.ToString())));
         text.Changed += OnChanged;
+    }
+
+    /// <summary>A text sent, before it goes, so a push that answers it, however soon it comes, is told so.</summary>
+    private void Sent(int version, bool changed)
+    {
+        lock (gate)
+        {
+            sent = version;
+            sentAt = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (changed && session.Pushes.EachText)
+            {
+                unanswered.Enqueue(version);
+            }
+        }
+    }
+
+    /// <summary>The version a push naming none answers, as it arrives (under the gate): the next a server that pushes once
+    /// a text has yet to answer (the latest sent for the last, which changes since left as it was); for a debouncing one
+    /// the latest sent, once it has rested, else none; else the latest sent.</summary>
+    private int Answered()
+    {
+        PushPace pace = session.Pushes;
+        if (pace.EachText)
+        {
+            return unanswered.TryDequeue(out int version) && unanswered.Count > 0 ? version : sent;
+        }
+        return System.Diagnostics.Stopwatch.GetElapsedTime(sentAt) >= pace.Rest ? sent : NoVersion;
     }
 
     public string Uri { get; }
@@ -273,18 +323,18 @@ public sealed class LspDocument : IDisposable
     /// then in <see cref="DiagnosticsAsync"/>.</summary>
     public event EventHandler? DiagnosticsPushed;
 
-    /// <summary>The diagnostics the server pushed, kept for the version they are for.</summary>
+    /// <summary>The diagnostics the server pushed, kept for the version they answer: the one it named, else the one its
+    /// <see cref="PushPace"/> says, told as they arrive (a version read later, on another thread, may be a text sent since).</summary>
     internal void Publish(PublishDiagnosticsParams published)
     {
         lock (gate)
         {
-            pushed = (published.Diagnostics, published.Version);
+            pushed = (published.Diagnostics, published.Version ?? Answered());
         }
         DiagnosticsPushed?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>The diagnostics the server last pushed and the version they are for: the one it named, else the text's
-    /// version now, as a server that names none sends them for the latest text it has.</summary>
+    /// <summary>The diagnostics the server last pushed and the version they answer (none for the text now before any came).</summary>
     public (IReadOnlyList<Diagnostic> Diagnostics, int Version) Pushed
     {
         get
@@ -292,6 +342,47 @@ public sealed class LspDocument : IDisposable
             lock (gate)
             {
                 return (pushed.Diagnostics, pushed.Version ?? Text.Version);
+            }
+        }
+    }
+
+    /// <summary>When the latest colours the server gave the document (the whole file's or a range's) were asked for and
+    /// when they came, as Stopwatch timestamps (zeros before any came), an answer to an earlier question never taking
+    /// the place of a later one's: a start's timing reads them, so it asks the server nothing of its own.</summary>
+    public (long Asked, long Came) Coloured
+    {
+        get
+        {
+            lock (gate)
+            {
+                return coloured;
+            }
+        }
+    }
+
+    /// <summary>When the latest diagnostics pulled for the document were asked for and when they came, as
+    /// <see cref="Coloured"/> are.</summary>
+    public (long Asked, long Came) Diagnosed
+    {
+        get
+        {
+            lock (gate)
+            {
+                return diagnosed;
+            }
+        }
+    }
+
+    /// <summary>An answer come to a question asked at <paramref name="asked"/>, kept unless a later question's came
+    /// first.</summary>
+    private void Came(ref (long Asked, long Came) latest, long asked)
+    {
+        long came = System.Diagnostics.Stopwatch.GetTimestamp();
+        lock (gate)
+        {
+            if (asked >= latest.Asked)
+            {
+                latest = (asked, came);
             }
         }
     }
@@ -352,10 +443,10 @@ public sealed class LspDocument : IDisposable
     {
         int version = Text.Version;
         CompletionContext context = incomplete ? new CompletionContext(3) : trigger is null ? new CompletionContext(1) : new CompletionContext(2, trigger);
-        // Sent now, in order with the changes before it; read where the answer came, or on the thread pool should it be in
-        // already, never on the caller's thread: a statement's list is every type in reach, each with the server's data.
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/completion",
-            new CompletionParams(Identifier, PositionOf(offset), context), cancel).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        // Sent now, in order with the changes before it; read on the thread pool, never on the caller's thread: a statement's
+        // list is every type in reach, each with the server's data.
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/completion",
+            new CompletionParams(Identifier, PositionOf(offset), context), cancel));
         return (Shapes.CompletionList(result), version);
     }
 
@@ -368,24 +459,32 @@ public sealed class LspDocument : IDisposable
     public async Task<SignatureHelp?> SignatureHelpAsync(int offset, CancellationToken cancel = default) =>
         await Server.RequestAsync<SignatureHelp>("textDocument/signatureHelp", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel);
 
+    /// <summary>Where the symbol at an offset is declared. Like every answer that grows with the solution or the file, read
+    /// on the thread pool before the caller resumes (<see cref="Read"/>).</summary>
     public async Task<IReadOnlyList<LspLocation>> DefinitionAsync(int offset, CancellationToken cancel = default) =>
-        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/definition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
+        Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/definition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel)));
 
     /// <summary>Where the type of the symbol at an offset (a variable's, a member's, a parameter's) is declared.</summary>
     public async Task<IReadOnlyList<LspLocation>> TypeDefinitionAsync(int offset, CancellationToken cancel = default) =>
-        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/typeDefinition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
+        Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/typeDefinition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel)));
 
+    /// <summary>The implementations of the symbol at an offset: an interface's in a solution may be thousands.</summary>
     public async Task<IReadOnlyList<LspLocation>> ImplementationAsync(int offset, CancellationToken cancel = default) =>
-        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/implementation", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
+        Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/implementation", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel)));
 
     /// <summary>Every place the symbol at an offset is used, its declaration included, each once: Roslyn names a place
     /// once for each symbol declared there (a type and its primary constructor, a record's positional property and its
     /// parameter), so such a declaration came twice. Told apart by the server's own URI text, never a path made
     /// canonical, which asks the disk once a place and held the UI thread through ten thousand usages.</summary>
     public async Task<IReadOnlyList<LspLocation>> ReferencesAsync(int offset, CancellationToken cancel = default) =>
-        [.. Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/references",
-                new ReferenceParams(Identifier, PositionOf(offset), new ReferenceContext(true)), cancel))
+        [.. Shapes.Locations(await Read(Server.RequestAsync<JsonElement>("textDocument/references",
+                new ReferenceParams(Identifier, PositionOf(offset), new ReferenceContext(true)), cancel)))
             .DistinctBy(place => (place.Uri, place.Range.Start))];
+
+    /// <summary>A request's answer awaited so that what follows the await, reading it into records, runs on the thread pool
+    /// however it came (in already, or where it arrived), never on the caller's thread: the UI thread gets the records made,
+    /// as completion's list is (thousands of usages, a file's hints, a project's code actions).</summary>
+    private static ConfiguredTaskAwaitable<T?> Read<T>(Task<T?> answer) => answer.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
 
     public async Task<IReadOnlyList<DocumentHighlight>> HighlightsAsync(int offset, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<DocumentHighlight>>("textDocument/documentHighlight", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel) ?? [];
@@ -401,8 +500,8 @@ public sealed class LspDocument : IDisposable
     /// call, joining the statement after it onto the call's line.</summary>
     public async Task<IReadOnlyList<CodeAction>> CodeActionsAsync(TextRange range, IReadOnlyList<Diagnostic> diagnostics, CancellationToken cancel = default)
     {
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/codeAction",
-            new CodeActionParams(Identifier, RangeOf(Trimmed(Text.Snapshot, range)), new CodeActionContext(diagnostics, TriggerKind: 1)), cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/codeAction",
+            new CodeActionParams(Identifier, RangeOf(Trimmed(Text.Snapshot, range)), new CodeActionContext(diagnostics, TriggerKind: 1)), cancel));
         return Shapes.CodeActions(result);
     }
 
@@ -427,8 +526,8 @@ public sealed class LspDocument : IDisposable
     public async Task<IReadOnlyList<CodeAction>> SourceActionsAsync(string kind, CancellationToken cancel = default)
     {
         LspRange whole = new(new LspPosition(0, 0), PositionOf(Text.Snapshot.Length));
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/codeAction",
-            new CodeActionParams(Identifier, whole, new CodeActionContext([], [kind], TriggerKind: 2)), cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/codeAction",
+            new CodeActionParams(Identifier, whole, new CodeActionContext([], [kind], TriggerKind: 2)), cancel));
         return Shapes.CodeActions(result);
     }
 
@@ -469,9 +568,19 @@ public sealed class LspDocument : IDisposable
         Server.RequestAsync<ProjectContextList>("textDocument/_vs_getProjectContexts",
             new GetProjectContextsParams(new TextDocumentItem(Uri, LanguageId, Text.Version, string.Empty)), cancel);
 
-    /// <summary>The document's outline: its types, and their members under them.</summary>
-    public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default) =>
-        await Server.RequestAsync<List<DocumentSymbol>>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel) ?? [];
+    /// <summary>The document's outline: its types, and their members under them. A server that answers with a flat list
+    /// (the Dockerfile server's instructions, as <see cref="SymbolInformation"/>) gives each as a symbol with no children.</summary>
+    public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default)
+    {
+        JsonElement found = await Read(Server.RequestAsync<JsonElement>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel));
+        if (found.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        return [.. found.EnumerateArray().Select(symbol => symbol.TryGetProperty("location", out _)
+            ? symbol.Deserialize<SymbolInformation>(Json.Options) is { } flat ? new DocumentSymbol(flat.Name, null, flat.Kind, flat.Location.Range, flat.Location.Range) : null
+            : symbol.Deserialize<DocumentSymbol>(Json.Options)).OfType<DocumentSymbol>()];
+    }
 
     public async Task<IReadOnlyList<LspTextEdit>> FormatAsync(IndentOptions indent, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<LspTextEdit>>("textDocument/formatting",
@@ -482,12 +591,14 @@ public sealed class LspDocument : IDisposable
     public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(CancellationToken cancel = default, SentRequest? sent = null)
     {
         int version = Text.Version;
+        long asked = System.Diagnostics.Stopwatch.GetTimestamp();
         SemanticTokensParams parameters = new(Identifier);
         if (sent is not null)
         {
             Server.Follow(parameters, sent);
         }
         SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/full", parameters, cancel);
+        Came(ref coloured, asked);
         if (tokens is { Data.Length: > 0 })
         {
             session.Coloured();
@@ -500,12 +611,14 @@ public sealed class LspDocument : IDisposable
     public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(TextRange range, CancellationToken cancel = default, SentRequest? sent = null)
     {
         int version = Text.Version;
+        long asked = System.Diagnostics.Stopwatch.GetTimestamp();
         SemanticTokensRangeParams parameters = new(Identifier, RangeOf(range));
         if (sent is not null)
         {
             Server.Follow(parameters, sent);
         }
         SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/range", parameters, cancel);
+        Came(ref coloured, asked);
         return (tokens, version);
     }
 
@@ -523,7 +636,7 @@ public sealed class LspDocument : IDisposable
     {
         int version = Text.Version;
         LspRange whole = new(new LspPosition(0, 0), PositionOf(Text.Snapshot.Length));
-        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/inlayHint", new InlayHintParams(Identifier, whole), cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("textDocument/inlayHint", new InlayHintParams(Identifier, whole), cancel));
         return (Shapes.InlayHints(result), version);
     }
 
@@ -531,8 +644,8 @@ public sealed class LspDocument : IDisposable
     /// says nothing.</summary>
     public async Task<string> InlayHintTooltipAsync(LspInlayHint hint, CancellationToken cancel = default)
     {
-        JsonElement result = await Server.RequestAsync<JsonElement>("inlayHint/resolve",
-            new { position = hint.Position, label = hint.Label, kind = hint.Kind, data = hint.Data }, cancel);
+        JsonElement result = await Read(Server.RequestAsync<JsonElement>("inlayHint/resolve",
+            new { position = hint.Position, label = hint.Label, kind = hint.Kind, data = hint.Data }, cancel));
         return result.ValueKind == JsonValueKind.Object && result.TryGetProperty("tooltip", out JsonElement tooltip) ? Shapes.Text(tooltip) : string.Empty;
     }
 
@@ -546,23 +659,29 @@ public sealed class LspDocument : IDisposable
             return Pushed;
         }
         int version = Text.Version;
+        TextSnapshot text = Text.Snapshot;
+        TextDocumentIdentifier identifier = Identifier;
+        long asked = System.Diagnostics.Stopwatch.GetTimestamp();
         List<Diagnostic> all = [];
         IReadOnlyList<string?> sources = IsRazor || session is not RoslynSession ? [null] : Server.DiagnosticSources;
+        // Gathered and told apart on the thread pool, from the text and project asked for: a file's thousands of warnings
+        // reach the caller as one list.
         foreach (string? source in sources)
         {
-            DocumentDiagnosticReport? report = await Server.RequestAsync<DocumentDiagnosticReport>("textDocument/diagnostic",
-                new DocumentDiagnosticParams(Identifier, source), cancel);
+            DocumentDiagnosticReport? report = await Read(Server.RequestAsync<DocumentDiagnosticReport>("textDocument/diagnostic",
+                new DocumentDiagnosticParams(identifier, source), cancel));
             all.AddRange(report?.Items ?? []);
         }
         if (IsRazor && Server.HtmlServer is not null)
         {
             // Razor makes the file's HTML as a question needs it: a fold's, the cheapest, has the HTML server's copy current.
-            await Server.RequestAsync<JsonElement>("textDocument/foldingRange", new FoldingRangeParams(new TextDocumentIdentifier(Uri)), cancel);
-            all.AddRange(await Server.RazorHtmlDiagnosticsAsync(DocumentUris.ToPath(Uri), Text.Snapshot.ToString(), cancel));
+            await Read(Server.RequestAsync<JsonElement>("textDocument/foldingRange", new FoldingRangeParams(new TextDocumentIdentifier(Uri)), cancel));
+            all.AddRange(await Server.RazorHtmlDiagnosticsAsync(DocumentUris.ToPath(Uri), text.ToString(), cancel).ConfigureAwait(false));
         }
         List<Diagnostic> distinct = all
             .DistinctBy(d => (d.Range, d.Message, d.Code?.ToString()))
             .ToList();
+        Came(ref diagnosed, asked);
         return (distinct, version);
     }
 
@@ -596,7 +715,21 @@ public sealed class LspDocument : IDisposable
             changes.Add(new TextDocumentContentChangeEvent(before.RangeOf(range), text));
             last = first - 1;
         }
+        Sent(e.Version, changed: !session.Pushes.EachText || Changes(e));
         Server.Notify("textDocument/didChange", new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(Uri, e.Version), changes));
+    }
+
+    /// <summary>Whether a change leaves the text otherwise than it was, as a server pushing once a text pushes only then.</summary>
+    private static bool Changes(DocumentChangedEventArgs e)
+    {
+        foreach (TextEdit edit in e.Edits)
+        {
+            if (edit.Text.Length != edit.End - edit.Start || e.Before.GetText(edit.Start, edit.End - edit.Start) != edit.Text)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>A change as the server can be sent it. Roslyn reads a column past a line's end as the end, before its break,

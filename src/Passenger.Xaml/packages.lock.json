@@ -25,11 +25,16 @@
           "Microsoft.CodeAnalysis.Analyzers": "5.9.0-1.26328.17"
         }
       },
+      "passenger.core": {
+        "type": "Project"
+      },
       "passenger.text": {
         "type": "Project"
       }
     },
     "net11.0/linux-arm64": {},
+    "net11.0/linux-musl-arm64": {},
+    "net11.0/linux-musl-x64": {},
     "net11.0/linux-x64": {},
     "net11.0/osx-arm64": {},
     "net11.0/osx-x64": {},

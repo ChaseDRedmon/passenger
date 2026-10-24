@@ -27,7 +27,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <summary>Dark or light, or as the system is.</summary>
     public ThemeChoice Theme { get; init; } = ThemeChoice.System;
 
-    /// <summary>The theme, Passenger's own or Harbour, each in the dark or light <see cref="Theme"/> says.</summary>
+    /// <summary>The theme, Passenger's own or another of <see cref="Look"/>'s, each in the dark or light <see cref="Theme"/> says.</summary>
     public Look Look { get; init; } = Look.Passenger;
 
     /// <summary>The code's colours: the theme's own scheme, or Rider's for a person who keeps Rider's colours under either
@@ -38,6 +38,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// (its window buttons at its right) rather than a strip under the system's. On at first, as Rider's is: its frame,
     /// Avalonia's drawn decorations for X11, moves, resizes and maximizes as the window manager's own does on GNOME.</summary>
     public bool MergeMainMenuWithWindowTitle { get; init; } = true;
+
+    /// <summary>Rider's Main menu as a bar of its menus on the toolbar (File, Edit, View…) rather than behind its button,
+    /// where the system has no menu bar of its own; those the toolbar has no room for behind the button after them.</summary>
+    public bool MainMenuBar { get; init; }
 
     public double EditorFontSize { get; init; } = 13;
     public double EditorLineSpacing { get; init; } = 1.2;
@@ -157,9 +161,24 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// console's text is kept, in KB, the oldest lines dropped past it.</summary>
     public int ConsoleBufferKb { get; init; } = ToolWindows.OutputView.DefaultLimitKb;
 
-    /// <summary>The person's shortcuts over the keymap's, by action, in keymap notation ("meta shift K"); an empty list
-    /// unbinds the action.</summary>
+    /// <summary>The keymap the person's keys follow, Settings' Keymap: Visual Studio's at first, as before there was a
+    /// choice, so a settings.json without one keeps the keys it had.</summary>
+    public Passenger.Editor.KeymapPreset Keymap { get; init; } = Passenger.Editor.KeymapPreset.VisualStudio;
+
+    /// <summary>The person's shortcuts over the Visual Studio keymap's, by action, in keymap notation ("meta shift K"); an
+    /// empty list unbinds the action.</summary>
     public Dictionary<string, string[]> Shortcuts { get; init; } = [];
+
+    /// <summary>The person's shortcuts over the VS Code keymap's, kept apart from Visual Studio's, so a shortcut set over
+    /// one keymap is never put over the other.</summary>
+    public Dictionary<string, string[]> VSCodeShortcuts { get; init; } = [];
+
+    /// <summary>The person's shortcuts over the keymap they chose (a method, so the settings agents list leave it out).</summary>
+    public Dictionary<string, string[]> OwnShortcuts() => Keymap == Passenger.Editor.KeymapPreset.VSCode ? VSCodeShortcuts : Shortcuts;
+
+    /// <summary>These settings with these as the person's shortcuts over the keymap they chose.</summary>
+    public AppSettings WithOwnShortcuts(Dictionary<string, string[]> shortcuts) =>
+        Keymap == Passenger.Editor.KeymapPreset.VSCode ? this with { VSCodeShortcuts = shortcuts } : this with { Shortcuts = shortcuts };
 
     /// <summary>Rider's Live Templates as the person left them, by template: a built-in one's changes (its key the
     /// shortcut it ships with), and the whole of each they added (<see cref="TemplateChange"/>).</summary>
@@ -224,6 +243,17 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <c>$schema</c> on the web is downloaded to check and complete it. Those Passenger carries never are.</summary>
     public bool DownloadJsonSchemas { get; init; } = true;
 
+    /// <summary>"Complete image tags from Docker Hub": the Dockerfile server asks Docker Hub for an image's tags, naming the
+    /// image, as <c>FROM image:</c> is completed. Off, it asks Docker Hub nothing and offers no tags.</summary>
+    public bool DockerHubTags { get; init; } = true;
+
+    /// <summary>"Check Dockerfiles with BuildKit": as a Dockerfile opens and is saved, the engine's BuildKit runs its build
+    /// checks on it with its own Dockerfile frontend (never a <c># syntax=</c> line's), reading each base image's metadata
+    /// from its registry. Off, none runs (a compose file's hints and
+    /// errors, which Compose works out on this computer, stay). On unless <c>PASSENGER_BUILDKIT_CHECKS</c> is off, as the
+    /// tests' run has it (<see cref="Containers.BuildKitChecks"/>).</summary>
+    public bool BuildKitChecks { get; init; } = Containers.BuildKitChecks.ByDefault;
+
     /// <summary>Rider's Enable MCP Server: agents reaching the window through its socket (<c>passenger --mcp-attach</c>)
     /// are let in without asking. Off until the person turns it on, since any program running as them could then act with
     /// the IDE's permissions; off, the window asks the person before each agent's first call goes on.</summary>
@@ -277,6 +307,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
 
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, DiscordOnNamingNothing];
 
+    /// <summary><see cref="AgentFolders"/> is a set: a folder let in always from one window while another's Settings takes
+    /// back a different one stays let in.</summary>
+    public static IReadOnlyList<string> Sets { get; } = [nameof(AgentFolders)];
+
     /// <summary>Version 1 to 2, Discord's activity on at first and naming nothing of the work: a file whose activity was not
     /// turned on holds the old defaults (off, the solution and the file), written with whatever else was changed, so it
     /// comes up on, naming only Passenger; one the person had turned on keeps what they chose.</summary>
@@ -310,7 +344,9 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             TerminalFontSize = Math.Clamp(TerminalFontSize, MinFontSize, MaxFontSize),
             IdleSeconds = Math.Clamp(IdleSeconds, MinIdleSeconds, MaxIdleSeconds),
             ConsoleBufferKb = Math.Clamp(ConsoleBufferKb, MinConsoleBufferKb, MaxConsoleBufferKb),
-            Shortcuts = (Shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray()),
+            Keymap = Enum.IsDefined(Keymap) ? Keymap : defaults.Keymap,
+            Shortcuts = Readable(Shortcuts),
+            VSCodeShortcuts = Readable(VSCodeShortcuts),
             LiveTemplates = (LiveTemplates ?? []).Where(t => t.Value is not null).ToDictionary(t => t.Key, t => t.Value.Clamped()),
             PostfixTemplates = PostfixTemplates ?? [],
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
@@ -323,8 +359,13 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             PrettierFiles = string.IsNullOrWhiteSpace(PrettierFiles) ? defaults.PrettierFiles : PrettierFiles.Trim(),
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
             XamlFormat = (XamlFormat ?? defaults.XamlFormat).Clamped(),
-            AgentFolders = [.. (AgentFolders ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.FromComparison(Passenger.Core.PathNames.Comparison))],
+            AgentFolders = [.. (AgentFolders ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(Passenger.Core.PathNames.Comparer)],
         };
+
+        // A shortcut kept under an action's former id is the action's now (one kept under its id now winning).
+        static Dictionary<string, string[]> Readable(Dictionary<string, string[]>? shortcuts) =>
+            (shortcuts ?? []).Where(s => s.Value is not null).OrderBy(s => AppActions.Formerly.ContainsKey(s.Key) ? 0 : 1)
+                .GroupBy(s => AppActions.Now(s.Key), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Last().Value.Where(k => k is not null).ToArray());
     }
 
     /// <summary>Whether a region of a kind folds as its file opens, as Fold by default says.</summary>

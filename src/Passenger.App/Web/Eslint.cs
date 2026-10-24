@@ -159,13 +159,16 @@ public sealed class EslintService : IAsyncDisposable
         CancellationTokenSource started = new();
         cancel = started;
         BackgroundWork.Begin();
-        Task<LanguageSession?> start = StartAsync(started.Token);
+        Task<LanguageSession?> start = StartAsync(started);
         // One that could not start said so before it returned, its end already past.
         starting = start.IsCompleted ? null : start;
     }
 
-    private async Task<LanguageSession?> StartAsync(CancellationToken cancelled)
+    /// <summary>One start of the server, <paramref name="own"/> its cancellation: the folder's start until another takes its
+    /// place (<see cref="End"/> cancels it first), after which its server, if it still comes, is ended rather than kept.</summary>
+    private async Task<LanguageSession?> StartAsync(CancellationTokenSource own)
     {
+        CancellationToken cancelled = own.Token;
         long began = Stopwatch.GetTimestamp();
         try
         {
@@ -192,7 +195,7 @@ public sealed class EslintService : IAsyncDisposable
                 ApplyEdit = edit => UiThread.InvokeAsync<string?>(() => disposed ? "the folder was closed" : ApplyEdit?.Invoke(edit) ?? "Passenger cannot make ESLint's edit here"),
             };
             LanguageSession started = await BackgroundWork.Run(() => LanguageSession.StartAsync(start, cancelled), cancelled);
-            if (cancelled.IsCancellationRequested || disposed)
+            if (cancelled.IsCancellationRequested || disposed || cancel != own)
             {
                 _ = Task.Run(() => started.DisposeAsync().AsTask());
                 return null;
@@ -220,7 +223,11 @@ public sealed class EslintService : IAsyncDisposable
         }
         finally
         {
-            starting = null;
+            // A start ended (Settings, the Node.js changed) unwinds after the one in its place has begun, which it leaves be.
+            if (cancel == own)
+            {
+                starting = null;
+            }
             Dispatcher.UIThread.Post(() => BackgroundWork.End());
         }
     }
@@ -312,7 +319,7 @@ public sealed class EslintService : IAsyncDisposable
                 }
             }
         });
-        server.Exited += (_, why) => UiThread.Post(() =>
+        void Lose(string why) => UiThread.Post(() =>
         {
             if (!disposed && session == started)
             {
@@ -320,6 +327,12 @@ public sealed class EslintService : IAsyncDisposable
                 Lost("The ESLint language server ended");
             }
         });
+        server.Exited += (_, why) => Lose(why);
+        // One that ended before it was listened to is lost as any that ends.
+        if (server.Ended is { } gone)
+        {
+            Lose(gone);
+        }
         server.NotResponding += (_, why) => UiThread.Post(() =>
         {
             if (!disposed && session == started)
@@ -437,15 +450,14 @@ public sealed class EslintDocument : IDisposable
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(400);
 
     private readonly OpenDocument document;
+    private readonly ServerDiagnostics diagnostics;
     private LanguageSession? session;
-    private CancellationTokenSource? pulling;
-    private Diagnostic[] found = [];
-    private TextRange[] ranges = [];
     private bool disposed;
 
     internal EslintDocument(OpenDocument document, WebDocument web)
     {
         this.document = document;
+        diagnostics = new ServerDiagnostics(document, holdsChecks: true);
         Web = web;
         document.Text.Changed += OnChanged;
         document.Saved += OnSaved;
@@ -456,7 +468,7 @@ public sealed class EslintDocument : IDisposable
     public LspDocument? Lsp { get; private set; }
 
     /// <summary>The problems last reported, on the server's lines of the text as it stands.</summary>
-    public IReadOnlyList<Diagnostic> Diagnostics => DiagnosticMarks.Placed(document.Text.Snapshot, found, ranges);
+    public IReadOnlyList<Diagnostic> Diagnostics => diagnostics.Placed;
 
     internal void Connect(LanguageSession started)
     {
@@ -542,7 +554,7 @@ public sealed class EslintDocument : IDisposable
             return;
         }
         disposed = true;
-        pulling?.Cancel();
+        diagnostics.Stop();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
         Lsp?.Dispose();
@@ -556,10 +568,7 @@ public sealed class EslintDocument : IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        for (int i = 0; i < ranges.Length; i++)
-        {
-            ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
-        }
+        diagnostics.Move(e);
         Pull(Settle);
     }
 
@@ -571,65 +580,20 @@ public sealed class EslintDocument : IDisposable
         {
             return;
         }
-        pulling?.Cancel();
-        CancellationTokenSource cancel = new();
-        pulling = cancel;
-        BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token, document.Checking());
-    }
-
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel, IDisposable checking)
-    {
-        try
+        diagnostics.Pull(delay, async cancel =>
         {
-            if (delay > TimeSpan.Zero)
+            if (await diagnostics.PulledAsync(lsp, cancel) is { } pulled && lsp == Lsp)
             {
-                await Task.Delay(delay, cancel);
+                Web.ShowLint(diagnostics.Take(pulled, Marker));
             }
-            (IReadOnlyList<Diagnostic> diagnostics, int version) = await lsp.DiagnosticsAsync(cancel);
-            if (!cancel.IsCancellationRequested && lsp == Lsp && version == document.Text.Version)
-            {
-                Show(diagnostics);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Typing went on, or the file was let go.
-        }
-        catch (LanguageServerFailed)
-        {
-            // The problems stand until the server answers again, or one started again does.
-        }
-        finally
-        {
-            Dispatcher.UIThread.Post(() =>
-            {
-                checking.Dispose();
-                BackgroundWork.End();
-            });
-        }
-    }
-
-    private void Show(IReadOnlyList<Diagnostic> diagnostics)
-    {
-        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-        found = [.. diagnostics];
-        ranges = [.. found.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
-        Web.ShowLint([.. found.Select((d, i) => Marker(d, ranges[i])).OfType<Marker>()]);
+        });
     }
 
     /// <summary>A problem as Rider shows ESLint's: "ESLint: message (rule)", the rule's name its page's link, at the
-    /// severity the configuration gives the rule.</summary>
+    /// severity the configuration gives the rule, never faded as unnecessary (the server tags no-unused-vars so).</summary>
     private static Marker? Marker(Diagnostic diagnostic, TextRange range)
     {
-        MarkerKind? kind = diagnostic.Severity switch
-        {
-            1 => MarkerKind.Error,
-            2 => MarkerKind.Warning,
-            3 => MarkerKind.Info,
-            _ => null,
-        };
-        if (kind is not { } k)
+        if (DiagnosticMarks.Kind(diagnostic.Severity) is not { } k)
         {
             return null;
         }

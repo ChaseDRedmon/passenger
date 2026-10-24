@@ -71,7 +71,7 @@ public sealed class XamlService : IDisposable
         {
             return;
         }
-        if (IsXaml(document.Path) && !Paths.IsUnder(document.Path, LibrarySources.Folder))
+        if (IsXaml(document.Path) && !PathNames.Within(document.Path, LibrarySources.Folder))
         {
             if (ProjectOf(document.Path) is { } loading)
             {
@@ -81,12 +81,12 @@ public sealed class XamlService : IDisposable
         }
         if (document.Language.Name == "C#")
         {
-            // Only a file under a XAML project loaded or loading waits for typing to pause (background work every key would
-            // hold half a second): a project that loads later reads the open files as they then are.
-            Debounce wait = new(SourceSettle, () => Loaded(document.Path) is { } owner ? SourceTypedAsync(owner, document) : Task.CompletedTask);
+            // Only a file a XAML project loaded or loading may read waits for typing to pause (background work every key
+            // would hold half a second): a project that loads later reads the open files as they then are.
+            Debounce wait = new(SourceSettle, () => SourceTypedAsync(document));
             EventHandler<DocumentChangedEventArgs> handler = (_, _) =>
             {
-                if (Loaded(document.Path) is not null)
+                if (Reading(document.Path).Any())
                 {
                     wait.Restart();
                 }
@@ -117,8 +117,8 @@ public sealed class XamlService : IDisposable
     public void FilesChanged(IEnumerable<string> paths)
     {
         UiThread.Check();
-        foreach (IGrouping<XamlLoading, string> changed in paths.Select(p => (Path: p, Owner: RestoredFor(p) ?? Loaded(p))).Where(p => p.Owner is not null)
-            .GroupBy(p => p.Owner!, p => p.Path))
+        foreach (IGrouping<XamlLoading, string> changed in paths.SelectMany(p => OwnersOf(p).Select(owner => (Path: p, Owner: owner)))
+            .GroupBy(p => p.Owner, p => p.Path))
         {
             XamlLoading loading = changed.Key;
             List<string> files = [.. changed];
@@ -135,7 +135,7 @@ public sealed class XamlService : IDisposable
                 {
                     if (file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                     {
-                        made = builder.SourceChanged(file, null);
+                        made = builder.SourceChanged(file, null) ?? made;
                     }
                     else if (builder.Owns(file) && !open.Contains(file))
                     {
@@ -208,7 +208,7 @@ public sealed class XamlService : IDisposable
             return loading;
         }
         Dictionary<string, TextSnapshot> texts = OpenTexts();
-        Task<XamlProjectBuilder?> builder = BackgroundWork.Run(() => XamlProjectBuilder.For(project, DotnetRoot.Value));
+        Task<XamlProjectBuilder?> builder = BackgroundWork.Run(() => XamlProjectBuilder.For(project, DotnetRoot.Value, IdeErrors.Report));
         loading = new XamlLoading(project, builder, LoadAsync(builder, texts));
         projects[project] = loading;
         _ = AnnounceAsync(loading);
@@ -243,7 +243,25 @@ public sealed class XamlService : IDisposable
 
     /// <summary>The project already loading or loaded that a file belongs to.</summary>
     private XamlLoading? Loaded(string path) =>
-        projects.Values.Where(l => Paths.IsUnder(path, l.Folder)).OrderByDescending(l => l.Folder.Length).FirstOrDefault();
+        projects.Values.Where(l => PathNames.Within(path, l.Folder)).OrderByDescending(l => l.Folder.Length).FirstOrDefault();
+
+    /// <summary>The projects loaded or loading that a file changed on disk may change: for C#, each that may read it; for
+    /// anything else, the project it is in, or whose restore it is.</summary>
+    private IEnumerable<XamlLoading> OwnersOf(string path)
+    {
+        if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+        {
+            return Reading(path);
+        }
+        return (RestoredFor(path) ?? Loaded(path)) is { } owner ? [owner] : [];
+    }
+
+    /// <summary>The projects whose XAML may read a C# file: each whose folder or a referenced project's holds it (an app's
+    /// XAML binding to App.Core's view models), and each still loading, whose references are not known yet. Each builder
+    /// says off the UI thread whether it compiles the file.</summary>
+    private IEnumerable<XamlLoading> Reading(string path) =>
+        projects.Values.Where(l => PathNames.Within(path, l.Folder) || !l.Loaded.IsCompleted
+            || (l.Loaded.IsCompletedSuccessfully && l.Loaded.Result is { } project && project.Referenced.Any(r => PathNames.Within(path, r.Folder))));
 
     /// <summary>The project a restore's assets under an artifacts folder are of (UseArtifactsOutput's
     /// artifacts/obj/Project/project.assets.json, which ProjectInputs reads), under no project's folder: the project of that
@@ -257,14 +275,17 @@ public sealed class XamlService : IDisposable
             return null;
         }
         string name = Path.GetFileName(named);
-        return projects.Values.Where(l => Path.GetFileNameWithoutExtension(l.ProjectPath) == name && Paths.IsUnder(l.ProjectPath, root))
+        return projects.Values.Where(l => Path.GetFileNameWithoutExtension(l.ProjectPath) == name && PathNames.Within(l.ProjectPath, root))
             .OrderByDescending(l => l.Folder.Length).FirstOrDefault();
     }
 
+    /// <summary>A project's load begun again, its builder made again: what it references now says whether its XAML is one
+    /// Passenger reads and in which dialect (Avalonia added through NuGet, or restored at last for a fresh clone).</summary>
     private void Reload(XamlLoading loading)
     {
         Dictionary<string, TextSnapshot> texts = OpenTexts();
-        XamlLoading again = loading with { Loaded = LoadAsync(loading.Builder, texts) };
+        Task<XamlProjectBuilder?> builder = BackgroundWork.Run(() => XamlProjectBuilder.For(loading.ProjectPath, DotnetRoot.Value, IdeErrors.Report));
+        XamlLoading again = loading with { Builder = builder, Loaded = LoadAsync(builder, texts) };
         projects[loading.ProjectPath] = again;
         foreach (XamlDocument document in documents.Values.Where(d => d.Loading.ProjectPath == loading.ProjectPath))
         {
@@ -283,12 +304,12 @@ public sealed class XamlService : IDisposable
         return texts;
     }
 
-    /// <summary>A C# file typed in: its types read again from its text as it stands.</summary>
-    private Task SourceTypedAsync(XamlLoading loading, OpenDocument document)
+    /// <summary>A C# file typed in: its types read again from its text as it stands, by every project that reads it.</summary>
+    private Task SourceTypedAsync(OpenDocument document)
     {
         string path = document.Path;
         TextSnapshot text = document.Text.Snapshot;
-        return UpdateAsync(loading, builder => builder.SourceChanged(path, text.ToString()));
+        return Task.WhenAll(Reading(path).ToList().Select(loading => UpdateAsync(loading, builder => builder.SourceChanged(path, text.ToString()))));
     }
 
     /// <summary>A change made to a loaded project off the UI thread; its open XAML files read against the result.</summary>
@@ -318,48 +339,35 @@ public sealed class XamlService : IDisposable
     }
 
     /// <summary>The XAML file whose <c>x:Class</c> is a class, in the project of a C# file of it: an open one's text first,
-    /// else the files on disk; null for none.</summary>
-    public string? ClassFile(string className, string near)
+    /// else the project's files on disk, read off the UI thread by the walk a project's files take (<see cref="FolderWalk"/>);
+    /// null for none.</summary>
+    public async Task<string?> ClassFileAsync(string className, string near)
     {
         UiThread.Check();
+        string declared = $"Class=\"{className}\"";
         foreach (XamlDocument document in documents.Values)
         {
-            if (document.Document.Text.Snapshot.ToString().Contains($"Class=\"{className}\"", StringComparison.Ordinal))
+            if (document.Document.Text.Snapshot.ToString().Contains(declared, StringComparison.Ordinal))
             {
                 return document.Document.Path;
             }
         }
-        if (ProjectFile(near) is not { } project)
+        return await BackgroundWork.Run(() => ProjectFile(near) is { } project
+            ? FolderWalk.Files(Path.GetDirectoryName(project)!, built: true).Where(IsXaml).FirstOrDefault(file => Declares(file, declared))
+            : null);
+    }
+
+    private static bool Declares(string file, string declared)
+    {
+        try
         {
-            return null;
+            return File.ReadAllText(file).Contains(declared, StringComparison.Ordinal);
         }
-        Stack<string> waiting = new([Path.GetDirectoryName(project)!]);
-        while (waiting.Count > 0)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            string folder = waiting.Pop();
-            try
-            {
-                foreach (string file in Directory.EnumerateFiles(folder).Where(IsXaml))
-                {
-                    if (File.ReadAllText(file).Contains($"Class=\"{className}\"", StringComparison.Ordinal))
-                    {
-                        return PathNames.Canonical(file);
-                    }
-                }
-                foreach (string sub in Directory.EnumerateDirectories(folder))
-                {
-                    if (Path.GetFileName(sub) is not ("bin" or "obj") && !Path.GetFileName(sub).StartsWith('.'))
-                    {
-                        waiting.Push(sub);
-                    }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                // A folder that cannot be read holds no XAML to go to.
-            }
+            // Gone, or not readable: no XAML to go to.
+            return false;
         }
-        return null;
     }
 
     /// <summary>A file's project: the nearest folder at or above it with a C# project file.</summary>

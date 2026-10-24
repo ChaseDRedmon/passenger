@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Passenger.App.CSharp;
+using Passenger.App.Editors;
 using Passenger.App.Run;
 using Passenger.Core;
 using Passenger.Dap;
@@ -44,7 +46,19 @@ public sealed record HotReloadOutcome(HotReloadResult Result, string Said)
     public int Methods { get; init; }
 
     public TimeSpan Took { get; init; }
+
+    /// <summary>Of several programs' apply (a container run's services), those whose edits need them restarted, by name.</summary>
+    public IReadOnlyList<string> Restart { get; init; } = [];
 }
+
+/// <summary>How a restart for edits Hot Reload could not apply is made, given what the apply came to and whether it is for
+/// the services of a container run with Hot Reload (else the program debugged): true once restarted. The window's asks as
+/// Settings say; an agent's never asks.</summary>
+public delegate Task<bool> HotReloadRestart(HotReloadOutcome outcome, bool running);
+
+/// <summary>What Apply Hot Reload Changes came to, every program that took the edits said as one, and whether a restart was
+/// made for edits one could not take running.</summary>
+public sealed record HotReloadApplied(HotReloadOutcome Outcome, bool Restarted);
 
 /// <summary>Hot Reload of one debugging session (Edit and Continue): Roslyn's own Edit and Continue service, in the language
 /// server through Passenger's extension, compares the solution as the editors have it with what was built (and applied
@@ -54,9 +68,11 @@ public sealed class HotReload
 {
     private readonly DebugSession debug;
     private readonly Func<RoslynSession?> server;
+    private readonly EditorArea editors;
     private int? id;
     private Task<string?>? starting;
     private RoslynSession? startedOn;
+    private bool ended;
 
     /// <summary>Why Hot Reload stopped for the session: the runtime refused an update part way.</summary>
     private string? stopped;
@@ -67,10 +83,11 @@ public sealed class HotReload
 
     /// <summary>Hot Reload for a session just launched. Roslyn's session begins at the first edit (most sessions have none,
     /// and its start reads every document), given each edited file's text from before its edits, the build's.</summary>
-    public HotReload(DebugSession debug, Func<RoslynSession?> server)
+    public HotReload(DebugSession debug, Func<RoslynSession?> server, EditorArea editors)
     {
         this.debug = debug;
         this.server = server;
+        this.editors = editors;
     }
 
     /// <summary>Whether the files have been edited since the launch or the last update applied.</summary>
@@ -116,6 +133,11 @@ public sealed class HotReload
             }
             id = started.Session;
             startedOn = roslyn;
+            if (ended)
+            {
+                End();
+                return "The debugging session ended";
+            }
             return null;
         }
         catch (LanguageServerFailed failed)
@@ -182,12 +204,13 @@ public sealed class HotReload
         {
             return new HotReloadOutcome(HotReloadResult.Failed, $"Hot Reload failed: {problem}");
         }
-        List<Problem> problems = [.. emitted.Problems.Select(ToProblem)];
+        Func<string, TextSnapshot?> texts = ServerPlaces.Texts(editors);
+        List<Problem> problems = [.. emitted.Problems.Select(p => ToProblem(p, texts))];
         switch (emitted.Status)
         {
             case "none":
                 Changed = false;
-                return new HotReloadOutcome(HotReloadResult.NothingToApply, "No managed code changes to apply.")
+                return new HotReloadOutcome(HotReloadResult.NothingToApply, NothingApplied(problems))
                 {
                     Problems = problems,
                     Files = emitted.ChangedDocuments,
@@ -228,7 +251,7 @@ public sealed class HotReload
         List<string> files = [.. emitted.ChangedDocuments];
         string named = files.Count == 0 ? string.Empty : $": {string.Join(", ", files.Select(Path.GetFileName))}";
         return new HotReloadOutcome(HotReloadResult.Applied,
-            $"C# changes applied in {took.ElapsedMilliseconds} ms{named} ({(methods == 1 ? "1 method" : $"{methods} methods")} updated)")
+            $"C# changes applied in {took.ElapsedMilliseconds} ms{named} ({Core.Plural.Of(methods, "method")} updated)")
         {
             Problems = problems,
             Files = files,
@@ -241,6 +264,7 @@ public sealed class HotReload
     /// <summary>Ends Roslyn's session with the debugging session's end.</summary>
     public void End()
     {
+        ended = true;
         if (id is int session && startedOn is { } roslyn)
         {
             id = null;
@@ -264,6 +288,15 @@ public sealed class HotReload
         }
     }
 
+    /// <summary>An apply that changed nothing, with what Roslyn said of it when it said anything (a file of a stale project,
+    /// ENC1008, whose edits wait for a build), in its words: why an edit made did not reach the program.</summary>
+    internal static string NothingApplied(IEnumerable<Problem> problems)
+    {
+        List<string> said = [.. problems.Select(p => p.Message.TrimEnd('.')).Distinct(StringComparer.Ordinal)];
+        return said.Count == 0 ? "No managed code changes to apply."
+            : $"No managed code changes to apply: {string.Join("; ", said.Take(2))}{(said.Count > 2 ? $"; and {said.Count - 2} more" : string.Empty)}.";
+    }
+
     /// <summary>The first edits named, each with its file and line, as the status bar says them.</summary>
     private static string Describe(IEnumerable<Problem> problems)
     {
@@ -272,12 +305,18 @@ public sealed class HotReload
         return named.Count > 2 ? $"{first}; and {named.Count - 2} more" : first;
     }
 
-    /// <summary>An edit Roslyn could not take, as Problems lists it: its id (ENC0020) the code, its place from zero.</summary>
-    private static Problem ToProblem(HotReloadProblem problem) => new(
-        problem.Error ? ProblemSeverity.Error : ProblemSeverity.Warning,
-        problem.Message,
-        problem.Id,
-        problem.Path is { } path ? PathNames.Canonical(path) : null,
-        new TextPosition(problem.StartLine, problem.StartColumn),
-        problem.Project);
+    /// <summary>An edit Roslyn could not take, as Problems lists it: its id (ENC0020) the code, its place from zero as the
+    /// editor counts its file's lines (Roslyn's are the server's, <see cref="ServerPlaces"/>).</summary>
+    private static Problem ToProblem(HotReloadProblem problem, Func<string, TextSnapshot?> texts)
+    {
+        string? path = problem.Path is { } named ? PathNames.Canonical(named) : null;
+        LspPosition at = new(problem.StartLine, problem.StartColumn);
+        return new Problem(
+            problem.Error ? ProblemSeverity.Error : ProblemSeverity.Warning,
+            problem.Message,
+            problem.Id,
+            path,
+            path is not null ? ServerPlaces.PositionOf(texts(path), at) : new TextPosition(at.Line, at.Character),
+            problem.Project);
+    }
 }

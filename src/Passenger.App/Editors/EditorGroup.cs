@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
@@ -8,6 +9,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.VisualTree;
+using Passenger.App.Tables;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
@@ -54,6 +56,13 @@ public sealed class EditorGroup : DockPanel
     private readonly Button bannerLink;
     private EditorTab? active;
 
+    /// <summary>The table over the editor for a CSV or workbook, made as the group first shows one.</summary>
+    private TableViewer? tables;
+
+    /// <summary>This group's view of the active asset (its bitmap or face belongs to the document, not this control) or of
+    /// release notes the app carries, rendered, in the editor's place.</summary>
+    private Control? preview;
+
     public EditorGroup(EditorArea area)
     {
         this.area = area;
@@ -72,11 +81,29 @@ public sealed class EditorGroup : DockPanel
             ItemsPanel = new FuncTemplate<Panel?>(() => new StackPanel { Orientation = Orientation.Horizontal }),
             ItemTemplate = new FuncDataTemplate<EditorTab>((tab, _) => Tab(tab), supportsRecycling: false),
         };
+        // A Markdown file's preview shown or hidden at the strip's end, over the editor's top-right corner.
+        MarkdownToggle = ToolButtons.Toggle("Icon.Preview", "Markdown Preview");
+        MarkdownToggle.Classes.Add("tabStripTool");
+        MarkdownToggle.IsVisible = false;
+        MarkdownToggle[DockProperty] = Dock.Right;
+        MarkdownToggle.Click += (_, _) =>
+        {
+            area.MarkdownToggled(this);
+            // It says what is in force once its action ran, or was refused.
+            FollowMarkdown();
+        };
         tabBar = new Border
         {
             Classes = { "tabStrip" },
             [DockProperty] = Dock.Top,
-            Child = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = strip },
+            Child = new DockPanel
+            {
+                Children =
+                {
+                    MarkdownToggle,
+                    new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = strip },
+                },
+            },
         };
         // Rider's editor notification: what a file is when it is not the project's own.
         bannerText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -115,8 +142,15 @@ public sealed class EditorGroup : DockPanel
         body = new Grid { ColumnDefinitions = new ColumnDefinitions("*,0,0") };
         body.Children.Add(Editor);
         Children.Add(body);
-        // The group the person works in is the area's active one.
-        Editor.GotFocus += (_, _) => area.SetActiveGroup(this);
+        // The group the person works in is the area's active one; while a table lies over the editor, the table takes its focus.
+        Editor.GotFocus += (_, _) =>
+        {
+            area.SetActiveGroup(this);
+            if (tables is { ShowsTable: true, View.IsVisible: true })
+            {
+                tables.View.Focus();
+            }
+        };
         Editor.SelectionChanged += (_, _) =>
         {
             if (active is not null && Editor.Document == active.Document.Text)
@@ -182,6 +216,40 @@ public sealed class EditorGroup : DockPanel
         }
     }
     public FindBar Find { get; }
+
+    /// <summary>The tab strip's toggle of a Markdown file's preview, shown while the group shows one.</summary>
+    public ToggleButton MarkdownToggle { get; }
+
+    /// <summary>The group's own preview of its Markdown file, made as it first shows one.</summary>
+    private MarkdownPreview? markdown;
+
+    /// <summary>The preview beside the editor while it shows one of a Markdown file, else null.</summary>
+    public MarkdownPreview? Markdown => Side as MarkdownPreview;
+
+    /// <summary>A Markdown file shown in the editor has its preview beside it while the area shows previews, and its toggle
+    /// on the strip either way; any other file neither.</summary>
+    internal void FollowMarkdown()
+    {
+        OpenDocument? document = active?.Document;
+        bool shows = document is not null && InEditor(document) && document.Language.Name == "Markdown";
+        MarkdownToggle.IsVisible = shows;
+        MarkdownToggle.IsChecked = area.ShowsMarkdownPreview;
+        if (shows && area.ShowsMarkdownPreview)
+        {
+            markdown ??= new MarkdownPreview(Editor, area);
+            Side = markdown;
+            markdown.Show(document);
+        }
+        else
+        {
+            if (Side is MarkdownPreview)
+            {
+                Side = null;
+            }
+            markdown?.Show(null);
+        }
+    }
+
     public IReadOnlyList<EditorTab> Tabs => tabs;
     public OpenDocument? Active => active?.Document;
     public bool Has(OpenDocument document) => tabs.Any(t => t.Document == document);
@@ -216,21 +284,53 @@ public sealed class EditorGroup : DockPanel
         tabs.Move(tabs.IndexOf(tab), tabs.Count(t => t.IsPinned && t != tab));
     }
 
-    /// <summary>A hidden tab's kept carets follow what changes its text meanwhile (a reload, a rename), as the shown one's do.</summary>
+    /// <summary>A hidden tab's kept carets follow what changes its text meanwhile (a reload, a rename), as the shown one's do;
+    /// release notes shown are drawn again from their new text (a build that carries others).</summary>
     private void OnTabTextChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (tabs.FirstOrDefault(t => t.Document.Text == sender) is { } tab && tab != active
-            && views.TryGetValue(tab.Document, out (SelectionSet Selections, Vector Scroll) view))
+        if (tabs.FirstOrDefault(t => t.Document.Text == sender) is not { } tab)
+        {
+            return;
+        }
+        if (tab == active && tab.Document.IsReleaseNotes && preview is not null)
+        {
+            ClearPreview();
+            preview = PreviewOf(tab.Document);
+            body.Children.Add(preview);
+        }
+        else if (tab != active && views.TryGetValue(tab.Document, out (SelectionSet Selections, Vector Scroll) view))
         {
             views[tab.Document] = (TextEditing.MapThrough(view.Selections, e.Edits).Clamp(e.After.Length), view.Scroll);
         }
     }
 
-    /// <summary>Shows a file's tab, keeping the carets and scroll of the one it replaces.</summary>
+    /// <summary>What shows in the editor's place for a file that is no text to edit: an asset's preview, or release notes rendered.</summary>
+    private Control PreviewOf(OpenDocument document) =>
+        document.Asset is { } asset ? new AssetPreviewControl(asset) : new ReleaseNotesView(document, area.Browse);
+
+    /// <summary>Whether the editor shows the file, rather than a view of its own in the editor's place.</summary>
+    private static bool InEditor(OpenDocument document) => document.Asset is null && !document.IsReleaseNotes;
+
+    /// <summary>Gives the keys to what shows the file: its preview or rendered notes, which its keys move through, else the
+    /// editor.</summary>
+    public void FocusShown()
+    {
+        if (preview is not null)
+        {
+            preview.Focus();
+        }
+        else
+        {
+            Editor.Focus();
+        }
+    }
+
+    /// <summary>Shows a file's text, or its asset preview or rendered release notes, keeping the carets and scroll of the
+    /// text it replaces. A preview detaches the hidden text editor so editing commands cannot change the previous file.</summary>
     public void Show(OpenDocument document)
     {
         Add(document);
-        if (active?.Document == document && Editor.IsVisible)
+        if (active?.Document == document && (Editor.IsVisible || preview is not null))
         {
             return;
         }
@@ -243,6 +343,22 @@ public sealed class EditorGroup : DockPanel
         active = tabs.First(t => t.Document == document);
         active.IsActive = true;
         document.PropertyChanged += OnDocumentChanged;
+        ClearPreview();
+        if (document.Asset is not null || document.IsReleaseNotes)
+        {
+            Find.Detach();
+            Editor.Detach();
+            Editor.IsReadOnly = true;
+            Editor.IsVisible = false;
+            Side = null;
+            tables?.Hide();
+            preview = PreviewOf(document);
+            body.Children.Add(preview);
+            ShowBanner(document);
+            tabBar.IsVisible = true;
+            FollowMarkdown();
+            return;
+        }
         (SelectionSet selections, Vector scroll) = views.TryGetValue(document, out var view) ? view : (document.Selections, document.Scroll);
         Editor.LineCommentPrefix = document.Language.LineComment;
         Editor.BlockComment = document.Language.BlockComment;
@@ -258,6 +374,7 @@ public sealed class EditorGroup : DockPanel
         Editor.SetLineMarks(document.LineMarks);
         Editor.SetLineAnnotations(document.ShownAnnotations);
         Editor.SetTestMarks(document.TestMarks);
+        Editor.SetRunMarks(document.GutterRunMarks);
         Editor.SetColourMarks(document.ColourMarks);
         Editor.SetChangeMarks(document.ChangeMarks);
         Editor.SetGutterAnnotations(document.GutterAnnotations);
@@ -265,9 +382,45 @@ public sealed class EditorGroup : DockPanel
         Editor.ContextLabel = ContextShown(document);
         Editor.IsReadOnly = document.IsReadOnly;
         ShowBanner(document);
-        Find.Attach(Editor);
         Editor.IsVisible = true;
         tabBar.IsVisible = true;
+        ShowTable(document);
+        Find.Attach(Editor, Table);
+        FollowMarkdown();
+    }
+
+    /// <summary>The table of the file shown, while it is a CSV or a workbook, null otherwise.</summary>
+    public CellGrid? Table => tables is { ShowsTable: true } ? tables.View : null;
+
+    /// <summary>The bar and grid of a table file over the editor, or none for any other file.</summary>
+    private void ShowTable(OpenDocument document)
+    {
+        if (TableFile.For(document) is not { } file)
+        {
+            tables?.Hide();
+            return;
+        }
+        if (tables is null)
+        {
+            tables = new TableViewer();
+            Children.Insert(Children.IndexOf(body), tables.Bar);
+            // Over the editor in its own column, so a XAML-like pane beside it is never covered.
+            body.Children.Add(tables.Body);
+            tables.Switched += (_, _) =>
+            {
+                Find.Attach(Editor, Table);
+                if (tables.ShowsTable)
+                {
+                    tables.View.Focus();
+                }
+                else
+                {
+                    Editor.Focus();
+                }
+            };
+            tables.View.GotFocus += (_, _) => area.SetActiveGroup(this);
+        }
+        tables.Show(file);
     }
 
     /// <summary>The banner over the file: where a read-only file comes from, what its notice says, and what its next save
@@ -301,10 +454,15 @@ public sealed class EditorGroup : DockPanel
         }
         int index = tabs.IndexOf(tab);
         views.Remove(document);
+        if (tables is not null && TableFile.For(document) is { } closed)
+        {
+            tables.Forget(closed);
+        }
         tabs.Remove(tab);
         document.Text.Changed -= OnTabTextChanged;
         if (tab == active)
         {
+            ClearPreview();
             document.PropertyChanged -= OnDocumentChanged;
             active = null;
             if (tabs.Count > 0)
@@ -319,6 +477,8 @@ public sealed class EditorGroup : DockPanel
                 Editor.IsVisible = false;
                 tabBar.IsVisible = false;
                 banner.IsVisible = false;
+                tables?.Hide();
+                FollowMarkdown();
             }
         }
     }
@@ -352,19 +512,19 @@ public sealed class EditorGroup : DockPanel
 
     /// <summary>Where a tab's carets are in this group: the editor's for the one shown, else as it was left.</summary>
     public SelectionSet SelectionsOf(OpenDocument document) =>
-        active?.Document == document ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
+        active?.Document == document && InEditor(document) ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
 
     /// <summary>Where a tab's editor was scrolled in this group: the editor's for the one shown, else as it was left.</summary>
     public Vector ScrollOf(OpenDocument document) =>
-        active?.Document == document ? Editor.ScrollOffset : views.TryGetValue(document, out var view) ? view.Scroll : document.Scroll;
+        active?.Document == document && InEditor(document) ? Editor.ScrollOffset : views.TryGetValue(document, out var view) ? view.Scroll : document.Scroll;
 
     /// <summary>Puts a tab's carets (and scroll) where they were kept, for when it is shown.</summary>
     public void Remember(OpenDocument document, SelectionSet selections, Vector scroll = default) => views[document] = (selections, scroll);
 
-    /// <summary>The carets and scroll of the file shown, kept for when its tab is shown again.</summary>
+    /// <summary>The carets and scroll of the text shown, kept for when its tab is shown again; an asset has no editor state.</summary>
     public void Keep()
     {
-        if (active is not null)
+        if (active is not null && InEditor(active.Document))
         {
             views[active.Document] = (Editor.Selections, Editor.ScrollOffset);
             active.Document.Selections = Editor.Selections;
@@ -389,6 +549,20 @@ public sealed class EditorGroup : DockPanel
         }
         switch (e.PropertyName)
         {
+            case nameof(OpenDocument.Asset):
+                // The decode landed: the picture takes the stand-in's place, and its focus.
+                bool focused = preview?.IsKeyboardFocusWithin == true;
+                ClearPreview();
+                if (document.Asset is { } asset)
+                {
+                    preview = new AssetPreviewControl(asset);
+                    body.Children.Add(preview);
+                    if (focused)
+                    {
+                        preview.Focus();
+                    }
+                }
+                break;
             case nameof(OpenDocument.Highlighter):
                 Editor.Highlighter = document.Highlighter;
                 break;
@@ -413,6 +587,9 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.TestMarks):
                 Editor.SetTestMarks(document.TestMarks);
                 break;
+            case nameof(OpenDocument.RunMarks) or nameof(OpenDocument.RouteMarks):
+                Editor.SetRunMarks(document.GutterRunMarks);
+                break;
             case nameof(OpenDocument.ColourMarks):
                 Editor.SetColourMarks(document.ColourMarks);
                 break;
@@ -430,10 +607,13 @@ public sealed class EditorGroup : DockPanel
                 Editor.ContextLabel = ContextShown(document);
                 break;
             case nameof(OpenDocument.Path):
+                ShowTable(document);
+                Find.Attach(Editor, Table);
                 Editor.LineCommentPrefix = document.Language.LineComment;
                 Editor.BlockComment = document.Language.BlockComment;
                 Editor.Markup = document.Language.Markup;
                 Editor.ReindentsPaste = document.Language.ReindentsPaste;
+                FollowMarkdown();
                 break;
             case nameof(OpenDocument.Indentation):
                 Editor.Indent = document.Indentation.Options;
@@ -444,6 +624,17 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.ShowWhitespaces):
                 Editor.ShowWhitespaces = document.ShowWhitespaces;
                 break;
+        }
+    }
+
+    /// <summary>Removes this group's view and its glyph runs, leaving the shared asset to its owning document.</summary>
+    private void ClearPreview()
+    {
+        if (preview is not null)
+        {
+            body.Children.Remove(preview);
+            (preview as IDisposable)?.Dispose();
+            preview = null;
         }
     }
 
@@ -489,7 +680,7 @@ public sealed class EditorGroup : DockPanel
         };
         void Paint()
         {
-            name.Text = document.Name;
+            name.Text = document.Title;
             icon.Data = document.Icon;
             icon.Foreground = document.IconBrush;
             ToolTip.SetTip(border, document.Path);

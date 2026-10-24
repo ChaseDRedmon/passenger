@@ -8,7 +8,8 @@ namespace Passenger.Inspector;
 // one framework has not (Avalonia's overlays, frames and binding values) the other's inspector refuses. Passenger asks
 // (Request) and the app answers each by its id (Reply); the app also tells without being asked (a Reply with an Event): hello
 // once its UI runs, treeChanged as controls come and go, picked when the person points at one, bindingFailed as a binding
-// fails (from before hello, as the app starts). An agent's tools ask the same: the windows, the tree with each element's
+// fails (from before hello, as the app starts), untold when it could not tell all it had (failed bindings past the most it
+// lists, messages left out while too many waited). An agent's tools ask the same: the windows, the tree with each element's
 // layout and text, a picture the app draws of a window, and input to it as a person's goes. A property breakpoint (Break When
 // Value Changes) asks it to watch an element's property, which stops the debugged app at each change its hit count lets
 // through (PropertyBreaks.cs); in a debugged app each failed binding also calls a method the XAML Binding Errors breakpoint
@@ -22,7 +23,7 @@ namespace Passenger.Inspector;
 public static class Wire
 {
     /// <summary>Bumped by a change either end must know of: a hello of another version is refused, saying so.</summary>
-    public const int Version = 5;
+    public const int Version = 7;
 
     /// <summary>The app's environment: the socket's path, where it connects.</summary>
     public const string SocketVariable = "PASSENGER_INSPECTOR";
@@ -31,19 +32,8 @@ public static class Wire
     /// <see cref="Request.Overlays"/> names them, joined by commas.</summary>
     public const string OverlaysVariable = "PASSENGER_INSPECTOR_OVERLAYS";
 
-    /// <summary>The runtime's list of startup hooks, which loads the inspector before the app's Main.</summary>
-    public const string StartupHooks = "DOTNET_STARTUP_HOOKS";
-
     /// <summary>A WPF app's environment: the launched project's folder, where its XAML is when its build's symbols do not say.</summary>
     public const string ProjectVariable = "PASSENGER_INSPECTOR_PROJECT";
-
-    /// <summary>A WPF app's environment, set to 1: WPF then records where in its XAML each object was made (its
-    /// VisualDiagnostics.GetXamlSourceInfo) and raises BindingDiagnostics.BindingFailed, as Visual Studio has it for a run it
-    /// starts. WPF reads it as it first loads XAML, so it stays in the app's environment.</summary>
-    public const string XamlSourceInfoVariable = "ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO";
-
-    /// <summary>The Avalonia the inspector is built for; an app on another major version is refused, saying which it has.</summary>
-    public const int AvaloniaMajor = 12;
 
     public const string Tree = "tree";
     public const string Details = "details";
@@ -80,6 +70,9 @@ public static class Wire
 
     /// <summary>A property whose binding the last values read showed has changed since: what was read is out of date.</summary>
     public const string ValuesChanged = "valuesChanged";
+
+    /// <summary>What the app could not tell so far (<see cref="Untold"/>), said again as it grows.</summary>
+    public const string Untold = "untold";
 }
 
 /// <summary>What Passenger asks: the windows' tree, an element's details, Select Element on or off, an element outlined in
@@ -255,7 +248,15 @@ public sealed record Reply
     public InputDone? Done { get; init; }
 
     public XamlValues? Values { get; init; }
+
+    /// <summary>What the app could not tell, with Untold.</summary>
+    public Untold? Untold { get; init; }
 }
+
+/// <summary>What the app could not tell since it started, in all: the failed bindings it counted but does not list (each
+/// distinct failure past the most it lists, every time it failed), and the messages it left out while too many waited to
+/// be written (none of them an answer, a binding failure or one of the events it merges: the inspector's own errors).</summary>
+public sealed record Untold(int Bindings, int Messages);
 
 /// <summary>The app's first word: its process, the Avalonia it runs (its assembly's version), and why the inspector cannot
 /// serve it when it cannot (another major version of Avalonia, none at all).</summary>
@@ -389,7 +390,12 @@ public static class StyleKinds
 
 /// <summary>A setter of a style: the property, the value it sets, where it is written, and what became of it
 /// (<see cref="SetterStates"/>), with what overrides it.</summary>
-public sealed record SetterReport(string Property, string Value, SourcePlace? Place, string State, string? By);
+public sealed record SetterReport(string Property, string Value, SourcePlace? Place, string State, string? By)
+{
+    /// <summary>Where what overrides it is written (another style's selector), which Passenger says after <see cref="By"/> at
+    /// the editor's line: a place in words keeps the XAML compiler's, which a lone '\r' puts lines ahead.</summary>
+    public SourcePlace? ByPlace { get; init; }
+}
 
 public static class SetterStates
 {

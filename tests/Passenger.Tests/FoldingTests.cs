@@ -83,6 +83,80 @@ public sealed class FoldingTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A folded method is one line to every line command, as the person sees it: Move Line takes it whole and steps
+    /// whole over a folded method beside it, both staying folded, and Duplicate, Copy, Cut and Delete Line take its body
+    /// with its signature. Each command leaves every method whole, where moving the signature alone put it inside the
+    /// hidden body beside it, or left its body behind the placeholder.</summary>
+    [AvaloniaFact]
+    public void Line_commands_take_a_folded_method_whole_and_step_over_one_whole_leaving_every_body_whole()
+    {
+        const string Area = "    int Area(int w, int h)\n    {\n        int area = w * h;\n        return area;\n    }\n";
+        const string Perimeter = "    int Perimeter(int w, int h)\n    {\n        return 2 * (w + h);\n    }\n";
+        const string Twice = "    int Twice(int x) => x * 2;\n";
+        static string Shapes(params string[] members) => "class Shapes\n{\n" + string.Concat(members) + "}\n";
+        string path = Path.Combine(folder, "Shapes.cs");
+        File.WriteAllText(path, Shapes(Area, Perimeter, Twice));
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => editor.FoldRegions.Count == 3, "the file's regions");
+        editor.Focus();
+        Ui.Run(window, EditorActions.FoldToDefinitions);
+
+        // Each command at a member's signature, the caret's column kept; then the text, the caret and the folded methods.
+        void At(string member, int nth, string action)
+        {
+            string text = editor.Document.Snapshot.ToString();
+            int found = -1;
+            for (int i = 0; i <= nth; i++)
+            {
+                found = text.IndexOf(member.Split('\n')[0], found + 1, StringComparison.Ordinal);
+            }
+            Assert.True(found >= 0, $"The text has no {nth + 1}. '{member.Split('\n')[0].Trim()}' to run {action} at");
+            editor.Selections = SelectionSet.Single(found + 8);
+            Ui.Run(window, action);
+            Ui.Settle();
+        }
+        void Shows(string what, string expected, string[] folded, string caretOn)
+        {
+            TextSnapshot text = editor.Document.Snapshot;
+            Assert.True(expected == text.ToString(), $"After {what} the text is not the members whole:\n{text}");
+            string Named(FoldRegion r) => text.GetLineText(text.GetLineFromOffset(r.Start)).Trim();
+            string[] shown = [.. Folded(editor).Select(Named)];
+            Assert.True(folded.SequenceEqual(shown), $"After {what} the folded methods are [{string.Join(", ", shown)}], not [{string.Join(", ", folded)}]");
+            string on = text.GetLineText(editor.CaretPosition.Line).Trim();
+            Assert.True(caretOn == on && editor.CaretPosition.Column == 8, $"After {what} the caret is on '{on}' at {editor.CaretPosition.Column}, not on '{caretOn}' at 8");
+        }
+
+        At(Area, 0, EditorActions.MoveLineDown);
+        Shows("Move Line Down on folded Area", Shapes(Perimeter, Area, Twice), ["int Perimeter(int w, int h)", "int Area(int w, int h)"], "int Area(int w, int h)");
+        At(Area, 0, EditorActions.MoveLineUp);
+        Shows("Move Line Up on folded Area", Shapes(Area, Perimeter, Twice), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Area(int w, int h)");
+        // A line moved up over a folded method goes above its signature, never into the body it hides.
+        At(Twice, 0, EditorActions.MoveLineUp);
+        Shows("Move Line Up past folded Perimeter", Shapes(Area, Twice, Perimeter), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Twice(int x) => x * 2;");
+        At(Twice, 0, EditorActions.MoveLineDown);
+        Shows("Move Line Down past folded Perimeter", Shapes(Area, Perimeter, Twice), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Twice(int x) => x * 2;");
+
+        At(Perimeter, 0, EditorActions.Copy);
+        Assert.Equal(Perimeter, Ui.Clipboard(window));
+        At(Area, 0, EditorActions.Duplicate);
+        Shows("Duplicate on folded Area", Shapes(Area, Area, Perimeter, Twice), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Area(int w, int h)");
+        Assert.Equal(7, editor.CaretPosition.Line);
+        // The copy is open, as the code it is: Delete Line on the folded one above it takes that one whole.
+        At(Area, 0, EditorActions.DeleteLine);
+        Shows("Delete Line on folded Area", Shapes(Area, Perimeter, Twice), ["int Perimeter(int w, int h)"], "int Area(int w, int h)");
+        At(Perimeter, 0, EditorActions.Cut);
+        Assert.Equal(Perimeter, Ui.Clipboard(window));
+        Shows("Cut on folded Perimeter", Shapes(Area, Twice), [], "int Twice(int x) => x * 2;");
+        At(Area, 0, EditorActions.Paste);
+        Shows("Paste of the cut method above Area", Shapes(Perimeter, Area, Twice), [], "int Area(int w, int h)");
+        window.Close();
+    }
+
     /// <summary>Folding is what makes a long method cheap to scroll past: with its 5,000 lines folded, a key typed below it
     /// colours the lines on screen, never the folded ones between them, and a frame with nothing new (a caret's blink)
     /// colours nothing.</summary>
@@ -251,11 +325,11 @@ public sealed class FoldingTests : IDisposable
         window.Close();
     }
 
-    /// <summary>Every key moves the regions below it, and the parse it makes brings them again: the window keeps one moved
-    /// copy of the list a key (24 bytes a region) and takes the parse's own when nothing is folded. A key typed above 2,000
-    /// doc comments allocates on the UI thread under 48 bytes for each more than above the same lines as plain comments,
-    /// where the regions were mapped, sorted and copied again by the editor, and copied twice more when each parse landed.
-    /// A region folded below keeps its fold through the keys.</summary>
+    /// <summary>Every key moves the regions below it, and the parse it makes brings them again: the window moves region by
+    /// region the run of them the key reaches and shifts the runs below whole, and keeps them when the parse finds the same.
+    /// The least of twenty keys above 2,000 doc comments allocates on the UI thread under 4 bytes for each more than above
+    /// plain comments, where a moved copy of every region (24 bytes) was made each key, and before that mapped, sorted and
+    /// copied again by the editor, and twice more as each parse landed. A region folded below keeps its fold.</summary>
     [AvaloniaFact]
     public void Typing_above_two_thousand_regions_moves_them_on_the_UI_thread_without_copying_each_again_and_again()
     {
@@ -264,12 +338,15 @@ public sealed class FoldingTests : IDisposable
         int more = regions - plainRegions;
         Assert.True(more >= 2000, $"The doc comments made {more} regions more than the plain comments");
         long each = (folding - plain) / more;
-        Assert.True(each < 48,
-            $"A key allocated {folding / 1024:N0} KB on the UI thread above {regions} regions, {plain / 1024:N0} KB above {plainRegions}: {each} bytes for each region, which the window copied again and again");
+        TestContext.Current.TestOutputHelper?.WriteLine($"A key allocated at least {folding:N0} bytes on the UI thread above {regions} regions, {plain:N0} above {plainRegions}: {each} bytes a region.");
+        Assert.True(each < 4,
+            $"A key allocated at least {folding / 1024:N0} KB on the UI thread above {regions} regions, {plain / 1024:N0} KB above {plainRegions}: {each} bytes for each region, which the window copied");
     }
 
-    /// <summary>What a key typed in a method at the top of a file allocates on the UI thread, its parse landing included,
-    /// with 2,000 members below it under doc comments or plain ones, the last of them folded; and the file's regions.</summary>
+    /// <summary>The least of twenty keys typed in a method at the top of a file allocates on the UI thread, its parse landing
+    /// included, with 2,000 members below under doc comments or plain ones, the last folded; and the file's regions. What
+    /// else lands in a key's wait goes into some keys alone (the caret's blink draws the editor again, 28 KB, in a wait past
+    /// its 530 ms, as a busy runner's are), what the key costs for each region into every one.</summary>
     private (long Bytes, int Regions) UiBytesPerKey(bool doc)
     {
         string comment = doc ? "///" : "// ";
@@ -301,19 +378,73 @@ public sealed class FoldingTests : IDisposable
         editor.ScrollTo(default);
         Ui.Settle();
         const int Keys = 20;
-        long bytes = 0;
+        long least = long.MaxValue;
         for (int i = 0; i < Keys; i++)
         {
             long before = GC.GetAllocatedBytesForCurrentThread();
             window.KeyTextInput("1");
             Ui.Settle();
-            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
         }
         FoldRegion folded = Assert.Single(document.FoldRegions, r => r.Folded);
         Assert.True(folded.Start == last + Keys, $"The folded method's region starts at {folded.Start} after the keys, not on its signature's end at {last + Keys}");
         int regions = document.FoldRegions.Count;
         window.Close();
-        return (bytes / Keys, regions);
+        return (least, regions);
+    }
+
+    /// <summary>The open file carries its regions through a key in runs, moving region by region only those the key reaches
+    /// and shifting those past it whole: through keys typed in the names of methods above, among and below 300 folded ones,
+    /// Enter between two of them, a key typed at two carets far apart and its undo, the regions the file carried as each
+    /// key landed are those its parse then finds, and every method stays folded.</summary>
+    [AvaloniaFact]
+    public void Keys_among_three_hundred_folded_methods_carry_every_region_to_where_the_parse_finds_it()
+    {
+        StringBuilder text = new("class Many\n{\n");
+        for (int i = 0; i < 300; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    int Member{i}()\n    {{\n        return {i};\n    }}\n\n");
+        }
+        string source = text.Append("}\n").ToString();
+        string path = Path.Combine(folder, "Folded.cs");
+        File.WriteAllText(path, source);
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        CSharpHighlighter syntax = document.Syntax!;
+        Ui.WaitFor(() => document.FoldRegions.Count == 301, "the file's regions");
+        editor.Focus();
+        Ui.Run(window, EditorActions.FoldToDefinitions);
+        Assert.Equal(300, document.FoldRegions.Count(r => r.Folded));
+
+        static string Spans(IReadOnlyList<FoldRegion> regions) => string.Join(", ", regions.Select(r => $"{r.Start}-{r.End} {r.Placeholder}"));
+        int At(string after) => document.Text.Snapshot.ToString().IndexOf(after, StringComparison.Ordinal) + after.Length;
+        void Carried(string what, Action key)
+        {
+            key();
+            string carried = Spans(document.FoldRegions);
+            Ui.Settle();
+            string found = Spans(syntax.Folds);
+            Assert.True(carried == found, $"After {what} the regions the file carried are not those its parse finds:\nfound   {found}\ncarried {carried}");
+            int folded = document.FoldRegions.Count(r => r.Folded);
+            Assert.True(folded == 300, $"After {what} {folded} of the 300 methods are folded");
+        }
+
+        foreach (int member in new[] { 0, 150, 299, 62, 63, 127 })
+        {
+            editor.Selections = SelectionSet.Single(At($"int Member{member}"));
+            Carried($"a key in Member{member}'s name", () => window.KeyTextInput("x"));
+        }
+        editor.Selections = SelectionSet.Single(At("return 200;\n    }\n"));
+        Carried("Enter between two methods", () => Ui.Press(window, "ENTER"));
+        editor.Selections = SelectionSet.Create([Selection.At(At("int Member10")), Selection.At(At("int Member290"))], 0);
+        Carried("a key at two carets", () => window.KeyTextInput("y"));
+        Carried("its undo", () => Ui.Run(window, EditorActions.Undo));
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -466,6 +597,43 @@ public sealed class FoldingTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Collapse All and Collapse to Definitions with the view wheeled down to the file's end and the caret left on
+    /// its first line: the rows left are far fewer, and the view comes back within them, where it stood past the last of
+    /// them, blank, gutter and all, until scrolled.</summary>
+    [AvaloniaFact]
+    public void Collapsing_with_the_view_wheeled_down_past_where_the_folded_rows_end_draws_them()
+    {
+        StringBuilder text = new("class Many\n{\n");
+        for (int i = 0; i < 60; i++)
+        {
+            text.Append($"    int Method{i}()\n    {{\n        int value = {i};\n        return value;\n    }}\n\n");
+        }
+        text.Append("}\n");
+        string path = Path.Combine(folder, "Many.cs");
+        File.WriteAllText(path, text.ToString());
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => window.EditorArea.Active!.FoldsFound && editor.FoldRegions.Count == 61, "the file's regions");
+        editor.Focus();
+        foreach (string collapse in new[] { EditorActions.FoldAll, EditorActions.FoldToDefinitions })
+        {
+            Point middle = editor.TranslatePoint(new Point(editor.Bounds.Width / 2, editor.Bounds.Height / 2), window)!.Value;
+            window.MouseWheel(middle, new Vector(0, -1000));
+            Ui.Settle();
+            Assert.True(editor.ScrollOffset.Y >= (editor.RowsShown - 2) * editor.LineHeight, $"The wheel left the view {editor.ScrollOffset.Y / editor.LineHeight:0.#} rows down a text of {editor.RowsShown}");
+            Assert.Equal(0, editor.Selections.Primary.Caret);
+            Ui.Run(window, collapse);
+            Assert.Contains(editor.FoldRegions, r => r.Folded);
+            Ui.DrawsText(window, editor, $"{window.Actions[collapse]!.Title} with the view wheeled down to the end");
+            Ui.Run(window, EditorActions.UnfoldAll);
+        }
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_project_file_folds_by_its_elements_and_a_JSON_file_by_its_braces_and_typing_keeps_their_folds()
     {
@@ -487,7 +655,8 @@ public sealed class FoldingTests : IDisposable
             </Project>
 
             """);
-        MainWindow window = new() { Width = 1000, Height = 700 };
+        // No C# language server, which folds nothing here and would restore the project's package.
+        MainWindow window = new() { Width = 1000, Height = 700, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(project);

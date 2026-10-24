@@ -71,6 +71,9 @@ public sealed class MemorySnapshot
     /// <summary>The run it was taken in: only snapshots of one run can be compared.</summary>
     internal object Run { get; }
 
+    /// <summary>How each earlier snapshot of the run, by its number, has its objects in this one.</summary>
+    internal IReadOnlyDictionary<int, Identity> Earlier => earlier;
+
     /// <summary>Every object of a type, as an object set.</summary>
     public ObjectSet ObjectsOf(HeapType type)
     {
@@ -101,7 +104,8 @@ public sealed class MemorySnapshot
             return $"{Name} and {other.Name} are of different runs: objects are told apart only within one";
         }
         (MemorySnapshot older, MemorySnapshot newer) = other.Number < Number ? (other, this) : (this, other);
-        return newer.earlier.ContainsKey(older.Number) ? null
+        // A container's tools say how the older's objects are found: by one entry for each of them.
+        return newer.earlier.TryGetValue(older.Number, out Identity? identity) && identity.Later.Length == older.Graph.Count ? null
             : $"The objects of {older.Name} could not be followed to {newer.Name}: the program's collections were not all seen";
     }
 

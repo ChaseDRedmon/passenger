@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.Xaml.Dialects;
 using Passenger.Xaml.Metadata;
 using Passenger.Xaml.Syntax;
@@ -12,6 +13,7 @@ public sealed class XamlProjectBuilder
 {
     private readonly object gate = new();
     private readonly string? dotnetRoot;
+    private readonly Action<Exception>? failed;
     private readonly Dictionary<string, SourceTypes> sources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, XamlFileSummary> files = new(StringComparer.Ordinal);
     private ProjectInputs inputs;
@@ -25,11 +27,12 @@ public sealed class XamlProjectBuilder
     /// declares none anew keeps it.</summary>
     private string classes = string.Empty;
 
-    private XamlProjectBuilder(ProjectInputs inputs, XamlDialect dialect, string? dotnetRoot)
+    private XamlProjectBuilder(ProjectInputs inputs, XamlDialect dialect, string? dotnetRoot, Action<Exception>? failed)
     {
         this.inputs = inputs;
         Dialect = dialect;
         this.dotnetRoot = dotnetRoot;
+        this.failed = failed;
     }
 
     public XamlDialect Dialect { get; }
@@ -38,11 +41,12 @@ public sealed class XamlProjectBuilder
 
     public string Folder => inputs.Folder;
 
-    /// <summary>A builder for a project whose XAML Passenger reads (an Avalonia or WPF project), or null for another.</summary>
-    public static XamlProjectBuilder? For(string projectPath, string? dotnetRoot)
+    /// <summary>A builder for a project whose XAML Passenger reads (an Avalonia or WPF project), or null for another;
+    /// <paramref name="failed"/> hears of a file a load could not read, which it leaves out.</summary>
+    public static XamlProjectBuilder? For(string projectPath, string? dotnetRoot, Action<Exception>? failed = null)
     {
         ProjectInputs inputs = ProjectInputs.Read(projectPath, dotnetRoot);
-        return DialectOf(inputs) is { } dialect ? new XamlProjectBuilder(inputs, dialect, dotnetRoot) : null;
+        return DialectOf(inputs) is { } dialect ? new XamlProjectBuilder(inputs, dialect, dotnetRoot, failed) : null;
     }
 
     /// <summary>The dialect a project's XAML is in, by the framework it references: Avalonia's for a project that references
@@ -61,7 +65,7 @@ public sealed class XamlProjectBuilder
 
     /// <summary>Whether a file is one of the project's XAML files.</summary>
     public bool Owns(string path) =>
-        Dialect.Extensions.Contains(Path.GetExtension(path).ToLowerInvariant()) && Passenger.Xaml.Projects.Paths.IsUnder(path, Folder) && !InBuildOutput(path);
+        Dialect.Extensions.Contains(Path.GetExtension(path).ToLowerInvariant()) && PathNames.Within(path, Folder) && !InBuildOutput(path);
 
     /// <summary>Reads everything: the assemblies, every C# and XAML file (an open file's text from <paramref name="open"/>
     /// rather than disk), the assets.</summary>
@@ -77,7 +81,7 @@ public sealed class XamlProjectBuilder
             sources.Clear();
             List<(string Path, string Assembly)> cs = [.. inputs.SourceFiles.Select(f => (f, inputs.AssemblyName))];
             cs.AddRange(referenced.SelectMany(r => r.Inputs.SourceFiles.Select(f => (f, r.Inputs.AssemblyName))));
-            foreach (SourceTypes read in cs.AsParallel().Select(f => SourceTypes.Read(f.Path, open?.Invoke(f.Path) ?? ReadText(f.Path), f.Assembly)))
+            foreach (SourceTypes read in cs.AsParallel().Select(f => Reading(() => SourceTypes.Read(f.Path, open?.Invoke(f.Path) ?? ReadText(f.Path), f.Assembly))).OfType<SourceTypes>())
             {
                 sources[read.Path] = read;
             }
@@ -87,10 +91,28 @@ public sealed class XamlProjectBuilder
             XamlProject shell = Make();
             foreach (string path in xaml)
             {
-                string text = open?.Invoke(path) ?? ReadText(path);
-                files[path] = XamlFileSummary.Of(path, XmlTree.Parse(text), shell.ResolveSource);
+                if (Reading(() => XamlFileSummary.Of(path, XmlTree.Parse(open?.Invoke(path) ?? ReadText(path)), shell.ResolveSource)) is { } summary)
+                {
+                    files[path] = summary;
+                }
             }
             return built = Make();
+        }
+    }
+
+    /// <summary>One file read as the project loads; null for one the reader trips on, said to <see cref="failed"/>, so the
+    /// project's other files keep their help.</summary>
+    private T? Reading<T>(Func<T> read)
+        where T : class
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            failed?.Invoke(error);
+            return null;
         }
     }
 
@@ -106,15 +128,16 @@ public sealed class XamlProjectBuilder
         }
     }
 
-    /// <summary>A C# file's text changed (typed, or written on disk): its types are read again; a file deleted goes.</summary>
-    public XamlProject SourceChanged(string path, string? text)
+    /// <summary>A C# file's text changed (typed, or written on disk): its types are read again; a file deleted goes. Null
+    /// for a file neither the project nor one it references compiles.</summary>
+    public XamlProject? SourceChanged(string path, string? text)
     {
         lock (gate)
         {
             string? assembly = AssemblyOf(path);
             if (assembly is null)
             {
-                return Current;
+                return null;
             }
             if (text is null && !File.Exists(path))
             {
@@ -164,18 +187,8 @@ public sealed class XamlProjectBuilder
     }
 
     /// <summary>Which project's assembly a C# file is compiled into, of this one and those it references; null for none.</summary>
-    private string? AssemblyOf(string path)
-    {
-        if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || InBuildOutput(path))
-        {
-            return null;
-        }
-        if (Paths.IsUnder(path, inputs.Folder) && !referenced.Any(r => Paths.IsUnder(path, r.Inputs.Folder) && r.Inputs.Folder.Length > inputs.Folder.Length))
-        {
-            return inputs.AssemblyName;
-        }
-        return referenced.FirstOrDefault(r => Paths.IsUnder(path, r.Inputs.Folder)).Inputs?.AssemblyName;
-    }
+    private string? AssemblyOf(string path) =>
+        new[] { inputs }.Concat(referenced.Select(r => r.Inputs)).FirstOrDefault(project => project.Compiles(path))?.AssemblyName;
 
     private XamlProject Make()
     {
@@ -262,38 +275,9 @@ public sealed class XamlProjectBuilder
         return keys;
     }
 
-    private IEnumerable<string> XamlFilesUnder(string folder)
-    {
-        Stack<string> waiting = new([folder]);
-        while (waiting.Count > 0)
-        {
-            string at = waiting.Pop();
-            IEnumerable<string> found;
-            try
-            {
-                found = Directory.EnumerateFileSystemEntries(at).ToList();
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-            foreach (string entry in found)
-            {
-                string name = Path.GetFileName(entry);
-                if (Directory.Exists(entry))
-                {
-                    if (name is not ("bin" or "obj" or "node_modules") && !name.StartsWith('.') && (entry == folder || !Directory.EnumerateFiles(entry, "*.csproj").Any()))
-                    {
-                        waiting.Push(entry);
-                    }
-                }
-                else if (Dialect.Extensions.Contains(Path.GetExtension(name).ToLowerInvariant()))
-                {
-                    yield return entry;
-                }
-            }
-        }
-    }
+    /// <summary>The project's own XAML files: under its folder, but for bin, obj, hidden folders and another project's.</summary>
+    private IEnumerable<string> XamlFilesUnder(string folder) =>
+        ProjectInputs.OwnFolders(folder).SelectMany(f => ProjectInputs.FilesIn(f, "*")).Where(f => Dialect.Extensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
     private bool InBuildOutput(string path)
     {
@@ -311,19 +295,5 @@ public sealed class XamlProjectBuilder
         {
             return string.Empty;
         }
-    }
-}
-
-/// <summary>Path comparisons as the file system makes them.</summary>
-public static class Paths
-{
-    public static StringComparison Comparison { get; } = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
-    /// <summary>Whether a path is inside a folder (or is it).</summary>
-    public static bool IsUnder(string path, string folder)
-    {
-        string trimmed = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return path.Equals(trimmed, Comparison) || path.StartsWith(trimmed + Path.DirectorySeparatorChar, Comparison)
-            || path.StartsWith(trimmed + Path.AltDirectorySeparatorChar, Comparison);
     }
 }

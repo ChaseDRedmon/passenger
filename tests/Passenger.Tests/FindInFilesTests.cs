@@ -52,7 +52,9 @@ public sealed class FindInFilesTests : IDisposable
         // A regex that does not read says why, and finds nothing.
         Search(popup, "count(");
         Assert.Empty(popup.Matches);
-        Assert.NotEqual("Nothing found", popup.Status);
+        string? why = FileSearch.Problem(popup.Query);
+        Assert.True(why is { Length: > 0 }, "A regex that does not read is not said to be wrong");
+        Assert.Equal(why, popup.Status);
         window.Close();
     }
 
@@ -109,6 +111,70 @@ public sealed class FindInFilesTests : IDisposable
         Assert.False(Array.IndexOf(saved, (byte)'?') >= 0, "The → Windows-1252 cannot hold was written as a question mark");
         Assert.Equal("// Prix: 5 →, déjà payés\nclass Gamma { }\n", new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(saved));
         Assert.Equal("Replaced 1 match in 1 file; Gamma.cs was saved as UTF-8: windows-1252 cannot hold '→'", window.Status);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_UTF_16_file_is_found_and_replaced_in_as_the_editor_reads_it_and_a_binary_file_is_still_passed_over()
+    {
+        string little = Path.Combine(folder, "Wide.cs");
+        string big = Path.Combine(folder, "WideBig.cs");
+        File.WriteAllText(little, "class Wide\n{\n    int count;\n}\n", System.Text.Encoding.Unicode);
+        File.WriteAllText(big, "// a count kept big-endian\n", System.Text.Encoding.BigEndianUnicode);
+        File.WriteAllBytes(Path.Combine(folder, "Blob.bin"), [.. System.Text.Encoding.ASCII.GetBytes("count"), 0, 1, 2]);
+        MainWindow window = Open();
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        popup.Words = true;
+        Search(popup, "count");
+        Assert.True(popup.Matches.Any(m => m.Name == "Wide.cs" && m.Line == 2 && m.Column == 8 && m.LineText == "    int count;"),
+            $"Find in Files passed over a UTF-16 file the editor opens, or placed its match wrong: {string.Join("; ", popup.Matches.Select(m => $"{m.Name}:{m.Line + 1}:{m.Column + 1} {m.LineText}"))}");
+        Assert.Contains(popup.Matches, m => m.Name == "WideBig.cs" && m.LineText == "// a count kept big-endian");
+        Assert.DoesNotContain(popup.Matches, m => m.Name == "Blob.bin");
+
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        popup.Replacement = "total";
+        popup.RequestReplace();
+        Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the replacement");
+        Assert.Equal("Replaced 5 matches in 4 files", window.Status);
+        byte[] saved = File.ReadAllBytes(little);
+        Assert.True(saved.AsSpan().StartsWith((ReadOnlySpan<byte>)[0xFF, 0xFE]), "Replace in Files wrote a UTF-16 file without its byte-order mark");
+        Assert.Equal("class Wide\n{\n    int total;\n}\n", System.Text.Encoding.Unicode.GetString(saved, 2, saved.Length - 2));
+        Assert.Equal("// a total kept big-endian\n", File.ReadAllText(big, System.Text.Encoding.BigEndianUnicode));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Replace_all_across_a_read_only_file_replaces_in_the_rest_and_says_which_file_it_left_and_why()
+    {
+        // As Perforce or TFVC leave a file not checked out; first by name, so the files after it show the replace went on.
+        string locked = Path.Combine(folder, "Aardvark.cs");
+        File.WriteAllText(locked, "class Aardvark { int count; }\n");
+        File.SetAttributes(locked, FileAttributes.ReadOnly);
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(folder, "Beta.cs"));
+        Ui.Settle();
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        popup.Words = true;
+        Search(popup, "count");
+        Assert.Equal(4, popup.Matches.Count);
+
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        popup.Replacement = "total";
+        popup.RequestReplace();
+        Ui.WaitFor(() => window.Status?.Contains("Replaced", StringComparison.Ordinal) == true || window.Status?.StartsWith("Nothing", StringComparison.Ordinal) == true, "the replacement");
+        Assert.Equal("Replaced 3 matches in 2 files; not replaced: Aardvark.cs (read-only)", window.Status);
+        Assert.Equal("class Aardvark { int count; }\n", File.ReadAllText(locked));
+        Assert.True(new FileInfo(locked).IsReadOnly, "Replace in Files made the read-only file writable");
+        Assert.Equal("class Alpha\n{\n    int total;\n}\n", File.ReadAllText(Path.Combine(folder, "Alpha.cs")));
+        Assert.Contains("void total()", window.EditorArea.Active!.Text.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // An agent's replace_in_files hears the same, and the open file it changed is saved.
+        Task<string> replacing = new Passenger.App.Mcp.PassengerTools(window).ReplaceInFiles("count|total", "sum", wholeWords: true, regex: true);
+        Ui.WaitFor(() => replacing.IsCompleted, "replace_in_files' answer");
+        Assert.Contains(replacing.Result, new[] { "Alpha.cs, Beta.cs", "Beta.cs, Alpha.cs" }.Select(files => $"Replaced 3 matches in 2 files: {files}; not replaced: Aardvark.cs (read-only)"));
+        Assert.Equal("class Alpha\n{\n    int sum;\n}\n", File.ReadAllText(Path.Combine(folder, "Alpha.cs")));
+        Assert.Contains("void sum()", File.ReadAllText(Path.Combine(folder, "Beta.cs")), StringComparison.Ordinal);
+        Assert.Equal("class Aardvark { int count; }\n", File.ReadAllText(locked));
         window.Close();
     }
 
@@ -312,12 +378,5 @@ public sealed class FindInFilesTests : IDisposable
         Ui.WaitFor(() => searching.IsCompleted, $"the search for {text}");
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(folder);
 }

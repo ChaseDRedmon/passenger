@@ -1,9 +1,10 @@
-using System.Text.Json;
+using System.Text;
 using System.Text.RegularExpressions;
 using Passenger.App.Web;
 using Passenger.App.Workspace;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Core;
 
 namespace Passenger.App.CSharp;
 
@@ -39,11 +40,13 @@ public sealed partial class CodeAssist
     }
 
     /// <summary>A character of a web language's name beyond an identifier's: CSS's and HTML's '-' (background-color,
-    /// --accent, data-id), JavaScript's '$', and in JSON the quotes a property's name is written in.</summary>
+    /// --accent, data-id), JavaScript's '$', a Dockerfile's flags' '-' (--from), YAML's keys' and names' '-' and '.'
+    /// (x-common, my-api), and in JSON the quotes a property's name is written in.</summary>
     private static bool IsWebWordChar(WebDocument web, char c) => web.Kind switch
     {
-        WebServerKind.Css or WebServerKind.Html => c == '-',
+        WebServerKind.Css or WebServerKind.Html or WebServerKind.Dockerfile => c == '-',
         WebServerKind.TypeScript => c == '$',
+        WebServerKind.Yaml => c is '-' or '.',
         _ => c is '"' or '-' or '.' or '@' or '/',
     };
 
@@ -108,8 +111,8 @@ public sealed partial class CodeAssist
             return (null, NoDeclaration);
         }
         LspPosition at = lsp.PositionOf(offset);
-        List<DocumentSymbol> path = JsonPath(outline, at);
-        if (path is [{ Name: "dependencies" or "devDependencies" or "peerDependencies" or "optionalDependencies" }, { } dependency] && Within(dependency.SelectionRange, at))
+        List<DocumentSymbol> path = DocumentSymbol.PathTo(outline, at);
+        if (path is [{ Name: "dependencies" or "devDependencies" or "peerDependencies" or "optionalDependencies" }, { } dependency] && dependency.SelectionRange.Holds(at))
         {
             return Installed(document.Path, dependency.Name) is { } installed
                 ? ((installed, new TextPosition(0, 0)), $"{dependency.Name}'s package.json")
@@ -118,7 +121,8 @@ public sealed partial class CodeAssist
         if (path is [{ Name: "scripts" } scripts, _] && RunAt(text, offset) is { } script
             && scripts.Children?.FirstOrDefault(s => s.Name == script) is { } declared)
         {
-            return ((document.Path, new TextPosition(declared.SelectionRange.Start.Line, declared.SelectionRange.Start.Character + 1)), $"The script {script}");
+            TextPosition name = ServerPlaces.PositionOf(text, declared.SelectionRange.Start);
+            return ((document.Path, new TextPosition(name.Line, name.Column + 1)), $"The script {script}");
         }
         return (null, NoDeclaration);
     }
@@ -155,7 +159,6 @@ public sealed partial class CodeAssist
                 shown = true;
                 ShowModal(box, asked.MapOffset(at.Key.Start), name =>
                 {
-                    using ChangeTracker made = asked;
                     if (name is null || name == property.Name || editors.Active != document)
                     {
                         return Task.CompletedTask;
@@ -168,9 +171,11 @@ public sealed partial class CodeAssist
                     }
                     Editor.ApplyEdits(placed);
                     int runs = placed.Count - 1;
-                    Message?.Invoke(this, runs == 0 ? "Renamed" : $"Renamed, and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it");
+                    Message?.Invoke(this, runs == 0 ? "Renamed" : $"Renamed, and in {Plural.Of(runs, "script")} that run{(runs == 1 ? "s" : "")} it");
                     return Task.CompletedTask;
                 });
+                // Let go as the box closes, however it closes; what was typed until then is still carried.
+                modalClosed = asked.Dispose;
             }
             finally
             {
@@ -187,8 +192,8 @@ public sealed partial class CodeAssist
     internal static (List<DocumentSymbol> Path, TextRange Key)? JsonPropertyAt(IReadOnlyList<DocumentSymbol> outline, ServerLines lines, int offset)
     {
         LspPosition at = lines.PositionOf(Math.Min(offset, lines.Text.Length));
-        List<DocumentSymbol> path = JsonPath(outline, at);
-        if (path.Count == 0 || !Within(path[^1].SelectionRange, at))
+        List<DocumentSymbol> path = DocumentSymbol.PathTo(outline, at);
+        if (path.Count == 0 || !path[^1].SelectionRange.Holds(at))
         {
             return null;
         }
@@ -200,7 +205,8 @@ public sealed partial class CodeAssist
     /// <c>npm run</c> of a script renamed with it.</summary>
     internal static IReadOnlyList<TextEdit> JsonRenameEdits(List<DocumentSymbol> path, TextRange key, ServerLines lines, string name, bool packageJson)
     {
-        List<TextEdit> edits = [new TextEdit(key.Start, key.Length, JsonSerializer.Serialize(name))];
+        string written = JsonStringContent(name);
+        List<TextEdit> edits = [new TextEdit(key.Start, key.Length, $"\"{written}\"")];
         if (packageJson && path is [{ Name: "scripts" } scripts, _])
         {
             TextRange within = TextRange.FromBounds(lines.OffsetOf(scripts.Range.Start), lines.OffsetOf(scripts.Range.End));
@@ -208,34 +214,45 @@ public sealed partial class CodeAssist
             foreach (Match run in Runs(path[^1].Name).Matches(text))
             {
                 Group script = run.Groups["script"];
-                edits.Add(new TextEdit(within.Start + script.Index, script.Length, name));
+                edits.Add(new TextEdit(within.Start + script.Index, script.Length, written));
             }
         }
         return [.. edits.OrderBy(e => e.Start)];
     }
 
-    internal static bool IsPackageJson(OpenDocument document) => Path.GetFileName(document.Path).Equals("package.json", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>The properties from the document's top to the one whose name or value holds a place, outermost first.</summary>
-    private static List<DocumentSymbol> JsonPath(IReadOnlyList<DocumentSymbol> symbols, LspPosition at)
+    /// <summary>Text as a JSON string holds it, read as typed: only what JSON must escape is (a quote, a backslash, a control
+    /// character), where a serializer's encoder escapes every letter outside ASCII and <c>+</c>, <c>&lt;</c> and the like.</summary>
+    private static string JsonStringContent(string text)
     {
-        List<DocumentSymbol> path = [];
-        IReadOnlyList<DocumentSymbol>? level = symbols;
-        while (level?.FirstOrDefault(s => Within(s.Range, at)) is { } inside)
+        StringBuilder written = new(text.Length);
+        foreach (char c in text)
         {
-            path.Add(inside);
-            if (Within(inside.SelectionRange, at))
+            switch (c)
             {
-                break;
+                case '"' or '\\':
+                    written.Append('\\').Append(c);
+                    break;
+                case '\n':
+                    written.Append("\\n");
+                    break;
+                case '\r':
+                    written.Append("\\r");
+                    break;
+                case '\t':
+                    written.Append("\\t");
+                    break;
+                case < ' ':
+                    written.Append($"\\u{(int)c:x4}");
+                    break;
+                default:
+                    written.Append(c);
+                    break;
             }
-            level = inside.Children;
         }
-        return path;
+        return written.ToString();
     }
 
-    private static bool Within(LspRange range, LspPosition at) =>
-        (range.Start.Line < at.Line || (range.Start.Line == at.Line && range.Start.Character <= at.Character))
-        && (at.Line < range.End.Line || (at.Line == range.End.Line && at.Character <= range.End.Character));
+    internal static bool IsPackageJson(OpenDocument document) => Path.GetFileName(document.Path).Equals("package.json", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The installed package's package.json, found as Node.js resolves a package: node_modules beside the
     /// package.json, then in each folder above it.</summary>

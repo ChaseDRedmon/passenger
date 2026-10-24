@@ -145,13 +145,4 @@ public abstract class RefactoringDialog : Window
     }
 
     protected static TextBox Field(string text) => new() { Classes = { "search" }, Text = text };
-
-    protected static Button Tool(string icon, string tip)
-    {
-        PathIcon glyph = new();
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-        Button button = new() { Classes = { "tool" }, Content = glyph };
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
 }

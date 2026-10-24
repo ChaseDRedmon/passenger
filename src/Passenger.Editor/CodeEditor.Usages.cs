@@ -96,9 +96,9 @@ public sealed partial class CodeEditor
         TextSnapshot text = document.Snapshot;
         IBraceMatcher? matcher = highlighter as IBraceMatcher;
         BracePair? PairBeside(int caret) =>
-            (caret < text.Length && IsBracket(text[caret]) ? matcher?.PairAt(text, caret) : null)
-            ?? (caret > 0 && IsBracket(text[caret - 1]) ? matcher?.PairAt(text, caret - 1) : null)
-            ?? matcher?.TagPairAt(text, caret);
+            (caret < text.Length && IsBracket(text[caret]) ? matcher?.PairAt(text, caret, far: true) : null)
+            ?? (caret > 0 && IsBracket(text[caret - 1]) ? matcher?.PairAt(text, caret - 1, far: true) : null)
+            ?? matcher?.TagPairAt(text, caret, far: true);
         document.BreakUndoGroup();
         SetSelections(selections.With(s => PairBeside(s.Caret) is { } pair ? Selection.At(pair.Matching.Start) : s), reveal: true);
     }

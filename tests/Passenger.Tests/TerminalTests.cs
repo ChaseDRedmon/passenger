@@ -19,8 +19,8 @@ namespace Passenger.Tests;
 /// them, typed commands and keys taken ahead of the IDE; floods of output and stuck pastes never hold the window, pastes
 /// stay text, accents and emoji take the columns the shell counts, lines reflow as it resizes, and a place or a selection
 /// holds as output streams. A run configuration that uses the terminal runs its program in a tab of its own, which reads
-/// what is typed there and draws as it likes, and which Stop ends with all it started.</summary>
-[Collection(Alone.Name)]
+/// what is typed there and draws as it likes, and which Stop ends with all it started. How soon the window answers through
+/// a flood, a stuck paste and a busy pool is TerminalResponsivenessTests'.</summary>
 public sealed class TerminalTests
 {
     [AvaloniaFact]
@@ -170,16 +170,16 @@ public sealed class TerminalTests
 
             // Shift+Escape is still the IDE's: it hides the window. The terminal's shortcut brings it back.
             Ui.Press(window, "shift ESCAPE");
-            Assert.False(window.DockHost.IsShown("terminal"));
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal));
             Ui.Run(window, AppActions.ShowTerminal);
-            Assert.True(window.DockHost.IsShown("terminal"));
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Terminal));
 
             // The shell's own exit closes its tab, and with the last one the window.
             Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the terminal focused again");
             window.KeyTextInput("exit");
             Ui.Press(window, "ENTER");
             Ui.WaitFor(() => window.TerminalPanel.Tabs.Count == 0, "the tab to close");
-            Assert.False(window.DockHost.IsShown("terminal"));
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal));
             window.Close();
         }
         finally
@@ -199,7 +199,7 @@ public sealed class TerminalTests
             // Cmd+9 and Ctrl+` in its macOS one. Rider's terminal lets every tool window's shortcut through.
             foreach ((string action, string shown) in new[] { (AppActions.ShowRun, "run"), (AppActions.ShowGit, "git"), (AppActions.ShowBookmarks, "bookmarks") })
             {
-                window.ShowToolWindow("terminal");
+                window.ShowToolWindow(ToolWindowIds.Terminal);
                 window.TerminalPanel.FocusView();
                 Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the terminal");
                 Passenger.Editor.Keystroke keys = window.Actions.Keymap.ShortcutsFor(action).First(s => s.Second is null).First;
@@ -210,159 +210,6 @@ public sealed class TerminalTests
         }
         finally
         {
-            TestFolders.Delete(folder);
-        }
-    }
-
-    [AvaloniaFact]
-    public void A_flood_of_output_leaves_the_window_taking_keys_and_Ctrl_C_stops_it()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            // sh, seq and a terminal's own Ctrl+C are Unix's.
-            return;
-        }
-        string folder = TestFolders.Create("terminal-");
-        MainWindow? window = null;
-        try
-        {
-            // Numbered lines of a hundred bytes, made as they are read: 500 MB of them, many times the 7 to 35 MB the window
-            // takes before Ctrl+C, yet an end that a terminal reading without waiting comes to.
-            string lines = $"seq -f 'line %07.0f {new string('x', 86)}'";
-            (window, TerminalSession shell) = Open(folder, "/bin/sh");
-            // The lines' glyphs drawn once first, as in a terminal already in use: the first frame of them lays them out,
-            // which on a slow machine holds the window for a second whatever the terminal does.
-            window.KeyTextInput($"{lines} 0 2");
-            Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("line 0000002", StringComparison.Ordinal), "the first lines on the screen");
-            Ui.Settle();
-            window.KeyTextInput("clear");
-            Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => !shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the screen cleared");
-            window.KeyTextInput($"{lines} 0 4999999");
-            using (InputWait waits = new())
-            {
-                // Pressed and waited for without settling, which waits for all the IDE's background work, seq pouring on.
-                window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
-                window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
-                Ui.PumpUntil(() => shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "seq's lines to come onto the screen");
-                // A second more of the flood, the window running as it does on a desktop, and on a machine slow to draw as
-                // long as it takes the window to answer enough looks to say how long a key waits.
-                Stopwatch flooding = Stopwatch.StartNew();
-                Ui.Hold(TimeSpan.FromSeconds(1), "a second of seq's flood, in which every key's wait is measured");
-                Ui.Pumped(() => waits.Answered >= 20, TimeSpan.FromSeconds(19));
-                waits.Stop();
-                Assert.True(waits.Answered >= 20,
-                    $"the window answered {waits.Answered} of {waits.Posted} looks at its thread in {flooding.Elapsed.TotalSeconds:F1} s of seq's output");
-                Assert.True(waits.Longest < TimeSpan.FromMilliseconds(250),
-                    $"a key waited {waits.Longest.TotalMilliseconds:F0} ms for the window while seq's output poured in");
-            }
-
-            // The window falls behind for a moment, as it would drawing a heavy frame: seq waits for it, its output not read
-            // into memory meanwhile, so Ctrl+C finds it running and only what the terminal had already read comes after.
-            long atCtrlC = -1;
-            window.AddHandler(InputElement.KeyDownEvent, (_, e) =>
-            {
-                if (e.Key == Key.C && e.KeyModifiers == KeyModifiers.Control)
-                {
-                    atCtrlC = LastLine(shell);
-                }
-            }, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
-            Ui.Stall(TimeSpan.FromSeconds(2), "the window behind on seq's output, as a heavy frame holds it");
-            Ui.Press(window, "control C");
-            window.KeyTextInput("echo after-$((6*7))");
-            Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("after-42", StringComparison.Ordinal),
-                $"the shell's answer after Ctrl+C:\n{shell.Screen.ScreenText()}", TimeSpan.FromSeconds(30));
-            long last = LastLine(shell);
-            Assert.True(last < 4_999_999,
-                $"seq ran to the end of its 500 MB, line {atCtrlC} on the screen when Ctrl+C was pressed: Ctrl+C never stopped it");
-            Assert.True(last - atCtrlC < 40_000,
-                $"{(last - atCtrlC) / 10_000.0:F1} MB of seq's output came after Ctrl+C: it was read into memory while the window was behind");
-        }
-        finally
-        {
-            // seq's lines outlast a test failing part-way, and end with the window's shells.
-            window?.Close();
-            TestFolders.Delete(folder);
-        }
-    }
-
-    [AvaloniaFact]
-    public void A_paste_into_a_program_that_reads_nothing_leaves_the_window_taking_keys()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            // A Unix pseudo-terminal's input queue holds a kilobyte or so; past that, a write waits for the program.
-            return;
-        }
-        string folder = TestFolders.Create("terminal-");
-        try
-        {
-            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
-            window.KeyTextInput("sleep 30");
-            Ui.Press(window, "ENTER");
-            WaitForScreen(window, shell, s => s.CursorRow > 0 && s.Lines[s.CursorRow - 1].Text().Contains("sleep 30", StringComparison.Ordinal), "sleep to start");
-
-            // Far more than the pseudo-terminal holds, while sleep reads none of it.
-            Copy(window, string.Concat(Enumerable.Range(0, 2000).Select(i => $"echo pasted {i}\n")));
-            Stopwatch pasting = Stopwatch.StartNew();
-            Ui.Press(window, PasteKey);
-            Assert.True(pasting.Elapsed < TimeSpan.FromSeconds(1), $"the paste held the window for {pasting.ElapsedMilliseconds} ms");
-            // What the pseudo-terminal took it echoes, so the paste did go.
-            Ui.WaitFor(() => Screen(shell).Contains("echo pasted 0", StringComparison.Ordinal), "the start of the paste echoed", TimeSpan.FromSeconds(10));
-
-            // The window still takes the IDE's keys: Shift+Escape hides the terminal.
-            Ui.Press(window, "shift ESCAPE");
-            Assert.False(window.DockHost.IsShown("terminal"), "the terminal is still shown after Shift+Escape");
-            window.Close();
-        }
-        finally
-        {
-            TestFolders.Delete(folder);
-        }
-    }
-
-    [AvaloniaFact]
-    public void The_shell_echoes_what_is_typed_while_every_thread_of_the_pool_is_busy()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            // sh is Unix's.
-            return;
-        }
-        string folder = TestFolders.Create("terminal-");
-        using ManualResetEventSlim release = new();
-        try
-        {
-            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
-            // Every thread of the pool held, as a build, a debugger or tests waiting on processes hold them, and more waiting.
-            ThreadPool.GetMinThreads(out int threads, out _);
-            int taken = 0;
-            for (int i = 0; i < threads * 4; i++)
-            {
-                ThreadPool.UnsafeQueueUserWorkItem(_ =>
-                {
-                    Interlocked.Increment(ref taken);
-                    release.Wait(TimeSpan.FromSeconds(60));
-                }, null);
-            }
-            Assert.True(Waiting.Until(() => Volatile.Read(ref taken) >= threads, TimeSpan.FromSeconds(10)), $"The pool took {Volatile.Read(ref taken)} of the {threads} jobs meant to hold its threads");
-            Stopwatch typing = Stopwatch.StartNew();
-            window.KeyTextInput("echo typed");
-            window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
-            window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
-            // Frames pumped by hand: settling waits for background work, which the busy pool would hold.
-            Ui.Pumped(() => Screen(shell).Contains("\ntyped", StringComparison.Ordinal), TimeSpan.FromSeconds(30));
-            TimeSpan answered = typing.Elapsed;
-            release.Set();
-            Assert.True(answered < TimeSpan.FromSeconds(5),
-                $"with the pool's {threads} threads busy, the shell's answer to a command typed took {answered.TotalSeconds:F1} s:\n{Screen(shell)}");
-            window.Close();
-        }
-        finally
-        {
-            release.Set();
             TestFolders.Delete(folder);
         }
     }
@@ -509,12 +356,12 @@ public sealed class TerminalTests
 
             // Moved to the right side, as a drag of its stripe button moves it, the terminal is a side panel's width.
             DockHost dock = window.DockHost;
-            dock.Move(dock["terminal"]!, ToolAnchor.RightTop);
+            dock.Move(dock[ToolWindowIds.Terminal]!, ToolAnchor.RightTop);
             Ui.WaitFor(() => screen.Columns < wide, "the terminal to narrow on the right side");
             Assert.True(screen.Columns < 100, $"on the right side the terminal has {screen.Columns} columns, room for the whole line");
             Assert.True(Lines(screen).Contains(hundred), $"at {screen.Columns} columns the line of 100 no longer reads whole, its rows joined:\n{Screen(shell)}");
 
-            dock.Move(dock["terminal"]!, ToolAnchor.BottomLeft);
+            dock.Move(dock[ToolWindowIds.Terminal]!, ToolAnchor.BottomLeft);
             Ui.WaitFor(() => screen.Columns == wide, "the terminal to widen back at the bottom");
             Ui.Settle();
             Assert.True(Enumerable.Range(0, screen.Rows).Any(r => screen.Lines[r].Text() == hundred),
@@ -525,7 +372,7 @@ public sealed class TerminalTests
             WaitForLine(shell, "kept", "the command typed before the resizes to run");
 
             // A program laying itself out reads the size the terminal has, narrowed again.
-            dock.Move(dock["terminal"]!, ToolAnchor.RightTop);
+            dock.Move(dock[ToolWindowIds.Terminal]!, ToolAnchor.RightTop);
             Ui.WaitFor(() => screen.Columns < wide, "the terminal to narrow again");
             Run(window, "stty size");
             WaitForLine(shell, $"{screen.Rows} {screen.Columns}", $"stty to count the terminal's {screen.Rows} rows and {screen.Columns} columns");
@@ -628,9 +475,9 @@ public sealed class TerminalTests
         TerminalRun run = Assert.IsType<TerminalRun>(window.RunInTerminal);
         TerminalSession program = run.Session;
         Assert.Equal("Keys", window.TerminalPanel.ActiveTab?.Name);
-        Assert.True(window.DockHost.IsShown("terminal"), "The program runs in the terminal, which is not shown");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Terminal), "The program runs in the terminal, which is not shown");
         Assert.Equal("Running Keys", window.Status);
-        Assert.True(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar has no Stop while the program runs in the terminal");
+        Assert.True(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could not be clicked while the program ran in the terminal");
 
         WaitForScreen(window, program, s => s.Lines.Any(l => l.Text() == "key?"), "the program to ask for a key");
         TerminalScreen screen = program.Screen;
@@ -650,7 +497,7 @@ public sealed class TerminalTests
         Assert.Equal(3, run.Ended.Result);
         WaitForLine(program, "Process finished with exit code 3.", "its tab saying how it ended");
         Assert.Equal("Keys exited with code 3", window.Status);
-        Assert.False(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the program ended");
+        Assert.False(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could still be clicked once the program ended");
         Assert.True(window.TerminalPanel.Tabs is [{ Name: "Keys", HasEnded: true }], "The ended program's tab was not kept to say how it ended");
         window.Close();
     }
@@ -674,7 +521,7 @@ public sealed class TerminalTests
         // SIGKILL's, as a shell gives it, on macOS and Linux; Windows' is what TerminateProcess was given.
         WaitForLine(run.Session, l => OperatingSystem.IsWindows() ? l.StartsWith("Process finished with exit code ", StringComparison.Ordinal) : l == "Process finished with exit code 137.",
             "its tab saying it was ended");
-        Assert.False(window.IsRunning || window.FindControl<Button>("StopButton")!.IsVisible, "The window says the stopped program still runs");
+        Assert.False(window.IsRunning || window.FindControl<Button>("StopButton")!.IsEnabled, "The window says the stopped program still runs");
         window.Close();
     }
 
@@ -750,12 +597,12 @@ public sealed class TerminalTests
     }
 
     /// <summary>A window over a folder of its own holding TerminalConsoleApp, restored, its configuration Keys running the
-    /// program in the terminal with these arguments.</summary>
+    /// program in the terminal with these arguments; without the C# language server, which a run asks nothing of.</summary>
     private static MainWindow RunWindow(string folder, string arguments)
     {
         string project = PathNames.Canonical(Debugging.Helpers.Debuggees.CopyTo("TerminalConsoleApp", folder));
         Restore.Run(folder);
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
@@ -765,7 +612,7 @@ public sealed class TerminalTests
 
     /// <summary>Waits for the terminal's screen to show something, failing with what it shows instead, its size, its
     /// cursor and what has the keys.</summary>
-    private static void WaitForScreen(MainWindow window, TerminalSession shell, Func<TerminalScreen, bool> shows, string what)
+    internal static void WaitForScreen(MainWindow window, TerminalSession shell, Func<TerminalScreen, bool> shows, string what)
     {
         try
         {
@@ -850,7 +697,7 @@ public sealed class TerminalTests
     }
 
     /// <summary>The window over a folder, its Terminal open on a shell of the test's and the keys going to it.</summary>
-    private static (MainWindow Window, TerminalSession Shell) Open(string folder, string shell, params string[] arguments)
+    internal static (MainWindow Window, TerminalSession Shell) Open(string folder, string shell, params string[] arguments)
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
@@ -864,22 +711,15 @@ public sealed class TerminalTests
     }
 
     /// <summary>The terminal's Paste: Cmd+V on the Mac, Ctrl+Shift+V elsewhere.</summary>
-    private static string PasteKey => OperatingSystem.IsMacOS() ? "meta V" : "control shift V";
+    internal static string PasteKey => OperatingSystem.IsMacOS() ? "meta V" : "control shift V";
 
     /// <summary>The terminal's Copy: Cmd+C on the Mac, Ctrl+Shift+C elsewhere.</summary>
     private static string CopyKey => OperatingSystem.IsMacOS() ? "meta C" : "control shift C";
 
-    private static void Copy(TopLevel window, string text)
-    {
-        Task copied = window.Clipboard!.SetTextAsync(text);
-        while (!copied.IsCompleted)
-        {
-            Ui.Settle();
-        }
-    }
+    internal static void Copy(TopLevel window, string text) => Ui.Await(window.Clipboard!.SetTextAsync(text), "the clipboard to take the text");
 
     /// <summary>The number of the last of seq's lines in the terminal, its scrollback included; -1 before the first.</summary>
-    private static long LastLine(TerminalSession session)
+    internal static long LastLine(TerminalSession session)
     {
         long last = -1;
         foreach (string line in Screen(session).Split('\n'))
@@ -893,6 +733,166 @@ public sealed class TerminalTests
         return last;
     }
 
-    private static string Screen(TerminalSession session) =>
+    internal static string Screen(TerminalSession session) =>
         string.Join('\n', session.Screen.Scrollback.Select(l => l.Text()).Concat(session.Screen.Lines.Select(l => l.Text())));
+}
+
+/// <summary>The terminal holds the window to how soon it answers: a flood of output leaves it taking keys and Ctrl+C stops it,
+/// a paste into a program that reads nothing returns at once, and the shell echoes what is typed with every thread of the
+/// pool busy. Held to times, and the pool taken from everything beside it, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class TerminalResponsivenessTests
+{
+    [AvaloniaFact]
+    public void A_flood_of_output_leaves_the_window_taking_keys_and_Ctrl_C_stops_it()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh, seq and a terminal's own Ctrl+C are Unix's.
+            return;
+        }
+        string folder = TestFolders.Create("terminal-");
+        MainWindow? window = null;
+        try
+        {
+            // Numbered lines of a hundred bytes, made as they are read: 500 MB of them, many times the 7 to 35 MB the window
+            // takes before Ctrl+C, yet an end that a terminal reading without waiting comes to.
+            string lines = $"seq -f 'line %07.0f {new string('x', 86)}'";
+            (window, TerminalSession shell) = TerminalTests.Open(folder, "/bin/sh");
+            // The lines' glyphs drawn once first, as in a terminal already in use: the first frame of them lays them out,
+            // which on a slow machine holds the window for a second whatever the terminal does.
+            window.KeyTextInput($"{lines} 0 2");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("line 0000002", StringComparison.Ordinal), "the first lines on the screen");
+            Ui.Settle();
+            window.KeyTextInput("clear");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => !shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the screen cleared");
+            window.KeyTextInput($"{lines} 0 4999999");
+            using (InputWait waits = new())
+            {
+                // Pressed and waited for without settling, which waits for all the IDE's background work, seq pouring on.
+                window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+                window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+                Ui.PumpUntil(() => shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "seq's lines to come onto the screen");
+                // A second more of the flood, the window running as it does on a desktop, and on a machine slow to draw as
+                // long as it takes the window to answer enough looks to say how long a key waits.
+                Stopwatch flooding = Stopwatch.StartNew();
+                Ui.Hold(TimeSpan.FromSeconds(1), "a second of seq's flood, in which every key's wait is measured");
+                Ui.Pumped(() => waits.Answered >= 20, TimeSpan.FromSeconds(19));
+                waits.Stop();
+                Assert.True(waits.Answered >= 20,
+                    $"the window answered {waits.Answered} of {waits.Posted} looks at its thread in {flooding.Elapsed.TotalSeconds:F1} s of seq's output");
+                Assert.True(waits.Longest < TimeSpan.FromMilliseconds(250),
+                    $"a key waited {waits.Longest.TotalMilliseconds:F0} ms for the window while seq's output poured in");
+            }
+
+            // The window falls behind for a moment, as it would drawing a heavy frame: seq waits for it, its output not read
+            // into memory meanwhile, so Ctrl+C finds it running and only what the terminal had already read comes after.
+            long atCtrlC = -1;
+            window.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+            {
+                if (e.Key == Key.C && e.KeyModifiers == KeyModifiers.Control)
+                {
+                    atCtrlC = TerminalTests.LastLine(shell);
+                }
+            }, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+            Ui.Stall(TimeSpan.FromSeconds(2), "the window behind on seq's output, as a heavy frame holds it");
+            Ui.Press(window, "control C");
+            window.KeyTextInput("echo after-$((6*7))");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("after-42", StringComparison.Ordinal),
+                $"the shell's answer after Ctrl+C:\n{shell.Screen.ScreenText()}", TimeSpan.FromSeconds(30));
+            long last = TerminalTests.LastLine(shell);
+            Assert.True(last < 4_999_999,
+                $"seq ran to the end of its 500 MB, line {atCtrlC} on the screen when Ctrl+C was pressed: Ctrl+C never stopped it");
+            Assert.True(last - atCtrlC < 40_000,
+                $"{(last - atCtrlC) / 10_000.0:F1} MB of seq's output came after Ctrl+C: it was read into memory while the window was behind");
+        }
+        finally
+        {
+            // seq's lines outlast a test failing part-way, and end with the window's shells.
+            window?.Close();
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_paste_into_a_program_that_reads_nothing_leaves_the_window_taking_keys()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // A Unix pseudo-terminal's input queue holds a kilobyte or so; past that, a write waits for the program.
+            return;
+        }
+        string folder = TestFolders.Create("terminal-");
+        try
+        {
+            (MainWindow window, TerminalSession shell) = TerminalTests.Open(folder, "/bin/sh");
+            window.KeyTextInput("sleep 30");
+            Ui.Press(window, "ENTER");
+            TerminalTests.WaitForScreen(window, shell, s => s.CursorRow > 0 && s.Lines[s.CursorRow - 1].Text().Contains("sleep 30", StringComparison.Ordinal), "sleep to start");
+
+            // Far more than the pseudo-terminal holds, while sleep reads none of it.
+            TerminalTests.Copy(window, string.Concat(Enumerable.Range(0, 2000).Select(i => $"echo pasted {i}\n")));
+            Stopwatch pasting = Stopwatch.StartNew();
+            Ui.Press(window, TerminalTests.PasteKey);
+            Assert.True(pasting.Elapsed < TimeSpan.FromSeconds(1), $"the paste held the window for {pasting.ElapsedMilliseconds} ms");
+            // What the pseudo-terminal took it echoes, so the paste did go.
+            Ui.WaitFor(() => TerminalTests.Screen(shell).Contains("echo pasted 0", StringComparison.Ordinal), "the start of the paste echoed", TimeSpan.FromSeconds(10));
+
+            // The window still takes the IDE's keys: Shift+Escape hides the terminal.
+            Ui.Press(window, "shift ESCAPE");
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal), "the terminal is still shown after Shift+Escape");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void The_shell_echoes_what_is_typed_while_every_thread_of_the_pool_is_busy()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh is Unix's.
+            return;
+        }
+        string folder = TestFolders.Create("terminal-");
+        using ManualResetEventSlim release = new();
+        try
+        {
+            (MainWindow window, TerminalSession shell) = TerminalTests.Open(folder, "/bin/sh");
+            // Every thread of the pool held, as a build, a debugger or tests waiting on processes hold them, and more waiting.
+            ThreadPool.GetMinThreads(out int threads, out _);
+            int taken = 0;
+            for (int i = 0; i < threads * 4; i++)
+            {
+                ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    Interlocked.Increment(ref taken);
+                    release.Wait(TimeSpan.FromSeconds(60));
+                }, null);
+            }
+            Assert.True(Waiting.Until(() => Volatile.Read(ref taken) >= threads, TimeSpan.FromSeconds(10)), $"The pool took {Volatile.Read(ref taken)} of the {threads} jobs meant to hold its threads");
+            Stopwatch typing = Stopwatch.StartNew();
+            window.KeyTextInput("echo typed");
+            window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+            window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+            // Frames pumped by hand: settling waits for background work, which the busy pool would hold.
+            Ui.Pumped(() => TerminalTests.Screen(shell).Contains("\ntyped", StringComparison.Ordinal), TimeSpan.FromSeconds(30));
+            TimeSpan answered = typing.Elapsed;
+            release.Set();
+            Assert.True(answered < TimeSpan.FromSeconds(5),
+                $"with the pool's {threads} threads busy, the shell's answer to a command typed took {answered.TotalSeconds:F1} s:\n{TerminalTests.Screen(shell)}");
+            window.Close();
+        }
+        finally
+        {
+            release.Set();
+            TestFolders.Delete(folder);
+        }
+    }
 }

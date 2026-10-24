@@ -40,7 +40,7 @@ public sealed partial class CloneDialog : Window
         parent = new TextBox { Classes = { "search" }, Text = folder };
         url.TextChanged += (_, _) => ShowDestination();
         parent.TextChanged += (_, _) => ShowDestination();
-        browse = new Button { Content = "Browse...", Margin = new Thickness(8, 0, 0, 0) };
+        browse = new Button { Content = "Browse…", Margin = new Thickness(8, 0, 0, 0) };
         browse.Click += (_, _) => _ = BrowseAsync();
         into = new TextBlock { Classes = { "muted" }, FontSize = 12, TextTrimming = TextTrimming.PathSegmentEllipsis, Margin = new Thickness(0, 6, 0, 0) };
         bar = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 100, Height = 4, MinHeight = 4 };
@@ -137,7 +137,7 @@ public sealed partial class CloneDialog : Window
         using CancellationTokenSource cancel = new();
         cloning = cancel;
         Fail(null);
-        Busy(true, $"Cloning into {destination}...");
+        Busy(true, $"Cloning into {destination}…");
         try
         {
             GitResult result = await Git.CloneAsync(Url.Trim(), destination, UiThread.Marshal<string>(ShowProgress), cancel.Token);

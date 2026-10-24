@@ -57,14 +57,19 @@ public sealed record BuildOutcome(BuildStatus Status, string Message)
 
     /// <summary>The last lines the build wrote.</summary>
     public IReadOnlyList<string> Output { get; init; } = [];
+
+    /// <summary>The folder a publish that succeeded put the app in.</summary>
+    public string? Published { get; init; }
 }
 
-/// <summary>What a build does: Rider's Build, Rebuild (everything again, nothing taken from the last build) and Clean.</summary>
+/// <summary>What a build does: Rider's Build, Rebuild (everything again, nothing taken from the last build) and Clean, and
+/// Publish, dotnet publish of one project (<see cref="PublishRequest"/>).</summary>
 public enum BuildKind
 {
     Build,
     Rebuild,
     Clean,
+    Publish,
 }
 
 /// <summary>What started a build, which decides whether the Build window opens as it begins, as Rider decides.</summary>
@@ -88,7 +93,8 @@ public static partial class BuildOutput
     /// lines not wrapped, so every problem is one line read once. A framework given builds a project for that one alone,
     /// as a run configuration's build before launch does. Windows targeting builds a WPF or Windows Forms project off
     /// Windows, as the project host evaluates it (<see cref="WindowsTargeting(string, IReadOnlyList{ProjectModel})"/>).</summary>
-    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build, string? framework = null, bool windowsTargeting = false)
+    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build, string? framework = null, bool windowsTargeting = false,
+        string? output = null)
     {
         List<string> arguments = kind switch
         {
@@ -99,6 +105,10 @@ public static partial class BuildOutput
         if (framework is not null)
         {
             arguments.AddRange(["--framework", framework]);
+        }
+        if (output is not null)
+        {
+            arguments.AddRange(["--output", output]);
         }
         if (windowsTargeting)
         {
@@ -114,7 +124,7 @@ public static partial class BuildOutput
     /// framework.</summary>
     public static bool WindowsTargeting(string target, IReadOnlyList<ProjectModel> projects)
     {
-        Dictionary<string, ProjectModel> byPath = new(StringComparer.FromComparison(PathNames.Comparison));
+        Dictionary<string, ProjectModel> byPath = new(PathNames.Comparer);
         foreach (ProjectModel each in projects)
         {
             byPath.TryAdd(each.Path, each);
@@ -123,7 +133,7 @@ public static partial class BuildOutput
         {
             return projects.Any(p => p.WindowsTargeting);
         }
-        HashSet<string> seen = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> seen = new(PathNames.Comparer);
         Queue<string> next = new([target]);
         while (next.TryDequeue(out string? path))
         {
@@ -160,6 +170,33 @@ public static partial class BuildOutput
         string message = match.Groups["message"].Value.Trim();
         return new Problem(severity, message, match.Groups["code"].Value, path, new TextPosition(lineNumber, column), project) { Link = Problem.LinkIn(message) };
     }
+
+    /// <summary>A compiler's message from a build inside an image, as BuildKit writes it ("#12 3.456 /src/Web/Program.cs(3,1):
+    /// error CS1002: ..."), its file the workspace's through the image's paths; null for any other line.</summary>
+    public static Problem? Parse(string line, Containers.ContainerPaths paths)
+    {
+        if (Parse(BuildKitStep().Replace(line, string.Empty)) is not { } problem)
+        {
+            return null;
+        }
+        return problem.Path is { } path && path.StartsWith('/') && paths.ToHost(path) is { } host ? problem with { Path = PathNames.Canonical(host) } : problem;
+    }
+
+    [GeneratedRegex(@"^#\d+\s+\d+(?:\.\d+)?\s+")]
+    private static partial Regex BuildKitStep();
+
+    /// <summary>A XAML compiler's message with the place it repeats at its end (Avalonia's "Line 8, position 6.", WPF's
+    /// MarkupCompile's "Line 8 Position 6.") said at another, as the editor counts the file's lines; as it was when it
+    /// repeats no such place, or another than <paramref name="was"/> (both from zero).</summary>
+    public static string Moved(string message, TextPosition was, TextPosition now) =>
+        RepeatedPlace().Replace(message, place =>
+            int.TryParse(place.Groups["line"].ValueSpan, out int line) && line == was.Line + 1
+                && int.TryParse(place.Groups["column"].ValueSpan, out int column) && column == was.Column + 1
+                ? $"{place.Groups["word"].Value} {now.Line + 1}{place.Groups["between"].Value}{now.Column + 1}"
+                : place.Value);
+
+    [GeneratedRegex(@"\b(?<word>Line) (?<line>\d{1,9})(?<between>,? [Pp]osition )(?<column>\d{1,9})\b")]
+    private static partial Regex RepeatedPlace();
 
     /// <summary>The problem before with this line's text added, when the line goes on with its message: MSBuild's console
     /// logger writes each further line of a message (Avalonia's XAML compiler's stack trace, NuGet's dependency chains) as

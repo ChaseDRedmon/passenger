@@ -7,6 +7,7 @@ using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Editors;
 using Passenger.App.Explorer;
+using Passenger.App.Vcs;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -15,8 +16,8 @@ using Passenger.Text;
 namespace Passenger.Tests;
 
 /// <summary>The Explorer's file operations as Rider's: New Class writes a class in its folder's namespace and opens it;
-/// a rename moves the file or folder and its open tabs with it; a delete goes to the Trash and closes its tab, and a
-/// project's leaves the solution; a name already there is refused with why.</summary>
+/// a rename moves the file or folder and its open tabs with it, its project including and removing what it did; a delete
+/// goes to the Trash and closes its tab, and a project's leaves the solution; a name already there is refused with why.</summary>
 public sealed class ExplorerFilesTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("files-");
@@ -24,7 +25,7 @@ public sealed class ExplorerFilesTests : IDisposable
 
     public ExplorerFilesTests()
     {
-        File.WriteAllText(Path.Combine(folder, "Shop.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(folder, "Shop.csproj"), TestProjects.Library());
         Directory.CreateDirectory(Path.Combine(folder, "Models"));
         Trash.Folder = trash;
     }
@@ -71,16 +72,22 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.True(File.Exists(Path.Combine(trash, "Purchase.cs")));
         Assert.Empty(window.EditorArea.Documents);
         Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Name == "Purchase.cs");
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void New_class_named_with_a_folder_goes_in_that_folder_in_its_namespace()
-    {
-        MainWindow window = Open();
+        // A folder renamed with two of its files open keeps the one in front in front.
+        string domain = PathNames.Canonical(Path.Combine(folder, "Domain"));
+        File.WriteAllText(Path.Combine(domain, "Alpha.cs"), "class Alpha { }\n");
+        File.WriteAllText(Path.Combine(domain, "Beta.cs"), "class Beta { }\n");
+        window.OpenFile(Path.Combine(domain, "Alpha.cs"));
+        window.OpenFile(Path.Combine(domain, "Beta.cs"));
+        window.OpenFile(Path.Combine(domain, "Alpha.cs"));
+        Ui.Settle();
+        Assert.Null(window.Rename(domain, "Models"));
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Models", "Alpha.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(2, window.EditorArea.Documents.Count);
+
+        // New Class named with a folder, typed as a person types it into New Class/Interface: the folder first, and the
+        // file's .cs by habit; it goes in that folder, in its namespace.
         string project = PathNames.Canonical(folder);
-
-        // Typed as a person types it into New Class/Interface: the folder first, and the file's .cs by habit.
         Assert.Null(window.CreateType(project, "Shapes/Circle.cs", "Class"));
         string circle = Path.Combine(project, "Shapes", "Circle.cs");
         Assert.True(File.Exists(circle), $"Shapes/Circle.cs made no Shapes/Circle.cs, but {string.Join(", ", Directory.EnumerateFiles(project, "*.cs", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(project, f)))}");
@@ -93,29 +100,7 @@ public sealed class ExplorerFilesTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void Delete_on_a_project_beside_its_solution_takes_it_out_of_the_solution_and_leaves_the_folder()
-    {
-        string solution = Path.Combine(folder, "Shop.slnx");
-        File.WriteAllText(solution, "<Solution>\n  <Project Path=\"Shop.csproj\" />\n</Solution>\n");
-        MainWindow window = Open();
-        List<string> asked = Answer(window);
-
-        // The project and the solution share the repository's top folder, which Delete must never offer to trash.
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project));
-        Ui.Press(window, "BACK_SPACE");
-        Ui.WaitFor(() => Finished(window, "Removed"), "the project's removal");
-        Assert.Equal("Removed Shop from Shop", window.Status);
-        Assert.DoesNotContain("Shop.csproj", File.ReadAllText(solution), StringComparison.Ordinal);
-        Assert.Equal(["Remove Project"], asked);
-        Assert.True(File.Exists(Path.Combine(folder, "Shop.csproj")), "The project's file went with it");
-        Assert.True(Directory.Exists(Path.Combine(folder, "Models")), "The folder beside the solution went to the Trash");
-        Assert.Empty(Directory.EnumerateFileSystemEntries(trash));
-        Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Delete_on_a_project_in_its_own_folder_moves_that_folder_to_the_Trash_only_once_asked_again()
+    public void Delete_on_a_project_in_its_own_folder_moves_that_folder_to_the_Trash_only_once_asked_again_and_one_beside_its_solution_leaves_the_folder()
     {
         string library = Directory.CreateDirectory(Path.Combine(folder, "Lib")).FullName;
         File.Copy(Path.Combine(folder, "Shop.csproj"), Path.Combine(library, "Lib.csproj"));
@@ -124,7 +109,7 @@ public sealed class ExplorerFilesTests : IDisposable
         MainWindow window = Open();
         List<string> asked = Answer(window);
 
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Lib"));
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Lib"));
         Ui.Press(window, "BACK_SPACE");
         Ui.WaitFor(() => Finished(window, "Moved"), "the project's folder to go");
         Assert.Equal("Moved Lib to the Trash", window.Status);
@@ -134,13 +119,27 @@ public sealed class ExplorerFilesTests : IDisposable
         string left = File.ReadAllText(solution);
         Assert.Contains("Shop.csproj", left, StringComparison.Ordinal);
         Assert.DoesNotContain("Lib.csproj", left, StringComparison.Ordinal);
+
+        // The project and the solution share the repository's top folder, which Delete must never offer to trash.
+        asked.Clear();
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project));
+        Ui.Press(window, "BACK_SPACE");
+        Ui.WaitFor(() => Finished(window, "Removed"), "the project's removal");
+        Assert.Equal("Removed Shop from Shop", window.Status);
+        Assert.DoesNotContain("Shop.csproj", File.ReadAllText(solution), StringComparison.Ordinal);
+        Assert.Equal(["Remove Project"], asked);
+        Assert.True(File.Exists(Path.Combine(folder, "Shop.csproj")), "The project's file went with it");
+        Assert.True(Directory.Exists(Path.Combine(folder, "Models")), "The folder beside the solution went to the Trash");
+        Assert.True(Directory.EnumerateFileSystemEntries(trash).Select(Path.GetFileName).SequenceEqual(["Lib"]),
+            $"Removing the project beside its solution put [{string.Join(", ", Directory.EnumerateFileSystemEntries(trash).Select(Path.GetFileName))}] in the Trash, where only Lib was");
+        Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project);
         window.Close();
     }
 
     [AvaloniaFact]
-    public void A_delete_the_Trash_refuses_keeps_the_open_file_and_its_unsaved_edit()
+    public void A_delete_the_Trash_refuses_keeps_the_open_file_and_its_unsaved_edit_and_one_it_takes_goes_with_them_kept_in_Local_History()
     {
-        string notes = Path.Combine(folder, "Notes.txt");
+        string notes = PathNames.Canonical(Path.Combine(folder, "Notes.txt"));
         File.WriteAllText(notes, "groceries\n");
         MainWindow window = Open();
         window.Autosaves = false;
@@ -154,7 +153,7 @@ public sealed class ExplorerFilesTests : IDisposable
         File.WriteAllText(full, string.Empty);
         Trash.Folder = full;
 
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
         Ui.Press(window, "BACK_SPACE");
         Assert.StartsWith("Notes.txt could not be deleted", window.Status, StringComparison.Ordinal);
         Assert.True(File.Exists(notes), "The file left although the Trash refused it");
@@ -162,50 +161,67 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.Equal("milk, groceries\n", open.Text.Snapshot.ToString());
         // Saved before the Trash was asked, the edit is on disk as well.
         Assert.True(File.ReadAllText(notes) == "milk, groceries\n" || open.IsModified, "The unsaved edit was marked saved without being written, so it would be lost");
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_file_deleted_with_unsaved_edits_goes_to_the_Trash_with_them_and_Local_History_keeps_them()
-    {
-        string notes = PathNames.Canonical(Path.Combine(folder, "Notes.txt"));
-        File.WriteAllText(notes, "groceries\n");
-        MainWindow window = Open();
-        window.OpenFile(notes);
+        // Another edit, unsaved, and a Trash that takes the file: it goes with every edit, and Local History keeps them.
+        Trash.Folder = trash;
         window.EditorArea.CodeEditor.Focus();
-        window.KeyTextInput("milk, ");
+        window.KeyTextInput("eggs, ");
         Ui.Settle();
         Assert.True(window.EditorArea.Active!.IsModified);
-        window.Confirm = (_, _, _) => Task.FromResult(true);
-
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
+        // The Explorer's keys back by Cmd+1, not a click on its row, which so soon after the first is a double click opening it.
+        Ui.Run(window, AppActions.FocusExplorer);
+        Assert.True(window.ExplorerView.Rows().IsKeyboardFocusWithin && window.ExplorerView.SelectedNodes.Select(n => n.Name).SequenceEqual(["Notes.txt"]),
+            $"Focus Explorer left the keys with {window.FocusManager?.GetFocusedElement()?.GetType().Name}, [{string.Join(", ", window.ExplorerView.SelectedNodes.Select(n => n.Name))}] chosen");
         Ui.Press(window, "BACK_SPACE");
         Ui.WaitFor(() => !File.Exists(notes) && window.EditorArea.Documents.Count == 0, "Notes.txt deleted and its tab closed");
         string trashed = File.ReadAllText(Path.Combine(trash, "Notes.txt"));
-        Assert.True(trashed == "milk, groceries\n", $"The Trash has Notes.txt without what was typed into it before the delete, so the edit is lost: '{trashed}'");
+        Assert.True(trashed == "milk, eggs, groceries\n", $"The Trash has Notes.txt without what was typed into it before the delete, so the edit is lost: '{trashed}'");
         Passenger.App.History.LocalHistory history = window.LocalHistory!;
         Ui.WaitFor(() => history.Snapshot().Events.Any(e => e.Kind == Passenger.App.History.HistoryKind.Deleted && e.Path == notes), "Local History to keep the deletion");
         string? kept = history.Snapshot().Events.Last(e => e.Kind == Passenger.App.History.HistoryKind.Deleted && e.Path == notes).Before is { } hash
             && history.Content(hash) is { } bytes ? System.Text.Encoding.UTF8.GetString(bytes) : null;
-        Assert.True(kept == "milk, groceries\n", $"Local History kept Notes.txt as deleted without what was typed into it: '{kept}'");
+        Assert.True(kept == "milk, eggs, groceries\n", $"Local History kept Notes.txt as deleted without what was typed into it: '{kept}'");
         window.Close();
     }
 
     [AvaloniaFact]
-    public void Renaming_a_folder_with_two_open_files_keeps_the_one_in_front_in_front()
+    public void A_folder_renamed_keeps_out_of_the_build_the_files_its_project_removed_by_name_or_by_glob_and_undo_puts_the_project_back()
     {
-        string models = PathNames.Canonical(Path.Combine(folder, "Models"));
-        File.WriteAllText(Path.Combine(models, "Alpha.cs"), "class Alpha { }\n");
-        File.WriteAllText(Path.Combine(models, "Beta.cs"), "class Beta { }\n");
+        // Old.cs and Stale.cs no longer compile, so the project removes them: one by its name, the other by its folder's glob.
+        string project = Path.Combine(folder, "Shop.csproj");
+        string written = $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n"
+            + "  <ItemGroup>\n    <Compile Remove=\"Legacy\\Old.cs\" />\n    <Compile Remove=\"Legacy\\Generated\\**\" />\n    <Folder Include=\"Legacy\\Generated\\\" />\n  </ItemGroup>\n</Project>\n";
+        File.WriteAllText(project, written);
+        string legacy = PathNames.Canonical(Path.Combine(folder, "Legacy"));
+        Directory.CreateDirectory(Path.Combine(legacy, "Generated"));
+        File.WriteAllText(Path.Combine(legacy, "Kept.cs"), "namespace Shop.Legacy;\n\npublic class Kept\n{\n}\n");
+        File.WriteAllText(Path.Combine(legacy, "Old.cs"), "this was C# once\n");
+        File.WriteAllText(Path.Combine(legacy, "Generated", "Stale.cs"), "and so was this\n");
         MainWindow window = Open();
-        window.OpenFile(Path.Combine(models, "Alpha.cs"));
-        window.OpenFile(Path.Combine(models, "Beta.cs"));
-        window.OpenFile(Path.Combine(models, "Alpha.cs"));
-        Ui.Settle();
+        List<string> asked = Answer(window);
 
-        Assert.Null(window.Rename(models, "Domain"));
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Domain", "Alpha.cs")), window.EditorArea.Active?.Path);
-        Assert.Equal(2, window.EditorArea.Documents.Count);
+        // Rename's keys on the folder in the Solution view: the project removes the same files from where they went.
+        window.ExplorerView.Reveal(legacy);
+        Ui.Settle();
+        Ui.ClickRow(window, window.ExplorerView.Tree.Rows.First(r => r.Path == legacy));
+        Ui.Run(window, AppActions.Rename);
+        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
+        popup.Text = string.Empty;
+        window.KeyTextInput("Archive");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
+        Assert.True(Directory.Exists(Path.Combine(folder, "Archive")), $"Legacy was not renamed: {window.Status}");
+        Assert.Equal(written.Replace("Legacy\\", "Archive\\", StringComparison.Ordinal), File.ReadAllText(project));
+
+        // Undo takes the folder and the project back together, asked first.
+        string archive = PathNames.Canonical(Path.Combine(folder, "Archive"));
+        window.ExplorerView.Reveal(archive);
+        Ui.Settle();
+        Ui.ClickRow(window, window.ExplorerView.Tree.Rows.First(r => r.Path == archive));
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(["Undo"], asked);
+        Assert.True(Directory.Exists(legacy), $"Undo did not rename Archive back: {window.Status}");
+        Assert.Equal(written, File.ReadAllText(project));
         window.Close();
     }
 
@@ -261,14 +277,98 @@ public sealed class ExplorerFilesTests : IDisposable
         window.Close();
     }
 
-    private MainWindow Open()
+    /// <summary>The Explorer's menu and keys are the window's actions (#393), where its own copies ignored the keymap: a
+    /// row's Rename and Delete run from its menu and from the keys of the keymap chosen, Visual Studio's Ctrl+R, R (⌘R, R
+    /// on macOS) and Delete, VS Code's F2 and Delete, as Rider's RenameElement and $Delete are bound in each; F2 renames
+    /// nothing in Visual Studio's, where Rider gives it none. Open In's file manager shows the row's file there, as the one
+    /// way the IDE opens the file manager records it (headless, it opens nothing).</summary>
+    [AvaloniaFact]
+    public void The_explorers_rename_delete_and_reveal_run_from_its_menu_and_from_each_keymaps_keys()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
+        foreach (string name in (string[])["One.txt", "Two.txt", "Three.txt", "Four.txt"])
+        {
+            File.WriteAllText(Path.Combine(folder, name), name);
+        }
+        MainWindow window = Open();
+        List<string> asked = Answer(window);
+        try
+        {
+            // From the row's menu.
+            Ui.ChooseFromRowMenu(window, Row(window, "One.txt"), "Edit", "Rename…");
+            Renamed(window, "Uno.txt");
+            Ui.ChooseFromRowMenu(window, Row(window, "Uno.txt"), "Edit", "Delete…");
+            Gone(window, "Uno.txt", "the delete from the row's menu");
+            Ui.ChooseFromRowMenu(window, Row(window, "Four.txt"), "Open In", FileManager.Name);
+            Assert.Equal([Row(window, "Four.txt").Path!], window.ShownInFileManager);
+
+            // By Visual Studio's keys.
+            Pick(window, Row(window, "Two.txt"));
+            Ui.Press(window, "F2");
+            Assert.False(window.Popup is NamePopup, "F2 renamed a row in Visual Studio's keymap, which gives Rename Ctrl+R, R");
+            Ui.Press(window, OperatingSystem.IsMacOS() ? "meta R , R" : "control R , R");
+            Renamed(window, "Dos.txt");
+            Pick(window, Row(window, "Dos.txt"));
+            Ui.Press(window, "DELETE");
+            Gone(window, "Dos.txt", "Delete in Visual Studio's keymap");
+
+            // By VS Code's.
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
+            Ui.Settle();
+            Pick(window, Row(window, "Three.txt"));
+            Ui.Press(window, "F2");
+            Renamed(window, "Tres.txt");
+            Pick(window, Row(window, "Tres.txt"));
+            Ui.Press(window, "DELETE");
+            Gone(window, "Tres.txt", "Delete in VS Code's keymap");
+        }
+        finally
+        {
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VisualStudio });
+            window.Close();
+        }
+
+        void Renamed(MainWindow window, string name)
+        {
+            NamePopup popup = window.Popup as NamePopup ?? throw new Xunit.Sdk.XunitException($"No rename was asked for, to {name}: the status bar says '{window.Status}'");
+            popup.Text = string.Empty;
+            window.KeyTextInput(name);
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to {name} to finish: {popup.Problem}");
+            Assert.True(File.Exists(Path.Combine(folder, name)), $"Nothing was renamed {name}: {window.Status}");
+        }
+
+        void Gone(MainWindow window, string name, string what)
+        {
+            // The delete asks first, which Answer agrees to: nothing asked means the keys deleted nothing.
+            Ui.Settle();
+            Assert.True(window.Status?.StartsWith("Moved", StringComparison.Ordinal) == true || asked.Count > 0 && asked[^1] == "Delete",
+                $"{what} did not delete {name}: the status bar says '{window.Status}'");
+            asked.Clear();
+            Ui.WaitFor(() => Finished(window, "Moved"), $"{what} to move {name} to the Trash");
+            Assert.True(!File.Exists(Path.Combine(folder, name)) && File.Exists(Path.Combine(trash, name)), $"{what} left {name} out of the Trash: '{window.Status}'");
+        }
     }
+
+    /// <summary>A file's row, opened to and chosen in the Explorer by its name in the folder.</summary>
+    private ExplorerNode Row(MainWindow window, string name)
+    {
+        string path = PathNames.Canonical(Path.Combine(folder, name));
+        window.ExplorerView.Reveal(path);
+        Ui.Settle();
+        return window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Path == path) ?? throw new InvalidOperationException($"The Explorer shows no row for {name}");
+    }
+
+    /// <summary>Chooses a row with the keys in the Explorer, as Focus Explorer and the arrows would: a click there, on the
+    /// place another row was just clicked at, would be a double click, which opens the file.</summary>
+    private static void Pick(MainWindow window, ExplorerNode row)
+    {
+        window.ExplorerView.Choose(row);
+        window.ExplorerView.FocusRows();
+        Ui.Settle();
+        Assert.True(window.Actions.Context().ToolWindow?.Id == ToolWindowIds.Explorer, $"The Explorer did not take the keys on {row.Name}");
+    }
+
+    private MainWindow Open() => Ui.OpenFolder(folder, languageServer: false);
 
     /// <summary>Agrees to every question the window asks, keeping their titles in order.</summary>
     private static List<string> Answer(MainWindow window)
@@ -289,16 +389,4 @@ public sealed class ExplorerFilesTests : IDisposable
 
     private static bool Finished(MainWindow window, string done) =>
         window.Status is { } status && (status.StartsWith(done, StringComparison.Ordinal) || status.Contains("could not", StringComparison.Ordinal));
-
-    /// <summary>Clicks a row of the Explorer, as a person chooses one before pressing a key.</summary>
-    private static void Choose(MainWindow window, ExplorerNode row)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        Control item = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-        Assert.Equal([row], window.ExplorerView.SelectedNodes);
-    }
 }

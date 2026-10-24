@@ -47,6 +47,10 @@ public sealed class TestFramesStrip : Border
     /// <summary>The frame viewer opened last, while it is open.</summary>
     public FrameViewer? Viewer { get; private set; }
 
+    /// <summary>A frame viewer opened, before it shows: what the IDE puts in each of its windows (its keys, its popups)
+    /// goes into it.</summary>
+    public event EventHandler<FrameViewer>? ViewerOpened;
+
     /// <summary>A test's frames, its name for the viewer's title; nothing, and the strip hidden, for none.</summary>
     public void Show(string test, IReadOnlyList<(TestOutcome Result, TestAttachment Frame)> frames)
     {
@@ -130,6 +134,7 @@ public sealed class TestFramesStrip : Border
         FrameViewer viewer = new(test, viewable, Math.Max(0, viewable.IndexOf(chosen)));
         Viewer = viewer;
         viewer.Closed += (_, _) => Viewer = Viewer == viewer ? null : Viewer;
+        ViewerOpened?.Invoke(this, viewer);
         if (TopLevel.GetTopLevel(this) is Window owner)
         {
             viewer.Show(owner);
@@ -151,8 +156,9 @@ public sealed class TestFramesStrip : Border
 
     private static TextBlock Muted(string text)
     {
-        TextBlock muted = new() { Text = text, FontSize = 11 };
-        muted.Bind(TextBlock.ForegroundProperty, muted.GetResourceObservable("Passenger.TextMuted"));
+        // A caption under a picture, smaller than the page's words.
+        TextBlock muted = MutedText.Of(text);
+        muted.FontSize = 11;
         return muted;
     }
 }

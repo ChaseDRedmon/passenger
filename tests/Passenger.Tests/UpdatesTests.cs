@@ -8,8 +8,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Settings;
 using Passenger.App.Updates;
@@ -63,6 +65,9 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         Assert.True(window.UpdateShown?.Link.AbsoluteUri == download,
             $"The notice's link opens {window.UpdateShown?.Link}, not this system's download from the release, {download}");
         Assert.Contains(download, ToolTip.GetTip(window.FindControl<Button>("UpdateButton")!) as string ?? string.Empty);
+        // Its click opens the download in the browser the one way the IDE opens one (#393).
+        Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
+        Assert.True(window.Browsed.LastOrDefault()?.AbsoluteUri == download, $"The notice's click opened [{string.Join(", ", window.Browsed)}], not {download} through Browse");
         Assert.True(window.Status == before, $"A check of the window's own said '{window.Status}' in the status bar's message, where it says nothing");
         Assert.Contains(Ui.IdeLog().Split('\n'), line => line.Contains($"Updates: Passenger {newer} is out (v{newer}; this is {Product.Version}): {download}", StringComparison.Ordinal));
 
@@ -392,7 +397,7 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", $"the status bar to offer Restart to Update to v{newer}");
 
         // The person chooses it: the window closes, and as the process ends the new app takes the old one's place and starts.
-        window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
         Ui.Settle();
         Assert.False(window.IsVisible, "Restart to Update did not close the window");
         window.Ended?.Wait();
@@ -416,6 +421,74 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         window.InstallUpdate();
         Assert.True(copy.InstalledVersion == later, $"Passenger closed with v{later} ready left {copy.Bundle} at {copy.InstalledVersion}");
         Assert.True(Ui.Shared(copy.Started) == $"started {newer}\n", "Closing Passenger started the version it installed, which only Restart to Update does");
+    }
+
+    /// <summary>Restart to Update with a read-only file's changes unsaved: the window asks what to do with them. Kept open,
+    /// the restart is given up, so closing it later installs the update and starts nothing; Close Without Saving carries
+    /// the restart on, installing the update and starting it.</summary>
+    [AvaloniaFact]
+    [SupportedOSPlatform("macos")]
+    public void Restart_to_Update_held_by_a_read_only_files_question_restarts_once_answered_Close_Without_Saving()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(),
+            "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
+        using IDisposable theme = TestsTheme();
+        AppBundle copy = new(images, TestFolders.Create("installed-"));
+        string folder = TestFolders.Create("restart-locked-");
+        string locked = Path.Combine(folder, "Locked.cs");
+        File.WriteAllText(locked, "class Locked { }\n");
+        File.SetAttributes(locked, FileAttributes.ReadOnly);
+        try
+        {
+            // Cancel: the window stays open, and closed later it installs the update without starting it.
+            string newer = Bumped(1, 0);
+            MainWindow window = ReadyWithLockedChanges(newer);
+            Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
+            Ui.ClickButton(Unsaved(window), "Cancel");
+            Assert.True(window.IsVisible, "Cancel closed the window, and the read-only file's changes with it");
+            window.Close();
+            Ui.ClickButton(Unsaved(window), "Close Without Saving");
+            Ui.WaitFor(() => !window.IsVisible, "the window to close without the read-only file's changes");
+            window.Ended?.Wait();
+            window.InstallUpdate();
+            Assert.True(copy.InstalledVersion == newer, $"Passenger closed with v{newer} ready left {copy.Bundle} at {copy.InstalledVersion}");
+            Assert.True(Ui.Shared(copy.Started) == string.Empty, $"Restart to Update, given up, still started the new version: '{Ui.Shared(copy.Started)}'");
+
+            // Close Without Saving: Passenger quits, installs the update and starts it.
+            string later = Bumped(1, 1);
+            window = ReadyWithLockedChanges(later);
+            Ui.Click(window.FindControl<Button>("UpdateButton")!, settle: false);
+            Ui.ClickButton(Unsaved(window), "Close Without Saving");
+            Ui.WaitFor(() => !window.IsVisible, "Restart to Update to close the window once the read-only file's question was answered");
+            window.Ended?.Wait();
+            window.InstallUpdate();
+            Assert.True(copy.InstalledVersion == later, $"Restart to Update left {copy.Bundle} at {copy.InstalledVersion}, not {later}");
+            Assert.True(Ui.Shared(copy.Started) == $"started {later}\n",
+                $"Restart to Update, answered Close Without Saving, did not start the new version once: what started says '{Ui.Shared(copy.Started)}'");
+            Assert.Equal("class Locked { }\n", File.ReadAllText(locked));
+        }
+        finally
+        {
+            File.SetAttributes(locked, FileAttributes.Normal);
+            TestFolders.Delete(folder);
+        }
+
+        // A window over the folder whose read-only file has changes it cannot save, offering Restart to Update to a version.
+        MainWindow ReadyWithLockedChanges(string version)
+        {
+            github.Answer = Release($"v{version}", files: copy.Update(version));
+            MainWindow window = Started(copy.Updater());
+            window.WatchForUpdates();
+            window.Confirm = (_, _, _) => Task.FromResult(false);
+            window.OpenFolder(folder);
+            window.OpenFile("Locked.cs");
+            Ui.Settle();
+            window.EditorArea.CodeEditor.Selections = Passenger.Text.SelectionSet.Single(0);
+            window.KeyTextInput("public ");
+            Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {version}", $"the status bar to offer Restart to Update to v{version}");
+            Assert.True(window.EditorArea.Active is { IsModified: true, Name: "Locked.cs" }, "The read-only file was not left changed and unsaved");
+            return window;
+        }
     }
 
     [AvaloniaFact]
@@ -479,8 +552,7 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         using System.Diagnostics.Process other = ChildProcesses.Start(ChildProcesses.Command(executable, ["120"]));
         try
         {
-            window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Ui.Settle();
+            Ui.Click(window.FindControl<Button>("UpdateButton")!);
             Assert.True(window.IsVisible, "Restart to Update closed the window while another Passenger runs from the same app");
             Assert.Equal($"Another Passenger is open from {copy.Bundle}: close it, then restart to update", window.Status);
 
@@ -511,6 +583,8 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         string disk = Path.Combine(folder, "volume.dmg");
         Tool("/usr/bin/hdiutil", "create", "-size", "20m", "-fs", "HFS+", "-volname", "Passenger Tests", "-ov", disk, "-quiet");
         Tool("/usr/bin/hdiutil", "attach", disk, "-nobrowse", "-noautoopen", "-mountpoint", volume, "-quiet");
+        // Spotlight indexes a volume whatever folder it is mounted in, unless it holds this marker (TestRun.Unindexed's why).
+        File.WriteAllText(Path.Combine(volume, ".metadata_never_index"), string.Empty);
         try
         {
             AppBundle copy = new(images, folder, volume);
@@ -574,18 +648,27 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         NativeMenuItem item;
         if (OperatingSystem.IsMacOS())
         {
-            Assert.DoesNotContain("Check for Updates...", helpItems);
+            Assert.DoesNotContain("Check for Updates…", helpItems);
             string[] application = [.. window.ApplicationMenu().Items.Select(i => (i as NativeMenuItem)?.Header ?? "-")];
-            Assert.Equal(["About Passenger", "Check for Updates...", "-", "Settings..."], application);
-            item = window.ApplicationMenu().Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates...");
+            Assert.Equal(["About Passenger", "Check for Updates…", "-", "Settings…"], application);
+            item = window.ApplicationMenu().Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates…");
         }
         else
         {
-            Assert.Equal(["Check for Updates...", "About"], helpItems[^2..]);
-            item = help.Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates...");
+            Assert.Equal(["Check for Updates…", "About"], helpItems[^2..]);
+            item = help.Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates…");
         }
         item.Command!.Execute(null);
         Ui.Settle();
+    }
+
+    /// <summary>The question a window closed with a read-only file's changes asks, held to the dialogs' rules.</summary>
+    private static ChoiceDialog Unsaved(MainWindow window)
+    {
+        Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), "the window to ask about the changes it cannot save");
+        ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
+        Assert.Equal("Clear Read-Only Status", asked.Title);
+        return asked;
     }
 
     /// <summary>The status bar's notice of a newer release, or null while it shows none.</summary>
@@ -900,7 +983,7 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
     /// <summary>GitHub on a loopback port of its own: releases/latest, answered as the test says or taken and never answered
     /// until the client gives up, and a release's downloads, each request's head kept as it came. A file held is sent half
     /// way and the rest only once the test lets it go.</summary>
-    private sealed class StandIn : IDisposable
+    internal sealed class StandIn : IDisposable
     {
         private const string DownloadPath = "/Zaneris/passenger/releases/download/";
 

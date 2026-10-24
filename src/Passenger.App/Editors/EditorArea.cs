@@ -61,12 +61,54 @@ public sealed partial class EditorArea : UserControl
     /// <summary>A file that could not be written, and why: it stays open with its edits.</summary>
     public event EventHandler<string>? SaveFailed;
 
+    /// <summary>An image or font whose first decode, off the UI thread, failed, and why: its tabs have closed, as a file
+    /// <see cref="Open"/> could not read never opens.</summary>
+    public event EventHandler<string>? OpenFailed;
+
     /// <summary>A file not written because something else changed it on disk since it was last loaded or saved: which
     /// to keep is the person's question (File Cache Conflict), never settled by writing over the disk's.</summary>
     public event EventHandler<OpenDocument>? SaveConflicted;
 
     /// <summary>A file or folder moved through <see cref="MoveFile"/>, with the open files that went with it.</summary>
     public event EventHandler<FileMove>? Moved;
+
+    /// <summary>A folder another program moved, which open files followed (<see cref="FollowMove"/>).</summary>
+    public event EventHandler<FileMove>? Followed;
+
+    /// <summary>A link clicked in a rendered page (release notes), for the window to open the one way the IDE opens a browser.</summary>
+    public event EventHandler<Uri>? BrowseRequested;
+
+    internal void Browse(Uri address) => BrowseRequested?.Invoke(this, address);
+
+    /// <summary>A link to a file clicked in a Markdown file's preview, for the window to open it in the editor.</summary>
+    public event EventHandler<string>? FileLinkClicked;
+
+    internal void OpenLinked(string path) => FileLinkClicked?.Invoke(this, path);
+
+    /// <summary>The open folder, whose files alone a Markdown preview draws the images of; null for none.</summary>
+    public Func<string?> Root { get; set; } = () => null;
+
+    private bool showsMarkdownPreview = true;
+
+    /// <summary>Whether a Markdown file shows its preview beside its editor, in every group showing one.</summary>
+    public bool ShowsMarkdownPreview
+    {
+        get => showsMarkdownPreview;
+        set
+        {
+            showsMarkdownPreview = value;
+            foreach (EditorGroup group in AllGroups)
+            {
+                group.FollowMarkdown();
+            }
+        }
+    }
+
+    /// <summary>A group's Markdown preview toggle pressed, for the window to run its action: nothing outside the group holds
+    /// the toggle, so a closed split goes with it.</summary>
+    public event EventHandler<EditorGroup>? MarkdownToggleClicked;
+
+    internal void MarkdownToggled(EditorGroup group) => MarkdownToggleClicked?.Invoke(this, group);
 
     /// <summary>The commands that changed several files at once or moved one (a rename), which Undo takes back whole.</summary>
     public CommandHistory Commands { get; }
@@ -131,7 +173,9 @@ public sealed partial class EditorArea : UserControl
         TitleWindows();
     }
 
-    /// <summary>Opens a file in a tab of the active group (or shows its tab if open), returning why not if it can't be.</summary>
+    /// <summary>Opens text, a read-only asset, or a binary file with no view of its own as its bytes' text, read-only
+    /// (<see cref="FileText.Bytes"/>), in the active group (or shows its tab if open), returning why not when the file
+    /// cannot be read; an asset whose decode fails once its tab shows it loading says so through <see cref="OpenFailed"/>.</summary>
     public string? Open(string path)
     {
         string full = PathNames.Canonical(path);
@@ -140,20 +184,16 @@ public sealed partial class EditorArea : UserControl
             Activate(open);
             return null;
         }
-        FileText? file;
+        OpenDocument document;
         try
         {
-            file = FileText.Load(full);
+            document = OpenDocument.Load(full);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return error.Message;
         }
-        if (file is null)
-        {
-            return $"{Path.GetFileName(full)} looks like a binary file.";
-        }
-        OpenDocument document = new(full, file);
+        document.PreviewFailed += OnPreviewFailed;
         Opened?.Invoke(this, document);
         documents.Add(document);
         activeGroup.Add(document);
@@ -169,7 +209,7 @@ public sealed partial class EditorArea : UserControl
         group.Show(document);
         SetActiveGroup(group);
         Refresh();
-        group.Editor.Focus();
+        group.FocusShown();
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -195,8 +235,17 @@ public sealed partial class EditorArea : UserControl
 
     /// <summary>A file's document for something beside the tabs to show and edit (Local History's diff): the open one, else
     /// one read from disk with no tab, held (<see cref="Hold"/>) until the hold is disposed. Null when it cannot be read as
-    /// text.</summary>
-    public (OpenDocument Document, IDisposable Hold)? Borrow(string path) => Load(path) is { } document ? (document, Hold(document)) : null;
+    /// text. An asset, or a binary file's bytes, is never borrowed as editable text, even if its file has since been
+    /// renamed.</summary>
+    public (OpenDocument Document, IDisposable Hold)? Borrow(string path)
+    {
+        string full = PathNames.Canonical(path);
+        if (AssetPreview.Supports(full))
+        {
+            return null;
+        }
+        return Load(full, asBytes: false) is { Asset: null, IsBinary: false } document ? (document, Hold(document)) : null;
+    }
 
     /// <summary>Names a change made across files through these editors (a refactoring's), for Local History: held while
     /// the change is made.</summary>
@@ -449,30 +498,34 @@ public sealed partial class EditorArea : UserControl
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Opens the find bar over the active file, with the replace row if asked.</summary>
+    /// <summary>Opens the find bar over the active text file, with the replace row if asked; never over an asset preview.</summary>
     public void ShowFind(bool replace)
     {
-        if (Active is not null)
+        if (Active is { Asset: null })
         {
             activeGroup.Find.Open(replace);
         }
     }
 
-    public void SaveActive()
+    /// <summary>File, Save: the file shown when it was pressed, whichever is shown by now, its folder made again if another
+    /// program moved or deleted it, as asked; nothing once that file has closed.</summary>
+    public void SaveAsked(OpenDocument document)
     {
-        if (Active is { } active)
+        if (documents.Contains(document))
         {
-            TrySave(active);
+            TrySave(document, asked: true);
         }
     }
 
-    /// <summary>Saves every changed file, but those <paramref name="waiting"/> on a question; whether all were written.</summary>
-    public bool SaveAll(IReadOnlySet<OpenDocument>? waiting = null)
+    /// <summary>Saves every changed file, but those <paramref name="waiting"/> on a question; whether all were written. A
+    /// file whose folder another program moved or deleted is left unsaved but for the person's Save All (<paramref
+    /// name="asked"/>), so an autosave never brings that folder back.</summary>
+    public bool SaveAll(IReadOnlySet<OpenDocument>? waiting = null, bool asked = false)
     {
         bool all = true;
         foreach (OpenDocument document in documents.Where(d => d.IsModified && waiting?.Contains(d) != true).ToList())
         {
-            all &= TrySave(document);
+            all &= TrySave(document, asked: asked);
         }
         return all;
     }
@@ -512,23 +565,44 @@ public sealed partial class EditorArea : UserControl
         {
             return error.Message;
         }
-        string target = PathNames.Canonical(to);
-        foreach (OpenDocument document in moving)
+        Relocate(new FileMove(source, PathNames.Canonical(to), moving), Moved);
+        return null;
+    }
+
+    /// <summary>Open files under a folder another program moved or renamed (mv, git mv, Finder) follow it, each that the
+    /// new place holds as it was last loaded or saved: its tab, carets, edits and undo stay, under its new path.</summary>
+    public void FollowMove(string from, string to)
+    {
+        List<OpenDocument> moving = [.. documents.Where(d => PathNames.IsUnder(d.Path, from) && d.IsSavedAt(PathNames.Moved(d.Path, from, to)))];
+        if (moving.Count > 0)
         {
-            document.MoveTo(PathNames.Moved(document.Path, source, target));
+            Relocate(new FileMove(from, to, moving), Followed);
         }
-        Moved?.Invoke(this, new FileMove(source, target, moving));
+    }
+
+    private void Relocate(FileMove move, EventHandler<FileMove>? told)
+    {
+        foreach (OpenDocument document in move.Documents)
+        {
+            document.MoveTo(PathNames.Moved(document.Path, move.From, move.To));
+        }
+        told?.Invoke(this, move);
         TitleWindows();
-        if (Active is { } shown && moving.Contains(shown))
+        if (Active is { } shown && move.Documents.Contains(shown))
         {
             // What names the file shown (the title, the status bar's path, the structure) reads it again.
             ActiveChanged?.Invoke(this, EventArgs.Empty);
         }
-        return null;
     }
 
-    private bool TrySave(OpenDocument document, bool overDisk = false)
+    /// <summary>Saves text, keeping edits on failure or a disk conflict. Assets need no save and never reach serialization.</summary>
+    /// <param name="asked">The person's own Save, which makes a folder moved or deleted elsewhere again.</param>
+    private bool TrySave(OpenDocument document, bool overDisk = false, bool asked = false)
     {
+        if (document.Asset is not null)
+        {
+            return true;
+        }
         if (!overDisk && document.ChangedOnDisk())
         {
             SaveConflicted?.Invoke(this, document);
@@ -538,7 +612,7 @@ public sealed partial class EditorArea : UserControl
         {
             // The carets of the editor showing it, whose lines keep the whitespace a save would trim.
             EditorGroup? showing = activeGroup.Has(document) ? activeGroup : AllGroups.FirstOrDefault(g => g.Has(document));
-            document.Save(showing?.SelectionsOf(document));
+            document.Save(showing?.SelectionsOf(document), makeFolder: asked);
             return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -581,23 +655,46 @@ public sealed partial class EditorArea : UserControl
         };
     }
 
-    /// <summary>Opens what a folder kept, into an area with nothing open: the main window's splits and the editor windows
-    /// where they stood, each group's tabs with their carets and the one shown. A file gone from disk is left out, and a
-    /// group left with none goes, a window with it.</summary>
+    /// <summary>Opens what a folder kept: the main window's splits and the editor windows where they stood, each group's
+    /// tabs with their carets and the one shown. A file gone from disk is left out, and a group left with none goes, a
+    /// window with it. The main window's tabs open before it (a file opened with no folder, a licence About opened) stay,
+    /// after the folder's in its current group, the one shown still in front: the folder's from then, as it opens.</summary>
     public void Restore(EditorLayout? layout, IReadOnlyList<KeptEditorWindow>? windows = null)
     {
-        if (documents.Count > 0)
-        {
-            return;
-        }
+        List<EditorGroup> before = [.. main.Groups];
+        OpenDocument? front = before.Contains(activeGroup) ? activeGroup.Active : null;
+        // Read before the kept tabs open, which may show one of these in a group of the folder's.
+        List<(OpenDocument Document, bool Pinned, SelectionSet Selections, Vector Scroll)> open =
+            [.. before.SelectMany(g => g.Tabs.Select(t => (t.Document, t.IsPinned, g.SelectionsOf(t.Document), g.ScrollOf(t.Document))))];
         bool restored = false;
         if (layout is not null && Restore(layout, out EditorGroup? current) is { } tree)
         {
+            // The groups left go: nothing of theirs may keep showing or following a file.
+            foreach ((EditorGroup group, OpenDocument document) in before.SelectMany(g => g.Tabs.Select(t => (g, t.Document))).ToList())
+            {
+                group.Remove(document);
+            }
             activeGroup.IsCurrent = false;
             main.Root = tree;
             activeGroup = current ?? main.Groups.First();
             main.Current = activeGroup;
             activeGroup.IsCurrent = true;
+            foreach ((OpenDocument document, bool pinned, SelectionSet selections, Vector scroll) in open)
+            {
+                if (!main.Groups.Any(g => g.Has(document)))
+                {
+                    activeGroup.Add(document, activeGroup.Tabs.Count, pinned);
+                    activeGroup.Remember(document, selections, scroll);
+                }
+            }
+            if (front is not null && main.Groups.FirstOrDefault(g => g.Has(front)) is { } showing)
+            {
+                showing.Show(front);
+                activeGroup.IsCurrent = false;
+                activeGroup = showing;
+                main.Current = showing;
+                showing.IsCurrent = true;
+            }
             Rebuild(main);
             activeGroup.Editor.Focus();
             restored = true;
@@ -647,8 +744,9 @@ public sealed partial class EditorArea : UserControl
         return new EditorFrame.Leaf(group);
     }
 
-    /// <summary>A file's document, open already or read from disk now; null when it cannot be read as text.</summary>
-    private OpenDocument? Load(string path)
+    /// <summary>A file's document, open already or loaded as text, a workbook, an asset now (still decoding) or, when
+    /// <paramref name="asBytes"/>, a binary file's bytes; null when it cannot be loaded.</summary>
+    private OpenDocument? Load(string path, bool asBytes = true)
     {
         string full = PathNames.Canonical(path);
         if (documents.FirstOrDefault(d => d.Path == full) is { } open)
@@ -657,11 +755,8 @@ public sealed partial class EditorArea : UserControl
         }
         try
         {
-            if (FileText.Load(full) is not { } file)
-            {
-                return null;
-            }
-            OpenDocument document = new(full, file);
+            OpenDocument document = OpenDocument.Load(full, asBytes);
+            document.PreviewFailed += OnPreviewFailed;
             Opened?.Invoke(this, document);
             documents.Add(document);
             return document;
@@ -669,6 +764,17 @@ public sealed partial class EditorArea : UserControl
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return null;
+        }
+    }
+
+    /// <summary>An asset whose first decode failed closes, its tabs with it, as a file that could not be read never
+    /// opens, and the window says why.</summary>
+    private void OnPreviewFailed(object? sender, string why)
+    {
+        if (sender is OpenDocument document && documents.Contains(document))
+        {
+            Close(document, forGood: true);
+            OpenFailed?.Invoke(this, why);
         }
     }
 

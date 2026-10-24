@@ -69,18 +69,19 @@ public sealed partial class CodeAssist
             return;
         }
         ShowModal(new ChoicePopup($"Move {type.Kind} '{type.Name}'",
-            [new Choice("Move to Another File...", string.Empty, true, Mnemonic: '1'), new Choice("Move to Namespace...", string.Empty, false, Mnemonic: '2')]),
+            [new Choice("Move to Another File…", string.Empty, true, Mnemonic: '1'), new Choice("Move to Namespace…", string.Empty, false, Mnemonic: '2')]),
             caret.Offset, name, chosen =>
             {
                 if (chosen?.Value is not bool toFile)
                 {
-                    caret.Dispose();
                     return Task.CompletedTask;
                 }
                 // Not awaited: the list's choice is work a screenshot waits for, and the dialog waits for the person.
-                _ = MoveAsync(type, document, caret, toFile);
+                _ = MoveAsync(type, document, new FollowedCaret(new ChangeTracker(document.Text), caret.Offset), toFile);
                 return Task.CompletedTask;
             });
+        // The list's own let go as it closes, however it closes: a choice follows the caret on from there with one of its own.
+        modalClosed = caret.Dispose;
     }
 
     private async Task MoveAsync(TypeSource type, OpenDocument document, FollowedCaret caret, bool toFile)
@@ -115,7 +116,6 @@ public sealed partial class CodeAssist
         }
     }
 
-    private static string Count(int count, string one, string? many = null) => count == 1 ? $"1 {one}" : $"{count} {many ?? one + "s"}";
 
     /// <summary>What Passenger's extension says is at a place of a file for a refactoring, as its dialog would show it: the
     /// method Change Signature changes (<see cref="Handlers.DescribeSignature"/>), the type Extract Interface or Move takes,
@@ -138,7 +138,7 @@ public sealed partial class CodeAssist
         Patience? patience = null) =>
         MakeAsync("Change Signature", document,
             lsp => lsp.ExtensionAsync<Refactored>(Handlers.ChangeSignature, new SignatureChange(lsp.PlaceOf(offset), method, returnType, parameters)),
-            files => $"Changed the signature of {signature.Container}{(signature.Kind == "method" ? "." + method : string.Empty)} in {Count(files, "file")}", patience);
+            files => $"Changed the signature of {signature.Container}{(signature.Kind == "method" ? "." + method : string.Empty)} in {Plural.Of(files, "file")}", patience);
 
     /// <summary>Extract Interface from the type at an offset: an interface of this name, in a new file of this name beside
     /// the type's, of the members chosen by their ids, which the type then implements.</summary>
@@ -158,7 +158,7 @@ public sealed partial class CodeAssist
     public Task<RefactorOutcome> MoveTypeToNamespaceAsync(OpenDocument document, int offset, TypeSource type, string space, Patience? patience = null) =>
         MakeAsync("Move to Namespace", document,
             lsp => lsp.ExtensionAsync<Refactored>(Handlers.MoveTypeToNamespace, new TypeToNamespace(lsp.PlaceOf(offset), space)),
-            files => $"Moved {type.Kind} {type.Name} to namespace {space} in {Count(files, "file")}", patience);
+            files => $"Moved {type.Kind} {type.Name} to namespace {space} in {Plural.Of(files, "file")}", patience);
 
     /// <summary>Pull Members Up (into the base type whose id is the target) or Push Members Down (into each derived class
     /// whose id is a line of it): the members chosen by their ids, those listed as made abstract left abstract where they
@@ -168,8 +168,8 @@ public sealed partial class CodeAssist
         MakeAsync(up ? "Pull Members Up" : "Push Members Down", document,
             lsp => lsp.ExtensionAsync<Refactored>(up ? Handlers.PullMembersUp : Handlers.PushMembersDown, new MembersMove(lsp.PlaceOf(offset), target, members, made)),
             files => up
-                ? $"Pulled {Count(members.Count, "member")} of {hierarchy.Type} up to {hierarchy.Bases.FirstOrDefault(b => b.Id == target)?.Text ?? target}"
-                : $"Pushed {Count(members.Count, "member")} of {hierarchy.Type} down to {Count(target.Split('\n').Length, "class", "classes")}", patience);
+                ? $"Pulled {Plural.Of(members.Count, "member")} of {hierarchy.Type} up to {hierarchy.Bases.FirstOrDefault(b => b.Id == target)?.Text ?? target}"
+                : $"Pushed {Plural.Of(members.Count, "member")} of {hierarchy.Type} down to {Plural.Of(target.Split('\n').Length, "class", "classes")}", patience);
 
     /// <summary>What Passenger's extension says is at the caret for a refactoring, with the file and the caret followed from
     /// now; null, said in the status bar, when the server cannot be asked.</summary>
@@ -241,6 +241,7 @@ public sealed partial class CodeAssist
                 return RefactorOutcome.Refused($"{name} was not applied: {stale}");
             }
             List<string> dropped = [];
+            IReadOnlyList<RefactoredFile> files = WorkspaceEdits.Files(edit, WorkspaceEdits.Answered(editors, asked));
             using (CommandHistory.Recording recording = editors.Commands.Record(name))
             {
                 foreach (FileChange change in made.Changes)
@@ -252,7 +253,7 @@ public sealed partial class CodeAssist
             FilesChanged?.Invoke(this, EventArgs.Empty);
             // Counted by file: a file made is its creation and its text, which the edit counts apart.
             string said = done(made.Changes.Count - dropped.Count) + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty);
-            return new RefactorOutcome(said, null, WorkspaceEdits.Files(edit), dropped);
+            return new RefactorOutcome(said, null, files, dropped);
         }
         catch (LanguageServerFailed failed)
         {

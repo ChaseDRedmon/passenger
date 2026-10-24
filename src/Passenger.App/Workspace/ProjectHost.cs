@@ -22,12 +22,18 @@ public sealed class ProjectHost : IAsyncDisposable
     private readonly Process process;
     private readonly Dictionary<int, Pending> pending = [];
     private readonly object writing = new();
+
+    /// <summary>The methods whose next answers are spoiled (<see cref="SpoilNext"/>), and the requests now asked of them.</summary>
+    private readonly Dictionary<string, int> spoiling = new(StringComparer.Ordinal);
+    private readonly HashSet<int> spoiled = [];
+
     private int next;
     private volatile bool gone;
 
     private ProjectHost(Process process, HostReady ready)
     {
         this.process = process;
+        ProcessId = process.Id;
         Sdk = ready.Sdk;
         Version = ready.Version;
     }
@@ -40,7 +46,7 @@ public sealed class ProjectHost : IAsyncDisposable
 
     public string Version { get; }
 
-    public int ProcessId => process.Id;
+    public int ProcessId { get; }
 
     public bool HasExited => gone || process.HasExited;
 
@@ -63,7 +69,7 @@ public sealed class ProjectHost : IAsyncDisposable
             throw new ProjectHostFailed(missing.Message, missing);
         }
         // The newest runtime there is, a prerelease too, so the SDK a folder picks can always load in it.
-        start.Environment["DOTNET_ROLL_FORWARD_TO_PRERELEASE"] = "1";
+        start.Environment[RuntimeVariables.RollForwardToPrerelease] = "1";
         // A build's own, from a Passenger started under one (dotnet run, dotnet test): the host finds its SDK itself.
         foreach (string variable in new[] { "MSBUILD_EXE_PATH", "MSBuildExtensionsPath", "MSBuildSDKsPath", "MSBuildLoadMicrosoftTargetsReadOnly" })
         {
@@ -75,7 +81,7 @@ public sealed class ProjectHost : IAsyncDisposable
         Process process;
         try
         {
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or IOException)
         {
@@ -156,6 +162,13 @@ public sealed class ProjectHost : IAsyncDisposable
         (await AskAsync(HostMethods.Inspect, new InspectParams(project, properties, texts), null, cancel)).Deserialize<ProjectInsight>(HostJson.Options)
             ?? throw new ProjectHostFailed("the project host gave no answer for the project's evaluation");
 
+    /// <summary>Some properties of one project as a build with these global properties sees them (a publish profile's,
+    /// imported by PublishProfile), each that has a value; or why the project did not evaluate.</summary>
+    public async Task<PropertiesAnswer> PropertiesAsync(string project, IReadOnlyDictionary<string, string> properties, IReadOnlyList<string> names,
+        CancellationToken cancel = default) =>
+        (await AskAsync(HostMethods.Properties, new PropertiesParams(project, properties, names), null, cancel)).Deserialize<PropertiesAnswer>(HostJson.Options)
+            ?? throw new ProjectHostFailed("the project host gave no answer for the project's properties");
+
     /// <summary>Holds the host's design-time builds of WPF projects off for a build of the IDE's own: done once none runs,
     /// those still running named to <paramref name="waiting"/> first (on the reader's thread), and none starts again until
     /// <paramref name="release"/> is cancelled.</summary>
@@ -201,6 +214,11 @@ public sealed class ProjectHost : IAsyncDisposable
             }
             id = ++next;
             pending[id] = new Pending(answered, partial);
+            if (spoiling.GetValueOrDefault(method) > 0)
+            {
+                spoiling[method]--;
+                spoiled.Add(id);
+            }
         }
         Send(id, method, parameters);
         // Given up by the caller, the host is told to end the request, and what it still sends of it is dropped.
@@ -238,22 +256,29 @@ public sealed class ProjectHost : IAsyncDisposable
         }
     }
 
+    /// <summary>Has the host's answer to the next request of a method read as a line that does not, as a host of another
+    /// build could write one: for a test of what follows, which it cannot make the host do.</summary>
+    public void SpoilNext(string method)
+    {
+        lock (pending)
+        {
+            spoiling[method] = spoiling.GetValueOrDefault(method) + 1;
+        }
+    }
+
+    /// <summary>Reads the host's answers until it ends. Anything else that ends the reading (a line that does not read, an
+    /// answer its caller could not take) leaves what the host says next unmatched to what was asked, which would wait for
+    /// good: the host is ended, every request fails, and the next is asked of a host started anew.</summary>
     private async Task ReadAsync()
     {
+        string why = "the project host ended";
         try
         {
-            while (await process.StandardOutput.ReadLineAsync() is { } line)
+            // Taken once: a disposed process gives no reader, where the reader taken says it was closed.
+            StreamReader output = process.StandardOutput;
+            while (await output.ReadLineAsync() is { } line)
             {
-                HostReply? reply;
-                try
-                {
-                    reply = JsonSerializer.Deserialize<HostReply>(line, HostJson.Options);
-                }
-                catch (JsonException error)
-                {
-                    IdeErrors.Write($"Project host (process {process.Id}) wrote a line that does not read: {error.Message}");
-                    continue;
-                }
+                HostReply? reply = JsonSerializer.Deserialize<HostReply>(line, HostJson.Options);
                 if (reply is null)
                 {
                     continue;
@@ -261,6 +286,10 @@ public sealed class ProjectHost : IAsyncDisposable
                 Pending? asked;
                 lock (pending)
                 {
+                    if (spoiled.Contains(reply.Id))
+                    {
+                        throw new JsonException("the line was spoiled, as a test asked");
+                    }
                     pending.TryGetValue(reply.Id, out asked);
                     if (asked is not null && reply.Partial is null)
                     {
@@ -285,11 +314,17 @@ public sealed class ProjectHost : IAsyncDisposable
                 }
             }
         }
-        catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException)
+        catch (Exception error) when (error is IOException or ObjectDisposedException || gone)
         {
-            // The pipe went with the process.
+            // The pipe went with the process, or with the host let go of.
         }
-        Fail("the project host ended");
+        catch (Exception error)
+        {
+            why = $"the project host's answer could not be read ({error.GetType().Name}: {error.Message})";
+            IdeErrors.Write($"Project host (process {ProcessId}) was ended: {why}");
+            ChildProcesses.Kill(process);
+        }
+        Fail(why);
     }
 
     private void Fail(string why)

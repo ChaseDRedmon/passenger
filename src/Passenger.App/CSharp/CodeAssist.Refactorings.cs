@@ -253,16 +253,17 @@ public sealed partial class CodeAssist
         // Each usage a row: where it is, then its line's code, the code lined up in a column of its own.
         Grid rows = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
         Dictionary<string, string> paths = DocumentUris.ToPaths(doomed.Uses.Select(u => u.Uri));
-        Func<string, int, string> preview = LinePreviews();
+        Func<string, LspPosition, (int Line, string Code)> preview = LinePreviews();
         foreach ((LspLocation use, int row) in doomed.Uses.Select((u, i) => (u, i)))
         {
             string path = paths[use.Uri];
-            string shown = root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+            string shown = PathNames.Shown(path, root);
+            (int line, string used) = preview(path, use.Range.Start);
             rows.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            TextBlock where = new() { Text = $"{shown}:{use.Range.Start.Line + 1}", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 1, 12, 1) };
+            TextBlock where = new() { Text = $"{shown}:{line + 1}", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 1, 12, 1) };
             TextBlock code = new()
             {
-                Text = preview(path, use.Range.Start.Line),
+                Text = used,
                 FontFamily = Fonts.Mono,
                 FontSize = 12,
                 Foreground = InfoCard.Brush("Passenger.TextMuted"),
@@ -276,7 +277,7 @@ public sealed partial class CodeAssist
             rows.Children.Add(code);
         }
         int count = doomed.Uses.Count;
-        string text = $"The {doomed.Removal.Kind} '{doomed.Removal.Name}' has {count} {(count == 1 ? "usage" : "usages")} that would no longer compile once it is deleted:";
+        string text = $"The {doomed.Removal.Kind} '{doomed.Removal.Name}' has {Plural.Of(count, "usage")} that would no longer compile once it is deleted:";
         ScrollViewer list = new() { MaxHeight = 220, Content = rows, Margin = new Thickness(0, 0, 0, 4) };
         return await new ConfirmDialog("Safe Delete", text, "Delete Anyway", detail: list).ShowDialog<bool>(owner);
     }
@@ -286,7 +287,7 @@ public sealed partial class CodeAssist
     public RefactorOutcome Delete(Doomed doomed)
     {
         Removal removal = doomed.Removal;
-        string uses = doomed.Uses.Count == 0 ? string.Empty : $", leaving {doomed.Uses.Count} {(doomed.Uses.Count == 1 ? "usage" : "usages")} to fix";
+        string uses = doomed.Uses.Count == 0 ? string.Empty : $", leaving {Plural.Of(doomed.Uses.Count, "usage")} to fix";
         int first = doomed.Text.GetLineFromOffset(removal.Range.Start);
         int last = doomed.Text.GetLineFromOffset(Math.Max(removal.Range.Start, removal.Range.Start + removal.Range.Length - 1));
         try

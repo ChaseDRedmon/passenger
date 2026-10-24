@@ -11,6 +11,26 @@ public sealed record SearchMatch(string Path, int Line, int Column, int Length, 
     public string Name => System.IO.Path.GetFileName(Path);
 }
 
+/// <summary>What Replace in Files did beyond the matches: the files written as UTF-8 since their encoding could not hold
+/// the replacement, and those left as they were since the system refused the write (read-only, access denied, held),
+/// each with why.</summary>
+public sealed record FilesReplaced(IReadOnlyList<string> Converted, IReadOnlyList<(string Path, string Why)> Refused)
+{
+    /// <summary>The matches in files that were replaced, the refused files' left out.</summary>
+    public IReadOnlyList<SearchMatch> Replaced(IEnumerable<SearchMatch> matches) => [.. matches.Where(m => !Refused.Any(r => r.Path == m.Path))];
+
+    /// <summary>How many matches in how many files, as the window and an agent are told.</summary>
+    public static string Count(IReadOnlyCollection<SearchMatch> matches)
+    {
+        int files = matches.Select(m => m.Path).Distinct().Count();
+        return $"{Plural.Of(matches.Count, "match", "matches")} in {Plural.Of(files, "file")}";
+    }
+
+    /// <summary>The refused files, each named as <paramref name="name"/> gives it with why; null when none was.</summary>
+    public string? NotReplaced(Func<string, string> name) =>
+        Refused.Count == 0 ? null : $"not replaced: {string.Join(", ", Refused.Select(r => $"{name(r.Path)} ({r.Why})"))}";
+}
+
 /// <summary>Find in Files over the open folder's files, matching as the editor's Find bar does (the same query and
 /// options): every text file the index has (build output and version control left out), or those a scope and a file
 /// mask leave, an open file as the editor has it, unsaved changes and all; binary and very large files passed over.
@@ -57,23 +77,14 @@ public static class FileSearch
         return (IReadOnlyList<SearchMatch>)found;
     }, cancellation);
 
-    /// <summary>A file's text, or null for one that is binary, too large or unreadable.</summary>
+    /// <summary>A file's text as the editor reads it (its BOM's encoding, a UTF-16 file's included), read once; null for
+    /// one that is binary (<see cref="FileText.LooksBinary"/>), too large or unreadable.</summary>
     public static string? Read(string path)
     {
         try
         {
             FileInfo file = new(path);
-            if (!file.Exists || file.Length > LargestFile)
-            {
-                return null;
-            }
-            byte[] start = new byte[Math.Min(8000, (int)file.Length)];
-            using (FileStream stream = file.OpenRead())
-            {
-                stream.ReadExactly(start);
-            }
-            // A NUL in the first few kilobytes is a binary file, as Git decides.
-            return Array.IndexOf(start, (byte)0) >= 0 ? null : FileText.Load(path)?.Text;
+            return file.Exists && file.Length <= LargestFile ? FileText.Load(path)?.Text : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

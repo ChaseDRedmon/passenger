@@ -7,12 +7,18 @@ namespace Passenger.Lsp;
 /// <summary>A snapshot's lines as Roslyn counts them, which every position to and from the server is in: a lone '\r',
 /// U+0085, U+2028 and U+2029 end a line there as '\n' and "\r\n" do, though the editor's lines end only at '\n', so a
 /// server position read as a <see cref="TextPosition"/> lands lines away in a file holding one. Kept per snapshot as
-/// the offsets just past those extra breaks; a file without them converts as the editor's lines do.</summary>
+/// the offsets just past those extra breaks; a file without them converts as the editor's lines do. An XML reader's
+/// lines (<see cref="OfXml"/>) are kept the same way.</summary>
 public sealed class ServerLines
 {
     private static readonly SearchValues<char> Breaks = SearchValues.Create("\r\u0085\u2028\u2029");
 
+    /// <summary>What ends a line for an XML reader and not for the editor: a lone '\r' alone, as XML 1.0 reads breaks.</summary>
+    private static readonly SearchValues<char> XmlBreaks = SearchValues.Create("\r");
+
     private static readonly ConditionalWeakTable<TextSnapshot, ServerLines> Known = new();
+
+    private static readonly ConditionalWeakTable<TextSnapshot, ServerLines> KnownXml = new();
 
     [ThreadStatic]
     private static long read;
@@ -20,10 +26,14 @@ public sealed class ServerLines
     /// <summary>The offset just past each break the server counts and the editor does not, in order.</summary>
     private readonly int[] extra;
 
-    private ServerLines(TextSnapshot text, int[] extra)
+    /// <summary>The characters that may end a line here and not in the editor ('\r' only when no '\n' follows).</summary>
+    private readonly SearchValues<char> breaks;
+
+    private ServerLines(TextSnapshot text, int[] extra, SearchValues<char> breaks)
     {
         Text = text;
         this.extra = extra;
+        this.breaks = breaks;
     }
 
     public TextSnapshot Text { get; }
@@ -35,7 +45,12 @@ public sealed class ServerLines
     public static long CharactersRead => read;
 
     /// <summary>The lines of a snapshot, found once and kept with it; safe from any thread.</summary>
-    public static ServerLines Of(TextSnapshot text) => Known.GetValue(text, Find);
+    public static ServerLines Of(TextSnapshot text) => Known.GetValue(text, static text => Find(text, Breaks));
+
+    /// <summary>The lines of a snapshot as an XML reader counts them, which Avalonia's and WPF's XAML compilers write into a
+    /// PDB and an element's place: a lone '\r' ends a line, U+0085, U+2028 and U+2029 do not. Found once and kept with it;
+    /// safe from any thread.</summary>
+    public static ServerLines OfXml(TextSnapshot text) => KnownXml.GetValue(text, static text => Find(text, XmlBreaks));
 
     /// <summary>The lines of the text a change made, carried from those of the text before it and kept with it, reading
     /// again only around each edit, so a key in a long file never reads all of it; null when the text before had none,
@@ -134,15 +149,15 @@ public sealed class ServerLines
             int at = edit.Start + delta;
             if (at > 0)
             {
-                Check(after, at - 1, ref found);
+                Check(after, breaks, at - 1, ref found);
             }
             ReadOnlySpan<char> text = edit.Text;
             read += text.Length + 1;
             int i = 0;
-            while (i < text.Length && text[i..].IndexOfAny(Breaks) is int next and >= 0)
+            while (i < text.Length && text[i..].IndexOfAny(breaks) is int next and >= 0)
             {
                 i += next;
-                Check(after, at + i, ref found);
+                Check(after, breaks, at + i, ref found);
                 i++;
             }
             delta += edit.Text.Length - edit.Length;
@@ -152,14 +167,14 @@ public sealed class ServerLines
             Add(ref found, extra[e] + delta);
             e++;
         }
-        return new ServerLines(after, found is null ? [] : [.. found]);
+        return new ServerLines(after, found is null ? [] : [.. found], breaks);
     }
 
     /// <summary>Notes the character at an offset when it is a break the server counts and the editor does not.</summary>
-    private static void Check(TextSnapshot text, int offset, ref List<int>? found)
+    private static void Check(TextSnapshot text, SearchValues<char> breaks, int offset, ref List<int>? found)
     {
         char c = text[offset];
-        bool counts = c == '\r' ? offset + 1 == text.Length || text[offset + 1] != '\n' : Breaks.Contains(c);
+        bool counts = c == '\r' ? offset + 1 == text.Length || text[offset + 1] != '\n' : breaks.Contains(c);
         if (counts)
         {
             Add(ref found, offset + 1);
@@ -176,7 +191,7 @@ public sealed class ServerLines
         }
     }
 
-    private static ServerLines Find(TextSnapshot text)
+    private static ServerLines Find(TextSnapshot text, SearchValues<char> breaks)
     {
         read += text.Length;
         List<int> extra = [];
@@ -192,7 +207,7 @@ public sealed class ServerLines
             }
             carriage = false;
             int i = 0;
-            while (i < span.Length && span[i..].IndexOfAny(Breaks) is int found and >= 0)
+            while (i < span.Length && span[i..].IndexOfAny(breaks) is int found and >= 0)
             {
                 i += found;
                 if (span[i] != '\r' || (i + 1 < span.Length && span[i + 1] != '\n'))
@@ -211,6 +226,6 @@ public sealed class ServerLines
         {
             extra.Add(at);
         }
-        return new ServerLines(text, [.. extra]);
+        return new ServerLines(text, [.. extra], breaks);
     }
 }

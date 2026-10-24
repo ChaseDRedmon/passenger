@@ -102,7 +102,7 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
         // An unknown name, or a condition that is not a bool, stops rather than going missing unseen.
         int id = response.Breakpoints[0].Id!.Value;
         BreakpointEvent said = await debugProtocolHost.WaitForEvent<BreakpointEvent>(e => e.Breakpoint.Id == id && e.Breakpoint.Message is not null && e.Breakpoint.Verified);
-        Assert.Contains(condition, said.Breakpoint.Message, StringComparison.Ordinal);
+        Assert.StartsWith(BreakpointConditions.NotEvaluated(condition), said.Breakpoint.Message, StringComparison.Ordinal);
         StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
         Assert.Equal(15, stoppedEvent.ReadStopInfo().line);
         Assert.Equal([id], stoppedEvent.HitBreakpointIds);
@@ -208,12 +208,10 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
         Assert.True(added.Breakpoints[2].Verified, "the breakpoint added while paused binds");
     }
 
-    [Theory]
-    [InlineData("3 times")]
-    [InlineData("abc")]
-    [InlineData("%0")]
-    [InlineData("==")]
-    public async Task A_hit_count_the_debugger_cannot_read_is_refused_saying_why(string hitCondition)
+    /// <summary>Hit counts the debugger cannot read, each set in turn with the program's code loaded, where one it took would
+    /// bind at once: each is refused saying why, the breakpoint beside it binds, and the program never stops at it.</summary>
+    [Fact]
+    public async Task A_hit_count_the_debugger_cannot_read_is_refused_saying_why()
     {
         bool startSuspended = true;
         using DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process debuggee);
@@ -227,15 +225,17 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
             .WithOptionalResumeRuntime(debuggee.Id, startSuspended);
         Assert.Equal(22, (await host.WaitForStoppedEvent()).ReadStopInfo().line);
 
-        // Set with the program's code loaded, where one it took would bind at once.
-        host.WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs"),
-            [new DapSourceBreakpoint(10, HitCondition: hitCondition), new DapSourceBreakpoint(9)],
-            out SetBreakpointsResponse response);
-        DapBreakpoint refused = response.Breakpoints[0];
-        Assert.False(refused.Verified);
-        Assert.Equal("failed", refused.Reason);
-        Assert.Contains($"The hit count \"{hitCondition}\" is not one the debugger can read", refused.Message, StringComparison.Ordinal);
-        Assert.True(response.Breakpoints[1].Verified, "the breakpoint beside it binds");
+        foreach (string hitCondition in new[] { "3 times", "abc", "%0", "==" })
+        {
+            host.WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs"),
+                [new DapSourceBreakpoint(10, HitCondition: hitCondition), new DapSourceBreakpoint(9)],
+                out SetBreakpointsResponse response);
+            DapBreakpoint refused = response.Breakpoints[0];
+            Assert.False(refused.Verified, $"The hit count \"{hitCondition}\" was taken");
+            Assert.Equal("failed", refused.Reason);
+            Assert.Contains($"The hit count \"{hitCondition}\" is not one the debugger can read", refused.Message, StringComparison.Ordinal);
+            Assert.True(response.Breakpoints[1].Verified, $"the breakpoint beside the hit count \"{hitCondition}\" binds");
+        }
 
         // It never stops: from line 9 the program runs on round its loop to line 22.
         Assert.Equal(9, (await host.WithContinueRequest().WaitForStoppedEvent()).ReadStopInfo().line);

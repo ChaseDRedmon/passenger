@@ -1,8 +1,8 @@
 # The solution built (warnings are errors) and every test run, on macOS (arm64), Windows and Linux (Ubuntu LTS, x64), as
 # `just build` and `just test` run them, each system's tests split across shards that run at once (#206): CI's (ci.yml)
-# for every push to main and every pull request, and a release's (release.yml) before it packages anything. Every
-# restore is locked to the packages.lock.json files (GitHub sets CI, which Directory.Build.props makes
-# RestoreLockedMode). Actions are pinned to a release's commit.
+# when it is run by hand, and a release's (release.yml) before it packages anything. The results go where `just test`
+# puts them, artifacts/test-results. Every restore is locked to the packages.lock.json files (GitHub sets CI, which
+# Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: Test
 
 on:
@@ -56,7 +56,7 @@ jobs:
             shards: 4
             time_scale: 2
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 56
     defaults:
       run:
         shell: bash
@@ -125,6 +125,48 @@ jobs:
       - name: Build
         run: dotnet build --no-restore
 
+      # Only Linux's runner runs Linux containers. The images the container tests run on (busybox from Docker Hub, which
+      # limits pulls, and .NET's from mcr.microsoft.com: tests/Passenger.Tests/ContainerImages.txt) come from a cache of
+      # them, pulled only when the cache lacks them, so no test pulls one: PASSENGER_TEST_PULL=never makes a test whose
+      # image is missing skip, saying which, where it would have pulled it on a developer's machine.
+      - name: Restore cached container images
+        id: images
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/container-images.tar
+          key: container-images-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/Passenger.Tests/ContainerImages.txt') }}
+
+      # A pull that fails is a warning, not the shard's failure: the container tests skip, saying which image is missing.
+      - name: The container images the tests run on
+        id: pulled
+        if: runner.os == 'Linux'
+        env:
+          IMAGES: ${{ runner.temp }}/container-images.tar
+        run: |
+          if [ -f "$IMAGES" ] && ! docker load -q -i "$IMAGES"; then
+            echo "::warning title=Container images::The cached images did not load, so they are pulled"
+            rm -f "$IMAGES"
+          fi
+          images=$(grep -v '^[[:space:]]*$' tests/Passenger.Tests/ContainerImages.txt)
+          missing=
+          for image in $images; do
+            docker image inspect "$image" > /dev/null 2>&1 && continue
+            docker pull -q "$image" || { echo "::warning title=Container image::$image could not be pulled, so the container tests skip"; missing=1; }
+          done
+          if [ -z "$missing" ] && [ ! -f "$IMAGES" ]; then
+            docker save -o "$IMAGES" $images
+            echo "saved=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "PASSENGER_TEST_PULL=never" >> "$GITHUB_ENV"
+
+      - name: Cache container images
+        if: runner.os == 'Linux' && matrix.shard == 1 && steps.images.outputs.cache-hit != 'true' && steps.pulled.outputs.saved == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/container-images.tar
+          key: ${{ steps.images.outputs.cache-primary-key }}
+
       # A file the .gitignore matches never reaches a clone (#58). After the build, so one that wrote beside the
       # sources shows too; and no tracked file may match a rule, since its folder's other files would not be seen.
       - name: No source is ignored by Git
@@ -139,25 +181,31 @@ jobs:
           fi
 
       # The deal goes in the log. Before any test runs, what each shard's settings select is listed and every test of
-      # the suite must be in exactly one. The suite's listing and the shards' settings go with the results: the summary
-      # checks the results against the listing, and a person sees what each shard ran. A listing that names no test, or
-      # says discovery failed (xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo, xunit #3576), is
-      # listed again, and the step fails with what dotnet printed only when the last of three tries is no better.
+      # the suite must be in exactly one: by the first shard alone, since every shard deals the same from the same suite
+      # and the filters select alike everywhere, while each listing costs a VSTest start and a discovery (the summary's
+      # cover finds a shard that listed a different suite). The suite's listing and the shards' settings go with the
+      # results: the summary checks the results against the listing, and a person sees what each shard ran. A listing
+      # that names no test, or says discovery failed (xunit 3.2's runner can spoil its answer to the adapter's
+      # -assemblyInfo, xunit #3576), is listed again, and the step fails with what dotnet printed only when the last of
+      # three tries is no better.
       - name: Deal the tests to the shards
         env:
           SYSTEM: ${{ matrix.system }}
           SHARDS: ${{ matrix.shards }}
+          SHARD: ${{ matrix.shard }}
         run: |
           python=python3
           [ "$RUNNER_OS" != Windows ] || python=python
-          mkdir -p TestResults/shards
-          "$python" -I tools/test-shards.py list TestResults/suite.txt
-          "$python" -I tools/test-shards.py split TestResults/suite.txt --system "$SYSTEM" --of "$SHARDS" --out TestResults/shards
+          results=artifacts/test-results
+          mkdir -p "$results/shards"
+          "$python" -I tools/test-shards.py list "$results/suite.txt"
+          "$python" -I tools/test-shards.py split "$results/suite.txt" --system "$SYSTEM" --of "$SHARDS" --out "$results/shards"
+          [ "$SHARD" = 1 ] || exit 0
           for number in $(seq 1 "$SHARDS"); do
-            "$python" -I tools/test-shards.py list "TestResults/shards/listed-$number.txt" \
-              --settings "TestResults/shards/shard-$number.runsettings"
+            "$python" -I tools/test-shards.py list "$results/shards/listed-$number.txt" \
+              --settings "$results/shards/shard-$number.runsettings"
           done
-          "$python" -I tools/test-shards.py check TestResults/suite.txt TestResults/shards/listed-*.txt
+          "$python" -I tools/test-shards.py check "$results/suite.txt" "$results"/shards/listed-*.txt
 
       # A test hung for 10 minutes is stopped and named, rather than holding the job to its timeout. Each test class's
       # time goes in the job's summary (tools/test-times.py), a class over its budget is a warning, and the shard over
@@ -166,21 +214,22 @@ jobs:
       # failed tests are listed last, as annotations and in the job's summary.
       - name: Test
         shell: pwsh
-        timeout-minutes: 30
+        timeout-minutes: 38
         env:
           SHARD: ${{ matrix.shard }}
           LABEL: ${{ matrix.name }}, shard ${{ matrix.shard }} of ${{ matrix.shards }}
           PASSENGER_TEST_TIME_SCALE: ${{ matrix.time_scale }}
         run: |
-          dotnet test tests/Passenger.Tests --no-build --settings "TestResults/shards/shard-$env:SHARD.runsettings" `
-            --results-directory TestResults --logger trx --logger "console;verbosity=normal" `
+          $results = 'artifacts/test-results'
+          dotnet test tests/Passenger.Tests --no-build --settings "$results/shards/shard-$env:SHARD.runsettings" `
+            --results-directory $results --logger trx --logger "console;verbosity=normal" `
             --blame-hang-timeout 10m --blame-hang-dump-type none
           $code = $LASTEXITCODE
           $python = if ($IsWindows) { 'python' } else { 'python3' }
-          & $python -I tools/test-times.py TestResults --budget tests/Passenger.Tests/TestBudget.json --shard $env:SHARD --label $env:LABEL
+          & $python -I tools/test-times.py $results --budget tests/Passenger.Tests/TestBudget.json --shard $env:SHARD --label $env:LABEL
           $budget = $LASTEXITCODE
           if ($code -eq 0) { exit $budget }
-          $failed = @(Get-ChildItem TestResults -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object {
+          $failed = @(Get-ChildItem $results -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object {
             ([xml](Get-Content -Raw $_.FullName)).TestRun.Results.UnitTestResult |
               Where-Object { $_ -and $_.outcome -notin 'Passed', 'NotExecuted' }
           })
@@ -214,16 +263,16 @@ jobs:
           SHARDS: ${{ matrix.shards }}
           STATUS: ${{ job.status }}
         run: |
-          mkdir -p TestResults
+          mkdir -p artifacts/test-results
           printf '{"system": "%s", "shard": %s, "shards": %s, "status": "%s"}\n' "$SYSTEM" "$SHARD" "$SHARDS" "$STATUS" \
-            > TestResults/shard.json
+            > artifacts/test-results/shard.json
 
       - name: Upload test results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ matrix.system }}-${{ matrix.shard }}
-          path: TestResults/
+          path: artifacts/test-results/
 
   # Each system's result as one check, under the name its one job had before the shards: every shard's job succeeded
   # and every test of the suite has exactly one result among them (tools/test-shards.py cover), with each class's time

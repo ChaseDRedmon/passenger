@@ -125,12 +125,9 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     break;
                 case "--look":
                     string lookText = Value(args, ref i, flag);
-                    look = lookText switch
-                    {
-                        "passenger" => global::Passenger.App.Look.Passenger,
-                        "harbour" => global::Passenger.App.Look.Harbour,
-                        _ => throw new FormatException($"--look takes passenger or harbour, not '{lookText}'"),
-                    };
+                    global::Passenger.App.Look[] looks = Enum.GetValues<global::Passenger.App.Look>();
+                    look = looks.Cast<global::Passenger.App.Look?>().FirstOrDefault(l => l.ToString()!.ToLowerInvariant() == lookText)
+                        ?? throw new FormatException($"--look takes {string.Join(", ", looks.Select(l => l.ToString().ToLowerInvariant()))}, not '{lookText}'");
                     break;
                 case "--scheme":
                     string schemeText = Value(args, ref i, flag);
@@ -179,9 +176,10 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     break;
                 case "--open":
                     string opened = Value(args, ref i, flag);
-                    steps.Add(new ScriptStep.Open(Directory.Exists(opened) || (File.Exists(opened) && WorkspaceModel.Opens(opened))
+                    // As File, Open takes it: a solution, project or folder as the workspace, any other file in a tab.
+                    steps.Add(new ScriptStep.Open(Directory.Exists(opened) || File.Exists(opened)
                         ? Path.GetFullPath(opened)
-                        : throw new FormatException($"--open takes a folder, a solution (.sln, .slnx) or a C# project (.csproj), not '{opened}'")));
+                        : throw new FormatException($"--open takes a file or folder that is there, not '{opened}'")));
                     break;
                 case "--agent":
                     string agentText = Value(args, ref i, flag);

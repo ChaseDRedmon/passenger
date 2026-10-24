@@ -21,11 +21,7 @@ public sealed class ToolColumn : Panel
     public ToolColumn()
     {
         ClipToBounds = true;
-        PathIcon dots = new();
-        dots.Bind(PathIcon.DataProperty, dots.GetResourceObservable("Icon.More"));
-        more = new Button { Classes = { "tool" }, Content = dots };
-        ToolTip.SetTip(more, "More");
-        more.Click += (_, _) => ShowMore();
+        more = ToolButtons.Of("Icon.More", "More", ShowMore);
         Children.Add(more);
     }
 

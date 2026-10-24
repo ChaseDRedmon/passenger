@@ -48,6 +48,7 @@ public sealed class CommandLineTests : IDisposable
     [InlineData("--screenshot out.png --caret 3:1", "--caret needs a file to put the caret in, the PATH or a --file")]
     [InlineData(". notes.txt --screenshot out.png", "'notes.txt' would be a second folder or file after '.'; Passenger opens one, and more files with --file")]
     [InlineData("--screenshot out.png --theme dark --theme light", "--theme is given twice")]
+    [InlineData("--screenshot out.png --file-icons default", "unknown flag '--file-icons'")]
     [InlineData("--no-mcp --screenshot out.png", "--no-mcp stops a window listening for agents, and --screenshot's lets in only its own --agent")]
     [InlineData("--screenshot out.png --agent no-agent-by-this-name", "--agent's program 'no-agent-by-this-name' is neither a file nor on the PATH")]
     [InlineData(". --agent ./notes.txt", "--agent is for a --screenshot, and none is asked for")]
@@ -67,6 +68,26 @@ public sealed class CommandLineTests : IDisposable
 
         Assert.True(code == 2 && error.StartsWith($"passenger: {reason}", StringComparison.Ordinal),
             $"'passenger {arguments}' was to be refused with exit code 2 saying \"{reason}\"; it exited {code} and wrote:\n{error}");
+    }
+
+    private const string Milliseconds = "a whole number of milliseconds above 0";
+
+    /// <summary>A variable the IDE or its debug adapter reads is checked as Passenger starts, before any window or server: a
+    /// malformed evaluation limit had the IDE quietly take 5 s while each adapter it started refused it and exited, so every
+    /// Debug failed with "connection closed".</summary>
+    [Theory]
+    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "3s", Milliseconds)]
+    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "0", Milliseconds)]
+    [InlineData(global::Passenger.App.Mcp.AgentCall.EveryVariable, "-1000", Milliseconds)]
+    [InlineData(global::Passenger.App.Mcp.McpHost.LanguageServerVariable, "no", "off or on")]
+    [InlineData(global::Passenger.App.Waits.ScaleVariable, "0", "a number above 0")]
+    public async Task A_malformed_variable_ends_Passenger_with_exit_code_2_and_the_reason_before_anything_starts(string variable, string value, string takes)
+    {
+        (int code, string error) = await Run(["--mcp", "."], settings, new Dictionary<string, string> { [variable] = value });
+
+        string reason = $"passenger: {variable} takes {takes}, not '{value}'";
+        Assert.True(code == 2 && error.StartsWith(reason, StringComparison.Ordinal),
+            $"Passenger with {variable}={value} was to be refused with exit code 2 saying \"{reason}\"; it exited {code} and wrote:\n{error}");
     }
 
     [Fact]
@@ -143,7 +164,7 @@ public sealed class CommandLineTests : IDisposable
         string state = TestFolders.Create("agent-state-");
         const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""";
         const string Initialized = """{"jsonrpc":"2.0","method":"notifications/initialized"}""";
-        const string Type = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"type","arguments":{"text":"agent "}}}""";
+        const string Type = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"app_type","arguments":{"app":"ide","control":"CodeEditor","text":"agent "}}}""";
         const string Read = """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"editor_text","arguments":{"path":"notes.txt","from":2,"to":2}}}""";
         string answers = Path.Combine(agent, "answers.txt");
         string command;
@@ -200,7 +221,7 @@ public sealed class CommandLineTests : IDisposable
             string answered = File.Exists(answers) ? await File.ReadAllTextAsync(answers, TestContext.Current.CancellationToken) : "(no answers)";
             Assert.True(code == 0 && File.Exists(Path.Combine(folder, "out.png")), $"The screenshot after its agent was not taken: exit code {code}\n{error}\nThe agent's answers:\n{answered}");
             Assert.True(answered.Contains("agent two", StringComparison.Ordinal) && !answered.Contains("\"isError\":true", StringComparison.Ordinal),
-                $"The agent's type was to be used unasked in the capture's window, its editor_text then reading line 2 as \"agent two\"; it was answered:\n{answered}");
+                $"The agent's app_type was to be used unasked in the capture's window, its editor_text then reading line 2 as \"agent two\"; it was answered:\n{answered}");
 
             string fails = OperatingSystem.IsWindows() ? "powershell -NoProfile -Command exit 3" : "sh -c \"exit 3\"";
             (code, error) = await Run([".", "--agent", fails, "--screenshot", "failed.png"], state);
@@ -223,7 +244,8 @@ public sealed class CommandLineTests : IDisposable
         File.WriteAllText(zebra, "<Solution />\n");
         string project = Path.Combine(folder, "sub", "Tool.csproj");
         File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        // The workspace is the window's to say; no C# language server is started on either.
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
         window.Show();
 
         window.Start(LaunchOptions.Parse([zebra]));
@@ -244,8 +266,9 @@ public sealed class CommandLineTests : IDisposable
     /// exit code and what it wrote to standard error; one still running after two minutes was not refused.</summary>
     private Task<(int Code, string Error)> Run(string arguments) => Run(arguments.Split(' '), settings);
 
-    /// <summary>Passenger run in the test's folder with these arguments and its state in a folder of their own.</summary>
-    private async Task<(int Code, string Error)> Run(IReadOnlyList<string> arguments, string state)
+    /// <summary>Passenger run in the test's folder with these arguments and its state in a folder of their own, with these
+    /// variables in its environment over the run's.</summary>
+    private async Task<(int Code, string Error)> Run(IReadOnlyList<string> arguments, string state, IReadOnlyDictionary<string, string>? environment = null)
     {
         ProcessStartInfo start = new(Passenger)
         {
@@ -259,6 +282,10 @@ public sealed class CommandLineTests : IDisposable
             start.ArgumentList.Add(argument);
         }
         start.Environment["PASSENGER_SETTINGS"] = state;
+        foreach ((string variable, string value) in environment ?? new Dictionary<string, string>())
+        {
+            start.Environment[variable] = value;
+        }
         using Process process = Process.Start(start)!;
         process.StandardInput.Close();
         Task<string> output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);

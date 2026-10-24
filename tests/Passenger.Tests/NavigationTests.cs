@@ -36,11 +36,53 @@ public sealed class NavigationTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Page Down and Page Up in Go to File's field choose a page of results below or above, as every search list's
+    /// keys do (one behaviour, #390, where no list took them): the first Page Down chooses the last row in sight without
+    /// scrolling, the next keeps the row it left in sight, and Page Up comes back the same way, stopping at the top.</summary>
+    [AvaloniaFact]
+    public void Page_down_and_up_in_go_to_file_choose_a_page_of_results_keeping_the_choice_in_sight()
+    {
+        for (int i = 0; i < 60; i++)
+        {
+            Write($"src/Item{i:00}.cs", "class Item { }");
+        }
+        MainWindow window = Open();
+
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
+        window.KeyTextInput("Item");
+        Ui.Settle();
+        Passenger.App.Navigation.GoToFilePopup popup = Assert.IsType<Passenger.App.Navigation.GoToFilePopup>(window.Popup);
+        ListBox results = popup.GetVisualDescendants().OfType<ListBox>().First();
+        Assert.Equal(0, results.SelectedIndex);
+
+        Ui.Press(window, "PAGE_DOWN");
+        int page = results.SelectedIndex;
+        Assert.True(page > 1 && InSight(results, 0) && InSight(results, page),
+            $"Page Down chose row {page}, where it chooses the last of the rows in sight and scrolls nothing");
+        Ui.Press(window, "PAGE_DOWN");
+        Assert.True(results.SelectedIndex == 2 * page && InSight(results, page) && InSight(results, 2 * page),
+            $"A second Page Down chose row {results.SelectedIndex}, where it moves a page more ({2 * page}) keeping the row it left in sight");
+        Ui.Press(window, "PAGE_UP");
+        Ui.Press(window, "PAGE_UP");
+        Ui.Press(window, "PAGE_UP");
+        Assert.True(results.SelectedIndex == 0 && InSight(results, 0), $"Page Up three times chose row {results.SelectedIndex}, where it stops at the first");
+        Ui.Press(window, "DOWN");
+        Assert.Equal(1, results.SelectedIndex);
+        Ui.Press(window, "ENTER");
+        Assert.Equal("Item01.cs", window.EditorArea.Active?.Name);
+        window.Close();
+
+        static bool InSight(ListBox list, int index) =>
+            list.ContainerFromIndex(index) is Control row && row.TranslatePoint(default, list) is { } top
+            && top.Y >= -0.5 && top.Y + row.Bounds.Height <= list.Bounds.Height + 0.5;
+    }
+
     /// <summary>Go to File over a large folder costs a key little more than over a small one: a file whose name cannot
     /// match is passed over with nothing done for it, where every file's name and stem were copied out of its path and its
-    /// word starts listed, a key in sixty thousand files taking the UI thread a median 86 to 123 ms. What the window
-    /// allocates is the count, not a time a busy machine stretches: the same key over 20,000 files allocates on the UI
-    /// thread less than 8 bytes for each file more than over 2,000.</summary>
+    /// word starts listed, a key in sixty thousand files taking the UI thread a median 86 to 123 ms; and the first letter,
+    /// which a great many match, keeps only the best of them as it goes, where all of them were sorted (#233's ~150 ms over
+    /// 60,000). What the window allocates is the count, not a time a busy machine stretches: each key over 20,000 files
+    /// allocates on the UI thread less than 8 bytes for each file more than over 2,000, the least of three tries of it.</summary>
     [AvaloniaFact]
     public void Go_to_file_in_twenty_thousand_files_does_no_work_for_a_file_whose_name_cannot_match()
     {
@@ -49,12 +91,14 @@ public sealed class NavigationTests : IDisposable
         Files(folder, 100);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
-        long few = KeyInGoToFile(window, small, 2000);
+        (long fewFirst, long few) = KeyInGoToFile(window, small, 2000);
         Ui.Press(window, "ESCAPE");
-        long many = KeyInGoToFile(window, folder, 20_000);
-        TestContext.Current.TestOutputHelper?.WriteLine($"The key allocated {few / 1024} KB over 2,000 files, {many / 1024} KB over 20,000");
+        (long manyFirst, long many) = KeyInGoToFile(window, folder, 20_000);
+        TestContext.Current.TestOutputHelper?.WriteLine($"The key allocated {few / 1024} KB over 2,000 files, {many / 1024} KB over 20,000; the first letter {fewFirst / 1024} KB and {manyFirst / 1024} KB");
         Assert.True(many - few < 8 * 18_000,
             $"A key in Go to File over 20,000 files allocated {many / 1024} KB on the UI thread, against {few / 1024} KB over 2,000: 8 bytes or more for each file more");
+        Assert.True(manyFirst - fewFirst < 8 * 18_000,
+            $"The first letter in Go to File over 20,000 files allocated {manyFirst / 1024} KB on the UI thread, against {fewFirst / 1024} KB over 2,000: every match was sorted");
         // What it found is what it finds: the validators of area 7, a name of the query's letters in order.
         Ui.Press(window, "ENTER");
         Assert.Matches(@"^Validator7x\d+\.cs$", window.EditorArea.Active?.Name ?? string.Empty);
@@ -76,22 +120,42 @@ public sealed class NavigationTests : IDisposable
         }
     }
 
-    /// <summary>What the key that narrows Go to File's list to a few of a folder's validators allocates on the UI thread,
-    /// the folder opened and its files indexed; the popup is left open on it.</summary>
-    private static long KeyInGoToFile(MainWindow window, string root, int files)
+    /// <summary>What the first letter of a query in Go to File (which three kinds of file in eight match) and the key that
+    /// narrows its list to a few of a folder's validators allocate on the UI thread, the folder opened and its files
+    /// indexed; the popup is left open on it.</summary>
+    private static (long First, long Narrowing) KeyInGoToFile(MainWindow window, string root, int files)
     {
         window.OpenFolder(root);
         Ui.WaitFor(() => window.FileIndex.Count >= files, $"the folder's {files} files indexed");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
         Assert.True(window.IsPopupOpen);
-        window.KeyTextInput("ValAr");
+        long first = Least(window, "V");
+        window.KeyTextInput("alAr");
+        long key = Least(window, "7");
         Ui.Settle();
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        window.KeyTextInput("7");
-        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
-        long key = GC.GetAllocatedBytesForCurrentThread() - before;
-        Ui.Settle();
-        return key;
+        return (first, key);
+    }
+
+    /// <summary>The least a key typed in Go to File's field allocates on the UI thread of three times, each taken back
+    /// after: what else lands on that thread meanwhile (a frame the key's own wait draws) goes into one look, as CI's
+    /// Linux once put 613 KB into one, while what the key costs for each file goes into every one.</summary>
+    private static long Least(MainWindow window, string key)
+    {
+        long least = long.MaxValue;
+        for (int time = 0; time < 3; time++)
+        {
+            Ui.Settle();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput(key);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            Ui.Settle();
+            if (time < 2)
+            {
+                Ui.Press(window, "BACK_SPACE");
+            }
+        }
+        return least;
     }
 
     [AvaloniaFact]
@@ -230,10 +294,7 @@ public sealed class NavigationTests : IDisposable
         Assert.True(window.ExplorerView.Selected?.Name == "One.cs", $"Select Next Tab showed One.cs and left the Explorer on {window.ExplorerView.Selected?.Name}");
 
         Control two = window.EditorArea.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == "Two.cs" && t.Classes.Contains("tabName"));
-        Point at = two.TranslatePoint(new Point(two.Bounds.Width / 2, two.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(two);
         Assert.Equal("Two.cs", window.EditorArea.Active?.Name);
         Assert.True(window.ExplorerView.Selected?.Name == "Two.cs", $"A click on Two.cs's tab left the Explorer on {window.ExplorerView.Selected?.Name}");
         window.Close();
@@ -265,12 +326,5 @@ public sealed class NavigationTests : IDisposable
         File.WriteAllText(path, text);
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(folder);
 }

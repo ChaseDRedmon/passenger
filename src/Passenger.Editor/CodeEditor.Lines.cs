@@ -30,6 +30,10 @@ public sealed partial class CodeEditor
     /// <summary>How many frames the editor has drawn: what a key costs to draw, for a test to count rather than time.</summary>
     public long Frames { get; private set; }
 
+    /// <summary>How many times the caret's blink has asked for a frame, one each: what a count of a key's frames leaves
+    /// out, since the blink draws the editor again whenever a wait outlasts its 530 ms.</summary>
+    public long Blinks { get; private set; }
+
     /// <summary>The views of the rows a frame shows: the ones they had while their text and colours (and a long line's
     /// window) still serve, the rest made, their colours asked for a run of neighbouring rows at a time.</summary>
     private LineView[] ViewsOf(TextSnapshot text, List<RowSpan> shown, double viewLeft, double viewWidth)
@@ -190,6 +194,7 @@ public sealed partial class CodeEditor
     {
         views.Clear();
         labels.Clear();
+        rowGaps.Clear();
         numbers.Clear();
         advances = null;
     }

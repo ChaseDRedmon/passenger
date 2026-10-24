@@ -14,6 +14,8 @@ public static class Program
     /// code-behind change the customer's name on the UI thread, as something a person did in it would.</summary>
     public static int Main(string[] args)
     {
+        // Named, as an app may name its UI thread: the debugger still knows it for Main's, where binding values are read.
+        Thread.CurrentThread.Name = "UI";
         Thread input = new(Input) { IsBackground = true, Name = "Input" };
         input.Start();
         return AppBuilder.Configure<App>()

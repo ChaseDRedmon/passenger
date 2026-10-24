@@ -11,9 +11,13 @@ public partial class MainWindow
     /// <summary>The Git log's branches panel.</summary>
     public BranchesPanel GitBranches => GitLog.Branches!;
 
-    private void AddBranches()
+    /// <summary>The folder's favourite branches, kept for the branches panel until the Git window is built.</summary>
+    private GitBranchesState branchFavorites = new();
+
+    /// <summary>The branches panel's requests and favourites, as the Git window is built.</summary>
+    private void FollowBranches(BranchesPanel panel)
     {
-        BranchesPanel panel = GitBranches;
+        panel.Favorites = branchFavorites;
         panel.NewBranchRequested += (_, branch) => ShowNewBranchFrom(branch);
         panel.RenameRequested += (_, branch) => ShowRenameBranch(branch);
         panel.DeleteRequested += (_, branch) => _ = DeleteBranchAsync(branch);
@@ -96,7 +100,7 @@ public partial class MainWindow
     {
         string current = session.Vcs.Branch ?? "HEAD";
         string currentRef = session.Vcs.Branch is { } name ? $"refs/heads/{name}" : "HEAD";
-        ShowToolWindow("git");
+        ShowToolWindow(ToolWindowIds.Git);
         return GitWindow.ShowCompare(new LogRange(currentRef, current, branch.Ref.FullName, branch.Name), new LogRange(branch.Ref.FullName, branch.Name, currentRef, current));
     }
 
@@ -112,7 +116,7 @@ public partial class MainWindow
         IReadOnlyList<FileChange> files = await session.Vcs.ChangesSinceAsync(branch);
         ChangesWindow window = new(branch.Name, files, repository);
         window.DiffRequested += (_, change) => _ = CompareWithAsync(change.Path, branch.Ref.FullName, branch.Name, change.From ?? change.Path);
-        window.Show(this);
+        ShowOwn(window);
         return window;
     }
 }

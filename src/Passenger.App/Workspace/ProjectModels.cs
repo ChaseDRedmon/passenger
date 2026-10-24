@@ -227,6 +227,18 @@ public sealed class ProjectModels
         return properties;
     }
 
+    /// <summary>The global properties one project is evaluated with for what a build of it makes (a launch's program, a test
+    /// run's assemblies, a publish): the solution's, and Windows targeting where the host loaded it with that.</summary>
+    public static Dictionary<string, string> Properties(WorkspaceModel? workspace, ProjectModel project)
+    {
+        Dictionary<string, string> properties = workspace is null ? new(StringComparer.OrdinalIgnoreCase) : Properties(workspace);
+        if (project.WindowsTargeting)
+        {
+            properties["EnableWindowsTargeting"] = "true";
+        }
+        return properties;
+    }
+
     private async Task RoundAsync(int mine, string following, List<string> projects, Dictionary<string, EvaluatedProject> before, Dictionary<string, string> properties,
         CancellationToken cancel)
     {

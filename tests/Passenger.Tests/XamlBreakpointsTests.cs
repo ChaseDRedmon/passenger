@@ -27,16 +27,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
 
     public XamlBreakpointsTests(RestoredFolders folders)
     {
-        folder = PathNames.Canonical(folders.Take("xamlbreakpoints-", made =>
-        {
-            foreach (string file in Directory.GetFiles(Debuggees.Source("XamlBreakpointsApp")))
-            {
-                File.Copy(file, Path.Combine(made, Path.GetFileName(file)));
-            }
-            string project = Path.Combine(made, "XamlBreakpointsApp.csproj");
-            File.WriteAllText(project, AvaloniaApp.HeadlessProject());
-            return project;
-        }));
+        folder = PathNames.Canonical(folders.Take("xamlbreakpoints-", made => AvaloniaApp.Debuggee(made, "XamlBreakpointsApp")));
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -78,10 +69,10 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal([$"MainWindow.axaml:{top + 1} Width", $"MainWindow.axaml:{save + 1}", $"MainWindow.axaml:{save + 1} Background", $"MainWindow.axaml:{row + 1}", ExceptionBreakpoint.AnyException,
             BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
-        Click(window, Row(breakpoints, $"MainWindow.axaml:{row + 1}"));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, $"MainWindow.axaml:{row + 1}"));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
         window.KeyTextInput("==2");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("==2", store.In(Xaml).Single(b => b.Line == row).HitCondition);
 
         Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
@@ -117,9 +108,70 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         window.Close();
     }
 
+    /// <summary>XamlIl counts lines as an XML reader does, ending one at a lone '\r' and at no U+0085, U+2028 or U+2029, so
+    /// below a comment holding all four and past a lone '\r' in Save's tag the PDB's lines run two ahead of the editor's: the
+    /// breakpoint on Save's Background stops there with the arrow on its line, the frame's row and an agent's place say it,
+    /// and a line typed above while paused moves the arrow and the row with their code, as the next stop, Delete's, is.</summary>
+    [AvaloniaFact]
+    public void Below_line_breaks_only_an_xml_reader_counts_a_xaml_breakpoint_stops_on_its_attribute_at_the_editors_line()
+    {
+        string xaml = File.ReadAllText(Xaml)
+            .Replace("    <StackPanel", $"    <!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd -->\n    <StackPanel", StringComparison.Ordinal)
+            .Replace("<Button x:Name=\"Save\" Content=\"Save\"", "<Button x:Name=\"Save\"\r        Content=\"Save\"", StringComparison.Ordinal);
+        File.WriteAllText(Xaml, xaml);
+        (int save, int background) = EditorPlace(xaml, "Background=\"Orange\"");
+        (int delete, int button) = EditorPlace(xaml, "Button x:Name=\"Delete\"");
+        MainWindow window = Opened();
+        Assert.Null(window.OpenFile(Xaml));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(save, background + 3));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        editor.GoTo(new TextPosition(delete, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Assert.Equal([$"MainWindow.axaml:{save + 1} Background", $"MainWindow.axaml:{delete + 1}"], window.Debugger.Breakpoints.In(Xaml).Select(b => b.Location));
+
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
+        DebugStop stop = Stopped(window, "the stop where Save's Background is set");
+        // The debugger names XamlIl's line and column (from one), past both lone '\r's: Background's begins at the tag's.
+        int named = xaml.IndexOf("Background=\"Orange\"", StringComparison.Ordinal);
+        Assert.Equal((save + 3, named - xaml.LastIndexOf('\r', named)), (stop.Top!.Line, stop.Top.Column));
+        Assert.Equal(new TextPosition(save, background), window.Debugger.PlaceOf(stop.Top));
+        Assert.Contains(new LineMark(save, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(editor.LineMarks, m => m.Line == save && m.Kind == LineMarkKind.BreakpointBound);
+        window.ShowToolWindow(ToolWindowIds.Debug);
+        window.BottomPanel.Debug.ShowTab(console: false);
+        Ui.WaitFor(() => FrameRows(window).Contains($"MainWindow.axaml:{save + 1}"), $"the frame's row to name Save's line, not {string.Join(", ", FrameRows(window))}");
+        Passenger.App.Mcp.DebugSnapshot told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).GetDebugState(), "the stop as an agent is told it");
+        Assert.Equal($"MainWindow.axaml:{save + 1}:{background + 1}", told.Location);
+        Assert.EndsWith($"at MainWindow.axaml:{save + 1}", told.Frames[0], StringComparison.Ordinal);
+
+        // A line broken at the top while paused: the arrow and the frame's row go down with Save's code.
+        editor.GoTo(new TextPosition(0, 0));
+        editor.Focus();
+        Ui.Press(window, "Enter");
+        Assert.Contains(new LineMark(save + 1, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains($"MainWindow.axaml:{save + 2}", FrameRows(window));
+
+        // Delete's element, below them all: its breakpoint, moved by the line, still stops where it was set.
+        Resume(window);
+        stop = Stopped(window, "the stop where Delete is made");
+        Assert.Equal(delete + 3, stop.Top!.Line);
+        Assert.Equal(new TextPosition(delete + 1, button), window.Debugger.PlaceOf(stop.Top));
+        Assert.Contains(new LineMark(delete + 1, LineMarkKind.ExecutionPoint), editor.LineMarks);
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugging to end");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Break_when_value_changes_stops_in_the_code_the_style_or_the_binding_that_changed_that_controls_property()
     {
+        // XamlIl counts the lone '\r' in the window's tag as a line's end, which the editor reads inside its line.
+        string xaml = File.ReadAllText(Xaml).Replace("Title=\"XAML Breakpoints\" Width", "Title=\"XAML Breakpoints\"\r        Width", StringComparison.Ordinal);
+        File.WriteAllText(Xaml, xaml);
+        int red = EditorPlace(xaml, "<Setter Property=\"Foreground\" Value=\"Red\"").Line;
         MainWindow window = Opened();
         Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Save"),
@@ -130,7 +182,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         PropertyBreakpoint background = Watch(window, "Save", "Background");
         Assert.Equal("Background on Button#Save", background.Location);
         Ui.WaitFor(() => background.Status == BreakpointStatus.Bound, $"the debugger to take the property breakpoint, not to say {background.Message}");
-        Say(window, "paint");
+        Ui.TypeToDebugged(window, "paint");
         DebugStop stop = Stopped(window, "the stop where paint sets Save's Background");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Background = Brushes.Green;"));
         Says(window, "Property Breakpoint Hit: Background on Button#Save is changed (Previous Value: Orange, New Value: Green, its local value)");
@@ -145,13 +197,13 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal([background.Location, ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
         Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Avalonia Property Breakpoints");
-        Click(window, Row(breakpoints, background.Location));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, background.Location));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
         window.KeyTextInput("2");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("2", background.HitCondition);
         Ui.Settle();
-        Say(window, "paint");
+        Ui.TypeToDebugged(window, "paint");
         stop = Stopped(window, "the stop at the second change, by the hit count");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Background = Brushes.Blue;"));
         Resume(window);
@@ -163,30 +215,32 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         PropertyBreakpoint width = Watch(window, "Save", "Width");
         Ui.Run(window, AppActions.ViewBreakpoints);
         breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        Click(window, Row(breakpoints, width.Location));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, width.Location));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
         window.KeyTextInput("(double)newValue > 150");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("(double)newValue > 150", width.Condition);
         Ui.Settle();
-        Say(window, "paint");
+        Ui.TypeToDebugged(window, "paint");
         stop = Stopped(window, "the stop where Width goes over 150");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Width = 200;"));
-        Assert.DoesNotContain("could not be evaluated", Console(window), StringComparison.Ordinal);
+        Assert.DoesNotContain(BreakpointConditions.NotEvaluated(DebugSession.EngineCondition(width)), Console(window), StringComparison.Ordinal);
         Resume(window);
 
         // A style, which a class added in code turns on: Delete's change, another control's, does not stop.
         PropertyBreakpoint foreground = Watch(window, "Save", "Foreground");
-        Say(window, "warn");
+        Ui.TypeToDebugged(window, "warn");
         stop = Stopped(window, "the stop where the danger style sets Save's Foreground");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Classes.Add(\"danger\");"));
         Says(window, $"Property Breakpoint Hit: {foreground.Location} is changed");
         Says(window, "by style Button.danger");
+        // Where its setter is written, at the editor's line, which XamlIl's runs one past below the lone '\r'.
+        Says(window, $" at MainWindow.axaml:{red + 1})");
         Resume(window);
 
         // A binding: the caption's Text, which the view model's caption changes.
         Watch(window, "Caption", "Text");
-        Say(window, "rename");
+        Ui.TypeToDebugged(window, "rename");
         stop = Stopped(window, "the stop where the caption's binding sets its Text");
         AssertAt(stop, Path.Combine(folder, "MainViewModel.cs"), Line(Path.Combine(folder, "MainViewModel.cs"), "PropertyChanged?.Invoke"));
         Says(window, "binding");
@@ -199,14 +253,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         window.Close();
     }
 
-    private MainWindow Opened()
-    {
-        MainWindow window = new() { Width = 1400, Height = 900 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900, languageServer: false);
 
     /// <summary>Break When Value Changes from a property's row of a control chosen in the Live Visual Tree: the property
     /// breakpoint it sets, or null when it took the one there away.</summary>
@@ -222,7 +269,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         Ui.Settle();
         tree.PropertyList.SelectedItem = tree.PropertyRows.First(p => p.Name == property);
         Ui.ChooseFromMenu(tree.PropertyList, LiveTreeView.BreakWhenValueChanges);
-        return window.Debugger.Breakpoints.FindProperty(tree.Details!.Id, property)!;
+        return window.Debugger.Breakpoints.FindProperty(window.Debugger.Session!, tree.Details!.Id, property)!;
     }
 
     /// <summary>Waits for the program to stop and the stop to be read, which it returns.</summary>
@@ -254,7 +301,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
     /// <summary>A member of a top-level row of Variables, the row opened to show it.</summary>
     private static string? Member(MainWindow window, string row, string name)
     {
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Depth == 0 && r.Name == row), $"{row} in Variables");
         VariableNode owner = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == row);
         if (!owner.IsExpanded)
@@ -263,20 +310,6 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         }
         Ui.WaitFor(() => owner.Children?.Any(c => c.Name == name) == true, $"{row}'s {name} in Variables");
         return owner.Children!.First(c => c.Name == name).Value;
-    }
-
-    /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
-    private static void Say(MainWindow window, string line)
-    {
-        window.ShowToolWindow("debug");
-        window.BottomPanel.Debug.ShowTab(console: true);
-        Ui.Settle();
-        Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, MouseButton.Left);
-        window.MouseUp(inside, MouseButton.Left);
-        window.KeyTextInput(line);
-        Ui.Press(window, "ENTER");
     }
 
     private static string Console(MainWindow window) => window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
@@ -288,13 +321,19 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
     private static ListBoxItem Row(BreakpointsWindow breakpoints, string location) =>
         breakpoints.GetVisualDescendants().OfType<ListBoxItem>().First(i => (i.Tag as Breakpoint)?.Location == location);
 
-    private static void Click(MainWindow window, Control control)
+    /// <summary>Where (line and column from zero) some text begins in a text as the editor counts lines, at each '\n' alone.</summary>
+    private static (int Line, int Column) EditorPlace(string text, string find)
     {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        int at = text.IndexOf(find, StringComparison.Ordinal);
+        return (text.AsSpan(0, at).Count('\n'), at - text.LastIndexOf('\n', at) - 1);
+    }
+
+    /// <summary>The places the Debug window's frame rows name, as drawn.</summary>
+    private static List<string?> FrameRows(MainWindow window)
+    {
+        Passenger.App.ToolWindows.DebugModel view = window.BottomPanel.Debug;
+        ListBox frames = window.DebugWindow.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
+        return [.. frames.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text)];
     }
 
     /// <summary>The line (from zero) of a file holding some text, so a test names what it means rather than a number.</summary>

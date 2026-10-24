@@ -14,7 +14,7 @@ namespace Passenger.App.Vcs;
 public sealed record ConflictRow(GitConflict Conflict, string Folder, string Yours, string Theirs)
 {
     /// <summary>Whether both sides have the file, so there is something to merge.</summary>
-    public bool CanMerge => Yours == "Modified" && Theirs == "Modified";
+    public bool CanMerge => Conflict.CanMerge;
 }
 
 /// <summary>Rider's Conflicts dialog: what is under way (Merging branch feature into branch main), the files in conflict
@@ -88,7 +88,7 @@ public sealed class ConflictsDialog : Window
 
         acceptYours = ActionButton("Accept Yours", () => AcceptAsync(yours: true));
         acceptTheirs = ActionButton("Accept Theirs", () => AcceptAsync(yours: false));
-        mergeButton = ActionButton("Merge...", MergeAsync);
+        mergeButton = ActionButton("Merge…", MergeAsync);
         StackPanel actions = new()
         {
             [DockPanel.DockProperty] = Avalonia.Controls.Dock.Right,

@@ -1,3 +1,4 @@
+using Passenger.App.CSharp;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
 using Passenger.Lsp;
@@ -11,23 +12,27 @@ public partial class MainWindow
 {
     private HierarchyView? hierarchy;
 
-    public HierarchyView Hierarchy => hierarchy!;
+    /// <summary>The Hierarchy tool window, built as it is first shown or asked for.</summary>
+    public HierarchyView Hierarchy => hierarchy ?? (HierarchyView)Dock[ToolWindowIds.Hierarchy]!.Content;
 
     private void AddHierarchy()
     {
-        hierarchy = new HierarchyView();
-        hierarchy.GoToRequested += (_, node) => NavigateTo(node.Path, node.Where);
-        hierarchy.Failed += (_, why) => status.Text = why;
-        Dock.Add(new Docking.ToolWindow("hierarchy", "Hierarchy", "Icon.Hierarchy", hierarchy, Docking.ToolAnchor.RightTop));
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Hierarchy, "Hierarchy", "Icon.Hierarchy", () =>
+        {
+            hierarchy = new HierarchyView();
+            hierarchy.GoToRequested += (_, node) => NavigateTo(node.Path, node.Where);
+            hierarchy.Failed += (_, why) => status.Text = why;
+            return hierarchy;
+        }, Docking.ToolAnchor.RightTop));
         // What the server finds at the caret, or why it found nothing, the status bar says as it answers.
         actions!.Add(new IdeAction(AppActions.CallHierarchy, "Call Hierarchy", "IDE", context => _ = ShowCallHierarchyAsync())
         {
-            WhyNot = NeedsFile,
+            WhyNot = Refusals.NeedsFile,
             Menus = [new MenuPlace("Navigate", 2, 6)],
         });
         actions.Add(new IdeAction(AppActions.TypeHierarchy, "Type Hierarchy", "IDE", context => _ = ShowTypeHierarchyAsync())
         {
-            WhyNot = NeedsFile,
+            WhyNot = Refusals.NeedsFile,
             Menus = [new MenuPlace("Navigate", 2, 7)],
         });
     }
@@ -40,11 +45,10 @@ public partial class MainWindow
         {
             return why;
         }
-        ShowToolWindow("hierarchy");
-        await Hierarchy.ShowAsync($"Calls of {item.Name}", Node(item), new HierarchyDirection("Callers", async of =>
-            [.. (await RunningServer().IncomingCallsAsync(of)).Select(call => Node(call.From, call.FromRanges.FirstOrDefault()))]),
-            new HierarchyDirection("Callees", async of =>
-            [.. (await RunningServer().OutgoingCallsAsync(of)).Select(call => Node(call.To))]));
+        ShowToolWindow(ToolWindowIds.Hierarchy);
+        await Hierarchy.ShowAsync($"Calls of {item.Name}", Node(item, ServerPlaces.Texts(Editors)), new HierarchyDirection("Callers", async of =>
+            Nodes(await RunningServer().IncomingCallsAsync(of), (call, texts) => Node(call.From, texts, call.FromRanges.FirstOrDefault()))),
+            new HierarchyDirection("Callees", async of => Nodes(await RunningServer().OutgoingCallsAsync(of), (call, texts) => Node(call.To, texts))));
         return null;
     }
 
@@ -56,10 +60,10 @@ public partial class MainWindow
         {
             return why;
         }
-        ShowToolWindow("hierarchy");
-        await Hierarchy.ShowAsync($"Hierarchy of {item.Name}", Node(item),
-            new HierarchyDirection("Supertypes", async of => [.. (await RunningServer().SupertypesAsync(of)).Select(t => Node(t))]),
-            new HierarchyDirection("Subtypes", async of => [.. (await RunningServer().SubtypesAsync(of)).Select(t => Node(t))]));
+        ShowToolWindow(ToolWindowIds.Hierarchy);
+        await Hierarchy.ShowAsync($"Hierarchy of {item.Name}", Node(item, ServerPlaces.Texts(Editors)),
+            new HierarchyDirection("Supertypes", async of => Nodes(await RunningServer().SupertypesAsync(of), (t, texts) => Node(t, texts))),
+            new HierarchyDirection("Subtypes", async of => Nodes(await RunningServer().SubtypesAsync(of), (t, texts) => Node(t, texts))));
         return null;
     }
 
@@ -96,10 +100,17 @@ public partial class MainWindow
         return why;
     }
 
-    /// <summary>An item as a row, landing at a place in it (a call) or at its name.</summary>
-    private static HierarchyNode Node(HierarchyItem item, LspRange? at = null)
+    /// <summary>A level's rows, each file read once for it.</summary>
+    private IReadOnlyList<HierarchyNode> Nodes<T>(IEnumerable<T> found, Func<T, Func<string, TextSnapshot?>, HierarchyNode> node)
     {
-        LspPosition where = (at ?? item.SelectionRange).Start;
-        return new HierarchyNode(item, DocumentUris.ToPath(item.Uri), new TextPosition(where.Line, where.Character));
+        Func<string, TextSnapshot?> texts = ServerPlaces.Texts(Editors);
+        return [.. found.Select(f => node(f, texts))];
+    }
+
+    /// <summary>An item as a row, landing at a place in it (a call) or at its name, in the editor's lines of its file.</summary>
+    private static HierarchyNode Node(HierarchyItem item, Func<string, TextSnapshot?> texts, LspRange? at = null)
+    {
+        string path = DocumentUris.ToPath(item.Uri);
+        return new HierarchyNode(item, path, ServerPlaces.PositionOf(texts(path), (at ?? item.SelectionRange).Start));
     }
 }

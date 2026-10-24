@@ -20,6 +20,9 @@ namespace Passenger.App.State;
 /// document is held once and what one window keeps another reads at once; a headless IDE starts on the defaults.</summary>
 public sealed class StateStore
 {
+    /// <summary>The settings' file at the store's top, which the --mcp-attach proxy reads too.</summary>
+    public const string SettingsFile = "settings.json";
+
     /// <summary>The stores open in this process by their folder: the person's windows share theirs, and a test's windows
     /// the one it names. UI thread only.</summary>
     private static readonly Dictionary<string, StateStore> Shared = new(StringComparer.Ordinal);
@@ -32,13 +35,21 @@ public sealed class StateStore
     {
         Root = root;
         this.key = key;
-        Settings = SettingsStore.Kept(new StateDocument<AppSettings>(Path.Combine(root, "settings.json")));
+        Settings = SettingsStore.Kept(new StateDocument<AppSettings>(Path.Combine(root, SettingsFile)));
         Layout = new(Path.Combine(root, "layout.json"));
         Recent = new(Path.Combine(root, "recentSolutions.json"));
         Updates = new(Path.Combine(root, "updates.json"));
         Find = new(Path.Combine(root, "find.json"));
         Refactorings = new(Path.Combine(root, "refactorings.json"));
+        Previews = new(Path.Combine(root, "previews.json"));
+        // Before this process writes any: a change is written a moment after it is made, and only through this store.
+        UsedBefore = new[] { Path.Combine(root, SettingsFile), Layout.Path, Recent.Path, Updates.Path }.Any(File.Exists)
+            || Directory.Exists(Path.Combine(root, "workspaces"));
     }
+
+    /// <summary>Whether a Passenger kept its state here before this process opened the store: one of the app's documents,
+    /// or a folder's, was there already (the logs, which every start writes, are none).</summary>
+    public bool UsedBefore { get; }
 
     /// <summary>The variable that names the folder in the user's local application data's place.</summary>
     public const string Variable = "PASSENGER_SETTINGS";
@@ -101,6 +112,9 @@ public sealed class StateStore
     /// application's.</summary>
     public StateDocument<RenameSettings> Refactorings { get; }
 
+    /// <summary>Which kinds of file show their preview beside their editor, as the person left them.</summary>
+    public StateDocument<PreviewsState> Previews { get; }
+
     /// <summary>A folder's own documents.</summary>
     public ProjectState Project(string folder)
     {
@@ -121,6 +135,7 @@ public sealed class StateStore
         Updates.Flush();
         Find.Flush();
         Refactorings.Flush();
+        Previews.Flush();
         foreach (ProjectState project in projects.Values)
         {
             project.Flush();
@@ -134,8 +149,10 @@ public sealed class StateStore
 }
 
 /// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
-/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, whether agents
-/// are let in unasked, and its projects as MSBuild last evaluated and built them at design time.</summary>
+/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, what its
+/// .http requests may take from the person's computer, the publish profile each project last published with, and its
+/// projects as MSBuild last evaluated and built them at design time. The folders agents are let in on unasked are the
+/// settings' (<see cref="AppSettings.AgentFolders"/>), which every window shares.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -150,6 +167,8 @@ public sealed class ProjectState
         Find = new(Path.Combine(Folder, "find.json"));
         UnitTests = new(Path.Combine(Folder, "unitTests.json"));
         GitBranches = new(Path.Combine(Folder, "gitBranches.json"));
+        Endpoints = new(Path.Combine(Folder, "endpoints.json"));
+        Publish = new(Path.Combine(Folder, "publish.json"));
         ProjectModels = new(Path.Combine(Folder, "projectModels.json"));
         ProjectBuilds = new(Path.Combine(Folder, "projectBuilds.json"));
     }
@@ -186,11 +205,25 @@ public sealed class ProjectState
     /// <summary>The branches marked and unmarked as favourites in the Git log, as Rider keeps them for a project.</summary>
     public StateDocument<ToolWindows.GitBranchesState> GitBranches { get; }
 
+    /// <summary>The environment variables and files outside the folder its .http requests may send, each to one host.</summary>
+    public StateDocument<Passenger.App.Endpoints.EndpointsState> Endpoints { get; }
+
+    /// <summary>The publish profile each project last published with, which Publish Again publishes it with.</summary>
+    public StateDocument<Run.PublishState> Publish { get; }
+
     /// <summary>The folder's projects as MSBuild last evaluated them, which it opens on.</summary>
     public StateDocument<ProjectModelCache> ProjectModels { get; }
 
     /// <summary>The folder's projects' design-time builds, which Roslyn's server loads them from.</summary>
     public StateDocument<ProjectBuildCache> ProjectBuilds { get; }
+
+    /// <summary>Reads, off the UI thread and at once, the documents a folder's open restores (its layout, editors,
+    /// breakpoints, bookmarks, configurations, the Unit Tests window's view, branches, scopes, grants and publish
+    /// profiles), so the restore takes them in with no read of its own (#233: unitTests.json alone held an open 75 ms).
+    /// Done at once for those read already.</summary>
+    public Task ReadAsync() => Task.WhenAll(Workspace.ValueAsync(), Layout.ValueAsync(), Breakpoints.ValueAsync(), Bookmarks.ValueAsync(),
+        RunConfigurations.ValueAsync(), Find.ValueAsync(), UnitTests.ValueAsync(), GitBranches.ValueAsync(), Endpoints.ValueAsync(),
+        Publish.ValueAsync());
 
     public void Flush()
     {
@@ -204,5 +237,7 @@ public sealed class ProjectState
         Find.Flush();
         UnitTests.Flush();
         GitBranches.Flush();
+        Endpoints.Flush();
+        Publish.Flush();
     }
 }

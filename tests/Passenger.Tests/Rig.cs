@@ -6,6 +6,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Passenger.Editor;
 using Passenger.Text;
 using Xunit.v3;
@@ -36,13 +37,21 @@ public static class TestApp
 /// killed left goes when the next begins.</summary>
 public sealed class TestRun : IDisposable
 {
-    private const string Prefix = "passenger-run-";
+    internal const string Prefix = "passenger-run-";
+
+    /// <summary>What ends the run's folder's name: Spotlight indexes the system's temporary folder but passes over a folder
+    /// so named, so it reads none of a run's thousands of files, nor the stand-in apps whose seals tests break.</summary>
+    internal const string Unindexed = ".noindex";
 
     /// <summary>The run's folder, named for the test process.</summary>
-    public static string Root { get; } = Path.Combine(Path.GetTempPath(), Prefix + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public static string Root { get; } = Path.Combine(Path.GetTempPath(), Prefix + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + Unindexed);
 
     /// <summary>The IDE's state folder for the whole run.</summary>
     public static string Settings => Path.Combine(Root, "settings");
+
+    /// <summary>Where the run's IDE finds user secrets in place of the person's own: a project's folder there, by its id, is
+    /// what a container run mounts.</summary>
+    public static string UserSecrets => Path.Combine(Root, "usersecrets");
 
     /// <summary>What every wall-clock limit of a test is multiplied by (<see cref="Limits.Scaled"/>): <c>PASSENGER_TEST_TIME_SCALE</c>,
     /// read once, 1 when unset, as on a developer's machine, for whose times each limit is written; CI sets it for each
@@ -90,7 +99,8 @@ public sealed class TestRun : IDisposable
         foreach (string left in Directory.EnumerateDirectories(Path.GetTempPath(), Prefix + "*"))
         {
             // A run still going has its process; one killed has none, and only an id reused since keeps its folder.
-            if (int.TryParse(Path.GetFileName(left)[Prefix.Length..], out int id) && (id == Environment.ProcessId || !Processes.IsRunning(id)))
+            if (int.TryParse(Path.GetFileName(left)[Prefix.Length..].Replace(Unindexed, string.Empty, StringComparison.Ordinal), out int id)
+                && (id == Environment.ProcessId || !Processes.IsRunning(id)))
             {
                 TestFolders.Delete(left);
             }
@@ -108,6 +118,7 @@ public sealed class TestRun : IDisposable
         // and zsh takes its startup files, and from them its history, from ZDOTDIR.
         Environment.SetEnvironmentVariable("HISTFILE", Path.Combine(Root, "history"));
         Environment.SetEnvironmentVariable("ZDOTDIR", Directory.CreateDirectory(Path.Combine(Root, "zsh")).FullName);
+        File.WriteAllText(Path.Combine(Root, "zsh", ".zshrc"), string.Empty);
         NuGetHome();
         // No test reaches GitHub: a window or a Passenger started that checks for updates without a stand-in of its own
         // asks a loopback port nothing listens on.
@@ -116,6 +127,13 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable(Passenger.App.Xaml.SourceLink.Variable, "http://127.0.0.1:9/");
         // Nor the web for a JSON schema a file names: those Passenger does not carry are asked of where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Web.JsonSchemas.Variable, "http://127.0.0.1:9/");
+        // Nor Docker Hub for an image's tags after FROM image:, which a Dockerfile server without a stand-in of its window's asks of where nothing listens.
+        Environment.SetEnvironmentVariable(Passenger.App.Web.DockerHubTags.Variable, "http://127.0.0.1:9/");
+        // Nor a registry for a Dockerfile's base images: BuildKit's checks, which read their metadata there, are off in every
+        // window's settings but in the one test that turns them on.
+        Environment.SetEnvironmentVariable(Passenger.App.Containers.BuildKitChecks.Variable, "off");
+        // Nor the person's user secrets: a container run mounts a project's from the run's own folder, which a test writes.
+        Environment.SetEnvironmentVariable(Passenger.App.Containers.ContainerPlans.UserSecretsVariable, UserSecrets);
         // Nor the person's Passenger: an agent's call with no window to join starts this build headless, in the run's state.
         Environment.SetEnvironmentVariable(Passenger.App.Mcp.McpProxy.StartVariable, "headless");
         // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.
@@ -134,12 +152,26 @@ public sealed class TestRun : IDisposable
         // Nor the person's application data: a Testing Platform test app the IDE runs writes its first-run notice's
         // sentinel there (Microsoft/TestingPlatform) unless telemetry is opted out.
         Environment.SetEnvironmentVariable("TESTINGPLATFORM_TELEMETRY_OPTOUT", "1");
+        // Nor Aspire's: an aspire CLI or AppHost the run starts keeps its settings, logs and first-run sentinel in the run's
+        // own home (ASPIRE_HOME), sends no telemetry and looks for no newer version of itself or of Aspire.
+        Environment.SetEnvironmentVariable("ASPIRE_HOME", Path.Combine(Root, "aspire-home"));
+        Environment.SetEnvironmentVariable("ASPIRE_CLI_TELEMETRY_OPTOUT", "1");
+        Environment.SetEnvironmentVariable("features__updateNotificationsEnabled", "false");
+        Environment.SetEnvironmentVariable("ASPIRE_VERSION_CHECK_DISABLED", "true");
+        // Nor the person's aspire CLI, nor their ~/.aspire: the run's own CLI, with a home of the run's own, is the only aspire
+        // on the run's PATH (AspireCli), and it makes no development certificate where it would only check one.
+        Environment.SetEnvironmentVariable("ASPIRE_CLI_GENERATE_HTTPS_CERTIFICATE", "false");
+        AspireCli.Begin(Root);
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
-        // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Debugger's Extensions.EvaluationTimeoutVariable;
+        // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Dap's AdapterEnvironment.EvaluationTimeoutVariable;
         // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it
-        // made of a save are followed for 3 s, not 10.
-        Environment.SetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS", "3000");
+        // made of a save are followed for 3 s, not 10, and an agent's call that takes a while tells it so every second, not
+        // every 10 s.
+        Environment.SetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "3000");
         Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
+        Environment.SetEnvironmentVariable(Passenger.App.Mcp.AgentCall.EveryVariable, "1000");
+        // The IDE's own waits on what it started (an Aspire service's start, a restart's wait for it) as long as the run's.
+        Environment.SetEnvironmentVariable(Passenger.App.Waits.ScaleVariable, TimeScale.ToString(System.Globalization.CultureInfo.InvariantCulture));
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }
@@ -196,8 +228,10 @@ public sealed class TestRun : IDisposable
 
     private static void End()
     {
+        // No child holds a container: what the run's tests made, and what they had the IDE make, goes by its labels.
+        Docker.RemoveEverything();
         // The windows' agent sockets are in a folder named for the run's state, outside it.
-        foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder])
+        foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder, AspireCli.Home])
         {
             try
             {
@@ -504,6 +538,30 @@ public static class TestFolders
         }
     }
 
+    /// <summary>A symlink to a folder; where Windows lets this user make none (no Developer Mode), a junction, which any
+    /// user may make and which a walk of the folders goes through as it goes through a symlink.</summary>
+    public static void LinkFolder(string path, string target)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(path, target);
+        }
+        catch (Exception refused) when (OperatingSystem.IsWindows() && refused is IOException or UnauthorizedAccessException)
+        {
+            Passenger.Core.ChildResult made = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(
+                Passenger.Core.ChildProcesses.Command("cmd.exe", ["/c", "mklink", "/J", path, target]), limit: TimeSpan.FromMinutes(1).Scaled())).GetAwaiter().GetResult();
+            Assert.True(made.Succeeded, $"Windows made neither a symlink ({refused.Message}) nor a junction at {path}: {made.Output}{made.Error}");
+        }
+    }
+
+    /// <summary>A file of a test's folder written, the folders it is in made first.</summary>
+    public static void Write(string folder, string relative, string text)
+    {
+        string path = Path.Combine(folder, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+
     public static void Begin(string test) => Made[test] = [];
 
     public static void End(string test)
@@ -688,7 +746,9 @@ public static class Ui
 
     /// <summary>Runs queued UI work and waits until the IDE is quiet: its background work landed (<see cref="BackgroundWork"/>),
     /// nothing in flight that no frame waits for (<see cref="Passenger.Core.InFlight"/>: a language server's request
-    /// unanswered), and every dispatcher timer that has come due fired. Fails naming what was still busy, and since when.</summary>
+    /// unanswered), every dispatcher timer that has come due fired, and the frame its last work laid out drawn
+    /// (<see cref="Drawn"/>), so a look at bounds or a click finds what that work showed. Fails naming what was still busy,
+    /// and since when.</summary>
     public static void Settle()
     {
         TimeSpan limit = SettleLimit.Scaled();
@@ -704,8 +764,51 @@ public static class Ui
         AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
         PromoteTimers(Dispatcher.UIThread);
         Dispatcher.UIThread.RunJobs();
+        if (BackgroundWork.Pending != 0 || Passenger.Core.InFlight.Count != 0)
+        {
+            return false;
+        }
+        Draw();
         return BackgroundWork.Pending == 0 && Passenger.Core.InFlight.Count == 0;
     }, limit - DateTime.UtcNow, every: TimeSpan.FromMilliseconds(2), scaled: false);
+
+    /// <summary>Runs what the window has queued (its layout among it) and draws until what that laid out is drawn
+    /// (<see cref="Drawn"/>): at most three frames, since an animation always has a next one, and three always do.</summary>
+    private static void Draw()
+    {
+        Dispatcher.UIThread.RunJobs();
+        for (int frame = 0; frame < 3 && !Drawn(); frame++)
+        {
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>Whether Avalonia has laid out and drawn every window as its last work left it: no render or layout pass
+    /// queued, no frame held back until the one before it was drawn, and none handed to the compositor but not yet drawn.
+    /// Hit testing reads the last frame drawn, so until then a click lands on what the window showed before.</summary>
+    private static bool Drawn()
+    {
+        object media = MediaContext.GetValue(null) ?? throw new InvalidOperationException("Avalonia has no media context");
+        return NextRender.GetValue(media) is null
+            && ((IReadOnlyCollection<Avalonia.Rendering.Composition.Compositor>)RequestedCommits.GetValue(media)!).Count == 0
+            && ((System.Collections.ICollection)PendingBatches.GetValue(media)!).Count == 0;
+    }
+
+    private static readonly Type MediaContextType = typeof(Visual).Assembly.GetType("Avalonia.Media.MediaContext")
+        ?? throw new MissingMemberException("Avalonia no longer has its MediaContext, by which a settle sees its frames drawn");
+
+    private static readonly PropertyInfo MediaContext = MediaContextType.GetProperty("Instance", BindingFlags.Static | BindingFlags.Public)
+        ?? throw new MissingMemberException("Avalonia's MediaContext no longer has its Instance");
+
+    private static readonly FieldInfo NextRender = MediaContextField("_nextRenderOp");
+
+    private static readonly FieldInfo RequestedCommits = MediaContextField("_requestedCommits");
+
+    private static readonly FieldInfo PendingBatches = MediaContextField("_pendingCompositionBatches");
+
+    private static FieldInfo MediaContextField(string name) => MediaContextType.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new MissingFieldException($"Avalonia's MediaContext no longer has {name}, by which a settle sees its frames drawn");
 
     /// <summary>What the IDE was busy with as a wait gave up: each hold of background work by where it was taken, and each
     /// piece of work in flight, with how long it had been under way.</summary>
@@ -744,9 +847,14 @@ public static class Ui
     }
 
     /// <summary>Waits for something to become true, running the dispatcher's loop (and so its timers)
-    /// meanwhile; fails naming what never happened. What it waits for may hold background work all along (a build, a test
+    /// meanwhile, and ends with the window laid out and drawn as it then stands; fails naming what never happened. What it waits for may hold background work all along (a build, a test
     /// run), which it then waits out for as long as it waits, not for <see cref="Settle"/>'s own limit alone.</summary>
-    public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null)
+    public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null) => WaitFor(condition, () => what, limit);
+
+    /// <summary><see cref="WaitFor(Func{bool}, string, TimeSpan?)"/> whose words are made as it gives up, so what it says
+    /// of the window (its status, a model's state) is what stood then: words made as a wait begins tell how it began, which
+    /// read as what it hung on (#433's "hang" was the status as the wait began).</summary>
+    public static void WaitFor(Func<bool> condition, Func<string> what, TimeSpan? limit = null)
     {
         TimeSpan within = (limit ?? SettleLimit).Scaled();
         DateTime until = DateTime.UtcNow + within;
@@ -754,15 +862,17 @@ public static class Ui
         {
             if (DateTime.UtcNow > until)
             {
-                throw new TimeoutException($"Waited {within.TotalSeconds} s for {what}");
+                throw new TimeoutException($"Waited {within.TotalSeconds} s for {what()}");
             }
             Frame();
             DateTime settling = DateTime.UtcNow + SettleLimit.Scaled();
             if (!Settled(settling > until ? settling : until))
             {
-                throw new TimeoutException($"The IDE was not quiet while waiting {within.TotalSeconds} s for {what}. Still busy:\n{Busy()}{IdeLogTail()}{ServerLogTail()}");
+                throw new TimeoutException($"The IDE was not quiet while waiting {within.TotalSeconds} s for {what()}. Still busy:\n{Busy()}{IdeLogTail()}{ServerLogTail()}");
             }
         }
+        // What it waited for may have landed with none of the window's jobs run since (a read that ended at once).
+        Draw();
     }
 
     /// <summary>Waits for a task the window started (a run, a debug session's start) as <see cref="WaitFor"/> waits, and
@@ -771,6 +881,13 @@ public static class Ui
     {
         WaitFor(() => task.IsCompleted, what, limit);
         return task.GetAwaiter().GetResult();
+    }
+
+    /// <inheritdoc cref="Await{T}(Task{T}, string, TimeSpan?)"/>
+    public static void Await(Task task, string what, TimeSpan? limit = null)
+    {
+        WaitFor(() => task.IsCompleted, what, limit);
+        task.GetAwaiter().GetResult();
     }
 
     /// <summary>Waits for a launch the window started (Run, Debug, Profile, a test run) as <see cref="Await"/> does, and
@@ -865,21 +982,279 @@ public static class Ui
     /// the IDE does while its window falls behind.</summary>
     public static void Stall(TimeSpan time, string why) => Waiting.For(time, why);
 
-    /// <summary>Opens a control's right-click menu for what it has chosen, as the menu key does, and chooses an item,
-    /// failing if it is not there or cannot run.</summary>
-    public static void ChooseFromMenu(Control owner, string item)
+    /// <summary>A click as a person's mouse makes it, pressed and let go at the control's centre (or a point in it) in the
+    /// window or popup showing it, once that is drawn; fails unless the control is shown, enabled and what the pointer finds
+    /// there, since a click it would miss does nothing for a person. Then lets what it ran land, unless told not to (a
+    /// click during work that holds background work, which the test pumps through itself).</summary>
+    public static void Click(Control control, Point? at = null, RawInputModifiers modifiers = RawInputModifiers.None, bool settle = true) =>
+        Click(control, at, MouseButton.Left, modifiers, settle);
+
+    /// <summary>A right click as <see cref="Click(Control, Point?, RawInputModifiers, bool)"/> makes a click, which opens
+    /// the menu of what is there.</summary>
+    public static void RightClick(Control control, Point? at = null) => Click(control, at, MouseButton.Right, RawInputModifiers.None, settle: true);
+
+    /// <summary>Two clicks in quick succession at the same place, as a person opens what a row holds.</summary>
+    public static void DoubleClick(Control control, Point? at = null)
+    {
+        (TopLevel top, Point point) = Aim(control, at);
+        for (int i = 0; i < 2; i++)
+        {
+            top.MouseDown(point, MouseButton.Left);
+            top.MouseUp(point, MouseButton.Left);
+        }
+        Settle();
+    }
+
+    private static void Click(Control control, Point? at, MouseButton button, RawInputModifiers modifiers, bool settle)
+    {
+        (TopLevel top, Point point) = Aim(control, at);
+        top.MouseDown(point, button, modifiers);
+        top.MouseUp(point, button, modifiers);
+        if (settle)
+        {
+            Settle();
+        }
+    }
+
+    /// <summary>Where a click on a control lands, in the window or popup showing it, scrolled into view, the tooltips the pointer
+    /// leaves shut, and drawn (hit testing reads the last frame drawn); fails unless the control is shown, enabled and inside
+    /// it, and the pointer finds it there.</summary>
+    private static (TopLevel Top, Point Point) Aim(Control control, Point? at)
+    {
+        // A person scrolls to what they click; one already in view stays where it is.
+        control.BringIntoView();
+        string name = Named(control);
+        TopLevel top = TopLevel.GetTopLevel(control) ?? throw new Xunit.Sdk.XunitException($"{name} is in no window, so a click cannot reach it");
+        ShutToolTipsLeft(top, control);
+        Draw();
+        Assert.True(control.IsEffectivelyVisible, $"{name} is hidden, so a click cannot reach it");
+        Assert.True(control.IsEffectivelyEnabled, $"{name} is disabled, so a click on it does nothing");
+        Point point = control.TranslatePoint(at ?? new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), top)
+            ?? throw new Xunit.Sdk.XunitException($"{name} is not laid out in its window");
+        Assert.True(new Rect(top.ClientSize).Contains(point), $"{name} is outside its window ({point} in {top.ClientSize}), so a click cannot reach it");
+        IInputElement? found = top.InputHitTest(point);
+        if (found?.GetType().Name == "LightDismissOverlayLayer")
+        {
+            // An open menu's layer takes the click to close it, then passes it on to what is under it.
+            found = top.InputHitTest(point, v => v.GetType().Name != "LightDismissOverlayLayer");
+        }
+        Assert.True(found is Visual visual && (visual == control || control.IsVisualAncestorOf(visual)),
+            $"A click on {name} lands on {(found is Control other ? Covering(other) : found?.ToString() ?? "nothing")} instead, which covers it there ({point} in {top.ClientSize})");
+        return (top, point);
+    }
+
+    /// <summary>Shuts each tooltip of what the pointer leaves for a click elsewhere, as a person's pointer moving there does. The
+    /// rig's pointer jumps to a click without moving, so Avalonia hears it rests on what it pressed only as the window redraws
+    /// under it, and opens that control's tooltip 400 ms on (a person's move there told it first, and the press shut it for
+    /// as long as the pointer stays); on a slow runner a click's wait outlasts that and the tip covers what is clicked next.</summary>
+    private static void ShutToolTipsLeft(TopLevel top, Control control)
+    {
+        foreach (ToolTip tip in top.GetVisualDescendants().OfType<ToolTip>().ToList())
+        {
+            if (tip.Parent is Avalonia.Controls.Primitives.Popup { PlacementTarget: Control owner } && owner != control && !owner.IsVisualAncestorOf(control))
+            {
+                ToolTip.SetIsOpen(owner, false);
+            }
+        }
+    }
+
+    /// <summary>What a control is, whose template part it is when it is one and what holds it, so a cover is known by what
+    /// drew it.</summary>
+    private static string Covering(Control control) => control.TemplatedParent is Control owner ? $"{Named(control)} of {Covering(owner)}"
+        : string.Join(" in ", control.GetVisualAncestors().OfType<Control>().Take(6).Prepend(control).Select(Named));
+
+    /// <summary>A person's window shown on a folder, once the folder's opening work has landed; without the C# language
+    /// server for a test that asks nothing of C# (<see cref="Passenger.App.MainWindow.StartsLanguageServer"/>), which then
+    /// waits for no server's start, load or restore.</summary>
+    public static Passenger.App.MainWindow OpenFolder(string folder, double width = 1200, double height = 800, bool languageServer = true)
+    {
+        Passenger.App.MainWindow window = new() { Width = width, Height = height, StartsLanguageServer = languageServer };
+        window.Show();
+        window.OpenFolder(folder);
+        Settle();
+        return window;
+    }
+
+    /// <summary>The caret put just after the first place some text is in an editor, failing when the text is not there.</summary>
+    public static void PlaceAfter(CodeEditor editor, string text)
+    {
+        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"'{text}' is not in the file");
+        editor.Selections = SelectionSet.Single(at + text.Length);
+    }
+
+    /// <summary>A line typed into a console (Run's, Debug's) as a person types it there, a click in it first taking the keys:
+    /// the console sends it to its program's input.</summary>
+    public static void TypeLine(Passenger.App.ToolWindows.OutputView console, string line)
+    {
+        Click(console.Editor, settle: false);
+        TopLevel top = TopLevel.GetTopLevel(console)!;
+        top.KeyTextInput(line);
+        Press(top, "ENTER");
+    }
+
+    /// <summary>Clicks the button (or toggle) showing these words among a control's descendants, failing naming the words
+    /// the buttons there show when none shows them.</summary>
+    public static void ClickButton(Visual within, string words)
+    {
+        Button[] buttons = [.. within.GetVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible)];
+        Click(buttons.FirstOrDefault(b => b.Content as string == words)
+            ?? throw new Xunit.Sdk.XunitException($"No button says {words}: [{string.Join(", ", buttons.Select(b => b.Content).OfType<string>())}]"));
+    }
+
+    /// <summary>A click on a console line's link to a file, at its first character, as a person clicks it: the pointer
+    /// rested there first, failing unless that underlines the link.</summary>
+    public static void ClickLink(Passenger.App.ToolWindows.OutputView console, string line)
+    {
+        CodeEditor editor = console.Editor;
+        Passenger.App.ToolWindows.FoundLink link = console.Links.In(line).Single(l => l.Target is Passenger.App.ToolWindows.FileLink);
+        int offset = editor.Document.Snapshot.ToString().IndexOf(line, StringComparison.Ordinal) + link.Start;
+        editor.GoTo(editor.Document.Snapshot.GetPosition(offset));
+        Settle();
+        Point within = editor.PointOf(offset) + new Vector(2, editor.LineHeight / 2);
+        TopLevel top = TopLevel.GetTopLevel(editor)!;
+        top.MouseMove(editor.TranslatePoint(within, top)!.Value);
+        Settle();
+        Assert.True(editor.HoveredLink is { Target: Passenger.App.ToolWindows.FileLink }, $"The pointer rests on the line's place but nothing is underlined:\n{line}");
+        Click(editor, within);
+    }
+
+    /// <summary>A line of the program Run started, typed into the Run window's console.</summary>
+    public static void TypeToRun(Passenger.App.MainWindow window, string line)
+    {
+        window.ShowToolWindow(Passenger.App.ToolWindowIds.Run);
+        Settle();
+        TypeLine(window.BottomPanel.Run, line);
+    }
+
+    /// <summary>A line of the debugged program's input, typed into the Debug window's console.</summary>
+    public static void TypeToDebugged(Passenger.App.MainWindow window, string line)
+    {
+        window.ShowToolWindow(Passenger.App.ToolWindowIds.Debug);
+        window.BottomPanel.Debug.ShowTab(console: true);
+        Settle();
+        TypeLine(window.BottomPanel.Debug.Console, line);
+    }
+
+    /// <summary>A control as a failure message names it: by its name, words or tip.</summary>
+    public static string Named(Control control) => control switch
+    {
+        { Name.Length: > 0 } => $"{control.GetType().Name} {control.Name}",
+        Avalonia.Controls.Primitives.HeaderedSelectingItemsControl { Header: string header } => $"{control.GetType().Name} '{header}'",
+        ContentControl { Content: string words } => $"{control.GetType().Name} '{words}'",
+        _ when ToolTip.GetTip(control) is string tip => $"{control.GetType().Name} '{tip}'",
+        _ => control.GetType().Name,
+    };
+
+    /// <summary>Opens a control's right-click menu for what it has chosen, as the menu key does, and chooses an item as
+    /// <see cref="Choose"/> does.</summary>
+    public static void ChooseFromMenu(Control owner, params string[] path)
     {
         ContextMenu menu = owner.ContextMenu ?? throw new InvalidOperationException($"{owner.GetType().Name} has no menu");
         owner.RaiseEvent(new ContextRequestedEventArgs());
         Settle();
-        MenuItem? chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item);
-        if (chosen is null || !chosen.IsEnabled)
-        {
-            throw new InvalidOperationException($"The menu has no {item} to choose: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => $"{i.Header}{(i.IsEnabled ? "" : " (disabled)")}"))}]");
-        }
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
+        Choose(menu, path);
+    }
+
+    /// <summary>Opens the shown editor's menu at its caret, as the menu key does, and chooses an item as
+    /// <see cref="Choose"/> does.</summary>
+    public static void ChooseFromEditorMenu(Passenger.App.MainWindow window, params string[] path)
+    {
+        window.EditorArea.CodeEditor.RequestContextMenu();
         Settle();
+        Choose(window.OpenContextMenu ?? throw new Xunit.Sdk.XunitException("The editor's menu did not open"), path);
+    }
+
+    /// <summary>Right-clicks a row of the Explorer and chooses an item of the menu it opens as <see cref="Choose"/> does,
+    /// failing unless the right click chose that row, so the menu is the row's own.</summary>
+    public static void ChooseFromRowMenu(Passenger.App.MainWindow window, Passenger.App.Explorer.ExplorerNode row, params string[] path)
+    {
+        RightClick(Row(window.ExplorerView, row));
+        Assert.True(window.ExplorerView.SelectedNodes.Contains(row),
+            $"A right-click on {row.Name} left [{string.Join(", ", window.ExplorerView.SelectedNodes.Select(n => n.Name))}] chosen, so its menu is another row's");
+        Choose(window.ExplorerView.OpenMenu ?? throw new Xunit.Sdk.XunitException($"A right-click on {row.Name} opened no menu"), path);
+    }
+
+    /// <summary>Clicks a row of the Explorer, as a person chooses one before pressing a key or dragging it, failing unless
+    /// that row alone is then chosen.</summary>
+    public static void ClickRow(Passenger.App.MainWindow window, Passenger.App.Explorer.ExplorerNode row)
+    {
+        Click(Row(window.ExplorerView, row));
+        Assert.True(window.ExplorerView.SelectedNodes.SequenceEqual([row]),
+            $"A click on {row.Name} left [{string.Join(", ", window.ExplorerView.SelectedNodes.Select(n => n.Name))}] chosen");
+    }
+
+    /// <summary>The centre of a control, in another's coordinates (its window's, for a drag's points).</summary>
+    public static Point Centre(Control control, Visual within) =>
+        control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), within)
+        ?? throw new Xunit.Sdk.XunitException($"{Named(control)} is not laid out in {within.GetType().Name}");
+
+    /// <summary>A row of the Explorer as it shows it, scrolled into view.</summary>
+    public static Control Row(Passenger.App.Explorer.ExplorerView explorer, Passenger.App.Explorer.ExplorerNode row)
+    {
+        ListBox rows = explorer.Rows();
+        rows.ScrollIntoView(row);
+        Settle();
+        return rows.ContainerFromItem(row) ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {row.Name}");
+    }
+
+    /// <summary>A row of a list as it shows it, scrolled into view.</summary>
+    public static Control Row(ListBox list, object row)
+    {
+        list.ScrollIntoView(row);
+        Settle();
+        return list.ContainerFromItem(row) ?? throw new Xunit.Sdk.XunitException($"The list does not show {row}");
+    }
+
+    /// <summary>Chooses an item of an open menu, through the submenus named before it ("Add", "Docker Support"), refusing
+    /// (InvalidOperationException) naming what the menu has when it lacks one or has it disabled. The item is clicked as a person's is; then the menu
+    /// is closed, should the item have left it open, and what it ran is let land.</summary>
+    public static void Choose(ContextMenu? menu, params string[] path)
+    {
+        ChooseIn(menu?.Items, path);
+        menu!.Close();
+        Settle();
+    }
+
+    /// <inheritdoc cref="Choose(ContextMenu?, string[])"/>
+    public static void Choose(MenuFlyout? menu, params string[] path)
+    {
+        ChooseIn(menu?.Items, path);
+        menu!.Hide();
+        Settle();
+    }
+
+    private static void ChooseIn(System.Collections.IEnumerable? shown, string[] path)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(path.Length);
+        if (shown is null)
+        {
+            throw new Xunit.Sdk.XunitException($"No menu is open to choose {string.Join(" > ", path)} from");
+        }
+        IEnumerable<MenuItem> items = shown.OfType<MenuItem>();
+        string where = "The menu";
+        for (int i = 0; i < path.Length; i++)
+        {
+            string step = path[i];
+            MenuItem item = items.FirstOrDefault(m => (string?)m.Header == step)
+                ?? throw new InvalidOperationException($"{where} has no {step}: [{string.Join(", ", items.Select(m => $"{m.Header}{(m.IsEnabled ? "" : " (disabled)")}"))}]");
+            if (!item.IsEffectivelyEnabled)
+            {
+                throw new InvalidOperationException($"{where} has {step} disabled: {ToolTip.GetTip(item)}");
+            }
+            if (i == path.Length - 1)
+            {
+                Click(item);
+                break;
+            }
+            if (!item.IsSubMenuOpen)
+            {
+                Click(item);
+            }
+            Assert.True(item.IsSubMenuOpen, $"A click on {step} left its submenu closed");
+            items = item.Items.OfType<MenuItem>();
+            where = step;
+        }
     }
 
     /// <summary>A submenu of the menu bar as the platform opens it: asked to bring its items up to date first.</summary>
@@ -892,15 +1267,8 @@ public static class Ui
     }
 
     /// <summary>The clipboard's text, read as a paste would read it.</summary>
-    public static string? Clipboard(TopLevel window)
-    {
-        Task<string?> text = Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!);
-        while (!text.IsCompleted)
-        {
-            Settle();
-        }
-        return text.Result;
-    }
+    public static string? Clipboard(TopLevel window) =>
+        Await(Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!), "the clipboard's text");
 
     /// <summary>Files dragged from the system's file manager onto the middle of a control and dropped there, as the
     /// platform delivers such a drag (an enter, a move, the drop).</summary>
@@ -969,6 +1337,43 @@ public static class Ui
             : Avalonia.Media.Color.FromRgb(pixel[2], pixel[1], pixel[0]);
     }
 
+    /// <summary>Fails unless an editor's gutter and text, as the compositor last drew them, each show more than a ground: an
+    /// editor drawing no rows leaves both a colour or two, where line numbers and code bring the shades of their glyphs.</summary>
+    public static void DrawsText(TopLevel window, CodeEditor editor, string after)
+    {
+        Settle();
+        using Avalonia.Media.Imaging.WriteableBitmap frame = window.CaptureRenderedFrame()
+            ?? throw new InvalidOperationException("The window has drawn no frame.");
+        double textLeft = editor.PointOf(0).X + editor.ScrollOffset.X;
+        int gutter = Colours(new Rect(0, 0, textLeft - 2, editor.Bounds.Height));
+        // Short of the scroll bar's error stripe and the problem counts over it.
+        int text = Colours(new Rect(textLeft, 0, Math.Max(1, editor.Bounds.Width - textLeft - 80), editor.Bounds.Height));
+        Assert.True(gutter > 4 && text > 4,
+            $"After {after} the editor drew no rows ({gutter} colours in its gutter, {text} in its text), scrolled {editor.ScrollOffset.Y / editor.LineHeight:0.#} rows down a text of {editor.RowsShown}");
+
+        int Colours(Rect area)
+        {
+            Point from = editor.TranslatePoint(area.TopLeft, window)!.Value;
+            PixelRect pixels = new(PixelPoint.FromPoint(from, window.RenderScaling), PixelSize.FromSize(area.Size, window.RenderScaling));
+            byte[] bytes = new byte[pixels.Width * pixels.Height * 4];
+            System.Runtime.InteropServices.GCHandle pinned = System.Runtime.InteropServices.GCHandle.Alloc(bytes, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try
+            {
+                frame.CopyPixels(pixels, pinned.AddrOfPinnedObject(), bytes.Length, pixels.Width * 4);
+            }
+            finally
+            {
+                pinned.Free();
+            }
+            HashSet<int> seen = [];
+            for (int i = 0; i < bytes.Length; i += 4)
+            {
+                seen.Add(bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16));
+            }
+            return seen.Count;
+        }
+    }
+
     /// <summary>Presses the platform's first shortcut for an IDE action, both keystrokes of a chord.</summary>
     public static void Run(TopLevel window, string action)
     {
@@ -1023,6 +1428,37 @@ public static class Ui
         }
         return raw;
     }
+}
+
+/// <summary>The project files tests write, as short as dotnet new's: each targets <see cref="Framework"/>, so moving the tests
+/// to the next .NET changes one line.</summary>
+public static class TestProjects
+{
+    /// <summary>The framework every project a test writes targets, the newest SDK's runtime that the tests' machines have.</summary>
+    public const string Framework = "net10.0";
+
+    /// <summary>A class library, with the properties given ("&lt;Nullable&gt;enable&lt;/Nullable&gt;") after its framework.</summary>
+    public static string Library(params string[] properties) => Project("Microsoft.NET.Sdk", exe: false, properties);
+
+    /// <summary>A console app, with the properties given after its framework.</summary>
+    public static string Console(params string[] properties) => Project("Microsoft.NET.Sdk", exe: true, properties);
+
+    /// <summary>An ASP.NET Core app, with the properties given after its framework.</summary>
+    public static string Web(params string[] properties) => Project("Microsoft.NET.Sdk.Web", exe: false, properties);
+
+    /// <summary>A project file with more after its properties (item groups, targets), before its end.</summary>
+    public static string With(this string project, string after) => project[..project.LastIndexOf("</Project>", StringComparison.Ordinal)] + after + "</Project>\n";
+
+    private static string Project(string sdk, bool exe, string[] properties) =>
+        $"<Project Sdk=\"{sdk}\">\n  <PropertyGroup>\n{(exe ? "    <OutputType>Exe</OutputType>\n" : "")}    <TargetFramework>{Framework}</TargetFramework>\n"
+        + string.Concat(properties.Select(p => $"    {p}\n")) + "  </PropertyGroup>\n</Project>\n";
+}
+
+public static class ExplorerRows
+{
+    /// <summary>The Explorer's list of rows.</summary>
+    public static ListBox Rows(this Passenger.App.Explorer.ExplorerView explorer) =>
+        explorer.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, explorer.Tree.Rows));
 }
 
 /// <summary>The one place a test lets time pass (Thread.Sleep and Task.Delay are banned elsewhere, BannedSymbols.txt): a wait
@@ -1195,23 +1631,32 @@ public static class Restore
 /// fixture).</summary>
 public sealed class RestoredFolders : IDisposable
 {
-    /// <summary>How many are made and restored at once.</summary>
+    /// <summary>The most made and restored at once.</summary>
     private const int Batch = 4;
 
     private readonly Queue<string> ready = new();
 
+    /// <summary>The tests that have taken a folder, by id.</summary>
+    private readonly HashSet<string> takers = new(StringComparer.Ordinal);
+
     /// <summary>A folder whose name starts with <paramref name="name"/>, written by <paramref name="write"/> (which gives what
     /// to restore in it) and restored; from a test class's constructor or its test, since those made with it for later
-    /// tests are none of this test's own (<see cref="TestFolders.Unowned"/>).</summary>
+    /// tests are none of this test's own (<see cref="TestFolders.Unowned"/>). A batch is as many as the class has tests yet
+    /// to take one (<see cref="StillToTake"/>), four at most, so a class of three tests restores three.</summary>
     public string Take(string name, Func<string, string> write)
     {
+        int left = StillToTake();
+        if (TestContext.Current.Test?.UniqueID is { } test)
+        {
+            takers.Add(test);
+        }
         if (ready.Count == 0)
         {
             List<string> made = [];
             try
             {
                 List<string> targets = [];
-                for (int i = 0; i < Batch; i++)
+                for (int i = 0; i < Math.Min(Batch, left); i++)
                 {
                     string folder = TestFolders.Unowned(name);
                     made.Add(folder);
@@ -1230,6 +1675,22 @@ public sealed class RestoredFolders : IDisposable
             made.ForEach(ready.Enqueue);
         }
         return ready.Dequeue();
+    }
+
+    /// <summary>How many of the class's tests have yet to take a folder, this one among them: its tests (a theory's inline
+    /// rows each, its other data a batch's worth) less those that took one. At least one; an overcount restores a folder
+    /// no test takes, an undercount (a test taking two) only restores again later.</summary>
+    private int StillToTake()
+    {
+        if (TestContext.Current.TestClass is not Xunit.v3.IXunitTestClass { Class: { } type })
+        {
+            return Batch;
+        }
+        int tests = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(method => method.GetCustomAttributes().Any(attribute => attribute is Xunit.v3.IFactAttribute))
+            .Sum(method => method.GetCustomAttributes().OfType<Xunit.v3.IDataAttribute>().Sum(data => data is InlineDataAttribute ? 1 : Batch) is var rows and > 0 ? rows : 1);
+        string? test = TestContext.Current.Test?.UniqueID;
+        return Math.Max(1, tests - takers.Count(taker => taker != test));
     }
 
     public void Dispose()
@@ -1634,4 +2095,54 @@ public static partial class NativeStacks
     // "    +   881 main  (in ReadsInputConsoleApp) + 184  [0x1024fa124]"
     [System.Text.RegularExpressions.GeneratedRegex(@"^[\s+!:|]*\d+\s+(.+?)\s+\(in ([^)]+)\)")]
     private static partial System.Text.RegularExpressions.Regex FrameLine();
+}
+
+/// <summary>A port of the system's choosing, kept from every other program until a program of the test's own is about to
+/// listen there: bound but not listening, so a connection to it is refused as to a port nothing holds. The program waits
+/// at a gate file before it binds, which <see cref="LetGo"/> opens just after freeing the port; <see cref="Hold"/> takes
+/// the port back for a next run once that program has ended.</summary>
+public sealed class HeldPort : IDisposable
+{
+    private System.Net.Sockets.Socket? held;
+
+    public HeldPort()
+    {
+        held = Bound(0);
+        Port = ((System.Net.IPEndPoint)held.LocalEndPoint!).Port;
+    }
+
+    public int Port { get; }
+
+    /// <summary>Frees the port and opens the gate the program that listens there waits at.</summary>
+    public void LetGo(string gate)
+    {
+        held?.Dispose();
+        held = null;
+        File.WriteAllText(gate, string.Empty);
+    }
+
+    /// <summary>Closes the gate and takes the port back, the program that listened there having ended.</summary>
+    public void Hold(string gate)
+    {
+        File.Delete(gate);
+        held ??= Bound(Port);
+    }
+
+    public void Dispose()
+    {
+        held?.Dispose();
+        held = null;
+    }
+
+    private static System.Net.Sockets.Socket Bound(int port)
+    {
+        System.Net.Sockets.Socket socket = new(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        if (port != 0 && !OperatingSystem.IsWindows())
+        {
+            // Taken back: a connection the last program there closed may linger on it (TIME_WAIT), which holds no one's port.
+            socket.SetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket, System.Net.Sockets.SocketOptionName.ReuseAddress, true);
+        }
+        socket.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
+        return socket;
+    }
 }

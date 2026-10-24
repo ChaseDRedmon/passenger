@@ -10,8 +10,8 @@ namespace Passenger.WpfPreview;
 
 /// <summary>A XAML file made loadable as loose XAML, as Visual Studio's designer loads the file it designs: the root is an
 /// instance of its element's own type (Window, UserControl, a base class), never its x:Class, so <c>x:Class</c> and its
-/// kin, event handlers (attributes naming an event, <c>EventSetter</c>s) and <c>x:Code</c> are blanked, every line and
-/// column kept where the editor has it. Read with it, from the designer's namespace: the root's <c>d:DesignWidth</c> and
+/// kin, event handlers (attributes naming an event, <c>EventSetter</c>s), <c>x:Code</c> and a root window's Visibility (which
+/// would show it) are blanked, every line and column kept where the editor has it. Read with it, from the designer's namespace: the root's <c>d:DesignWidth</c> and
 /// <c>d:DesignHeight</c>, and each element's <c>d:DataContext</c>.</summary>
 internal sealed class LooseXaml
 {
@@ -105,7 +105,8 @@ internal sealed class LooseXaml
                 }
                 else
                 {
-                    blank = IsEvent(schema, type, ns.Length == 0 ? defaultNamespace : ns, name, ns.Length == 0, localAssembly);
+                    blank = IsEvent(schema, type, ns.Length == 0 ? defaultNamespace : ns, name, ns.Length == 0, localAssembly)
+                        || (isRoot && ns.Length == 0 && name == "Visibility" && type is not null && typeof(Window).IsAssignableFrom(type));
                 }
                 if (blank)
                 {

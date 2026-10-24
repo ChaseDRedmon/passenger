@@ -28,6 +28,7 @@ public sealed partial class SettingsDialog : Window
     public const string EslintPage = "ESLint";
     public const string PrettierPage = "Prettier";
     public const string SchemasPage = "Remote JSON Schemas";
+    public const string DockerPage = "Docker";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
     public const string DiscordPage = "Discord";
@@ -41,7 +42,7 @@ public sealed partial class SettingsDialog : Window
         [(OpenProjectIn.NewWindow, "New window"), (OpenProjectIn.CurrentWindow, "Current window"), (OpenProjectIn.Ask, "Ask")];
 
     /// <summary>The themes, in the order Settings offers them.</summary>
-    public static readonly (Look Look, string Name)[] LookChoices = [(Look.Passenger, "Passenger"), (Look.Harbour, "Harbour")];
+    public static readonly (Look Look, string Name)[] LookChoices = [.. Enum.GetValues<Look>().Select(l => (l, l.ToString()))];
 
     /// <summary>The code's colour schemes, in the order Settings offers them.</summary>
     public static readonly (ColourScheme Scheme, string Name)[] ColourSchemeChoices = [(ColourScheme.Theme, "Same as theme"), (ColourScheme.Rider, "Rider")];
@@ -50,7 +51,7 @@ public sealed partial class SettingsDialog : Window
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
     private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, XamlCodeStylePage, LiveTemplatesPage,
-        BuildPage, RunPage, HotReloadPage, NodePage, EslintPage, PrettierPage, SchemasPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
+        BuildPage, RunPage, HotReloadPage, NodePage, EslintPage, PrettierPage, SchemasPage, DockerPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
 
     /// <summary>Rider's names for Attributes format's choices, in <see cref="Passenger.Xaml.Features.XamlAttributeStyle"/>'s order.</summary>
     public static readonly string[] AttributeStyles = ["On single line", "First attribute on single line", "Each attribute on separate lines", "Do not touch"];
@@ -94,7 +95,7 @@ public sealed partial class SettingsDialog : Window
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        AddOptions(actions.Keymap, agents ?? Mcp.AgentSetup.Here(null));
+        AddOptions(agents ?? Mcp.AgentSetup.Here(null));
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Search settings", Margin = new Thickness(10, 10, 10, 6) };
         search.TextChanged += (_, _) => Filter();
         pages = new ListBox { Classes = { "tree", "pages" } };
@@ -189,7 +190,8 @@ public sealed partial class SettingsDialog : Window
             option.Row.IsVisible = words.All(w => option.Words.Contains(w, StringComparison.OrdinalIgnoreCase)) && byShortcut(option);
         }
         string? was = Page;
-        string[] listed = [.. Order.Where(p => options.Any(o => o.Page == p && o.Row.IsVisible) || (p == KeymapPage && shortcutFilter is not null))];
+        string[] listed = [.. Order.Where(p => options.Any(o => o.Page == p && o.Row.IsVisible)
+            || (p == KeymapPage && (shortcutFilter is not null || FindsKeymapChoice(words))))];
         // A new list chooses no page for a moment, which would take the Keymap page's top, Find Shortcut with it, away.
         if (!listed.SequenceEqual(Pages))
         {
@@ -211,12 +213,12 @@ public sealed partial class SettingsDialog : Window
         }
     }
 
-    private void AddOptions(Keymap keymap, Mcp.AgentSetup agents)
+    private void AddOptions(Mcp.AgentSetup agents)
     {
         // Each theme has a Dark and a Light, which the next row chooses between, or the system does, as Rider's Sync with OS.
         ComboBox look = new() { ItemsSource = LookChoices.Select(c => c.Name).ToArray(), SelectedIndex = Array.FindIndex(LookChoices, c => c.Look == Working.Look), Classes = { "form" } };
         look.SelectionChanged += (_, _) => Change(s => s with { Look = LookChoices[Math.Max(0, look.SelectedIndex)].Look });
-        Add(Appearance, "Theme", look, "colour color theme look passenger harbour blue warm palette");
+        Add(Appearance, "Theme", look, "colour color theme look palette " + string.Join(" ", LookChoices.Select(c => c.Name.ToLowerInvariant())));
         ComboBox theme = new() { ItemsSource = new[] { "System", "Dark", "Light" }, SelectedIndex = Working.Theme switch { ThemeChoice.Dark => 1, ThemeChoice.Light => 2, _ => 0 }, Classes = { "form" } };
         theme.SelectionChanged += (_, _) => Change(s => s with { Theme = theme.SelectedIndex switch { 1 => ThemeChoice.Dark, 2 => ThemeChoice.Light, _ => ThemeChoice.System } });
         Add(Appearance, "Dark or light", theme, "colour color theme dark light system sync os appearance mode");
@@ -228,6 +230,12 @@ public sealed partial class SettingsDialog : Window
             Add(Appearance, "Merge main menu with window title", merge,
                 "title bar window header toolbar decorations frame caption buttons minimize maximize close system linux",
                 TitleBars.NotOnThisDesktop ?? TitleBars.OwnFrame);
+        }
+        if (!OperatingSystem.IsMacOS())
+        {
+            Add(Appearance, "Show main menu as a menu bar", Check(Working.MainMenuBar, v => Change(s => s with { MainMenuBar = v })),
+                "main menu bar hamburger file edit view toolbar ribbon menus",
+                "File, Edit, View and the rest side by side on the toolbar rather than behind its button. Those the toolbar has no room for go behind the button after them.");
         }
 
         Add(SystemPage, "Reopen projects on startup", Check(Working.ReopenProjectsOnStartup, v => Change(s => s with { ReopenProjectsOnStartup = v })),
@@ -373,6 +381,17 @@ public sealed partial class SettingsDialog : Window
             "A JSON file that names a schema on the web ($schema) has it downloaded to check and complete it. package.json, "
             + "tsconfig.json, jsconfig.json, appsettings.json, launchSettings.json and global.json use the schemas Passenger "
             + "carries from SchemaStore, which are never downloaded.");
+        // Beside Remote JSON Schemas: the other thing typing asks the web for.
+        Add(DockerPage, "Complete image tags from Docker Hub", Check(Working.DockerHubTags, v => Change(s => s with { DockerHubTags = v })),
+            "docker hub dockerfile containerfile image images tag tags from completion registry remote download web network",
+            "In a Dockerfile, completion after FROM image: lists the image's tags, which the Dockerfile language server asks "
+            + "Docker Hub for, naming the image. Off, it asks Docker Hub nothing and offers no tags.");
+        Add(DockerPage, "Check Dockerfiles with BuildKit", Check(Working.BuildKitChecks, v => Change(s => s with { BuildKitChecks = v })),
+            "buildkit buildx build check checks lint rules warnings dockerfile containerfile base image images metadata registry registries network engine",
+            "As a Dockerfile opens and is saved, the container engine's BuildKit checks it by its build rules with the engine's own "
+            + "Dockerfile frontend, never one a # syntax= line names, which is neither pulled nor run. BuildKit reads each base "
+            + "image's metadata from its registry. Off, no check runs and no registry is asked; a compose file's values and errors, "
+            + "which Compose works out on this computer, stay.");
 
         Add(TerminalPage, "Font size", Number(Working.TerminalFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { TerminalFontSize = v })), "font size shell");
         (string shell, _) = Passenger.Terminal.TerminalSession.DefaultShell();
@@ -417,15 +436,16 @@ public sealed partial class SettingsDialog : Window
 
         // Rider's Help, Diagnostic Tools: what is written where is said under each, the folder being Help, Show Log's.
         Add(DiagnosticsPage, "Trace protocol messages", Check(Working.TraceProtocols, v => Change(s => s with { TraceProtocols = v })),
-            "trace log lsp dap json-rpc language server debugger adapter vstest tests messages verbose",
+            "trace log lsp dap json-rpc language server debugger adapter vstest tests messages verbose mcp agent calls",
             "Every message to and from the C# language server, the debugger and the test runner is written to lsp.log, dap.log "
-            + "and vstest.log in the logs folder (Help, Show Log).");
+            + "and vstest.log in the logs folder (Help, Show Log), and each agent's MCP call, with what it waited on and for how "
+            + "long, to mcp.log.");
         Add(DiagnosticsPage, "Log every program started", Check(Working.LogEveryProgram, v => Change(s => s with { LogEveryProgram = v })),
             "debug log processes programs commands git dotnet exit code time",
             "Each program the IDE runs (git, dotnet, the servers) is written to passenger.log with its exit code and time. "
             + "Otherwise only those that fail or take a second or more are.");
 
-        AddKeymap(keymap);
+        AddKeymap();
     }
 
     /// <summary>A page that is one control of its own (the live templates' list and editor), the whole of its width, found

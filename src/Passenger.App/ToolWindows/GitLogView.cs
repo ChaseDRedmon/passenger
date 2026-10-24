@@ -78,14 +78,14 @@ public sealed class GitLogView : DockPanel
             ListMenus.Item("Copy Revision Number", null, () => _ = ListMenus.CopyAsync(this, commit.Hash)),
             new Separator(),
             ListMenus.Item("Checkout Revision", null, () => _ = vcs.CheckoutRevisionAsync(commit.Hash)),
-            ListMenus.Item("New Branch...", null, () => NewBranchRequested?.Invoke(this, commit)),
+            ListMenus.Item("New Branch…", null, () => NewBranchRequested?.Invoke(this, commit)),
             new Separator(),
             ListMenus.Item("Cherry-Pick", null, () => _ = vcs.CherryPickAsync(commit.Hash)),
             ListMenus.Item("Revert Commit", null, () => _ = vcs.RevertAsync(commit.Hash)),
             ListMenus.Sub("Reset Current Branch to Here",
                 ListMenus.Item("Soft: the changes since kept staged", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Soft))),
                 ListMenus.Item("Mixed: the changes since kept in the files", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Mixed))),
-                ListMenus.Item("Hard: the changes since dropped...", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Hard)))),
+                ListMenus.Item("Hard: the changes since dropped…", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Hard)))),
         ]);
         fileList = new ListBox
         {
@@ -116,10 +116,7 @@ public sealed class GitLogView : DockPanel
 
         filter = new TextBox { Classes = { "search" }, PlaceholderText = "Text or hash", Width = 240, Margin = new Thickness(8, 0) };
         filter.TextChanged += (_, _) => Filter();
-        Button refresh = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
-        ToolTip.SetTip(refresh, "Refresh");
-        refresh.Click += (_, _) => _ = LoadAsync();
+        Button refresh = ToolButtons.Of("Icon.Rerun", "Refresh", () => _ = LoadAsync());
         // Rider's Branch filter, shown while the log is filtered to a branch, its x showing every branch again.
         branchFilterText = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         PathIcon clearGlyph = new() { Classes = { "small" } };
@@ -466,8 +463,8 @@ public sealed class GitLogView : DockPanel
 
         static TextBlock Muted(string text)
         {
-            TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0), TextTrimming = TextTrimming.CharacterEllipsis };
-            block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
+            TextBlock block = MutedText.Of(text);
+            block.Margin = new Thickness(8, 0);
             return block;
         }
     }
@@ -500,7 +497,8 @@ public sealed class GitLogView : DockPanel
         string where = vcs.Repository is { } repository ? Path.GetDirectoryName(repository.Relative(change.Path))?.Replace('\\', '/') ?? string.Empty : string.Empty;
         TextBlock folder = new() { Text = where, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12 };
         folder.Bind(TextBlock.ForegroundProperty, folder.GetResourceObservable("Passenger.TextMuted"));
-        return new StackPanel { Orientation = Orientation.Horizontal, Height = RowHeight, Children = { icon, name, folder } };
+        // The folder gives way first, then the name, each ending in an ellipsis, in a narrow pane.
+        return new ShrinkingRow { Height = RowHeight, Children = { icon, name, folder } };
     }
 
     /// <summary>A row's part of the graph: the lines through it, lane by lane, and the commit's dot.</summary>

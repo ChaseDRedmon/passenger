@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Passenger.Dap;
 using Passenger.Debugger.ExpressionEvaluator;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.Interop;
@@ -257,10 +258,16 @@ public partial class ManagedDebugger
             return;
         }
 
-        if (_stepper is { IsActive: false })
+        ICorDebugThread corThread = breakpointCorDebugManagedCallbackEventArgs.Thread;
+        if (_stepper is { IsActive: false } && _stepping is (int stepping, _))
         {
-            // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
-            Continue(clearVariables: true);
+            if (stepping == corThread.Id)
+            {
+                // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
+                Continue(clearVariables: true);
+                return;
+            }
+            PutOffBehindStep(breakpointCorDebugManagedCallbackEventArgs, corThread.Id, stepping);
             return;
         }
         // A step still going is ended only once this breakpoint stops (EndStepForStop), never by one that tests false or logs.
@@ -272,7 +279,6 @@ public partial class ManagedDebugger
             return;
         }
 
-        ICorDebugThread corThread = breakpointCorDebugManagedCallbackEventArgs.Thread;
         if (_entryBreakpoint is { } entryBreakpoint && entryBreakpoint.CorBreakpoint == functionBreakpoint)
         {
             // Remove the one-shot breakpoint unless a user breakpoint shares the same CLR breakpoint.
@@ -287,11 +293,11 @@ public partial class ManagedDebugger
             SourceInfo? sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame, _justMyCode is false);
             if (sourceInfo is null)
             {
-                ReportStop(corThread.Id, "entry");
+                ReportStop(corThread.Id, StopReasons.Entry);
             }
             else
             {
-                ReportStop(corThread.Id, "entry", sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, null);
+                ReportStop(corThread.Id, StopReasons.Entry, sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, null);
             }
 
             return;
@@ -351,7 +357,7 @@ public partial class ManagedDebugger
             (bool holds, string? error) = await EvaluateBreakpointCondition(corThread, condition);
             if (error is not null)
             {
-                string message = $"The condition '{condition}' could not be evaluated, so the breakpoint stopped: {error}";
+                string message = $"{Passenger.Dap.BreakpointConditions.NotEvaluated(condition)}, so the breakpoint stopped: {error}";
                 managedBreakpoint.Message = message;
                 OnBreakpointChanged?.Invoke(managedBreakpoint);
                 OnConsole?.Invoke($"{message}\n");
@@ -388,11 +394,11 @@ public partial class ManagedDebugger
             // There exists a 'function breakpoint' type, but netcoredbg et al do not use it, so lets just use 'breakpoint'
             if (sourceInfo is null)
             {
-                ReportStop(corThread.Id, "breakpoint");
+                ReportStop(corThread.Id, StopReasons.Breakpoint);
             }
             else
             {
-                ReportStop(corThread.Id, "breakpoint", sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, [managedBreakpoint.Id]);
+                ReportStop(corThread.Id, StopReasons.Breakpoint, sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, [managedBreakpoint.Id]);
             }
 
             return;
@@ -407,7 +413,7 @@ public partial class ManagedDebugger
             _stoppedShort = (corThread.Id, shortRange, resolvedBreakpoint);
         }
 
-        ReportStop(corThread.Id, "breakpoint", managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, [managedBreakpoint.Id]);
+        ReportStop(corThread.Id, StopReasons.Breakpoint, managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, [managedBreakpoint.Id]);
     }
 
     private void TryBindEntryBreakpoint(ModuleInfo moduleInfo)
@@ -439,10 +445,29 @@ public partial class ManagedDebugger
     private async Task HandleStepComplete(object? sender, StepCompleteCorDebugManagedCallbackEventArgs stepCompleteEventArgs)
     {
         ICorDebugThread corThread = stepCompleteEventArgs.Thread;
+        bool evaluatedHere = EvalStatus.ThreadId == corThread.Id || EvalStatus.Abandoned.ContainsKey(corThread.Id);
+        if (PutOffDuringEvaluation(stepCompleteEventArgs, corThread))
+        {
+            if (evaluatedHere && stepCompleteEventArgs.Stepper == _stepper)
+            {
+                // Let go with the evaluated code's events, the step ends: no breakpoint may take it for one whose end is queued.
+                _stepper = null;
+                TakeBehindStep();
+            }
+            return;
+        }
+        TakeBehindStep();
+        if (stepCompleteEventArgs.Stepper != _stepper)
+        {
+            // A step that had completed when a stop (another thread's, a pause) ended it: its end, queued behind, stops nothing.
+            _logger?.Invoke($"The end of a step on thread {corThread.Id} that a stop ended meanwhile is let go");
+            Continue(clearVariables: false);
+            return;
+        }
         ICorDebugILFrame ilFrame = (ICorDebugILFrame)corThread.ActiveFrame;
         // An async step's breakpoint at an await, which the step ran to, was not hit: the async step is over.
         _asyncStepper?.ClearActiveAsyncStep();
-        ICorDebugStepper stepper = _stepper ?? throw new InvalidOperationException("No stepper found for step complete");
+        ICorDebugStepper stepper = stepCompleteEventArgs.Stepper;
         stepper.Deactivate();
         _stepper = null;
         EndReturnWatch();
@@ -499,20 +524,43 @@ public partial class ManagedDebugger
         string sourceFilePath = sourceInfo.Value.FilePath;
         int line = sourceInfo.Value.StartLine;
         int column = sourceInfo.Value.StartColumn;
-        ReportStop(corThread.Id, "step", sourceFilePath, line, column, null);
+        ReportStop(corThread.Id, StopReasons.Step, sourceFilePath, line, column, null);
     }
 
     /// <summary>A breakpoint that stops ends the step in progress, on its own thread or another, as Rider's does: the
-    /// stepper and an async step's breakpoints at an await. One whose condition is false, or a tracepoint, leaves it going.</summary>
+    /// stepper, an async step's breakpoints at an await, and the step a remap would make again in the new code. One whose
+    /// condition is false, or a tracepoint, leaves it going.</summary>
     private void EndStepForStop()
     {
         _asyncStepper?.Disable();
         _stepAfterEvaluation = null;
+        _restepAfterRemap = null;
         EndSmartStep();
         if (_stepper is not null)
         {
             _stepper.Deactivate();
             _stepper = null;
+        }
+    }
+
+    /// <summary>Another thread's breakpoint the runtime handed over just as a step completed, the step's StepComplete queued
+    /// behind it: put off, its thread held at the breakpoint, until the step's end has been handled; then it waits with the
+    /// events put off during an evaluation, and is handled as a hit once the program goes on from the step's stop. So both
+    /// stop, the step that had completed first, rather than the breakpoint ending a step no longer in progress.</summary>
+    private void PutOffBehindStep(CorDebugManagedCallbackEventArgs callbackEvent, int thread, int stepping)
+    {
+        _logger?.Invoke($"Put off: {callbackEvent.GetType().Name} on thread {thread}, behind the step completed on thread {stepping}");
+        _behindStep.Enqueue(callbackEvent);
+        Continue(clearVariables: false);
+    }
+
+    /// <summary>The events put off behind a step's end (<see cref="PutOffBehindStep"/>), which has come: they wait with those put
+    /// off during an evaluation, handed back in order once the program goes on.</summary>
+    private void TakeBehindStep()
+    {
+        while (_behindStep.TryDequeue(out CorDebugManagedCallbackEventArgs? behind))
+        {
+            _deferredEvents.Enqueue(behind);
         }
     }
 
@@ -558,7 +606,7 @@ public partial class ManagedDebugger
             return;
         }
         EndStepForStop();
-        ReportStop(corThread.Id, "pause");
+        ReportStop(corThread.Id, StopReasons.Pause);
     }
 
     private void HandleException(object? sender, ExceptionCorDebugManagedCallbackEventArgs exceptionEventArgs)
@@ -698,7 +746,7 @@ public partial class ManagedDebugger
         EndStepForStop();
         _exceptionBreakModes[new ThreadId(corThread.Id)] = breakMode;
         _unhandledByUser = breakMode is ExceptionBreakMode.UserUnhandled && handler is { } range ? (corThread.Id, range) : null;
-        ReportStop(corThread.Id, "exception", hitBreakpointIds: hit is { Count: > 0 } ? hit : null);
+        ReportStop(corThread.Id, StopReasons.Exception, hitBreakpointIds: hit is { Count: > 0 } ? hit : null);
     }
 
     /// <summary>The exception breakpoints for an exception of this type thrown where it was and handled as it is (or not).</summary>
@@ -731,7 +779,7 @@ public partial class ManagedDebugger
                 (bool holds, string? error) = await EvaluateBreakpointCondition(thread, condition);
                 if (error is not null)
                 {
-                    OnConsole?.Invoke($"The condition '{condition}' could not be evaluated, so the breakpoint on {exceptionType} stopped: {error}\n");
+                    OnConsole?.Invoke($"{Passenger.Dap.BreakpointConditions.NotEvaluated(condition)}, so the breakpoint on {exceptionType} stopped: {error}\n");
                 }
                 else if (!holds)
                 {

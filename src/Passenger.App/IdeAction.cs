@@ -41,6 +41,18 @@ public sealed record IdeAction(string Id, string Title, string Group, Action<Act
     /// (Split Vertically for Split Right).</summary>
     public IReadOnlyList<string> Words { get; init; } = [];
 
+    /// <summary>The action whose work this one starts, which <see cref="ActionWork"/> holds it under while it works: its own
+    /// unless it shares another's (Rebuild Solution is a build, as Build Solution is).</summary>
+    public string? Works { get; init; }
+
+    /// <summary>The id its work is held under.</summary>
+    public string WorkId => Works ?? Id;
+
+    /// <summary>For an action whose keys are another's where it applies, as Rider gives one key two actions told apart by
+    /// where it is pressed (the Explorer's Compare Files takes the editor's Duplicate keys in Visual Studio's keymap off
+    /// macOS): that action, whose keys its menu items and Find Action show. Null with keys of its own, or none.</summary>
+    public Func<string?>? KeysOf { get; init; }
+
     public bool CanRun(ActionContext context) => WhyNot(context) is null;
 
     /// <summary>Its title in a menu opened in this context.</summary>
@@ -92,6 +104,14 @@ public sealed class ActionContext(OpenDocument? file, CodeEditor editor, object?
 
     /// <summary>The tab whose own menu this is, which the tab actions act on in place of the one the active group shows.</summary>
     public (Editors.EditorGroup Group, OpenDocument File)? Tab { get; init; }
+
+    /// <summary>The Explorer's row whose own menu this is, which the Explorer's actions act on in place of the one chosen
+    /// there.</summary>
+    public Explorer.ExplorerNode? ExplorerRow { get; init; }
+
+    /// <summary>The .NET service of a run whose gutter menu this is, which the service actions act on in place of the one
+    /// chosen in the Containers or Aspire window.</summary>
+    public Run.ChosenService? Service { get; init; }
 
     private static string? SymbolAt(CodeEditor editor)
     {

@@ -11,18 +11,21 @@ using Passenger.Text;
 namespace Passenger.App;
 
 /// <summary>The Explorer's file operations, as Rider's: New File, New Folder and New Class where a row holds things,
-/// Rename and Delete (to the Trash) for what is on disk, though a project's Delete takes it out of the solution, Copy
-/// Path and Reveal; the solution's own folders' are in MainWindow.Solution.cs. The open tabs follow a rename and close
-/// with a delete, and the Explorer, the file index and Git are read again after.</summary>
+/// Rename and Delete (to the Trash) for what is on disk, though a project's Delete takes it out of the solution; the
+/// solution's own folders' are in MainWindow.Solution.cs, and the actions that run them on a row in
+/// MainWindow.ExplorerActions.cs. The open tabs follow a rename and close with a delete, and the Explorer, the file index
+/// and Git are read again after.</summary>
 public partial class MainWindow
 {
     private void AddFileOperations()
     {
-        Explorer.ActionRequested += (_, asked) => _ = ExplorerActionAsync(asked.Action, asked.Node);
+        AddExplorerActions();
+        AddConfiguration();
         Explorer.Dropped += (_, dropped) => _ = DropAsync(dropped);
-        Explorer.CanPaste = () => held is not null;
         Explorer.NestingAsked += (_, _) => _ = AskNestingAsync();
         Editors.Moved += (_, move) => OnFileMoved(move);
+        // The watcher that saw the move reads the Explorer, the index and Git again itself.
+        Editors.Followed += (_, move) => session.Followed(move);
     }
 
     /// <summary>Rider's File Nesting, over the window: its "Show files with the same names as nested" is the setting every
@@ -33,114 +36,6 @@ public partial class MainWindow
         if (await dialog.ShowDialog<bool>(this))
         {
             ApplySettings(settings with { NestFiles = dialog.Nest });
-        }
-    }
-
-    private async Task ExplorerActionAsync(ExplorerAction action, ExplorerNode node)
-    {
-        string? path = node.Path;
-        // Where something new goes: into a folder or a project's folder, beside a file.
-        string? into = node.Kind switch
-        {
-            NodeKind.Folder => path,
-            NodeKind.Project or NodeKind.Solution or NodeKind.File when path is not null => Path.GetDirectoryName(path),
-            _ => Folder,
-        };
-        switch (action)
-        {
-            case ExplorerAction.NewSolutionFolder when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
-                AskName("New Solution Folder", string.Empty, name => AddSolutionFolder(node.SolutionPath, name));
-                break;
-            case ExplorerAction.NewProject when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
-                ShowNewProject(node.SolutionPath);
-                break;
-            case ExplorerAction.AddExistingProject when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
-                await AddExistingProjectsAsync(node.SolutionPath);
-                break;
-            case ExplorerAction.AddExistingItem when node is { Kind: NodeKind.SolutionFolder, SolutionPath: { } holding }:
-                await AddExistingItemsAsync(holding);
-                break;
-            case ExplorerAction.Rename when node is { Kind: NodeKind.SolutionFolder, SolutionPath: { } renaming }:
-                AskName("Rename Solution Folder", node.Name, name => RenameSolutionFolder(renaming, name));
-                break;
-            case ExplorerAction.Delete when node is { Kind: NodeKind.SolutionFolder, SolutionPath: { } removing }:
-                await RemoveSolutionFolderAsync(removing);
-                break;
-            case ExplorerAction.Delete when node is { IsSolutionItem: true, SolutionPath: { } holder } && path is not null:
-                await RemoveSolutionItemAsync(holder, path);
-                break;
-            case ExplorerAction.ShowHistory or ExplorerAction.CompareWithRevision or ExplorerAction.CompareWithBranch:
-                await ExplorerGitAsync(action, node);
-                break;
-            case ExplorerAction.ShowLocalHistory when Target(node, fileOnly: false) is { } shown:
-                ShowLocalHistory(shown);
-                break;
-            case ExplorerAction.RunTests or ExplorerAction.DebugTests:
-                RunProjectTests([.. Explorer.SelectedNodes.Append(node).Distinct().SelectMany(Explorer.Tree.ProjectsOf).Distinct()], node.Name, action == ExplorerAction.DebugTests);
-                break;
-            case ExplorerAction.FindInFiles or ExplorerAction.ReplaceInFiles:
-                ShowFindInFiles(action == ExplorerAction.ReplaceInFiles, ScopeOf(Explorer.SelectedNodes.Contains(node) ? Explorer.SelectedNodes : [node]));
-                break;
-            case ExplorerAction.NewFile when into is not null:
-                AskName("New File", string.Empty, name => CreateFile(into, name, string.Empty));
-                break;
-            case ExplorerAction.NewFolder when into is not null:
-                AskName("New Folder", string.Empty, name => CreateFolder(into, name));
-                break;
-            case ExplorerAction.NewClass when into is not null:
-                AskType(into);
-                break;
-            case ExplorerAction.Cut or ExplorerAction.Copy:
-                await HoldAsync(node, cut: action == ExplorerAction.Cut);
-                break;
-            case ExplorerAction.Paste:
-                await PasteAsync(node);
-                break;
-            case ExplorerAction.AddReference when (node.Kind == NodeKind.Project ? path : node.Owner) is { } project:
-                ShowAddReference(project);
-                break;
-            case ExplorerAction.Delete when node is { Kind: NodeKind.ProjectReference, Owner: { } owner, Referenced: { } referenced }:
-                await RemoveReferenceAsync(owner, referenced);
-                break;
-            case ExplorerAction.Compare when node is { Kind: NodeKind.File, Path: not null }:
-                await CompareAsync(node);
-                break;
-            case ExplorerAction.OpenInTerminal when path is not null:
-                _ = OpenTerminalAt(node.Kind == NodeKind.Folder ? path : Path.GetDirectoryName(path)!);
-                break;
-            case ExplorerAction.Rename when path is not null:
-                AskRename(path);
-                break;
-            case ExplorerAction.Undo or ExplorerAction.Redo:
-                UndoCommand(action == ExplorerAction.Redo, null);
-                break;
-            case ExplorerAction.Delete when path is not null && node.Kind == NodeKind.Project:
-                await RemoveProjectAsync(path);
-                break;
-            case ExplorerAction.Delete when path is not null:
-                await DeleteAsync(path);
-                break;
-            case ExplorerAction.CopyPath when path is not null && Clipboard is { } clipboard:
-                await clipboard.SetTextAsync(path);
-                status.Text = $"Copied {path}";
-                break;
-            case ExplorerAction.Reveal when path is not null:
-                ChildProcesses.Reveal(path);
-                break;
-            case ExplorerAction.ManageNuGet:
-                ShowToolWindow("nuget");
-                break;
-            case ExplorerAction.EditProjectFile when path is not null:
-                OpenFile(path);
-                break;
-            case ExplorerAction.Unload or ExplorerAction.Reload when path is not null:
-                SetUnloaded(path, action == ExplorerAction.Unload);
-                break;
-            case ExplorerAction.Build or ExplorerAction.Rebuild or ExplorerAction.Clean:
-                BuildKind kind = action switch { ExplorerAction.Rebuild => BuildKind.Rebuild, ExplorerAction.Clean => BuildKind.Clean, _ => BuildKind.Build };
-                // A project's or solution folder's menu builds every project chosen with it; the solution's, the solution.
-                Build(kind, node.Kind is NodeKind.Project or NodeKind.SolutionFolder ? SelectedProjects() : null);
-                break;
         }
     }
 
@@ -202,12 +97,19 @@ public partial class MainWindow
         {
             return $"{name} is already there";
         }
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        // Made as its .editorconfig asks: its line breaks and its charset.
-        EditorConfig conventions = EditorConfig.For(path);
-        FileEncoding charset = conventions.Charset ?? FileEncoding.Utf8;
-        LineSeparator separator = conventions.EndOfLine ?? LineSeparator.LF;
-        FileText.Save(path, LineEndings.In(text, separator.Held()), charset.Encoding, charset.Bom, separator == LineSeparator.CR);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            // Made as its .editorconfig asks: its line breaks and its charset.
+            EditorConfig conventions = EditorConfig.For(path);
+            FileEncoding charset = conventions.Charset ?? FileEncoding.Utf8;
+            LineSeparator separator = conventions.EndOfLine ?? LineSeparator.LF;
+            FileText.Save(path, LineEndings.In(text, separator.Held()), charset.Encoding, charset.Bom, separator == LineSeparator.CR);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return NotMade(name, error);
+        }
         FilesChanged();
         OpenFile(path);
         Explorer.Reveal(PathNames.Canonical(path));
@@ -225,11 +127,23 @@ public partial class MainWindow
         {
             return $"{name} is already there";
         }
-        Directory.CreateDirectory(path);
+        try
+        {
+            Directory.CreateDirectory(path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return NotMade(name, error);
+        }
         FilesChanged();
         Explorer.Reveal(PathNames.Canonical(path));
         return null;
     }
+
+    /// <summary>Why a file or folder could not be made (its folder read-only or denied to this user, a path too long, a
+    /// full disk), as the popup that asked for its name says it.</summary>
+    private static string NotMade(string name, Exception error) =>
+        $"{name} could not be made: {(error is UnauthorizedAccessException ? "access denied" : error.Message)}";
 
     /// <summary>Rider's New Class: a file of its name holding a class in the namespace its folder gives (the project's
     /// name, then the folders under it).</summary>
@@ -322,7 +236,7 @@ public partial class MainWindow
             return "The new file name cannot be used as a valid type name";
         }
         string target = Path.Combine(Path.GetDirectoryName(path)!, name);
-        if ((File.Exists(target) || Directory.Exists(target)) && !string.Equals(target, path, StringComparison.OrdinalIgnoreCase))
+        if ((File.Exists(target) || Directory.Exists(target)) && !PathNames.Same(target, path))
         {
             return $"{name} is already there";
         }
@@ -361,10 +275,10 @@ public partial class MainWindow
             moves.AddRange(WithDependents(path, name).Where(d => !moves.Any(m => m.From == d.From)));
             List<string> dropped = [];
             int files = TypeRename.Apply(Editors, made, moves, $"Rename {type.Name} to {renamed}", asked, dropped,
-                recording => FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording));
+                recording => FollowMoved([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording));
             FilesChanged();
             Explorer.Reveal(PathNames.Canonical(target));
-            status.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {files} file{(files == 1 ? "" : "s")}"
+            status.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {Plural.Of(files, "file")}"
                 + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty);
             return null;
         }
@@ -383,10 +297,18 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>Rider's Rename on a project: its file takes the name, its extension kept, and the solution and the projects
+    /// referencing it follow (<see cref="Rename"/>). Null once renamed, else why not.</summary>
+    public string? RenameProject(string project, string name)
+    {
+        string extension = Path.GetExtension(project);
+        return Invalid(name) ?? Rename(project, name.EndsWith(extension, StringComparison.OrdinalIgnoreCase) ? name : name + extension);
+    }
+
     /// <summary>Renames a file or folder in place, and the files nested under a file with it, as Rider's rename of a
     /// project item renames its dependents (Counter.razor.cs going with Counter.razor). Its open files keep their tabs,
-    /// splits and undo, saved first, its bookmarks and breakpoints go with it, and its project's items follow it. Undo in
-    /// the Solution view renames it back, as Rider's does.</summary>
+    /// splits and undo, saved first, its bookmarks and breakpoints go with it, and what names it follows (projects' items,
+    /// the solution, references to a project). Undo in the Solution view renames it all back, as Rider's does.</summary>
     public string? Rename(string path, string name)
     {
         if (Invalid(name) is { } problem)
@@ -399,7 +321,7 @@ public partial class MainWindow
             return null;
         }
         List<(string From, string To)> moves = [(path, target), .. WithDependents(path, name)];
-        if (moves.FirstOrDefault(m => (File.Exists(m.To) || Directory.Exists(m.To)) && !string.Equals(m.To, m.From, StringComparison.OrdinalIgnoreCase)) is { To: not null } taken)
+        if (moves.FirstOrDefault(m => (File.Exists(m.To) || Directory.Exists(m.To)) && !PathNames.Same(m.To, m.From)) is { To: not null } taken)
         {
             return $"{Path.GetFileName(taken.To)} is already there";
         }
@@ -412,7 +334,7 @@ public partial class MainWindow
                     return failed;
                 }
             }
-            if (FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording) is { } unfollowed)
+            if (FollowMoved([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording) is { } unfollowed)
             {
                 status.Text = unfollowed;
             }
@@ -531,6 +453,7 @@ public partial class MainWindow
         Explorer.Refresh();
         // What a project's wildcards take in changed here: its evaluation follows at once, not when the watcher hears of it.
         session.Evaluate();
+        session.MSBuild.FilesCameOrWent();
         if (Folder is { } folder)
         {
             session.Index.Build(folder);

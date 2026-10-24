@@ -77,7 +77,13 @@ public sealed class XamlPreview : IDisposable
         switch (builder.Dialect)
         {
             case AvaloniaDialect:
-                host = AvaloniaPreviewHost.Start(this, builder.Current.Inputs);
+                IPreviewHost? drawing = await AvaloniaPreviewHost.StartAsync(this, builder.Current.Inputs);
+                if (disposed || start != starts)
+                {
+                    drawing?.Dispose();
+                    return;
+                }
+                host = drawing;
                 break;
             case WpfDialect when !OperatingSystem.IsWindows():
                 // WPF draws with Windows' own graphics, which no other system has: said in its place, rather than a pane that never draws.
@@ -210,6 +216,19 @@ public sealed class XamlPreview : IDisposable
         return found.Where(f => (!configured || File.Exists(Path.ChangeExtension(f, ".runtimeconfig.json"))) && File.Exists(Path.ChangeExtension(f, ".deps.json"))
                 && !f.Contains($"{Path.DirectorySeparatorChar}ref{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+    }
+
+    /// <summary>Where a previewer says the XAML it was sent did not load, " (line N, column M)" from one, as the editor counts
+    /// that text's lines; empty with no line. Both previewers read the file as an XML reader does, a lone '\r' ending a line,
+    /// so below one theirs run ahead of the editor's (<see cref="Lsp.ServerLines.OfXml"/>).</summary>
+    internal static string Where(TextSnapshot sent, int? line, int? column)
+    {
+        if (line is not int reported || reported < 1)
+        {
+            return string.Empty;
+        }
+        TextPosition at = sent.GetPosition(Lsp.ServerLines.OfXml(sent).OffsetOf(reported - 1, Math.Max(0, (column ?? 1) - 1)));
+        return column is null ? $" (line {at.Line + 1})" : $" (line {at.Line + 1}, column {at.Column + 1})";
     }
 
     /// <summary>A target framework's .NET version (net8.0-windows is 8.0); null for one before .NET 5 or none.</summary>

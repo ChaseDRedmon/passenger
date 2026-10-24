@@ -178,7 +178,7 @@ public sealed partial class CodeAssist
     {
         if (Xaml?.Invoke() is not { } service)
         {
-            return (null, "No folder is open");
+            return (null, Refusals.NoFolder);
         }
         Passenger.Xaml.Metadata.AssemblyTypes? theme = file.Types.Assemblies.Where(a => a.Name.Contains(".Themes.", StringComparison.Ordinal) && a.XamlFiles.Count > 0)
             .OrderBy(a => a.Name.EndsWith(".Fluent", StringComparison.Ordinal) ? 0 : 1).FirstOrDefault();
@@ -299,7 +299,7 @@ public sealed partial class CodeAssist
         }
         if (target.Place is { } place)
         {
-            return ((place.Path, new TextPosition(place.Line, place.Column)), null);
+            return ((place.Path, ServerPlaces.PositionOf(editors, place.Path, new LspPosition(place.Line, place.Column))), null);
         }
         if (target.Path is { } path)
         {
@@ -334,13 +334,11 @@ public sealed partial class CodeAssist
         }
     }
 
-    /// <summary>A range of a file as a place for the Find window.</summary>
+    /// <summary>A range of a file as a place for the Find window, which reads it in the server's lines as the server's are.</summary>
     private LspLocation Location(string path, int start, int end)
     {
-        TextSnapshot text = editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot ?? TextSnapshot.From(ReadText(path));
-        TextPosition from = text.GetPosition(Math.Min(start, text.Length));
-        TextPosition to = text.GetPosition(Math.Min(end, text.Length));
-        return new LspLocation(DocumentUris.FromPath(path), new LspRange(new LspPosition(from.Line, from.Column), new LspPosition(to.Line, to.Column)));
+        TextSnapshot text = ServerPlaces.TextOf(editors, path) ?? TextSnapshot.Empty;
+        return new LspLocation(DocumentUris.FromPath(path), ServerLines.Of(text).RangeOf(TextRange.FromBounds(Math.Min(start, text.Length), Math.Min(end, text.Length))));
     }
 
     /// <summary>Find Usages in XAML: an element's name where the file names it and where its code-behind uses the field
@@ -457,7 +455,7 @@ public sealed partial class CodeAssist
 
     /// <summary>Rename in XAML: an element's name, where the file names it and where its code-behind uses its field, as one
     /// command undone whole.</summary>
-    private async Task XamlRename(XamlDocument xaml, OpenDocument document)
+    private async Task XamlRename(XamlDocument xaml)
     {
         int caret = Editor.Selections.Primary.Caret;
         if (await XamlSymbolAt(xaml, caret, "Rename in XAML renames an element's name") is not { Symbol.Named: { } named } found)
@@ -466,10 +464,8 @@ public sealed partial class CodeAssist
         }
         string old = named.Value;
         RenameBox box = new(old);
-        ChangeTracker opened = new(document.Text);
         ShowModal(box, named.ValueStart, async name =>
         {
-            opened.Dispose();
             if (name is null || name == old)
             {
                 return;
@@ -539,7 +535,7 @@ public sealed partial class CodeAssist
             }
             else if (await BackgroundWork.Run(() => XamlNavigation.At(file, caret)) is { Named: { } named })
             {
-                refactorings.Add(new Choice("Rename...", named.Value, XamlRefactoring.Rename));
+                refactorings.Add(new Choice("Rename…", named.Value, XamlRefactoring.Rename));
             }
             refactorings.AddRange(await BackgroundWork.Run(() => XamlRefactoringsAt(file, caret)));
         }
@@ -558,9 +554,9 @@ public sealed partial class CodeAssist
             {
                 ApplyFix(fix);
             }
-            else if (choice?.Value is EditorFix chosen && editors.Active == document)
+            else if (choice?.Value is EditorFix chosen && document is not null)
             {
-                Editor.ApplyEdits([new TextEdit(chosen.Range.Start, chosen.Range.Length, chosen.Text)], SelectionSet.Single(chosen.Range.Start + chosen.Text.Length));
+                return ApplyOwnFix(document, chosen);
             }
             else if (choice?.Value is XamlRefactoring refactoring && editors.Active == document)
             {
@@ -575,7 +571,7 @@ public sealed partial class CodeAssist
     /// command.</summary>
     private void ApplyFix(XamlFix fix)
     {
-        string? refused = ApplyXamlChanges(fix.Title, [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others]);
+        string? refused = ApplyFileChanges(fix.Title, [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others]);
         Message?.Invoke(this, refused is null ? fix.Title : $"{fix.Title} was not applied: {refused}");
     }
 
@@ -591,7 +587,7 @@ public sealed partial class CodeAssist
 
     /// <summary>A C# definition that lands in the field Avalonia's generator or WPF's MarkupCompile made for a named element
     /// goes to the element's name in its XAML instead, as Rider's does; null for any other.</summary>
-    private XamlTarget? NamedElementOf(IReadOnlyList<LspLocation> definitions, int offset)
+    private async Task<XamlTarget?> NamedElementOfAsync(IReadOnlyList<LspLocation> definitions, int offset)
     {
         foreach (LspLocation place in definitions)
         {
@@ -607,7 +603,7 @@ public sealed partial class CodeAssist
             else
             {
                 Match generated = GeneratedFile().Match(Uri.UnescapeDataString(place.Uri));
-                xaml = generated.Success ? Xaml?.Invoke()?.ClassFile(generated.Groups["class"].Value, active.Path) : null;
+                xaml = generated.Success && Xaml?.Invoke() is { } service ? await service.ClassFileAsync(generated.Groups["class"].Value, active.Path) : null;
             }
             string name = NameAt(offset);
             if (xaml is not null && Regex.Match(ReadOpenOrDisk(xaml), $@"\b(?:x:)?Name\s*=\s*""(?<name>{Regex.Escape(name)})""") is { Success: true } found)

@@ -25,12 +25,21 @@ public enum ToolMode
 }
 
 /// <summary>A tool window (Explorer, Debug, Unit Tests): its content, its button on a stripe, and where it docks.
-/// The person moves it by dragging its button or its header, or with Move to in its header's menu.</summary>
-public sealed class ToolWindow(string id, string title, string icon, Control content, ToolAnchor anchor) : Observable
+/// The person moves it by dragging its button or its header, or with Move to in its header's menu. One given how to
+/// build its view builds it when first shown or asked for, so a window's start makes no view it hides (#233).</summary>
+public sealed class ToolWindow(string id, string title, string icon, Func<Control> build, ToolAnchor anchor) : Observable
 {
     private ToolAnchor anchor = anchor;
     private bool isShown;
     private string title = title;
+    private Control? content;
+    private Control? headerTools;
+
+    /// <summary>A tool window whose view is made already (the Explorer's, open at first).</summary>
+    public ToolWindow(string id, string title, string icon, Control content, ToolAnchor anchor) : this(id, title, icon, () => content, anchor)
+    {
+        this.content = content;
+    }
 
     public string Id { get; } = id;
 
@@ -44,10 +53,36 @@ public sealed class ToolWindow(string id, string title, string icon, Control con
     /// <summary>The theme's icon resource for its stripe button.</summary>
     public string Icon { get; } = icon;
 
-    public Control Content { get; } = content;
+    /// <summary>Its view, built the first time it is asked for: as it is shown, or by what reads or acts on it.</summary>
+    public Control Content
+    {
+        get
+        {
+            if (content is null)
+            {
+                content = build();
+                Built?.Invoke(this, EventArgs.Empty);
+            }
+            return content;
+        }
+    }
+
+    /// <summary>Whether its view has been built: what only looks among the views made (which one holds the keys) passes
+    /// over one that has not.</summary>
+    public bool IsBuilt => content is not null;
+
+    /// <summary>Its view was built, as it was first shown or asked for.</summary>
+    public event EventHandler? Built;
 
     /// <summary>Controls of its own for its header, after its title (the Explorer's view switch).</summary>
-    public Control? HeaderTools { get; init; }
+    public Control? HeaderTools
+    {
+        get => headerTools ??= Tools?.Invoke();
+        init => headerTools = value;
+    }
+
+    /// <summary>The header's controls of a view built when first shown, asked for once its <see cref="Content"/> is.</summary>
+    public Func<Control?>? Tools { get; init; }
 
     /// <summary>Menu items of its own atop its header's options, as IntelliJ puts a tool window's (the Explorer's
     /// Appearance), made as the menu opens.</summary>
@@ -99,8 +134,6 @@ public sealed class ToolWindow(string id, string title, string icon, Control con
         get => isShown;
         internal set => Set(ref isShown, value);
     }
-
-    public static bool IsSide(ToolAnchor anchor) => anchor is not (ToolAnchor.BottomLeft or ToolAnchor.BottomRight);
 
     /// <summary>The name a menu gives a place: "Left Top", "Bottom Right".</summary>
     public static string Name(ToolAnchor anchor) => anchor switch

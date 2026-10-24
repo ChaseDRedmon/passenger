@@ -70,18 +70,18 @@ public sealed class HistoryTab : DockPanel
         [
             ListMenus.Item("Revert Selected and Later Changes", null, () => _ = RevertAsync()),
         ]);
-        placeholder = Muted(string.Empty);
+        placeholder = MutedText.Of(string.Empty);
         placeholder.HorizontalAlignment = HorizontalAlignment.Center;
         placeholder.VerticalAlignment = VerticalAlignment.Center;
         placeholder.TextWrapping = TextWrapping.Wrap;
-        diffPlaceholder = Muted("Select activity to view changes");
+        diffPlaceholder = MutedText.Of("Select activity to view changes");
         diffPlaceholder.HorizontalAlignment = HorizontalAlignment.Center;
         diffPlaceholder.VerticalAlignment = VerticalAlignment.Center;
         diffHost.Content = diffPlaceholder;
 
         filter = new TextBox { Classes = { "search" }, PlaceholderText = isFolder ? "Search by file name" : "Search by content", Width = 240, Margin = new Thickness(8, 0) };
         filter.TextChanged += (_, _) => _ = FilterAsync();
-        Button revert = Tool("Icon.Rollback", "Revert Selected and Later Changes", () => _ = RevertAsync());
+        Button revert = ToolButtons.Of("Icon.Rollback", "Revert Selected and Later Changes", () => _ = RevertAsync());
         Border top = new()
         {
             [DockProperty] = Dock.Top,
@@ -106,7 +106,7 @@ public sealed class HistoryTab : DockPanel
             {
                 [DockProperty] = Dock.Top,
                 Height = 30,
-                Child = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 0), Children = { Tool("Icon.Rollback", "Revert Selection", () => _ = RevertSelectionAsync()) } },
+                Child = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 0), Children = { ToolButtons.Of("Icon.Rollback", "Revert Selection", () => _ = RevertSelectionAsync()) } },
             };
             Grid split = new() { RowDefinitions = new RowDefinitions("*,1,2*") };
             DockPanel changes = new() { Children = { fileBar, fileList } };
@@ -162,16 +162,6 @@ public sealed class HistoryTab : DockPanel
 
     /// <summary>Chooses the row of a change set, once the history has it.</summary>
     public void SelectSet(long set) => list.SelectedItem = rows.FirstOrDefault(r => r.Set == set);
-
-    /// <summary>Chooses one of a folder's files, as a click on it does.</summary>
-    public void SelectFile(HistoryDifference file)
-    {
-        if (fileList is not null)
-        {
-            fileList.SelectedItems?.Clear();
-            fileList.SelectedItem = files.FirstOrDefault(f => PathNames.Same(f.Path, file.Path));
-        }
-    }
 
     /// <summary>The tab closed: it stops following the history, and lets go of the file it borrowed.</summary>
     public void Close()
@@ -423,7 +413,7 @@ public sealed class HistoryTab : DockPanel
     private Control Row(HistoryRow row)
     {
         DockPanel line = new() { Height = RowHeight, LastChildFill = true };
-        TextBlock time = Muted(GitLogView.When(row.Time));
+        TextBlock time = MutedText.Of(GitLogView.When(row.Time));
         time[DockProperty] = Dock.Right;
         time.Margin = new Thickness(8, 0, 4, 0);
         line.Children.Add(time);
@@ -460,27 +450,11 @@ public sealed class HistoryTab : DockPanel
         {
             name.TextDecorations = TextDecorations.Strikethrough;
         }
-        string where = System.IO.Path.GetDirectoryName(System.IO.Path.GetRelativePath(Path, file.Path))?.Replace('\\', '/') ?? string.Empty;
-        TextBlock folder = Muted(where);
+        string where = System.IO.Path.GetDirectoryName(PathNames.Shown(file.Path, Path))?.Replace('\\', '/') ?? string.Empty;
+        TextBlock folder = MutedText.Of(where);
         folder.FontSize = 12;
         folder.Margin = new Thickness(8, 0, 0, 0);
         return new StackPanel { Orientation = Orientation.Horizontal, Height = RowHeight, Children = { icon, name, folder } };
     }
 
-    private static TextBlock Muted(string text)
-    {
-        TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-        block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
-        return block;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        PathIcon glyph = new();
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-        Button button = new() { Classes = { "tool" }, Content = glyph };
-        ToolTip.SetTip(button, tip);
-        button.Click += (_, _) => run();
-        return button;
-    }
 }

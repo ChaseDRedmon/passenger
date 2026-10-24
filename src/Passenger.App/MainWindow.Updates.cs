@@ -63,10 +63,10 @@ public partial class MainWindow
 
     private void AddUpdates()
     {
-        actions!.Add(new IdeAction(AppActions.CheckForUpdates, "Check for Updates...", "Help",
+        actions!.Add(new IdeAction(AppActions.CheckForUpdates, "Check for Updates…", "Help",
             context => _ = CheckForUpdatesAsync(asked: true))
         {
-            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 0)],
+            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 1)],
         });
         actions.Add(new IdeAction(AppActions.RestartToUpdate, "Restart to Update", "Help", _ => RestartToUpdate())
         {
@@ -108,7 +108,7 @@ public partial class MainWindow
     /// <summary>Whether the window closing hands its watch for updates to another window open, rather than installing
     /// what it made ready as Passenger ends: it closes alone, not as Passenger quits.</summary>
     internal bool HandsOnUpdates() =>
-        !quitting && !PassengerApp.Quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible);
+        !quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible);
 
     /// <summary>The process's one watch for updates, taken from the window that had it as that one closed with this one
     /// open: its way of installing and the update it made ready, which this window offers and installs as Passenger ends,
@@ -169,7 +169,7 @@ public partial class MainWindow
     {
         if (asked)
         {
-            status.Text = "Checking for updates...";
+            status.Text = "Checking for updates…";
         }
         ReleaseFeed feed = Releases;
         CancellationToken end = updatesEnd.Token;
@@ -304,7 +304,7 @@ public partial class MainWindow
     }
 
     /// <summary>Quits Passenger, every window closing, to install the update and start it, as the person chose; a window
-    /// that does not close (a file it could not save) installs nothing yet.</summary>
+    /// that does not close (a file it could not save) installs nothing yet, and one that asks first restarts once answered.</summary>
     private void RestartToUpdate()
     {
         if (readyRelease is null || SelfUpdate is not { } updater)
@@ -316,12 +316,9 @@ public partial class MainWindow
             status.Text = $"Another Passenger is open from {updater.Installed}: close it, then restart to update";
             return;
         }
-        // Every window closes, as Passenger restarts; one that will not keeps the update for the next end.
+        // A window kept open keeps the update for the next end, which starts nothing.
         restartToUpdate = true;
-        if (!PassengerApp.Quit())
-        {
-            restartToUpdate = false;
-        }
+        PassengerApp.Quit(givenUp: () => restartToUpdate = false);
     }
 
     /// <summary>Stops a download and drops what was downloaded, the notice going back to a link to the release.</summary>
@@ -366,7 +363,7 @@ public partial class MainWindow
         }
         else
         {
-            Say($"Passenger {installing} did not install: Help, Show Log says why", StatusPlace.Log);
+            Say($"Passenger {installing} did not install: Help, Show Log says why", LogPlace);
             IdeErrors.Write($"Updates: Passenger {installing} was to install as the last session ended, but this is {Product.Version}");
         }
     }
@@ -400,7 +397,7 @@ public partial class MainWindow
     {
         UpdateShown = release;
         Notice(UpdateNotice.Downloading, "Icon.ArrowDown", "Passenger.Link",
-            percent < 100 ? $"Downloading Passenger {release.Version}: {percent}%" : $"Checking Passenger {release.Version}...",
+            percent < 100 ? $"Downloading Passenger {release.Version}: {percent}%" : $"Checking Passenger {release.Version}…",
             $"Passenger {release.Version} is downloading from GitHub, to be checked and installed when Passenger restarts.\nClick to open its release page.");
     }
 
@@ -442,7 +439,7 @@ public partial class MainWindow
         }
         else if (UpdateShown is { } shown)
         {
-            _ = Launcher.LaunchUriAsync(notice == UpdateNotice.Downloading ? shown.Page : shown.Link);
+            Browse(notice == UpdateNotice.Downloading ? shown.Page : shown.Link);
         }
     }
 

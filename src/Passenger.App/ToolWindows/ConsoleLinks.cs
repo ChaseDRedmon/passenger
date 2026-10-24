@@ -9,7 +9,14 @@ namespace Passenger.App.ToolWindows;
 /// address in the person's browser.</summary>
 public abstract record LinkTarget;
 
-public sealed record FileLink(string Path, TextPosition Position) : LinkTarget;
+public sealed record FileLink(string Path, TextPosition Position) : LinkTarget
+{
+    /// <summary>Whether the line is its compiler's count, not the editor's: a compiler's message or a stack frame (its PDB's)
+    /// in a file Roslyn compiles, which counts its lines as the language server does, or a XAML compiler's message or frame
+    /// in a XAML file, counted as an XML reader counts them; read in the file's text as it is opened
+    /// (<see cref="CSharp.ServerPlaces.PositionOfCompiled"/>).</summary>
+    public bool CompiledLines { get; init; }
+}
 
 public sealed record WebLink(Uri Address) : LinkTarget;
 
@@ -33,12 +40,16 @@ public sealed partial class ConsoleLinks : IHighlighter
     private const int Kept = 2048;
 
     private readonly Dictionary<string, FoundLink[]> lines = [];
-    private readonly Dictionary<string, string?> files = new(PathNames.Comparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string?> files = new(PathNames.Comparer);
 
     public event EventHandler? Changed;
 
     /// <summary>Where a relative path is looked for, in order: the project the output came from first.</summary>
     public Func<IReadOnlyList<string>> Folders { get; set; } = () => [];
+
+    /// <summary>Where the paths of the containers whose output this is are the workspace's files (a container run's images),
+    /// tried first for a path that starts at the root; null for output from this machine alone.</summary>
+    public Func<Containers.ContainerPaths?> Paths { get; set; } = () => null;
 
     /// <summary>Whether any path to a file is a link (hidden), as in Rider's terminal; a console links only frames and
     /// compiler messages.</summary>
@@ -111,10 +122,13 @@ public sealed partial class ConsoleLinks : IHighlighter
                 Claim(found, new FoundLink(url.Index, url.Length, target));
             }
         }
-        if (Frame().Match(line) is { Success: true } frame && Resolve(frame.Groups["path"].Value.Trim(), deterministic: true) is { } framed)
+        // Merged logs name the resource before the program's own text: "web-1 | " or "[apiservice] ".
+        int skip = ResourcePrefix().Match(line) is { Success: true } prefix ? prefix.Length : 0;
+        if (Frame().Match(line, skip, line.Length - skip) is { Success: true } frame && Resolve(frame.Groups["path"].Value.Trim(), deterministic: true) is { } framed)
         {
             Group path = frame.Groups["path"];
-            Claim(found, new FoundLink(path.Index, frame.Index + frame.Length - path.Index, new FileLink(framed, Position(frame.Groups["line"], null))));
+            Claim(found, new FoundLink(path.Index, frame.Index + frame.Length - path.Index,
+                new FileLink(framed, Position(frame.Groups["line"], null)) { CompiledLines = CSharp.ServerPlaces.CountedApart(framed) }));
         }
         if (FilePaths)
         {
@@ -137,10 +151,14 @@ public sealed partial class ConsoleLinks : IHighlighter
                 }
             }
         }
-        else if (Compiler().Match(line) is { Success: true } message && Resolve(message.Groups["path"].Value, project: ProjectOf(line)) is { } source)
+        else if (Compiler().Match(line, skip, line.Length - skip) is { Success: true } message && Resolve(message.Groups["path"].Value, project: ProjectOf(line)) is { } source)
         {
             Group path = message.Groups["path"];
-            Claim(found, new FoundLink(path.Index, message.Groups["close"].Index + 1 - path.Index, new FileLink(source, Position(message.Groups["line"], message.Groups["column"]))));
+            // A XAML file's place is its compiler's only in a compiler's message: a failed binding's line names the editor's.
+            bool compiled = CSharp.ServerPlaces.CountedByRoslyn(source)
+                || (CSharp.ServerPlaces.CountedAsXml(source) && Diagnostic().IsMatch(line, message.Index + message.Length));
+            Claim(found, new FoundLink(path.Index, message.Groups["close"].Index + 1 - path.Index,
+                new FileLink(source, Position(message.Groups["line"], message.Groups["column"])) { CompiledLines = compiled }));
         }
         found.Sort((a, b) => a.Start.CompareTo(b.Start));
         FoundLink[] links = [.. found];
@@ -208,6 +226,10 @@ public sealed partial class ConsoleLinks : IHighlighter
             return null;
         }
         string relative = path;
+        if (path.StartsWith('/') && Paths() is { IsEmpty: false } map && map.ToHost(path) is { } host && Exists(host) is { } mapped)
+        {
+            return mapped;
+        }
         if (deterministic && (path.StartsWith("/_/", StringComparison.Ordinal) || path.StartsWith(@"\_\", StringComparison.Ordinal)))
         {
             relative = path[3..];
@@ -272,10 +294,19 @@ public sealed partial class ConsoleLinks : IHighlighter
     [GeneratedRegex(@"^\s*at\s[^\r\n]*?\) in (?<path>[^\r\n]+?):line (?<line>\d{1,9})\b")]
     private static partial Regex Frame();
 
+    /// <summary>The container's name and bar <c>docker compose logs</c> puts before each line of a service's.</summary>
+    [GeneratedRegex(@"^(?:[\w.-]+-\d+\s+\| |\[[^\]\r\n]+\] )")]
+    private static partial Regex ResourcePrefix();
+
     /// <summary>A compiler's or MSBuild's message, the place first on its line: "File.cs(12,5): error CS1002: ...", "1>"
     /// before it when Visual Studio numbered the projects. The path may hold parentheses of its own ("Shop (copy)").</summary>
     [GeneratedRegex(@"^\s*(?:\d+>)?(?<path>[^\s>][^\r\n]*?)\((?<line>\d{1,9})(?:,(?<column>\d{1,9}))?(?:[-,]\d{1,9})*(?<close>\))\s*:")]
     private static partial Regex Compiler();
+
+    /// <summary>What follows a compiler's message's place: its severity and code, MSBuild's subcategory perhaps before them
+    /// ("Avalonia error AVLN2000:", "error MC3000:").</summary>
+    [GeneratedRegex(@"\G\s*(?:[A-Za-z][\w.]*\s+)?(?:error|warning)\s+[A-Za-z]+\d+\s*:")]
+    private static partial Regex Diagnostic();
 
     /// <summary>The project MSBuild names at the end of a message.</summary>
     [GeneratedRegex(@"\[(?<project>[^\[\]]+\.\w*proj)\]\s*$")]

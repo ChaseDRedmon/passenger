@@ -122,6 +122,54 @@ public sealed class EditorTabsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A file left scrolled to its end, then made far shorter on disk (a checkout, an agent writing it): its tab
+    /// draws the lines left whether it is shown as the file changes, shown again from behind another tab, or closed and
+    /// reopened, where its view stood past the last of them, blank, gutter and all, until scrolled.</summary>
+    [AvaloniaFact]
+    public void A_tab_left_scrolled_to_its_files_end_draws_the_lines_left_once_the_file_is_far_shorter_on_disk()
+    {
+        string path = Path.Combine(folder, "Long.cs");
+        string full = string.Concat(Enumerable.Range(1, 300).Select(i => $"// line {i}\n"));
+        const string Short = "// line 1\n// line 2\n// line 3\n";
+        File.WriteAllText(path, full);
+        MainWindow window = Keeping("Long.cs");
+        EditorArea area = window.EditorArea;
+        string Long() => area.Documents.Single(d => d.Name == "Long.cs").Text.Snapshot.ToString();
+        void AtTheEnd()
+        {
+            File.WriteAllText(path, full);
+            Ui.WaitFor(() => Long() == full, "the file's every line from disk");
+            area.CodeEditor.GoTo(new TextPosition(299, 0));
+            Ui.Settle();
+            Assert.True(area.CodeEditor.ScrollOffset.Y > 200 * area.CodeEditor.LineHeight, "Going to the last line left the view at the file's top");
+        }
+
+        // Shown as it changes.
+        AtTheEnd();
+        File.WriteAllText(path, Short);
+        Ui.WaitFor(() => Long() == Short, "the shorter text from disk");
+        Ui.DrawsText(window, area.CodeEditor, "the file shown was made shorter on disk");
+
+        // Behind another tab as it changes, then shown again.
+        AtTheEnd();
+        window.OpenFile("One.cs");
+        Ui.Settle();
+        File.WriteAllText(path, Short);
+        Ui.WaitFor(() => Long() == Short, "the shorter text from disk");
+        window.OpenFile("Long.cs");
+        Ui.DrawsText(window, area.CodeEditor, "the file behind another tab was made shorter on disk and shown again");
+
+        // Closed, changed, and reopened.
+        AtTheEnd();
+        Ui.Run(window, AppActions.CloseTab);
+        Assert.DoesNotContain(area.Documents, d => d.Name == "Long.cs");
+        File.WriteAllText(path, Short);
+        FromEditorTabs(window, "Reopen Closed Tab");
+        Assert.Equal(Short, Long());
+        Ui.DrawsText(window, area.CodeEditor, "the file was closed, made shorter on disk and reopened");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Close_Tabs_to_the_Left_and_to_the_Right_close_those_on_that_side_but_the_pinned_ones()
     {
@@ -180,6 +228,7 @@ public sealed class EditorTabsTests : IDisposable
         window.Show();
         window.KeepLayout();
         window.OpenFolder(folder);
+        Ui.Settle();
         foreach (string file in files)
         {
             window.OpenFile(file);

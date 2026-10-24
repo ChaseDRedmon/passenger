@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.Editor;
 using Passenger.Profiler;
+using Passenger.Core;
 
 namespace Passenger.App.Profiling;
 
@@ -173,7 +174,7 @@ public sealed class ProfilerView : DockPanel
         keptSummary = new TextBlock { Margin = new Thickness(12, 8), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         Button reveal = new()
         {
-            Content = OperatingSystem.IsMacOS() ? "Reveal in Finder" : $"Show in {Core.ChildProcesses.FileManager}",
+            Content = FileManager.Showing,
             Margin = new Thickness(0, 0, 12, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -192,23 +193,24 @@ public sealed class ProfilerView : DockPanel
         };
 
         status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
-        stop = new Button { Content = "Get Snapshot", Classes = { "primary" }, IsVisible = false };
+        stop = new Button { Name = "ProfilerGetSnapshot", Content = "Get Snapshot", Classes = { "primary" }, IsVisible = false };
         stop.Click += (_, _) => StopRequested?.Invoke(this, EventArgs.Empty);
         kill = new Button { Content = "Kill", IsVisible = false };
         kill.Click += (_, _) => KillRequested?.Invoke(this, EventArgs.Empty);
         pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph"), PageButton("Frames"), PageButton("Allocations"), PageButton("GC"),
             PageButton("Memory"), PageButton("Snapshots")];
-        pages[(int)ProfilerPage.Frames].Name = "ProfilerFrames";
+        // Named for a screenshot's --click-name: ProfilerHotSpots, ProfilerMemory and the rest.
+        foreach (ProfilerPage page in Enum.GetValues<ProfilerPage>())
+        {
+            pages[(int)page].Name = $"Profiler{page}";
+        }
         StackPanel left = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (ToggleButton page in pages)
         {
             left.Children.Add(page);
         }
-        Button open = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ((PathIcon)open.Content).Bind(PathIcon.DataProperty, open.GetResourceObservable("Icon.FolderOpen"));
-        ToolTip.SetTip(open, "Open Snapshot");
-        open.Click += (_, _) => OpenSnapshotRequested?.Invoke(this, EventArgs.Empty);
-        heap = new Button { Content = "Get Memory Snapshot", IsVisible = false };
+        Button open = ToolButtons.Of("Icon.FolderOpen", "Open Snapshot", () => OpenSnapshotRequested?.Invoke(this, EventArgs.Empty));
+        heap = new Button { Name = "ProfilerGetMemorySnapshot", Content = "Get Memory Snapshot", IsVisible = false };
         heap.Click += (_, _) => MemoryRequested?.Invoke(this, EventArgs.Empty);
         StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Children = { heap, stop, kill, open } };
         DockPanel bar = new();
@@ -284,7 +286,7 @@ public sealed class ProfilerView : DockPanel
         kept.ItemsSource = files;
         keptSummary.Text = files.Count == 0
             ? $"No snapshots yet. Each run's is kept in {folder}, the newest {Snapshots.Kept}."
-            : $"{files.Count} snapshot{(files.Count == 1 ? "" : "s")}, the newest first, kept in {folder}. Past {Snapshots.Kept}, the oldest go.";
+            : $"{Plural.Of(files.Count, "snapshot")}, the newest first, kept in {folder}. Past {Snapshots.Kept}, the oldest go.";
         pages[(int)ProfilerPage.Snapshots].IsEnabled = true;
         int current = Array.FindIndex(pages, p => p.IsChecked == true);
         ShowPage(Snapshot is null && Memory is null && !ticking.IsEnabled && files.Count > 0 ? ProfilerPage.Snapshots : (ProfilerPage)Math.Max(0, current));
@@ -340,13 +342,13 @@ public sealed class ProfilerView : DockPanel
         status.Text = $"Starting {name} under the profiler…";
     }
 
-    /// <summary>A run has begun; one attached to a program already running has no Kill, the program being another's.</summary>
-    public void Running(string name, Func<TimeSpan> clock, bool attached = false)
+    /// <summary>A run has begun; one attached to a program Profile did not start has no Kill, the program being another's.</summary>
+    public void Running(string name, Func<TimeSpan> clock, bool killable = true)
     {
         running = name;
         elapsed = clock;
         stop.IsVisible = true;
-        kill.IsVisible = !attached;
+        kill.IsVisible = killable;
         heap.IsVisible = true;
         placeholder.Text = $"Profiling {name}. Get Snapshot when it has done what is to be measured.";
         ticking.Start();
@@ -374,6 +376,15 @@ public sealed class ProfilerView : DockPanel
             }
         }
     }
+
+    /// <summary>Kill shown or not whatever the run: the program Profile started goes on after its snapshot, until it ends.</summary>
+    public void ShowKill(bool shown) => kill.IsVisible = shown;
+
+    /// <summary>Whether Kill is there.</summary>
+    public bool CanKill => kill.IsVisible;
+
+    /// <summary>Whether the window follows a run as it goes: its time ticking, Get Snapshot there.</summary>
+    public bool IsFollowing => ticking.IsEnabled;
 
     /// <summary>What the window's middle says while it has nothing on the page shown.</summary>
     public string Placeholder => placeholder.IsVisible ? placeholder.Text ?? string.Empty : string.Empty;
@@ -414,7 +425,7 @@ public sealed class ProfilerView : DockPanel
             Fill(whole);
             return;
         }
-        status.Text = $"{snapshotName}: reading {span.From - whole.StartMs:N0} to {span.To - whole.StartMs:N0} ms...";
+        status.Text = $"{snapshotName}: reading {span.From - whole.StartMs:N0} to {span.To - whole.StartMs:N0} ms…";
         Snapshot within = await BackgroundWork.Run(() => whole.Within(span.From, span.To));
         if (chosen == choosing)
         {
@@ -429,7 +440,7 @@ public sealed class ProfilerView : DockPanel
         Snapshot = snapshot;
         Snapshot whole = snapshot.Whole;
         status.Text = ReferenceEquals(whole, snapshot)
-            ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {snapshot.Threads.Count} thread{(snapshot.Threads.Count == 1 ? "" : "s")}, {snapshot.Samples:N0} samples"
+            ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {Plural.Of(snapshot.Threads.Count, "thread")}, {snapshot.Samples:N0} samples"
             : $"{snapshotName}: {snapshot.StartMs - whole.StartMs:N0} to {snapshot.EndMs - whole.StartMs:N0} ms of {whole.Duration.TotalMilliseconds:N0}, {snapshot.Samples:N0} samples";
         foreach (ToggleButton page in pages)
         {
@@ -459,7 +470,7 @@ public sealed class ProfilerView : DockPanel
         spots.ItemsSource = snapshot.HotSpots;
         flame.SampleMs = snapshot.SampleMs;
         flame.Root = snapshot.All;
-        frames.Show(snapshot.UiFrames, whole.StartMs);
+        frames.Show(snapshot.UiFrames, whole.StartMs, snapshot.Place is { } elsewhere ? FramesView.InContainer(elsewhere.Where) : null);
         ShowPageLater(current);
         types.ItemsSource = snapshot.Allocations;
         types.SelectedIndex = snapshot.Allocations.Count > 0 ? 0 : -1;
@@ -635,7 +646,7 @@ public sealed class ProfilerView : DockPanel
         PathIcon chevron = new() { Classes = { "chevron" }, IsVisible = row.Node.Children.Count > 0, RenderTransformOrigin = RelativePoint.Center };
         chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
         chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
-        row.PropertyChanged += (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
+        row.FollowWhileShown(chevron, (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0));
         Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
         toggle.PointerPressed += (_, e) =>
         {
@@ -685,8 +696,8 @@ public sealed class ProfilerView : DockPanel
 
     private static TextBlock Muted(string text, double width)
     {
-        TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, Width = width };
-        block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
+        TextBlock block = MutedText.Of(text);
+        block.Width = width;
         return block;
     }
 }

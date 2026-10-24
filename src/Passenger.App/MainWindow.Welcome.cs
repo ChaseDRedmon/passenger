@@ -15,7 +15,7 @@ public partial class MainWindow
 {
     private readonly WelcomeView welcome = new();
 
-    /// <summary>What Open's panel lists first; All Files is beside it, so another file can be chosen and refused with why.</summary>
+    /// <summary>What Open's panel offers beside All Files, which it lists first since Open takes any file.</summary>
     private static readonly FilePickerFileType SolutionsAndProjects = new("Solutions and Projects") { Patterns = ["*.sln", "*.slnx", "*.csproj"] };
 
     /// <summary>The Welcome screen, which the editor area shows until a folder opens.</summary>
@@ -30,9 +30,10 @@ public partial class MainWindow
         welcome.CloneRequested += (_, _) => Request(AppActions.CloneRepository);
         welcome.Chosen += (_, row) => OpenRecent(row.Path);
         welcome.RemoveRequested += (_, row) => ForgetRecent(row.Path);
+        welcome.RevealRequested += (_, row) => ShowInFileManager(row.Path);
         AddNewProjectActions();
-        actions!.Add(new IdeAction(AppActions.OpenFolder, "Open Folder...", "IDE", context => _ = PickFolder()) { Menus = [new MenuPlace("File", 0, 1)] });
-        actions.Add(new IdeAction(AppActions.CloneRepository, "Clone Repository...", "Git", _ => ShowCloneRepository())
+        actions!.Add(new IdeAction(AppActions.OpenFolder, "Open Folder…", "IDE", context => _ = PickFolder()) { Menus = [new MenuPlace("File", 0, 1)] });
+        actions.Add(new IdeAction(AppActions.CloneRepository, "Clone Repository…", "Git", _ => ShowCloneRepository())
         {
             Menus = [new MenuPlace("File", 0, 2), new MenuPlace("Git", 4, 0)],
         });
@@ -40,32 +41,38 @@ public partial class MainWindow
 
     /// <summary>Opens what File, Open or Open Folder chose (or the recent solutions, the system, a new solution or a clone):
     /// a solution (.sln, .slnx) or C# project (.csproj) as the workspace over its folder, or a folder, in this window or
-    /// another as Settings says or the person answers (<see cref="Asking"/>). Null once it is open or asked where, else why
-    /// not (it is not there, or is another kind of file), which the status bar and the Welcome screen say.</summary>
-    public string? Open(string path)
+    /// another as Settings says or the person answers (<see cref="Asking"/>); any other file in an editor tab here, in the
+    /// open folder or on its own, as Rider's Open does. Null once it is open or asked where, else why not (it is not there,
+    /// or cannot be read), which the status bar and the Welcome screen say; <paramref name="then"/> is told the window a
+    /// workspace opened in once its session has begun there, whenever that is.</summary>
+    public string? Open(string path, Action<MainWindow>? then = null)
     {
         string full = PathNames.Canonical(path);
-        string? why = Directory.Exists(full) || (File.Exists(full) && WorkspaceModel.Opens(full)) ? null
-            : File.Exists(full) ? $"{Path.GetFileName(full)} was not opened: Open takes a solution (.sln, .slnx), a C# project (.csproj) or a folder"
-            : $"{RecentRow.Home(full)} was not opened: it does not exist";
+        if (File.Exists(full) && !WorkspaceModel.Opens(full))
+        {
+            string? problem = OpenFile(full);
+            welcome.Say(problem);
+            return problem;
+        }
+        string? why = Directory.Exists(full) || File.Exists(full) ? null : $"{RecentRow.Home(full)} was not opened: it does not exist";
         welcome.Say(why);
         if (why is not null)
         {
             status.Text = why;
             return why;
         }
-        OpenChosen(full);
+        OpenChosen(full, then);
         return null;
     }
 
-    /// <summary>File, Open: a solution or project in the system's panel. Avalonia's panel takes files or folders, never both
-    /// as Rider's does, so a folder is Open Folder's.</summary>
+    /// <summary>File, Open: any file in the system's panel, a solution or project opening as the workspace. Avalonia's panel
+    /// takes files or folders, never both as Rider's does, so a folder is Open Folder's.</summary>
     private async Task PickWorkspace()
     {
         IReadOnlyList<IStorageFile> picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = "Open",
-            FileTypeFilter = [SolutionsAndProjects, FilePickerFileTypes.All],
+            FileTypeFilter = [FilePickerFileTypes.All, SolutionsAndProjects],
             SuggestedStartLocation = await StorageProvider.TryGetFolderFromPathAsync(BesideLast()),
         });
         if (picked.Count == 1 && picked[0].TryGetLocalPath() is { } path)

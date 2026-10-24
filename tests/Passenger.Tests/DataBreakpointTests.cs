@@ -41,7 +41,7 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     }
 
     private const string Project =
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
+        $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
         + "    <ImplicitUsings>enable</ImplicitUsings>\n    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n  </PropertyGroup>\n</Project>\n";
 
     // Garbage before the neighbour, so the compacting collection moves it; the counter, watched, is held where it is. A
@@ -99,15 +99,15 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
         Assert.SkipUnless(Watches, OnlyOnWindowsX64);
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Passenger.App.ToolWindows.DebugView view = PausedAtReady(window);
+        Passenger.App.ToolWindows.DebugModel view = PausedAtReady(window);
         VariableNode count = Member(view, "counter", "count");
-        Assert.Equal(DataWatchOffer.Set, Offered(view, count).Item.Header as string);
-        Ui.ChooseFromMenu(view.VariablesList, DataWatchOffer.Set);
+        Assert.Equal(DataWatchOffer.Set, Offered(window, view, count).Item.Header as string);
+        Ui.ChooseFromMenu(window.DebugWindow.VariablesList, DataWatchOffer.Set);
         DataBreakpoint watched = Assert.Single(window.Debugger.Breakpoints.Data);
         Assert.StartsWith("count on counter", watched.Location, StringComparison.Ordinal);
         Ui.WaitFor(() => watched.Status == BreakpointStatus.Bound, $"the debugger to take the data breakpoint, not to say {watched.Message}");
         // Watched, the row's menu offers Rider's Remove Data Breakpoint instead.
-        Assert.Equal(DataWatchOffer.Remove, Offered(view, Member(view, "counter", "count")).Item.Header as string);
+        Assert.Equal(DataWatchOffer.Remove, Offered(window, view, Member(view, "counter", "count")).Item.Header as string);
 
         // Set(0) writes the value the field has, which does not stop it; Set(2) changes it, after the collection.
         Ui.Run(window, AppActions.Resume);
@@ -140,16 +140,16 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     {
         Assert.SkipUnless(Watches, OnlyOnWindowsX64);
         MainWindow window = Open();
-        Passenger.App.ToolWindows.DebugView view = PausedAtReady(window);
-        view.VariablesList.SelectedItem = Member(view, "counter", "count");
-        Ui.ChooseFromMenu(view.VariablesList, DataWatchOffer.Set);
+        Passenger.App.ToolWindows.DebugModel view = PausedAtReady(window);
+        window.DebugWindow.VariablesList.SelectedItem = Member(view, "counter", "count");
+        Ui.ChooseFromMenu(window.DebugWindow.VariablesList, DataWatchOffer.Set);
         DataBreakpoint watched = Assert.Single(window.Debugger.Breakpoints.Data);
 
         Ui.Run(window, AppActions.ViewBreakpoints);
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal(["Program.cs:7", watched.Location, ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
         Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Data Breakpoints");
-        Click(window, Row(breakpoints, watched.Location));
+        Ui.Click(Row(breakpoints, watched.Location));
         Assert.Same(watched, breakpoints.Chosen);
         Ui.Press(window, "Delete");
         Assert.Equal(["Program.cs:7", ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
@@ -172,17 +172,17 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     {
         Assert.SkipUnless(Watches, OnlyOnWindowsX64);
         MainWindow window = Open();
-        Passenger.App.ToolWindows.DebugView view = PausedAtReady(window);
-        view.VariablesList.SelectedItem = Member(view, "counter", "count");
-        Ui.ChooseFromMenu(view.VariablesList, DataWatchOffer.Set);
+        Passenger.App.ToolWindows.DebugModel view = PausedAtReady(window);
+        window.DebugWindow.VariablesList.SelectedItem = Member(view, "counter", "count");
+        Ui.ChooseFromMenu(window.DebugWindow.VariablesList, DataWatchOffer.Set);
         DataBreakpoint watched = Assert.Single(window.Debugger.Breakpoints.Data);
 
         Ui.Run(window, AppActions.ViewBreakpoints);
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        Click(window, Row(breakpoints, watched.Location));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, watched.Location));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
         window.KeyTextInput("value == 3");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("value == 3", watched.Condition);
 
         Ui.Run(window, AppActions.Resume);
@@ -198,13 +198,13 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     public void Set_data_breakpoint_is_greyed_saying_why_on_a_local_on_a_property_with_no_backing_field_and_wherever_the_runtime_cannot_watch()
     {
         MainWindow window = Open();
-        Passenger.App.ToolWindows.DebugView view = PausedAtReady(window);
+        Passenger.App.ToolWindows.DebugModel view = PausedAtReady(window);
         string? unavailable = window.Debugger.Session!.DataBreakpointsUnavailable;
         Assert.True(Watches == (unavailable is null), $"Windows x64 alone watches memory for a debugger; this debugger says: {unavailable ?? "it can"}");
 
-        (MenuItem field, string? fieldWhy) = Offered(view, Member(view, "counter", "count"));
-        (MenuItem local, string? localWhy) = Offered(view, view.Tree.Rows.First(r => r.Depth == 0 && r.Name == "counter"));
-        (MenuItem property, string? propertyWhy) = Offered(view, Member(view, "counter", "Count"));
+        (MenuItem field, string? fieldWhy) = Offered(window, view, Member(view, "counter", "count"));
+        (MenuItem local, string? localWhy) = Offered(window, view, view.Tree.Rows.First(r => r.Depth == 0 && r.Name == "counter"));
+        (MenuItem property, string? propertyWhy) = Offered(window, view, Member(view, "counter", "Count"));
         Assert.Equal(DataWatchOffer.Set, field.Header as string);
         if (unavailable is not null)
         {
@@ -229,7 +229,7 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     }
 
     /// <summary>The program debugged from its start to the line where it waits to be watched, its Debug window then.</summary>
-    private Passenger.App.ToolWindows.DebugView PausedAtReady(MainWindow window)
+    private Passenger.App.ToolWindows.DebugModel PausedAtReady(MainWindow window)
     {
         window.EditorArea.CodeEditor.GoTo(new TextPosition(Ready, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
@@ -239,7 +239,7 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     }
 
     /// <summary>A member of a top-level row of Variables, the row opened to show it.</summary>
-    private static VariableNode Member(Passenger.App.ToolWindows.DebugView view, string row, string name)
+    private static VariableNode Member(Passenger.App.ToolWindows.DebugModel view, string row, string name)
     {
         VariableNode owner = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == row);
         if (!owner.IsExpanded)
@@ -252,11 +252,11 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
 
     /// <summary>The data breakpoint item of a row's menu as it opens on the row, once the debugger has answered, and why
     /// it is greyed when it is.</summary>
-    private static (MenuItem Item, string? WhyNot) Offered(Passenger.App.ToolWindows.DebugView view, VariableNode node)
+    private static (MenuItem Item, string? WhyNot) Offered(MainWindow window, Passenger.App.ToolWindows.DebugModel view, VariableNode node)
     {
-        view.VariablesList.SelectedItem = node;
-        ContextMenu menu = view.VariablesList.ContextMenu ?? throw new InvalidOperationException("The row has no menu");
-        view.VariablesList.RaiseEvent(new ContextRequestedEventArgs());
+        window.DebugWindow.VariablesList.SelectedItem = node;
+        ContextMenu menu = window.DebugWindow.VariablesList.ContextMenu ?? throw new InvalidOperationException("The row has no menu");
+        window.DebugWindow.VariablesList.RaiseEvent(new ContextRequestedEventArgs());
         Ui.Settle();
         MenuItem item = menu.Items.OfType<MenuItem>().Last();
         menu.Close();
@@ -270,18 +270,10 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     private static ListBoxItem Row(BreakpointsWindow breakpoints, string location) =>
         breakpoints.GetVisualDescendants().OfType<ListBoxItem>().First(i => (i.Tag as Breakpoint)?.Location == location);
 
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
+    /// <summary>A window on the program with its file open, with no C# language server, which debugging asks nothing of.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(program);

@@ -101,8 +101,6 @@ public sealed partial class CodeAssist
             msbuildWordCharacters = list.WordCharacters;
             open = new Completion(items, Math.Min(list.Start, Editor.Selections.Primary.Caret), [], list.Incomplete);
             Filter();
-            // The first item's documentation beside the list as it opens, which its selection came too early to show.
-            _ = DescribeSelected();
         }
         catch (OperationCanceledException)
         {
@@ -169,14 +167,11 @@ public sealed partial class CodeAssist
         {
             return;
         }
-        TextSnapshot snapshot = TextSnapshot.From(propsText!);
-        TextPosition from = snapshot.GetPosition(version.Start);
-        TextPosition to = snapshot.GetPosition(version.End);
         JsonElement edit = JsonSerializer.SerializeToElement(new
         {
             changes = new Dictionary<string, List<LspTextEdit>>
             {
-                [DocumentUris.FromPath(props!)] = [new LspTextEdit(new LspRange(new LspPosition(from.Line, from.Column), new LspPosition(to.Line, to.Column)), version.Text)],
+                [DocumentUris.FromPath(props!)] = ServerPlaces.EditsOf(TextSnapshot.From(propsText!), [version]),
             },
         }, Json.Options);
         List<string> dropped = [];
@@ -239,7 +234,7 @@ public sealed partial class CodeAssist
         }
         string root = Path.GetDirectoryName(msbuild.Project ?? msbuild.Document.Path)!;
         List<Choice> choices = [.. found.Targets.Select(t => new Choice(t.Title,
-            PathNames.IsUnder(t.Place.Path, root) ? Path.GetRelativePath(root, t.Place.Path) : t.Place.Path, t))];
+            PathNames.Shown(t.Place.Path, root), t))];
         ShowModal(new ChoicePopup($"Declarations of {found.Symbol.Name}", choices), offset, "Go to Declaration", choice =>
         {
             if (choice?.Value is MSBuildTarget target)

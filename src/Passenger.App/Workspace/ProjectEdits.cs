@@ -4,8 +4,8 @@ using Passenger.Core;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>Rider's Add Reference and Remove on a project reference, and its items following a file moved, made to the
-/// project file's text: a reference goes beside the project's others, or in an item group of its own before
+/// <summary>Rider's Add Reference and Remove on a project reference, its items following a file moved, and a property set
+/// (Add > Docker Support's container properties), made to the project file's text: a reference goes beside the project's others, or in an item group of its own before
 /// &lt;/Project&gt;, written as dotnet add reference writes it (relative, with backslashes); taking it out takes the group
 /// it leaves empty, so the file is as it was. The rest of the file keeps its bytes, its byte order mark, line endings and
 /// indentation: dotnet add reference reformats what it writes back. Paths are canonical. A reference's edit returns null
@@ -29,19 +29,70 @@ public static partial class ProjectEdits
         {
             int lineEnd = text.IndexOf('\n', last.End);
             int at = lineEnd < 0 ? text.Length : lineEnd + 1;
-            file.Write(text.Insert(at, $"{LineIndent(text, last.Start)}{element}{eol}"));
+            if (text[last.End..(lineEnd < 0 ? text.Length : lineEnd)].Trim().Length > 0)
+            {
+                // The group's close (or more) follows it on its line: the new one goes between them, on that line.
+                file.Write(text.Insert(last.End, element));
+                return null;
+            }
+            // On a line of its own, indented as the last one's, a level deeper when that line begins with its group.
+            int lineStart = text.LastIndexOf('\n', Math.Max(0, last.Start - 1)) + 1;
+            string under = text[lineStart..last.Start].Trim().Length > 0 ? indent : string.Empty;
+            file.Write(text.Insert(at, $"{LineIndent(text, last.Start)}{under}{element}{eol}"));
             return null;
         }
+        return InGroupOfItsOwn(file, project, element);
+    }
+
+    /// <summary>A package reference added as dotnet add package writes one, its version given (none under central package
+    /// management, whose Directory.Packages.props holds it): on a line of its own after the project's last package reference,
+    /// indented as it is, else in an item group of its own before &lt;/Project&gt;. Null once done, else why not.</summary>
+    public static string? AddPackage(string project, string id, string? version)
+    {
+        ProjectText file = new(project);
+        string text = file.Text;
+        if (Regex.IsMatch(text, $"<PackageReference\\s+Include=\"{Regex.Escape(id)}\"", RegexOptions.IgnoreCase))
+        {
+            return $"{Path.GetFileNameWithoutExtension(project)} already references {id}";
+        }
+        string element = version is null ? $"<PackageReference Include=\"{id}\" />" : $"<PackageReference Include=\"{id}\" Version=\"{version}\" />";
+        if (Regex.Matches(text, "<PackageReference\\b[^>]*/>").LastOrDefault() is { } last)
+        {
+            int end = last.Index + last.Length;
+            int lineEnd = text.IndexOf('\n', end);
+            string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            if (text[end..(lineEnd < 0 ? text.Length : lineEnd)].Trim().Length > 0)
+            {
+                file.Write(text.Insert(end, element));
+                return null;
+            }
+            file.Write(text.Insert(lineEnd < 0 ? text.Length : lineEnd + 1, $"{LineIndent(text, last.Index)}{element}{eol}"));
+            return null;
+        }
+        return InGroupOfItsOwn(file, project, element);
+    }
+
+    /// <summary>An item put in an item group of its own before &lt;/Project&gt;, indented as the file indents.</summary>
+    private static string? InGroupOfItsOwn(ProjectText file, string project, string element)
+    {
+        string text = file.Text;
+        string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        string indent = IndentUnit(text);
         int close = text.LastIndexOf("</Project>", StringComparison.Ordinal);
         if (close < 0)
         {
             return $"{Path.GetFileName(project)} is not a project file";
         }
         int closeLine = text.LastIndexOf('\n', Math.Max(0, close - 1)) + 1;
+        bool inline = text[closeLine..close].Trim().Length > 0;
+        if (inline)
+        {
+            closeLine = close;
+        }
         // A file that leaves a blank line between its groups gets one after the new group too.
         bool spaced = closeLine >= 2 && text[..closeLine].TrimEnd('\r', '\n').Length < text[..closeLine].Length - eol.Length;
         string group = $"{indent}<ItemGroup>{eol}{indent}{indent}{element}{eol}{indent}</ItemGroup>{eol}{(spaced ? eol : string.Empty)}";
-        file.Write(text.Insert(closeLine, group));
+        file.Write(text.Insert(closeLine, (inline ? eol : string.Empty) + group));
         return null;
     }
 
@@ -69,36 +120,141 @@ public static partial class ProjectEdits
         return null;
     }
 
-    /// <summary>The project following files and folders that moved or were renamed, as Rider's project model does: an
-    /// item that names a file by itself (its Include or Update, no wildcards) names where it went, and a DependentUpon or
-    /// LastGenOutput naming one (relative to its item's folder) names it there. Whether the file changed.</summary>
+    /// <summary>Sets a property in the project file, as Add > Docker Support sets the SDK's container properties and Manage User
+    /// Secrets a UserSecretsId (<see cref="WithProperty"/>). Null once done, else why not.</summary>
+    public static string? SetProperty(string project, string name, string value)
+    {
+        ProjectText file = new(project);
+        (string? text, string? problem) = WithProperty(file.Text, project, name, value);
+        if (text is not null && text != file.Text)
+        {
+            file.Write(text);
+        }
+        return problem;
+    }
+
+    /// <summary>A project file's text with a property set: where an unconditioned property group sets it already, its value
+    /// there; else on a line of its own at the end of the first unconditioned property group, indented as that group's last
+    /// property; else in a property group of its own before &lt;/Project&gt;. The text, else why not.</summary>
+    public static (string? Text, string? Problem) WithProperty(string text, string project, string name, string value)
+    {
+        string written = System.Security.SecurityElement.Escape(value);
+        List<(int Start, int End)> comments = [.. Comment().Matches(text).Select(m => (m.Index, m.Index + m.Length))];
+        List<Match> groups = [.. PropertyGroup().Matches(text).Where(m => !comments.Any(c => m.Index >= c.Start && m.Index < c.End)
+            && !m.Groups["attributes"].Value.Contains("Condition", StringComparison.OrdinalIgnoreCase))];
+        Regex element = new($@"<{Regex.Escape(name)}\s*>(?<value>[^<]*)</{Regex.Escape(name)}\s*>");
+        foreach (Match group in groups)
+        {
+            Capture body = group.Groups["body"];
+            // One commented out sets nothing: the one MSBuild reads is outside every comment.
+            Match set = element.Match(text, body.Index, body.Length);
+            while (set.Success && comments.Any(c => set.Index >= c.Start && set.Index < c.End))
+            {
+                set = set.NextMatch();
+            }
+            if (set.Success)
+            {
+                Capture old = set.Groups["value"];
+                return (old.Value == written ? text : text.Remove(old.Index, old.Length).Insert(old.Index, written), null);
+            }
+        }
+        string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        string indent = IndentUnit(text);
+        string line = $"<{name}>{written}</{name}>";
+        if (groups.FirstOrDefault() is { } first)
+        {
+            Capture body = first.Groups["body"];
+            int closeLine = text.LastIndexOf('\n', body.Index + body.Length - 1) + 1;
+            if (closeLine <= body.Index || text[closeLine..(body.Index + body.Length)].Trim().Length > 0)
+            {
+                // The group closes on a line it shares: the property goes just before its close.
+                return (text.Insert(body.Index + body.Length, line), null);
+            }
+            // Indented as the group's last property, or a level under the group with none.
+            int previous = text.LastIndexOf('\n', Math.Max(0, closeLine - 2)) + 1;
+            string under = previous <= first.Index ? LineIndent(text, first.Index) + indent : LineIndent(text, closeLine - 1);
+            return (text.Insert(closeLine, $"{under}{line}{eol}"), null);
+        }
+        int close = text.LastIndexOf("</Project>", StringComparison.Ordinal);
+        if (close < 0)
+        {
+            return (null, $"{Path.GetFileName(project)} is not a project file");
+        }
+        int closeAt = text.LastIndexOf('\n', Math.Max(0, close - 1)) + 1;
+        bool spaced = closeAt >= 2 && text[..closeAt].TrimEnd('\r', '\n').Length < text[..closeAt].Length - eol.Length;
+        return (text.Insert(closeAt, $"{indent}<PropertyGroup>{eol}{indent}{indent}{line}{eol}{indent}</PropertyGroup>{eol}{(spaced ? eol : string.Empty)}"), null);
+    }
+
+    /// <summary>A property's value as the project file's own text sets it, outside comments and conditioned groups; null where it
+    /// sets none.</summary>
+    public static string? PropertyIn(string text, string name)
+    {
+        List<(int Start, int End)> comments = [.. Comment().Matches(text).Select(m => (m.Index, m.Index + m.Length))];
+        Regex element = new($@"<{Regex.Escape(name)}\s*>(?<value>[^<]*)</{Regex.Escape(name)}\s*>");
+        foreach (Match group in PropertyGroup().Matches(text).Where(m => !comments.Any(c => m.Index >= c.Start && m.Index < c.End)
+            && !m.Groups["attributes"].Value.Contains("Condition", StringComparison.OrdinalIgnoreCase)))
+        {
+            Capture body = group.Groups["body"];
+            for (Match set = element.Match(text, body.Index, body.Length); set.Success; set = set.NextMatch())
+            {
+                if (!comments.Any(c => set.Index >= c.Start && set.Index < c.End))
+                {
+                    return System.Net.WebUtility.HtmlDecode(set.Groups["value"].Value.Trim());
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The project (at its path now) following files and folders that moved or were renamed: an item's Include,
+    /// Update, Remove or Exclude naming a file, or a glob's folder, names where it went (a list or a property stays as
+    /// written), and a DependentUpon or LastGenOutput naming one (relative to its item's file) names it there. A project
+    /// that moved itself reads its paths from where it was, so one naming a file outside it still finds it. Whether it
+    /// changed.</summary>
     public static bool MoveItems(string project, IReadOnlyList<(string From, string To)> moves)
     {
         ProjectText file = new(project);
         string folder = Path.GetDirectoryName(project)!;
         // A file moved, or one inside a folder that was.
         string Moved(string path) => moves.FirstOrDefault(m => PathNames.Within(path, m.From)) is { From: not null } move ? PathNames.Moved(path, move.From, move.To) : path;
+        string before = Path.GetDirectoryName(moves.FirstOrDefault(m => PathNames.Within(project, m.To)) is { To: not null } back ? PathNames.Moved(project, back.To, back.From) : project)!;
         List<(int Start, int End)> comments = [.. Comment().Matches(file.Text).Select(m => (m.Index, m.Index + m.Length))];
         string text = ItemElement().Replace(file.Text, item =>
         {
-            string items = item.Groups["items"].Value;
-            if (comments.Any(c => item.Index >= c.Start && item.Index < c.End) || items.IndexOfAny(['*', '?', ';', '$', '@', '%']) >= 0)
+            if (comments.Any(c => item.Index >= c.Start && item.Index < c.End))
             {
                 return item.Value;
             }
-            string was = Path.GetFullPath(Path.Combine(folder, items.Replace('\\', '/')));
-            string now = Moved(was);
-            // What the item names beside it, relative to its folder: where that is now, from where the item is now.
-            string element = RelatedName().Replace(item.Value, related =>
+            // Each path written from where the project was names where that file is now, from where the project is now; a
+            // glob by the folder it begins in, so Remove="Legacy\**" still removes what it did, and a folder's ("Legacy\").
+            string start = ItemAttribute().Replace(item.Groups["start"].Value, attribute =>
+            {
+                string items = attribute.Groups["items"].Value;
+                int wild = items.IndexOfAny(['*', '?']);
+                string path = (wild < 0 ? items : items[..Math.Max(0, items.LastIndexOfAny(['\\', '/'], wild))]).TrimEnd('\\', '/');
+                if (path.Trim().Length == 0 || items.IndexOfAny([';', '$', '@', '%']) >= 0)
+                {
+                    return attribute.Value;
+                }
+                string now = Moved(Full(before, path));
+                return PathNames.Same(Full(folder, path), now) ? attribute.Value
+                    : Spliced(attribute, attribute.Groups["items"], Written(Path.GetRelativePath(folder, now), path) + items[path.Length..]);
+            });
+            string element = $"<{item.Groups["tag"].Value}{start}{item.Groups["end"].Value}";
+            if (ItemAttribute().Matches(item.Groups["start"].Value).FirstOrDefault(a => a.Groups["kind"].Value is "Include" or "Update" && OneFile(a.Groups["items"].Value)) is not { } own)
+            {
+                return element;
+            }
+            // What the item names beside it, relative to its file: where that is now, from where its file is now.
+            string was = Path.GetDirectoryName(Full(before, own.Groups["items"].Value))!;
+            string at = Path.GetDirectoryName(Moved(Full(before, own.Groups["items"].Value)))!;
+            return RelatedName().Replace(element, related =>
             {
                 Capture value = related.Groups["value"];
-                string named = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(was)!, value.Value.Trim().Replace('\\', '/')));
-                string target = Moved(named);
-                return target == named && now == was ? related.Value
-                    : Spliced(related, value, Written(Path.GetRelativePath(Path.GetDirectoryName(now)!, target), value.Value));
+                string target = Moved(Full(was, value.Value.Trim()));
+                return PathNames.Same(Full(at, value.Value.Trim()), target) ? related.Value
+                    : Spliced(related, value, Written(Path.GetRelativePath(at, target), value.Value));
             });
-            return now == was ? element : ItemAttribute().Replace(element, attribute =>
-                Spliced(attribute, attribute.Groups["items"], Written(Path.GetRelativePath(folder, now), items)), 1);
         });
         if (text == file.Text)
         {
@@ -106,6 +262,10 @@ public static partial class ProjectEdits
         }
         file.Write(text);
         return true;
+
+        static bool OneFile(string items) => items.Trim().Length > 0 && items.IndexOfAny(['*', '?', ';', '$', '@', '%']) < 0;
+
+        static string Full(string folder, string relative) => Path.GetFullPath(Path.Combine(folder, relative.Replace('\\', '/')));
     }
 
     /// <summary>A path as a project writes it, with the separators the value it replaces had.</summary>
@@ -149,10 +309,16 @@ public static partial class ProjectEdits
     /// <summary>The indentation one level of the file takes: its first indented element's.</summary>
     private static string IndentUnit(string text) => IndentedLine().Match(text) is { Success: true } line ? line.Groups[1].Value : "  ";
 
+    /// <summary>The whitespace the line holding a place begins with, never what stands on it before the place.</summary>
     private static string LineIndent(string text, int at)
     {
         int lineStart = text.LastIndexOf('\n', Math.Max(0, at - 1)) + 1;
-        return text[lineStart..at];
+        int end = lineStart;
+        while (end < at && text[end] is ' ' or '\t')
+        {
+            end++;
+        }
+        return text[lineStart..end];
     }
 
     [GeneratedRegex(@"\n([ \t]+)<")]
@@ -164,11 +330,15 @@ public static partial class ProjectEdits
     [GeneratedRegex(@"<ItemGroup\b(?<attributes>[^>]*?)>(?<body>.*?)</ItemGroup\s*>", RegexOptions.Singleline)]
     private static partial Regex ItemGroup();
 
-    /// <summary>An item that names files: its start tag's Include or Update, and its end.</summary>
-    [GeneratedRegex(@"<(?<tag>[A-Za-z_][\w.-]*)(?=[^>]*\b(?:Include|Update)\s*=)[^>]*?\b(?:Include|Update)\s*=\s*""(?<items>[^""]*)""[^>]*?(?:/>|>.*?</\k<tag>\s*>)", RegexOptions.Singleline)]
+    [GeneratedRegex(@"<PropertyGroup\b(?<attributes>[^>]*?)>(?<body>.*?)</PropertyGroup\s*>", RegexOptions.Singleline)]
+    private static partial Regex PropertyGroup();
+
+    /// <summary>An item that names files: its tag, the rest of its start tag (an Include, Update, Remove or Exclude among
+    /// it), and its end.</summary>
+    [GeneratedRegex(@"<(?<tag>[A-Za-z_][\w.-]*)(?<start>(?=[^>]*\b(?:Include|Update|Remove|Exclude)\s*=)[^>]*?)(?<end>/>|>.*?</\k<tag>\s*>)", RegexOptions.Singleline)]
     private static partial Regex ItemElement();
 
-    [GeneratedRegex(@"\b(?:Include|Update)\s*=\s*""(?<items>[^""]*)""")]
+    [GeneratedRegex(@"\b(?<kind>Include|Update|Remove|Exclude)\s*=\s*""(?<items>[^""]*)""")]
     private static partial Regex ItemAttribute();
 
     /// <summary>A file an item names beside it: what it depends on, or what generates from it, as an attribute or an element.</summary>

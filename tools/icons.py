@@ -12,7 +12,7 @@ import urllib.request
 
 # The repository's commit the icons come from, so every run draws the same ones: a newer set is a new commit here and
 # `just icons`, its changes to Icons.axaml then seen in review.
-COMMIT = "a347af95478f989038cccbf085978865264c048a"
+COMMIT = "463d58b8186f874ab2f51cf0a08b4ff5097c912f"
 BASE = f"https://raw.githubusercontent.com/microsoft/fluentui-system-icons/{COMMIT}/assets"
 
 # Resource key, the icon's folder in the Fluent repo, and the file's size and style.
@@ -30,9 +30,7 @@ ICONS = [
     ("Settings", "Settings", "20_regular"),
     ("ChevronDown", "Chevron Down", "16_regular"),
     ("ChevronRight", "Chevron Right", "16_regular"),
-    ("Document", "Document", "20_regular"),
     ("DocumentText", "Document Text", "20_regular"),
-    ("Code", "Code", "20_regular"),
     ("Close", "Dismiss", "16_regular"),
     ("ArrowUp", "Arrow Up", "16_regular"),
     ("ArrowDown", "Arrow Down", "16_regular"),
@@ -47,7 +45,6 @@ ICONS = [
     # A solution folder is the solution's, in no folder on disk: the folder filled, where a disk folder's is an outline.
     ("SolutionFolder", "Folder", "20_filled"),
     ("SolutionFolderOpen", "Folder Open", "20_filled"),
-    ("Project", "Box", "20_regular"),
     ("Package", "Box Multiple", "20_regular"),
     ("Reference", "Link", "20_regular"),
     ("Error", "Error Circle", "20_regular"),
@@ -124,6 +121,18 @@ ICONS = [
     ("HotReload", "Fire", "20_regular"),
     # The Hierarchy window's stripe button: a type over the types it derives from or that derive from it.
     ("Hierarchy", "Diagram", "20_regular"),
+    # The Endpoints window's stripe button: the requests of the folder's .http files, sent over the web.
+    ("Endpoints", "Globe", "20_regular"),
+    # The Containers window's stripe button: the engine's containers, images, volumes and networks.
+    ("Containers", "Box Multiple", "20_regular"),
+    # The Aspire window's stripe button: an AppHost over the resources it runs.
+    ("Aspire", "Cube Tree", "20_regular"),
+    # Attach to a service as it runs: the debugger plugged in, beside Detach's plug unplugged.
+    ("Attach", "Plug Connected", "20_regular"),
+    # The Migrations window's stripe button: a database, whose migrations it lists and applies.
+    ("Database", "Database", "20_regular"),
+    # A Markdown file's preview beside its editor, shown or hidden from the editor's tab strip.
+    ("Preview", "Eye", "20_regular"),
 ]
 
 

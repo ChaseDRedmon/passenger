@@ -15,9 +15,6 @@ public static class TypeHints
     /// <summary>Words that make a static method returning its own type a factory (ReSharper's list).</summary>
     private static readonly string[] FactoryWords = ["Create", "Build", "Construct", "Make", "Generate", "Produce", "New", "Instance"];
 
-    /// <summary>Words that make a static field of its own type a singleton (ReSharper's list).</summary>
-    private static readonly string[] SingletonWords = ["Empty", "Instance", "Default", "Value"];
-
     /// <summary>A name's first word that says it holds a bool.</summary>
     private static readonly HashSet<string> BooleanPrefixes = new(StringComparer.Ordinal)
     {

@@ -87,8 +87,8 @@ public sealed class CommitView : DockPanel
         };
         ListMenus.Attach(list, () => list.SelectedItem is not CommitRow chosen ? [] : chosen.Change.Kind is ChangeKind.Conflicted ?
         [
-            ListMenus.Item("Merge...", "Enter", () => MergeRequested?.Invoke(this, chosen.Change.Path)),
-            ListMenus.Item("Resolve Conflicts...", null, () => ResolveRequested?.Invoke(this, EventArgs.Empty)),
+            ListMenus.Item("Merge…", "Enter", () => MergeRequested?.Invoke(this, chosen.Change.Path)),
+            ListMenus.Item("Resolve Conflicts…", null, () => ResolveRequested?.Invoke(this, EventArgs.Empty)),
             ListMenus.Item("Jump to Source", "F4", () => OpenRequested?.Invoke(this, chosen.Change.Path)),
             new Separator(),
             ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Change.Path)),
@@ -97,8 +97,8 @@ public sealed class CommitView : DockPanel
             ListMenus.Item("Show Diff", "Enter", () => DiffRequested?.Invoke(this, chosen.Change.Path)),
             ListMenus.Item("Jump to Source", "F4", () => OpenRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
             new Separator(),
-            ListMenus.Item("Rollback...", null, () => RollbackRequested?.Invoke(this, [.. ChosenChanges(chosen)])),
-            ListMenus.Item("Delete...", null, () => DeleteRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
+            ListMenus.Item("Rollback…", null, () => RollbackRequested?.Invoke(this, [.. ChosenChanges(chosen)])),
+            ListMenus.Item("Delete…", null, () => DeleteRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
             ListMenus.Item("Add to .gitignore", null, () => IgnoreRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is ChangeKind.Unversioned),
             new Separator(),
             ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Change.Path)),
@@ -185,7 +185,7 @@ public sealed class CommitView : DockPanel
         }, RoutingStrategies.Tunnel);
         commit = new Button { Content = "Commit", Classes = { "primary" } };
         commit.Click += (_, _) => _ = CommitAsync(push: false);
-        commitAndPush = new Button { Content = "Commit and Push..." };
+        commitAndPush = new Button { Content = "Commit and Push…" };
         commitAndPush.Click += (_, _) => _ = CommitAsync(push: true);
         StackPanel buttons = new()
         {
@@ -210,9 +210,9 @@ public sealed class CommitView : DockPanel
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                Tool("Icon.Rerun", "Refresh", () => _ = vcs.RefreshAsync()),
-                Tool("Icon.Rollback", "Rollback", () => RollbackRequested?.Invoke(this, ChosenOrSelected())),
-                Tool("Icon.Diff", $"Show Diff ({(OperatingSystem.IsMacOS() ? "⌘D" : "Ctrl+D")})", () =>
+                ToolButtons.Of("Icon.Rerun", "Refresh", () => _ = vcs.RefreshAsync()),
+                ToolButtons.Of("Icon.Rollback", "Rollback", () => RollbackRequested?.Invoke(this, ChosenOrSelected())),
+                ToolButtons.Of("Icon.Diff", $"Show Diff ({(OperatingSystem.IsMacOS() ? "⌘D" : "Ctrl+D")})", () =>
                 {
                     if (list.SelectedItem is CommitRow row)
                     {
@@ -472,7 +472,7 @@ public sealed class CommitView : DockPanel
         };
         TextBlock count = new()
         {
-            Text = group.Rows.Count == 1 ? "1 file" : $"{group.Rows.Count} files",
+            Text = Core.Plural.Of(group.Rows.Count, "file"),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
             FontSize = 12,
@@ -493,7 +493,7 @@ public sealed class CommitView : DockPanel
         name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable("Passenger.Vcs.File.Conflicted"));
         TextBlock count = new()
         {
-            Text = group.Rows.Count == 1 ? "1 file" : $"{group.Rows.Count} files",
+            Text = Core.Plural.Of(group.Rows.Count, "file"),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
             FontSize = 12,
@@ -542,14 +542,8 @@ public sealed class CommitView : DockPanel
     /// scrolling let go of is not kept by a row, which lives through refreshes.</summary>
     private static void Follow(Control control, Observable item, Action show)
     {
-        void Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => show();
         show();
-        control.AttachedToVisualTree += (_, _) =>
-        {
-            show();
-            item.PropertyChanged += Changed;
-        };
-        control.DetachedFromVisualTree += (_, _) => item.PropertyChanged -= Changed;
+        item.FollowWhileShown(control, (_, _) => show());
     }
 
     /// <summary>A changed file as the window shows it: its icon, its name in its change's colour (struck through when
@@ -591,13 +585,4 @@ public sealed class CommitView : DockPanel
         ChangeKind.Conflicted => "Passenger.Vcs.File.Conflicted",
         _ => "Passenger.Vcs.File.Modified",
     };
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
-    }
 }

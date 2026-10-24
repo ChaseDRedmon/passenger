@@ -12,45 +12,14 @@ namespace Passenger.Tests;
 
 /// <summary>Test projects on Microsoft.Testing.Platform with no VSTest adapter, as Rider and Visual Studio run them through
 /// the platform's own protocol: an xUnit v3 project and an MSTest project on MSTest's runner show their tests from code,
-/// Run All runs them in their own programs and marks each, a theory's rows land under it, Debug Tests stops at a
-/// breakpoint in one, Stop ends a run and its test host, and a solution with a VSTest project too shows and runs both.</summary>
-[Collection(Alone.Name)]
-public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisposable
+/// Run All runs them in their own programs and marks each, a theory's rows land under it, Stop ends a run and its test
+/// host, and a solution with a VSTest project too shows and runs both. Debug Tests on the platform is
+/// <see cref="TestingPlatformDebuggingTests"/>', alone.</summary>
+public sealed class TestingPlatformTests : TestingPlatformFolders, IClassFixture<RestoredFolders>
 {
-    /// <summary>xUnit v3 on the platform alone: its own program, with no test SDK or VSTest adapter.</summary>
-    private const string XunitProject =
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
-        "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"xunit.v3\" Version=\"4.0.2\" />\n  </ItemGroup>\n</Project>\n";
-
-    private readonly string folder;
-    private readonly string source;
-    private readonly List<string> folders = [];
-
     public TestingPlatformTests(RestoredFolders restored)
+        : base(restored)
     {
-        folder = PathNames.Canonical(restored.Take("mtp-", made =>
-        {
-            string project = PathNames.Canonical(made);
-            Write(project, "Sums.Tests.csproj", XunitProject);
-            Write(project, "SumTests.cs",
-                "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests(ITestOutputHelper output)\n{\n" +
-                "    [Fact]\n    public void Two_and_two_make_four()\n    {\n        output.WriteLine(\"adding two and two\");\n        int sum = 2 + 2;\n        Assert.Equal(4, sum);\n    }\n\n" +
-                "    [Fact]\n    public void Two_and_two_make_five()\n    {\n        Assert.Equal(5, 2 + 2);\n    }\n\n" +
-                "    [Theory]\n    [InlineData(1, 2)]\n    [InlineData(2, 4)]\n    public void Doubles(int value, int twice) => Assert.Equal(twice, value * 2);\n\n" +
-                "    [Fact(Skip = \"later\")]\n    public void Not_yet() { }\n\n" +
-                "    [Fact]\n    public void Takes_a_while() => Thread.Sleep(80);\n}\n");
-            return project;
-        }));
-        source = Path.Combine(folder, "SumTests.cs");
-    }
-
-    public void Dispose()
-    {
-        TestFolders.Delete(folder);
-        foreach (string made in folders)
-        {
-            TestFolders.Delete(made);
-        }
     }
 
     [AvaloniaFact]
@@ -123,27 +92,6 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
     }
 
     [AvaloniaFact]
-    public void Debug_tests_at_the_caret_stops_at_a_breakpoint_inside_a_test_on_the_platform()
-    {
-        MainWindow window = Open();
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        editor.GoTo(new TextPosition(10, 8));
-        Ui.Run(window, AppActions.ToggleBreakpoint);
-
-        Ui.Run(window, AppActions.DebugTests);
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.BottomPanel.Debug.Frames.Count > 0, "the stop in the test", TimeSpan.FromSeconds(180));
-        Assert.Contains(new LineMark(10, LineMarkKind.ExecutionPoint), editor.LineMarks);
-        Assert.Contains("Two_and_two_make_four", window.BottomPanel.Debug.Frames[0].Name, StringComparison.Ordinal);
-
-        Ui.Run(window, AppActions.Resume);
-        Ui.WaitFor(() => !window.Tests.IsBusy, "the debugged run to end", TimeSpan.FromSeconds(60));
-        Assert.Equal(TestState.Passed, Method(window, "Two_and_two_make_four")!.State);
-        Assert.Equal(TestState.NotRun, Method(window, "Two_and_two_make_five")!.State);
-        Ui.WaitFor(() => window.Debugger.Session is null || window.Debugger.Session.State == DebugState.Ended, "the test host to end once its run was done");
-        window.Close();
-    }
-
-    [AvaloniaFact]
     public void Stop_ends_a_run_on_the_platform_and_its_test_host_keeping_what_ran()
     {
         string host = Path.Combine(folder, "running.txt");
@@ -168,13 +116,13 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
     {
         string solution = NewFolder();
         Write(solution, "Vs.Tests/Vs.Tests.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n" +
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n" +
             "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
             "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n");
         Write(solution, "Vs.Tests/AddTests.cs", "using Xunit;\n\nnamespace Vs.Tests;\n\npublic class AddTests\n{\n    [Fact]\n    public void Adds() => Assert.Equal(3, 1 + 2);\n}\n");
         // MSTest on its own runner: an executable with no test SDK, which vstest.console could not run.
         Write(solution, "Store.Tests/Store.Tests.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
             "    <EnableMSTestRunner>true</EnableMSTestRunner>\n  </PropertyGroup>\n  <ItemGroup>\n" +
             "    <PackageReference Include=\"MSTest.TestFramework\" Version=\"4.5.1\" />\n    <PackageReference Include=\"MSTest.TestAdapter\" Version=\"4.5.1\" />\n  </ItemGroup>\n</Project>\n");
         Write(solution, "Store.Tests/StoreTests.cs",
@@ -183,7 +131,7 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
             "    [TestMethod]\n    [DataRow(1)]\n    [DataRow(2)]\n    public void Counts(int items) => Assert.IsTrue(items > 0);\n}\n");
         Write(solution, "Suite.slnx", "<Solution>\n  <Project Path=\"Vs.Tests/Vs.Tests.csproj\" />\n  <Project Path=\"Store.Tests/Store.Tests.csproj\" />\n</Solution>\n");
         Restore.Run(Path.Combine(solution, "Suite.slnx"));
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(solution);
         Tree(window);
@@ -203,10 +151,134 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
             Shown(window));
         window.Close();
     }
+}
 
-    private MainWindow Open()
+/// <summary>Debug Tests on Microsoft.Testing.Platform: a breakpoint inside a test stops it, and Stop as the test host
+/// starts under the debugger ends the run saying why. Debugged through the window, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class TestingPlatformDebuggingTests : TestingPlatformFolders, IClassFixture<RestoredFolders>
+{
+    public TestingPlatformDebuggingTests(RestoredFolders restored)
+        : base(restored)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+    }
+
+    [AvaloniaFact]
+    public void Debug_tests_at_the_caret_stops_at_a_breakpoint_inside_a_test_on_the_platform()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(10, 8));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+
+        Ui.Run(window, AppActions.DebugTests);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.BottomPanel.Debug.Frames.Count > 0, "the stop in the test", TimeSpan.FromSeconds(180));
+        Assert.Contains(new LineMark(10, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains("Two_and_two_make_four", window.BottomPanel.Debug.Frames[0].Name, StringComparison.Ordinal);
+
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => !window.Tests.IsBusy, "the debugged run to end", TimeSpan.FromSeconds(60));
+        Assert.Equal(TestState.Passed, Method(window, "Two_and_two_make_four")!.State);
+        Assert.Equal(TestState.NotRun, Method(window, "Two_and_two_make_five")!.State);
+        Ui.WaitFor(() => window.Debugger.Session is null || window.Debugger.Session.State == DebugState.Ended, "the test host to end once its run was done");
+        window.Close();
+    }
+
+    /// <summary>A debugged run ends when Stop ends its test host's start under the debugger (held at its start here, by a
+    /// diagnostic port of the test's own that the project's launch profile names): no test, group or run icon is left
+    /// running, and the Unit Tests window and the status bar say why the run ended.</summary>
+    [AvaloniaFact]
+    public void Stop_as_a_debugged_runs_test_host_starts_leaves_no_test_running_and_says_why()
+    {
+        using Debugging.Helpers.StartHold hold = new();
+        Write(folder, "Properties/launchSettings.json",
+            $"{{ \"profiles\": {{ \"Sums\": {{ \"commandName\": \"Project\", \"environmentVariables\": {System.Text.Json.JsonSerializer.Serialize(hold.Environment)} }} }} }}");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(10, 8));
+        Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
+        int host = 0;
+        try
+        {
+            // Not settled: the start holds the window's background work while the debugger waits for the test host.
+            Assert.True(window.Perform(AppActions.DebugTests), $"Debug Tests did not start: {Ui.Said(window)}");
+            Ui.PumpUntil(() => held.IsCompleted, "the build, then the test host's runtime to come to the hold", TimeSpan.FromMinutes(3));
+            host = held.Result;
+            TestNode four = Method(window, "Two_and_two_make_four")!;
+            Assert.Equal(TestState.Running, four.State);
+
+            Assert.True(window.Perform(AppActions.Stop), $"Stop did not run while the debugger started the test host: {Ui.Said(window)}");
+            Ui.PumpUntil(() => !window.Tests.IsBusy, "the debugged run to end once Stop ended its test host's start", TimeSpan.FromSeconds(30));
+            Ui.Settle();
+            List<string> running = [.. Every(window.Tests.Tree.Roots).Where(n => n.State == TestState.Running).Select(n => n.Name)];
+            Assert.True(running.Count == 0, $"A run stopped as its test host started left these shown as running: {string.Join(", ", running)}");
+            Assert.Equal(TestState.NotRun, four.State);
+            Assert.DoesNotContain(editor.TestMarks, m => m.Kind == TestMarkKind.Running);
+            // Stopped, as a run Stop ends at any other moment, said after the debugger's word that its test host was stopped.
+            string? why = window.BottomPanel.Tests.Status;
+            Assert.True(why is not null && System.Text.RegularExpressions.Regex.IsMatch(why, @"^Tests passed: 0, failed: 0 of 0 in \d+\.\d s, stopped$"),
+                $"A debugged run Stop ended as its test host started did not say it was stopped, but '{why}' (the status bar '{window.Status}')");
+            Assert.True(window.Status == why, $"The status bar's last word on the stopped run is '{window.Status}', where the Unit Tests window says '{why}'");
+            string debugged = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
+            Assert.True(debugged.Contains("Debugging Tests was stopped as it started", StringComparison.Ordinal),
+                $"The Debug window does not say its test host was stopped as it started: '{debugged}'");
+            Assert.Null(window.Debugger.Session);
+        }
+        finally
+        {
+            Processes.Kill(host);
+        }
+        window.Close();
+
+        static IEnumerable<TestNode> Every(IEnumerable<TestNode> nodes) => nodes.SelectMany(n => Every(n.Children).Prepend(n));
+    }
+}
+
+/// <summary>The xUnit v3 project on the platform alone each test takes, restored, the folders it writes, and the helpers
+/// that open the window on them and read the Unit Tests window.</summary>
+public abstract class TestingPlatformFolders : IDisposable
+{
+    /// <summary>xUnit v3 on the platform alone: its own program, with no test SDK or VSTest adapter.</summary>
+    private const string XunitProject =
+        $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
+        "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"xunit.v3\" Version=\"4.0.2\" />\n  </ItemGroup>\n</Project>\n";
+
+    protected readonly string folder;
+    protected readonly string source;
+    private readonly List<string> folders = [];
+
+    protected TestingPlatformFolders(RestoredFolders restored)
+    {
+        folder = PathNames.Canonical(restored.Take("mtp-", made =>
+        {
+            string project = PathNames.Canonical(made);
+            Write(project, "Sums.Tests.csproj", XunitProject);
+            Write(project, "SumTests.cs",
+                "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests(ITestOutputHelper output)\n{\n" +
+                "    [Fact]\n    public void Two_and_two_make_four()\n    {\n        output.WriteLine(\"adding two and two\");\n        int sum = 2 + 2;\n        Assert.Equal(4, sum);\n    }\n\n" +
+                "    [Fact]\n    public void Two_and_two_make_five()\n    {\n        Assert.Equal(5, 2 + 2);\n    }\n\n" +
+                "    [Theory]\n    [InlineData(1, 2)]\n    [InlineData(2, 4)]\n    public void Doubles(int value, int twice) => Assert.Equal(twice, value * 2);\n\n" +
+                "    [Fact(Skip = \"later\")]\n    public void Not_yet() { }\n\n" +
+                "    [Fact]\n    public void Takes_a_while() => Thread.Sleep(80);\n}\n");
+            return project;
+        }));
+        source = Path.Combine(folder, "SumTests.cs");
+    }
+
+    public void Dispose()
+    {
+        TestFolders.Delete(folder);
+        foreach (string made in folders)
+        {
+            TestFolders.Delete(made);
+        }
+    }
+
+    /// <summary>A window on the test's project with its tests' file open and shown in the Unit Tests window, with no C#
+    /// language server, which finding, running and debugging tests ask nothing of.</summary>
+    protected MainWindow Open()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(source);
@@ -216,14 +288,14 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
         return window;
     }
 
-    private string NewFolder()
+    protected string NewFolder()
     {
         string made = PathNames.Canonical(TestFolders.Create("mtp-"));
         folders.Add(made);
         return made;
     }
 
-    private static string Write(string root, string relative, string text)
+    protected static string Write(string root, string relative, string text)
     {
         string path = Path.Combine(root, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -232,9 +304,9 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
     }
 
     /// <summary>The Unit Tests window's rows as a person reads them, indented by depth.</summary>
-    private static List<string> Shown(MainWindow window) => [.. window.Tests.Tree.Rows.Select(r => new string(' ', r.Depth * 2) + r.Name)];
+    protected static List<string> Shown(MainWindow window) => [.. window.Tests.Tree.Rows.Select(r => new string(' ', r.Depth * 2) + r.Name)];
 
-    private static ListBox Tree(MainWindow window)
+    protected static ListBox Tree(MainWindow window)
     {
         window.Perform(AppActions.ShowTests);
         Ui.Settle();
@@ -242,9 +314,9 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
     }
 
     /// <summary>The Unit Tests window's details of the chosen row, beside the tree.</summary>
-    private static CodeEditor Details(MainWindow window) =>
+    protected static CodeEditor Details(MainWindow window) =>
         window.BottomPanel.Tests.GetVisualDescendants().OfType<CodeEditor>().First(e => e.IsReadOnly);
 
-    private static TestNode? Method(MainWindow window, string name) =>
+    protected static TestNode? Method(MainWindow window, string name) =>
         window.Tests.Tree.Roots.SelectMany(r => r.Methods).FirstOrDefault(m => m.Name == name);
 }

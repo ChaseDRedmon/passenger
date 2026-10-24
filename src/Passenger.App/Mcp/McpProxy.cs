@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -14,24 +16,50 @@ namespace Passenger.App.Mcp;
 /// and joins a window only when a tool is called: the innermost whose folder holds FOLDER (else the agent's working
 /// folder), never one on an unrelated folder; with a PID, that process's windows alone, the newest when none holds it.
 /// With no window to join it has the running Passenger open the folder (<see cref="AppSocket"/>), else starts Passenger
-/// on it, and waits for that folder's window, which lets the agent in or asks the person first. A window that closes is
-/// joined again, or another started, at the next call. Resources and prompts are none, here as in the window.</summary>
+/// on it, and waits for that folder's window, which lets the agent in or asks the person first. A window that closes, or
+/// that opens another folder than the one it was joined on (but by the agent's own open), is joined again, or another
+/// started, at the next call. Resources and prompts are none, here as in the window.</summary>
 public sealed class McpProxy
 {
     /// <summary>The test run's: <c>headless</c> has a call with no window start this build headless, as its own child, in
     /// the state PASSENGER_SETTINGS names, never the person's installed Passenger.</summary>
     public const string StartVariable = "PASSENGER_START";
 
-    /// <summary>How long a call waits for a Passenger started or asked to open the folder to show its window.</summary>
+    /// <summary>What the proxy tells a Passenger it starts for an agent (<c>agent</c>), which takes it out of its own
+    /// environment as it starts, so nothing it runs inherits it.</summary>
+    public const string StartedForVariable = "PASSENGER_STARTED_FOR";
+
+    /// <summary>Whether an agent's --mcp-attach started this Passenger, to open a folder for it: its window shows the person
+    /// no What's New, which waits for a start of their own.</summary>
+    public static bool StartedForAgent { get; private set; }
+
+    /// <summary>How long joining may take, including old connection cleanup, opening a window and initialization.</summary>
     private static readonly TimeSpan StartLimit = TimeSpan.FromMinutes(2);
+
+    /// <summary>How long a call's failure waits for its connection's end to be told, as the thread pool may run it late on a
+    /// busy machine; only a failure that is no such end waits it out.</summary>
+    private static readonly TimeSpan EndingLimit = TimeSpan.FromSeconds(5);
 
     private readonly int? processId;
     private readonly string here;
     private readonly SemaphoreSlim joining = new(1, 1);
     private McpClient? joined;
 
+    /// <summary>The calls on the window that the agent asked progress of, by the token the window tells it under.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ProgressToken, AgentCall> told = new();
+
     /// <summary>The socket <see cref="joined"/> talks over.</summary>
     private Socket? joinedSocket;
+
+    /// <summary>The joined window's socket file, beside which it writes its folder.</summary>
+    private string? joinedPath;
+
+    /// <summary>The folder the joined window had open as it was joined, or as the agent's own open left it: the agent's to
+    /// work in there, and no other the person opens in that window.</summary>
+    private string? joinedOn;
+
+    /// <summary>The agent's own opens under way on the joined window, which move it on purpose.</summary>
+    private int opening;
 
     /// <summary>The headless Passenger a test run's call started, which ends with this one.</summary>
     private Process? headless;
@@ -42,12 +70,22 @@ public sealed class McpProxy
         this.here = here;
     }
 
-    /// <summary>Fails a start whose <see cref="StartVariable"/> is not one this build knows, as a malformed flag does.</summary>
+    /// <summary>Fails a start whose <see cref="StartVariable"/> or <see cref="StartedForVariable"/> is not one this build
+    /// knows, as a malformed flag does; the second is read into <see cref="StartedForAgent"/> and taken out.</summary>
     public static void CheckVariable()
     {
         if (Environment.GetEnvironmentVariable(StartVariable) is { Length: > 0 } how && how != "headless")
         {
             throw new FormatException($"{StartVariable} takes headless (the test run's), not '{how}'");
+        }
+        if (Environment.GetEnvironmentVariable(StartedForVariable) is { Length: > 0 } started)
+        {
+            if (started != "agent")
+            {
+                throw new FormatException($"{StartedForVariable} takes agent (a Passenger an agent's --mcp-attach started), not '{started}'");
+            }
+            StartedForAgent = true;
+            Environment.SetEnvironmentVariable(StartedForVariable, null);
         }
     }
 
@@ -56,14 +94,14 @@ public sealed class McpProxy
     {
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
-        // Standard output is the protocol's alone: anything else written to the console goes to stderr.
-        Console.SetOut(Console.Error);
+        // Standard output is the protocol's alone, and standard error the agent may never read: the console goes to the log.
+        IdeLog.TakeConsole();
         McpProxy proxy = new(processId, PathNames.Canonical(folder ?? Environment.CurrentDirectory));
         McpServerPrimitiveCollection<McpServerTool> tools = [];
-        foreach (MethodInfo method in McpHost.ToolMethods())
+        foreach (McpServerTool tool in McpHost.Tools)
         {
             // Never called: each call goes on to the window's own tool of the name.
-            tools.Add(new ForwardedTool(McpHost.Lean(McpServerTool.Create(method, _ => throw new InvalidOperationException("The proxy runs no tool itself"), McpHost.ToolCreateOptions())), proxy));
+            tools.Add(new ForwardedTool(tool, proxy));
         }
         McpServerOptions options = new()
         {
@@ -73,10 +111,13 @@ public sealed class McpProxy
         };
         using CancellationTokenSource gone = new();
         StreamServerTransport transport = new(input, output, "passenger");
-        McpServer server = McpServer.Create(transport, options);
+        McpServer server = McpServer.Create(new PeerTransport(transport), options);
         Task running = server.RunAsync(gone.Token);
         // The server waits out the calls still going when the agent goes, so its going is watched for here.
-        Task.WaitAny(running, transport.MessageReader.Completion);
+        // The system's request to end it (an agent's client may send SIGTERM a moment after closing the input) ends it so too.
+        TaskCompletionSource terminated = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using System.Runtime.InteropServices.PosixSignalRegistration? signal = McpHost.EndOnSignal(() => terminated.TrySetResult());
+        Task.WaitAny(running, transport.MessageReader.Completion, terminated.Task);
         gone.Cancel();
         proxy.Leave();
         try
@@ -90,23 +131,61 @@ public sealed class McpProxy
         return 0;
     }
 
-    /// <summary>One call of the agent's, on the window it is joined to.</summary>
+    /// <summary>One call of the agent's, on the window it is joined to: told to the agent while it joins one, and the
+    /// window's progress for it passed on, when the agent asked for progress.</summary>
     private async Task<CallToolResult> CallAsync(RequestContext<CallToolRequestParams> request, CancellationToken cancel)
     {
         string tool = request.Params?.Name ?? "a tool";
+        await using AgentCall call = AgentCall.Begin(request.Server, request.Params?.ProgressToken, tool, $"Joining the Passenger window on {here}",
+            AgentConnection.NameOf(request.Server.ClientInfo), "attach", Traced());
+        try
+        {
+            CallToolResult answer = await ForwardAsync(request, tool, call, cancel);
+            call.Ended(answer.IsError == true ? "answered an error" : "answered");
+            return answer;
+        }
+        catch (OperationCanceledException)
+        {
+            call.Ended("given up by the agent");
+            throw;
+        }
+        catch (Exception error)
+        {
+            call.Ended($"failed ({error.GetType().Name})");
+            throw;
+        }
+    }
+
+    private async Task<CallToolResult> ForwardAsync(RequestContext<CallToolRequestParams> request, string tool, AgentCall call, CancellationToken cancel)
+    {
         McpClient window;
         try
         {
-            window = await JoinAsync(request.Server.ClientInfo, cancel);
+            window = await JoinAsync(request.Server.ClientInfo, request.Server.NegotiatedProtocolVersion, call, cancel);
         }
         catch (NotJoined why)
         {
+            call.Logged($"no window: {why.Message}");
             return Refused(why.Message);
         }
-        RequestId id = new($"agent-{Guid.NewGuid():N}");
-        Task<CallToolResult> answer = window.SendRequestAsync<CallToolRequestParams, CallToolResult>(RequestMethods.ToolsCall, request.Params!, requestId: id).AsTask();
+        string name = $"agent-{Guid.NewGuid():N}";
+        RequestId id = new(name);
+        // The window tells its progress under a token of the proxy's, which this call's agent hears as its own.
+        ProgressToken? asked = call.Token is null ? null : new ProgressToken(name);
+        if (asked is { } token)
+        {
+            told[token] = call;
+        }
+        call.Logged("forwarded to the window");
+        AgentCall.Say($"Waiting for the Passenger window on {here} to answer");
+        bool opens = tool == "open";
+        if (opens)
+        {
+            Interlocked.Increment(ref opening);
+        }
         try
         {
+            Task<CallToolResult> answer = window.SendRequestAsync<CallToolRequestParams, CallToolResult>(RequestMethods.ToolsCall, Forwarded(request.Params!, asked), requestId: id).AsTask();
             return await answer.WaitAsync(cancel);
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
@@ -122,55 +201,179 @@ public sealed class McpProxy
             }
             throw;
         }
-        catch (Exception error) when (window.Completion.IsCompleted && error is not OperationCanceledException)
+        // The window's own error answers (a protocol error) are passed on as they came.
+        catch (Exception error) when (error is not McpProtocolException && !cancel.IsCancellationRequested)
         {
-            return Refused($"The Passenger window closed before it answered {tool}; a later call joins one again.");
+            if (!await EndedAsync(window, cancel))
+            {
+                throw;
+            }
+            return Refused($"The connection to the Passenger window ended before it answered {tool}; a later call joins one again.");
+        }
+        finally
+        {
+            if (asked is { } forwarded)
+            {
+                told.TryRemove(forwarded, out _);
+            }
+            if (opens)
+            {
+                await FollowAsync(window);
+                Interlocked.Decrement(ref opening);
+            }
         }
     }
 
-    /// <summary>The window the agent works in: the one joined, while it stays, else one over the folder, which a running
-    /// Passenger is asked to open or a new one started on, waited for.</summary>
-    private async Task<McpClient> JoinAsync(Implementation? agent, CancellationToken cancel)
+    /// <summary>The agent's own open answered: the window it joined is on the folder that open left it on, the agent's to
+    /// work in from now.</summary>
+    private async Task FollowAsync(McpClient window)
     {
-        await joining.WaitAsync(cancel);
+        await joining.WaitAsync();
         try
         {
-            if (joined is { Completion.IsCompleted: false } live)
+            if (joined == window && joinedPath is { } path)
             {
-                // A window that closed has closed its end already, which the session may not have read yet: it ends soon after.
-                if (Closed(joinedSocket))
-                {
-                    await Task.WhenAny(live.Completion, Task.Delay(TimeSpan.FromSeconds(1), cancel));
-                }
-                if (!live.Completion.IsCompleted)
-                {
-                    return live;
-                }
+                joinedOn = McpHost.WindowFolder(path);
             }
-            if (joined is not null)
-            {
-                await Quietly(joined);
-                joined = null;
-            }
-            NetworkStream stream = Connect() ?? await StartAsync(cancel);
-            try
-            {
-                // The agent's own name, which the window shows the person when it asks.
-                joined = await McpClient.CreateAsync(new StreamClientTransport(stream, stream),
-                    new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" } }, cancellationToken: cancel);
-                joinedSocket = stream.Socket;
-            }
-            catch (Exception error) when (error is IOException or McpException or InvalidOperationException
-                || (error is OperationCanceledException && !cancel.IsCancellationRequested))
-            {
-                await stream.DisposeAsync();
-                throw new NotJoined($"The Passenger window on {here} closed as the agent joined it; a later call tries again.");
-            }
-            return joined;
         }
         finally
         {
             joining.Release();
+        }
+    }
+
+    /// <summary>Whether the joined window has another folder open than the one the agent was let in on there, which the
+    /// person opened (the agent's own opens under way aside): the window shuts the agent out, unless it lets agents in
+    /// unasked there, and the agent goes on with its own folder.</summary>
+    private bool Moved() =>
+        Volatile.Read(ref opening) == 0 && joinedPath is { } path && !string.Equals(McpHost.WindowFolder(path), joinedOn, StringComparison.Ordinal);
+
+    /// <summary>The agent's call as the window is sent it: the same, but for its progress token, the proxy's own or none.</summary>
+    private static CallToolRequestParams Forwarded(CallToolRequestParams call, ProgressToken? token)
+    {
+        JsonObject sent = JsonSerializer.SerializeToNode(call, McpJsonUtilities.DefaultOptions)!.AsObject();
+        JsonObject meta = sent["_meta"] as JsonObject ?? [];
+        meta.Remove("progressToken");
+        if (token is { } given)
+        {
+            meta["progressToken"] = JsonSerializer.SerializeToNode(given, McpJsonUtilities.DefaultOptions);
+        }
+        if (meta.Count == 0)
+        {
+            sent.Remove("_meta");
+        }
+        else
+        {
+            sent["_meta"] = meta;
+        }
+        return sent.Deserialize<CallToolRequestParams>(McpJsonUtilities.DefaultOptions)!;
+    }
+
+    /// <summary>The window's progress on a call the agent asked progress of, passed on to the agent.</summary>
+    private ValueTask Heard(JsonRpcNotification notification, CancellationToken cancel)
+    {
+        if (notification.Params?.Deserialize<ProgressNotificationParams>(McpJsonUtilities.DefaultOptions) is { } progress
+            && told.TryGetValue(progress.ProgressToken, out AgentCall? call))
+        {
+            call.Heard(progress.Progress.Message);
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>Whether Settings' protocol traces are on in the state this proxy shares with the person's windows, read as
+    /// each call begins, since the proxy keeps no settings of its own.</summary>
+    private static bool Traced()
+    {
+        try
+        {
+            using FileStream file = new(Path.Combine(State.StateStore.DefaultRoot, State.StateStore.SettingsFile), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using JsonDocument settings = JsonDocument.Parse(file);
+            return settings.RootElement.ValueKind == JsonValueKind.Object
+                && settings.RootElement.TryGetProperty("traceProtocols", out JsonElement on) && on.ValueKind == JsonValueKind.True;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The window the agent works in: the one joined, while it stays, else one over the folder, which a running
+    /// Passenger is asked to open or a new one started on, waited for. Joined in the protocol version the agent agreed
+    /// with this server, so what the window answers, passed on as it is, has nothing of a later version in it.
+    /// The whole join has <see cref="StartLimit"/>.</summary>
+    private async Task<McpClient> JoinAsync(Implementation? agent, string? protocol, AgentCall call, CancellationToken cancel)
+    {
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        limit.CancelAfter(StartLimit);
+        CancellationToken joiningCancel = limit.Token;
+        bool acquired = false;
+        try
+        {
+            await joining.WaitAsync(joiningCancel);
+            acquired = true;
+            joiningCancel.ThrowIfCancellationRequested();
+            if (joined is { Completion.IsCompleted: false } live && !Closed(joinedSocket) && !Moved())
+            {
+                return live;
+            }
+            McpClient? old = joined;
+            Socket? oldSocket = joinedSocket;
+            joined = null;
+            joinedSocket = null;
+            joinedPath = null;
+            joinedOn = null;
+            oldSocket?.Dispose();
+            if (old is not null)
+            {
+                await Quietly(old).WaitAsync(joiningCancel);
+            }
+            (NetworkStream stream, string socket) = await ConnectAsync(joiningCancel) ?? await StartAsync(call, joiningCancel);
+            try
+            {
+                // The agent's own name, which the window shows the person when it asks.
+                joined = await McpClient.CreateAsync(PeerTransport.Of(new StreamClientTransport(stream, stream)),
+                    new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" }, ProtocolVersion = protocol }, cancellationToken: joiningCancel);
+                joined.RegisterNotificationHandler(NotificationMethods.ProgressNotification, Heard);
+                joinedSocket = stream.Socket;
+                joinedPath = socket;
+                joinedOn = McpHost.WindowFolder(socket);
+            }
+            catch (Exception error)
+            {
+                await stream.DisposeAsync();
+                if (error is IOException or McpException or InvalidOperationException)
+                {
+                    throw new NotJoined($"The connection to the Passenger window on {here} ended as the agent joined it; a later call tries again.");
+                }
+                throw;
+            }
+            return joined;
+        }
+        catch (OperationCanceledException) when (joiningCancel.IsCancellationRequested && !cancel.IsCancellationRequested)
+        {
+            throw new NotJoined($"Joining the Passenger window on {here} timed out after {StartLimit.TotalSeconds:0} s; a later call tries again.");
+        }
+        finally
+        {
+            if (acquired)
+            {
+                joining.Release();
+            }
+        }
+    }
+
+    /// <summary>Whether a call's failure is its connection to the window ending: the session fails the calls still waiting as
+    /// its reader stops, and says it is complete only a moment after, on another of the pool's threads.</summary>
+    private static async Task<bool> EndedAsync(McpClient window, CancellationToken cancel)
+    {
+        try
+        {
+            await window.Completion.WaitAsync(EndingLimit, cancel);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
         }
     }
 
@@ -188,8 +391,8 @@ public sealed class McpProxy
         }
     }
 
-    /// <summary>A connection to the window to join, or null when no window of Passenger's is over the folder.</summary>
-    private NetworkStream? Connect()
+    /// <summary>A connection to the window to join, with its socket's file, or null when none connects. Each endpoint has five seconds.</summary>
+    private async Task<(NetworkStream Stream, string Socket)?> ConnectAsync(CancellationToken cancel)
     {
         McpHost.RemoveStale();
         foreach (string path in Windows())
@@ -197,12 +400,19 @@ public sealed class McpProxy
             Socket socket = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             try
             {
-                socket.Connect(new UnixDomainSocketEndPoint(path));
-                return new NetworkStream(socket, ownsSocket: true);
+                using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+                limit.CancelAfter(TimeSpan.FromSeconds(5));
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), limit.Token);
+                return (new NetworkStream(socket, ownsSocket: true), path);
             }
-            catch (SocketException)
+            catch (Exception error) when (error is SocketException || (error is OperationCanceledException && !cancel.IsCancellationRequested))
             {
                 socket.Dispose();
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
             }
         }
         return null;
@@ -228,7 +438,7 @@ public sealed class McpProxy
 
     /// <summary>Has a Passenger open the folder, the running one's or one started on it, and joins its window once it
     /// listens.</summary>
-    private async Task<NetworkStream> StartAsync(CancellationToken cancel)
+    private async Task<(NetworkStream Stream, string Socket)> StartAsync(AgentCall call, CancellationToken cancel)
     {
         if (processId is int pid)
         {
@@ -246,13 +456,18 @@ public sealed class McpProxy
         }
         if (await AppSocket.AskAsync(here, cancel) is null)
         {
+            call.Waits($"Starting Passenger on {here} and waiting for its window (at most {StartLimit.TotalSeconds:0} s)");
             await LaunchAsync(cancel);
         }
-        long began = Stopwatch.GetTimestamp();
-        while (Stopwatch.GetElapsedTime(began) < StartLimit)
+        else
         {
-            if (Connect() is { } stream)
+            call.Waits($"Waiting for the running Passenger to open {here} (at most {StartLimit.TotalSeconds:0} s)");
+        }
+        while (true)
+        {
+            if (await ConnectAsync(cancel) is { } stream)
             {
+                call.Waited("its window listens");
                 return stream;
             }
             if (headless is { HasExited: true } ended)
@@ -261,28 +476,33 @@ public sealed class McpProxy
             }
             await Task.Delay(TimeSpan.FromMilliseconds(250), cancel);
         }
-        throw new NotJoined($"No Passenger window opened on {here} within {StartLimit.TotalSeconds:0} s.");
     }
 
     /// <summary>Starts Passenger on the folder: the installed app this is, through LaunchServices on macOS (which hands it
     /// to a Passenger already running there), else apart from this process, which it outlives; the test run's headless,
-    /// as a child.</summary>
+    /// as a child. Each is told it was started for an agent (<see cref="StartedForVariable"/>).</summary>
     private async Task LaunchAsync(CancellationToken cancel)
     {
         string self = Environment.ProcessPath ?? throw new NotJoined("Passenger cannot tell where it is installed, to start it.");
         if (Environment.GetEnvironmentVariable(StartVariable) == "headless")
         {
             ProcessStartInfo start = ChildProcesses.Command(self, ["--headless", here], here);
-            // Its input kept: its end, with this process, ends it; its output is never the agent's protocol.
+            start.Environment[StartedForVariable] = "agent";
+            // Its input kept: its end, with this process, ends it; its output is never the agent's protocol, nor its error the
+            // agent's to read.
             start.RedirectStandardInput = true;
             start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
             headless = ChildProcesses.Start(start);
             _ = headless.StandardOutput.BaseStream.CopyToAsync(Stream.Null, CancellationToken.None);
+            _ = headless.StandardError.BaseStream.CopyToAsync(Stream.Null, CancellationToken.None);
             return;
         }
         if (OperatingSystem.IsMacOS() && Bundle(self) is { } app)
         {
-            ChildResult opened = await ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/open", ["-a", app, here]), limit: TimeSpan.FromSeconds(30), cancel: cancel);
+            // The variable reaches only a Passenger LaunchServices starts; one running already opens the folder as it is.
+            ChildResult opened = await ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/open", ["--env", $"{StartedForVariable}=agent", "-a", app, here]),
+                limit: TimeSpan.FromSeconds(30), cancel: cancel);
             if (!opened.Succeeded)
             {
                 throw new NotJoined($"LaunchServices did not start Passenger: {opened.Error.Trim()}");
@@ -291,7 +511,9 @@ public sealed class McpProxy
         }
         try
         {
-            ChildProcesses.StartApart(ChildProcesses.Command(self, [here], here));
+            ProcessStartInfo apart = ChildProcesses.Command(self, [here], here);
+            apart.Environment[StartedForVariable] = "agent";
+            ChildProcesses.StartApart(apart);
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
@@ -314,6 +536,20 @@ public sealed class McpProxy
         if (joined is { } window)
         {
             Quietly(window).Wait(TimeSpan.FromSeconds(5));
+        }
+        // The test run's headless window ends with its input, cleanly: left to this process's end, the watchdog would kill it
+        // before it took its socket away.
+        if (headless is { HasExited: false } child)
+        {
+            try
+            {
+                child.StandardInput.Close();
+                child.WaitForExit(McpHost.EndLimit);
+            }
+            catch (Exception error) when (error is IOException or InvalidOperationException)
+            {
+                // Gone already.
+            }
         }
     }
 

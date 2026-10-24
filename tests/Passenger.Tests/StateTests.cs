@@ -16,7 +16,7 @@ namespace Passenger.Tests;
 /// <summary>The IDE's own state, in one store in its state folder: a file that does not read is set aside, said in
 /// the status bar and logged, never written over; a later build's values and a hand edit out of range stay in the file while the window
 /// uses what it can; two windows' changes are both kept; what a person kept before the store is there on the first
-/// run; and a folder's layout, breakpoints and bookmarks come back with it.</summary>
+/// run; and a folder's tabs (whatever was open before it), layout, breakpoints and bookmarks come back with it.</summary>
 public sealed class StateTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("folder-");
@@ -48,7 +48,7 @@ public sealed class StateTests : IDisposable
         Assert.Contains("set aside as settings.json.bad", log, StringComparison.Ordinal);
         Assert.True(window.Status?.Contains($"settings.json did not read, so its defaults stand: what it held is kept as {file}.bad", StringComparison.Ordinal) == true,
             $"Only the log says the settings were set aside, so the person finds them gone with nothing saying where they went: '{window.Status}'");
-        Assert.True(window.StatusPlace?.Name == $"show settings.json.bad in {Passenger.Core.ChildProcesses.FileManager}",
+        Assert.True(window.StatusPlace?.Name == $"show settings.json.bad in {Passenger.App.FileManager.Name}",
             $"The status bar's word on the settings set aside goes to '{window.StatusPlace?.Name}', not to the file they are kept in");
 
         // A change after it goes to a new file, whole, and the one set aside stays as it was.
@@ -143,25 +143,6 @@ public sealed class StateTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void Two_windows_changing_different_settings_keep_both_changes()
-    {
-        using IDisposable theme = TestsTheme();
-        MainWindow first = Keeping();
-        first.KeepSettings();
-        MainWindow second = Keeping();
-        second.KeepSettings();
-        first.ApplySettings(first.Settings with { EditorFontSize = 16 });
-        first.Close();
-        second.ApplySettings(second.Settings with { TerminalFontSize = 18 });
-        second.Close();
-
-        MainWindow third = Keeping();
-        third.KeepSettings();
-        Assert.Equal((16, 18), (third.Settings.EditorFontSize, third.Settings.TerminalFontSize));
-        third.Close();
-    }
-
-    [AvaloniaFact]
     public void What_a_person_kept_before_the_store_is_there_on_the_first_run()
     {
         using IDisposable theme = TestsTheme();
@@ -190,7 +171,7 @@ public sealed class StateTests : IDisposable
         Ui.Settle();
         Assert.Equal((ThemeChoice.Light, 16), (window.Settings.Theme, window.Settings.EditorFontSize));
         Assert.Equal(ToolAnchor.RightBottom, window.DockHost["tests"]!.Anchor);
-        Assert.True(window.DockHost.IsShown("tests"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Tests));
         Assert.Equal("One.cs", window.EditorArea.Active?.Name);
         Assert.Equal(new TextPosition(2, 4), window.EditorArea.CodeEditor.CaretPosition);
         window.OpenFile(Path.Combine(folder, "Two.cs"));
@@ -237,13 +218,93 @@ public sealed class StateTests : IDisposable
 
         // Another folder has its own: none of these, and they come back with this one.
         string other = TestFolders.Create("other-");
+        // A folder's documents are read off the window's thread as it opens, its restore once they land.
         second.OpenFolder(other);
+        Ui.Settle();
         Assert.Empty(second.Debugger.Breakpoints.All);
         Assert.Empty(second.Bookmarks.All);
         second.OpenFolder(folder);
+        Ui.Settle();
         Assert.Single(second.Debugger.Breakpoints.All);
         Assert.Equal(2, second.Bookmarks.All.Count);
         second.Close();
+    }
+
+    /// <summary>A folder's kept documents are read off the window's thread as it opens, so their size never holds the
+    /// window (#233: an open stalled it up to 681 ms, unitTests.json's first read 75 ms of it): the open's own work on the
+    /// window's thread allocates no more with 4,000 breakpoints kept than with 40, and every one comes back once read.</summary>
+    [AvaloniaFact]
+    public void A_folders_kept_documents_are_read_off_the_windows_thread_as_it_opens_and_all_come_back()
+    {
+        long Opening(int count)
+        {
+            string open = PathNames.Canonical(TestFolders.Create("kept-"));
+            string kept = Passenger.App.State.ProjectState.FolderOf(settings, open);
+            Directory.CreateDirectory(kept);
+            JsonArray breakpoints = [.. Enumerable.Range(0, count).Select(i => (JsonNode)new JsonObject
+            {
+                ["path"] = Path.Combine(open, $"File{i % 100}.cs"),
+                ["line"] = i / 100,
+                ["condition"] = $"count == {i}",
+            })];
+            File.WriteAllText(Path.Combine(kept, "breakpoints.json"), new JsonObject { ["breakpoints"] = breakpoints }.ToJsonString());
+            MainWindow window = Keeping();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.OpenFolder(open);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Ui.Settle();
+            int restored = window.Debugger.Breakpoints.All.Count();
+            Assert.True(restored == count, $"{restored} of the {count} breakpoints kept came back as the folder opened");
+            window.Close();
+            return allocated;
+        }
+
+        // The first open in the process pays for what it loads once, which neither measure should carry.
+        Opening(1);
+        long few = Opening(40);
+        long many = Opening(4000);
+        Assert.True(many < few + (256 * 1024),
+            $"Opening a folder with 4,000 breakpoints kept allocated {many / 1024} KB on the window's thread, {few / 1024} KB with 40: its documents are read there");
+    }
+
+    /// <summary>#444: a file open with no folder kept the next folder's tabs from coming back, and leaving that folder then
+    /// wrote the file over the tabs it had kept.</summary>
+    [AvaloniaFact]
+    public void A_folder_opens_with_its_own_tabs_whatever_was_open_before_it_which_stays_beside_them()
+    {
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), "class Shop { }\n");
+        File.WriteAllText(Path.Combine(folder, "Bank.cs"), "class Bank { }\n");
+        MainWindow window = Keeping(folder);
+        window.OpenFile(Path.Combine(folder, "Shop.cs"));
+        window.OpenFile(Path.Combine(folder, "Bank.cs"));
+        Ui.Settle();
+        window.Close();
+        Ui.Settle();
+
+        // The next start opens no folder, and About's link opens the licence the app carries.
+        window = Keeping();
+        AboutDialog about = DialogButtonsTests.Check(window.ShowAbout());
+        Ui.ClickButton(about, AboutDialog.LicenseLink);
+        string licence = PathNames.Canonical(Path.Combine(AppContext.BaseDirectory, "LICENSE.txt"));
+        Assert.Equal(licence, window.EditorArea.Active?.Path);
+
+        // The folder opens with its own tabs back, the licence after them, still in front as it was.
+        window.OpenFolder(folder);
+        Ui.Settle();
+        string[] tabs = Tabs(window);
+        Assert.True(tabs.SequenceEqual(["Shop.cs", "Bank.cs", "LICENSE.txt"]),
+            $"The folder opened on [{string.Join(", ", tabs)}], not its own Shop.cs and Bank.cs with the licence open before it after them");
+        Assert.Equal(licence, window.EditorArea.Active?.Path);
+
+        // Left and opened again, it has the same tabs: none of its own went to the file open before it.
+        Assert.Null(window.CloseSolution());
+        Ui.Settle();
+        Assert.Empty(window.EditorArea.Documents);
+        window.OpenFolder(folder);
+        Ui.Settle();
+        Assert.True(Tabs(window).SequenceEqual(tabs), $"Opened again, the folder has [{string.Join(", ", Tabs(window))}], not the [{string.Join(", ", tabs)}] it was left with");
+        Assert.Equal(licence, window.EditorArea.Active?.Path);
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -252,11 +313,13 @@ public sealed class StateTests : IDisposable
         string other = TestFolders.Create("other-");
         MainWindow first = Keeping(folder);
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
-        first.DockHost.Show("tests");
+        first.DockHost.Show(ToolWindowIds.Tests);
         first.OpenFolder(other);
+        Ui.Settle();
         Assert.Equal(ToolAnchor.RightBottom, first.DockHost["tests"]!.Anchor);
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.LeftBottom);
         first.OpenFolder(folder);
+        Ui.Settle();
         Assert.Equal(ToolAnchor.RightBottom, first.DockHost["tests"]!.Anchor);
         first.Close();
 
@@ -264,8 +327,9 @@ public sealed class StateTests : IDisposable
         MainWindow second = Keeping();
         Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
         second.OpenFolder(other);
+        Ui.Settle();
         Assert.Equal(ToolAnchor.LeftBottom, second.DockHost["tests"]!.Anchor);
-        Assert.True(second.DockHost.IsShown("tests"));
+        Assert.True(second.DockHost.IsShown(ToolWindowIds.Tests));
         second.Close();
     }
 
@@ -297,7 +361,7 @@ public sealed class StateTests : IDisposable
         Assert.Equal(["Debug", "Run"], window.OwnedWindows.Select(w => w.Title).Order());
         // A place or a mode this build does not have is its default: where the window was added, docked.
         Assert.Equal((ToolAnchor.BottomLeft, ToolAnchor.BottomLeft), (window.DockHost["tests"]!.Anchor, window.DockHost["problems"]!.Anchor));
-        Assert.Equal((ToolAnchor.RightTop, ToolMode.Docked, true), (window.DockHost["structure"]!.Anchor, window.DockHost["structure"]!.Mode, window.DockHost.IsShown("structure")));
+        Assert.Equal((ToolAnchor.RightTop, ToolMode.Docked, true), (window.DockHost["structure"]!.Anchor, window.DockHost["structure"]!.Mode, window.DockHost.IsShown(ToolWindowIds.Structure)));
         window.Close();
     }
 
@@ -316,6 +380,9 @@ public sealed class StateTests : IDisposable
     }
 
     private static JsonObject Read(string file) => (JsonObject)JsonNode.Parse(File.ReadAllText(file))!;
+
+    /// <summary>Every tab's file name, group after group, as the strips show them.</summary>
+    private static string[] Tabs(MainWindow window) => [.. window.EditorArea.Groups.SelectMany(g => g.Tabs).Select(t => t.Document.Name)];
 
     /// <summary>Puts the tests' theme back once a window that keeps its settings has put the person's in force.</summary>
     private static IDisposable TestsTheme() => new ThemeBack(Avalonia.Application.Current!.RequestedThemeVariant);

@@ -29,14 +29,18 @@ keyboard shortcuts follow Rider's keymaps.
 
 ## Setting up
 
-You need the .NET 11 SDK (the release candidate works until it ships in November 2026),
-[just](https://github.com/casey/just), Git, and a .NET SDK 10 or later for the projects the tests open. Node.js runs the
-web languages' tests, which skip without it.
+You need the .NET 11 SDK (11.0.100-rc.2 or later, as `global.json` asks, until .NET 11 ships in November 2026),
+[just](https://github.com/casey/just) and Git, and for the tests the .NET 10 SDK too, which the programs they debug and
+most projects they write run on (on Linux also the X11 and fontconfig libraries
+[Passenger's Linux page](https://passenger-ide.net/linux) names). Node.js runs the web languages' tests and a container
+engine running Linux containers runs the container tests; each kind skips without its own, saying why. Python 3 runs the
+recipes that write or check generated files (`just icons`, `just themes`, `just notices` and others). The README's
+[Building](README.md#building) has the whole list.
 
 ```sh
 just build                 # Debug build; warnings are errors
 just run [PATH]            # the IDE on a folder or solution
-just test [FILTER]         # the tests, or those whose name matches
+just test [FILTER]         # the tests, or those whose name matches; results in artifacts/test-results
 just screenshot shell.png  # the main window drawn off-screen to a PNG
 ```
 
@@ -76,7 +80,8 @@ work on Passenger. Passenger can't tell you how those terms apply to you, so if 
 - **Work off the UI thread** that changes what is drawn goes through `BackgroundWork`.
 - **Paths are canonical** (`PathNames.Canonical`) wherever two are compared.
 - **Code style:** four spaces, file-scoped namespaces, braces on every block, explicit types over `var`; `.editorconfig`
-  enforces most of it in the build. Comments say why, never what the next lines do.
+  makes the build fail on the namespaces, braces and accessibility, while `var` is only a suggestion there, so write the
+  type yourself. Comments say why, never what the next lines do.
 
 ## Pull requests
 

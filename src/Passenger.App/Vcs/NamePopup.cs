@@ -136,9 +136,8 @@ public sealed class NamePopup : UserControl
             _ = SubmitAsync();
             e.Handled = true;
         }
-        else if (kinds is not null && e.Key is Key.Up or Key.Down && e.KeyModifiers == KeyModifiers.None)
+        else if (kinds is not null && ListKeys.Move(kinds, e))
         {
-            kinds.SelectedIndex = Math.Clamp(kinds.SelectedIndex + (e.Key == Key.Down ? 1 : -1), 0, kindNames.Count - 1);
             e.Handled = true;
         }
     }

@@ -32,7 +32,7 @@ public sealed class DebugSession : IDisposable
     private readonly string engineLog;
     private readonly bool ownLog;
 
-    private DebugSession(ITestOutputHelper output, Process? debuggee, bool terminateDebuggee, string? symbolCache = null)
+    private DebugSession(ITestOutputHelper output, Process? debuggee, bool terminateDebuggee, string? symbolCache = null, IReadOnlyDictionary<string, string>? environment = null)
     {
         this.debuggee = debuggee;
         this.terminateDebuggee = terminateDebuggee;
@@ -43,7 +43,7 @@ public sealed class DebugSession : IDisposable
         }
         // The engine's own log: PASSENGER_ENGINE_LOG=FILE keeps every session's, else the session keeps one for a failed
         // wait to quote, which on a machine no one can debug on (CI's) is all there is to go by.
-        string? kept = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } named ? named : null;
+        string? kept = Environment.GetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EngineLogVariable) is { Length: > 0 } named ? named : null;
         ownLog = kept is null;
         engineLog = kept ?? Path.Combine(TestRun.Root, $"engine-{Guid.NewGuid():N}.log");
         // The symbols it decompiles go where the run's IDE keeps them (its state folder's), unless a test names a folder.
@@ -54,6 +54,10 @@ public sealed class DebugSession : IDisposable
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
+        foreach ((string variable, string value) in environment ?? new Dictionary<string, string>())
+        {
+            start.Environment[variable] = value;
+        }
         adapter = ChildProcesses.Start(start);
         adapter.ErrorDataReceived += (_, e) =>
         {
@@ -99,8 +103,9 @@ public sealed class DebugSession : IDisposable
     public static DebugSession ForAttach(ITestOutputHelper output, Process program) => new(output, program, terminateDebuggee: false);
 
     /// <summary>The adapter alone, to launch a program itself; the program ends with the session. Decompiled symbols go to
-    /// <paramref name="symbolCache"/> when given.</summary>
-    public static DebugSession ForLaunch(ITestOutputHelper output, string? symbolCache = null) => new(output, null, terminateDebuggee: true, symbolCache);
+    /// <paramref name="symbolCache"/> when given, and the adapter has <paramref name="environment"/> over the run's.</summary>
+    public static DebugSession ForLaunch(ITestOutputHelper output, string? symbolCache = null, IReadOnlyDictionary<string, string>? environment = null) =>
+        new(output, null, terminateDebuggee: true, symbolCache, environment);
 
     /// <summary>Kills the adapter and the program it launched, as a crash or the IDE's own kill of an adapter that never
     /// answered a disconnect does.</summary>
@@ -110,6 +115,17 @@ public sealed class DebugSession : IDisposable
         if (!adapter.WaitForExit(TimeSpan.FromSeconds(10)))
         {
             throw new TimeoutException($"The adapter (process {adapter.Id}) was still running 10 s after it was killed");
+        }
+    }
+
+    /// <summary>Closes the client's end of the protocol with no disconnect, as an IDE that crashed or was ended leaves it, and
+    /// waits for the adapter to see it and end of itself.</summary>
+    public void GoWithoutDisconnecting()
+    {
+        adapter.StandardInput.Close();
+        if (!adapter.WaitForExit(EventLimit))
+        {
+            throw new TimeoutException($"The adapter (process {adapter.Id}) was still running {EventLimit.TotalSeconds:0} s after its client went. {Heard()}");
         }
     }
 
@@ -167,6 +183,42 @@ public sealed class DebugSession : IDisposable
         Task answer = Connection.RequestAsync(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken);
         Observe(answer);
         return answer;
+    }
+
+    /// <summary>Bytes written to the adapter's input as they are, not as a message of the protocol's: what a client that does
+    /// not speak it sends. False when the adapter closed its input before they were all written, as one that stopped
+    /// reading them may: Windows' pipe ends under the write, where macOS's and Linux's take what fits their buffer.</summary>
+    public bool SendRaw(byte[] bytes)
+    {
+        Stream input = adapter.StandardInput.BaseStream;
+        try
+        {
+            input.Write(bytes);
+            input.Flush();
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Whether the adapter has ended within the time given (scaled), its input still open.</summary>
+    public bool Ended(TimeSpan within) => adapter.WaitForExit(within.Scaled());
+
+    /// <summary>The engine's own log as written so far.</summary>
+    public string EngineLog()
+    {
+        try
+        {
+            using FileStream file = new(engineLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using StreamReader reader = new(file);
+            return reader.ReadToEnd();
+        }
+        catch (IOException error)
+        {
+            return $"(not readable: {error.Message})";
+        }
     }
 
     /// <summary>A disconnect, answered or not within <paramref name="limit"/>: true when it was, the adapter then on its way out.</summary>

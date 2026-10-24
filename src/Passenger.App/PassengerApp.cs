@@ -45,6 +45,9 @@ public static class PassengerApp
     /// handed on as it closes; it installs what was made ready as the process ends.</summary>
     private static MainWindow? updates;
 
+    /// <summary>What a quit a window's question holds tells if the person keeps that window open (<see cref="Quit"/>).</summary>
+    private static Action? quitGivenUp;
+
     /// <summary>The project windows open, in the order they opened: the Window menu's list, which Next and Previous
     /// Solution Window step through.</summary>
     public static IReadOnlyList<MainWindow> Windows => Open;
@@ -72,23 +75,29 @@ public static class PassengerApp
     /// <summary>Opens a folder, solution (.sln, .slnx) or C# project (.csproj), a path checked already (<see
     /// cref="MainWindow.Open"/> says why one cannot be), in the window it is opened from or one of its own; a window with
     /// nothing open takes it either way, as Rider's Welcome screen does. One another window has open (its folder) is
-    /// brought forward there instead, taking the solution named. The window it opened in.</summary>
-    public static MainWindow OpenProject(string path, OpenTarget target, MainWindow from)
+    /// brought forward there instead, taking the solution named. The window it opened in; <paramref name="then"/> is told
+    /// that window once the solution's session has begun there, never when it was not opened.</summary>
+    public static MainWindow OpenProject(string path, OpenTarget target, MainWindow from, Action<MainWindow>? then = null)
     {
         UiThread.Check();
         string full = PathNames.Canonical(path);
         string folder = File.Exists(full) && WorkspaceModel.Opens(full) ? Path.GetDirectoryName(full)! : full;
-        if (Open.FirstOrDefault(w => w != from && w.Folder is { } other && PathNames.Same(other, folder)) is { } already)
+        // A window's folder may still be opening (its documents read off the window's thread): it holds that one already.
+        if (Open.FirstOrDefault(w => w != from && w.FolderHeld is { } other && PathNames.Same(other, folder)) is { } already)
         {
             if (already.WorkspaceModel?.OpenedAs is not { } opened || !PathNames.Same(opened, full))
             {
-                already.OpenFolder(full);
+                already.OpenFolder(full, opened: then is null ? null : () => then(already));
+            }
+            else
+            {
+                then?.Invoke(already);
             }
             BringForward(already);
             return already;
         }
-        MainWindow into = target == OpenTarget.NewWindow && from.Folder is { } open && !PathNames.Same(open, folder) ? NewWindow(from) : from;
-        into.OpenFolder(full);
+        MainWindow into = target == OpenTarget.NewWindow && from.FolderHeld is { } open && !PathNames.Same(open, folder) ? NewWindow(from) : from;
+        into.OpenFolder(full, opened: then is null ? null : () => then(into));
         if (into != from)
         {
             BringForward(into);
@@ -97,7 +106,8 @@ public static class PassengerApp
     }
 
     /// <summary>A window made as another is: its state folder, its layout and settings kept or not, its agents, its
-    /// Discord and its updates' feed, beside it at its size; shown with nothing open.</summary>
+    /// Discord, its updates' feed and release notes and whether it starts the language server, beside it at its size;
+    /// shown with nothing open.</summary>
     public static MainWindow NewWindow(MainWindow like)
     {
         UiThread.Check();
@@ -107,7 +117,9 @@ public static class PassengerApp
             AgentsAllowed = like.AgentsAllowed,
             AgentAnswerLimit = like.AgentAnswerLimit,
             Autosaves = like.Autosaves,
+            StartsLanguageServer = like.StartsLanguageServer,
             Releases = like.Releases,
+            Notes = like.Notes,
             DiscordIpc = like.DiscordIpc,
             DiscordIdleAfter = like.DiscordIdleAfter,
             Width = like.ClientSize.Width > 0 ? like.ClientSize.Width : like.Width,
@@ -115,6 +127,7 @@ public static class PassengerApp
             WindowStartupLocation = WindowStartupLocation.Manual,
             Position = like.Position + new PixelPoint(Cascade, Cascade),
         };
+        window.StartBeside();
         // Cascaded from the one it is opened from, yet never past the edge of that one's screen.
         window.FitToScreen(keepPlace: true);
         if (like.KeepsLayout)
@@ -161,8 +174,10 @@ public static class PassengerApp
 
     /// <summary>File, Exit (the application menu's Quit on macOS): every window closes as the person closing it would,
     /// saving its files, the last opened first, and each one's solution is reopened by the next start. A window that
-    /// cannot close (a file it could not save) keeps itself and those not yet closed open; false then.</summary>
-    public static bool Quit()
+    /// cannot close (a file it could not save) keeps itself and those not yet closed open; false then, and
+    /// <paramref name="givenUp"/> is told. One that asks the person first holds the quit until they answer, when it
+    /// carries on or is given up (<see cref="Answered"/>).</summary>
+    public static bool Quit(Action? givenUp = null)
     {
         UiThread.Check();
         Quitting = true;
@@ -173,6 +188,14 @@ public static class PassengerApp
                 window.Close();
                 if (window.IsVisible)
                 {
+                    if (window.AsksBeforeClosing)
+                    {
+                        quitGivenUp += givenUp;
+                    }
+                    else
+                    {
+                        givenUp?.Invoke();
+                    }
                     return false;
                 }
             }
@@ -184,8 +207,26 @@ public static class PassengerApp
         }
     }
 
-    /// <summary>Solutions, projects or folders the system hands Passenger (the Finder's Open, a drop on the Dock's icon),
-    /// opened as File, Open opens them from the window in front: asked where, unless Settings says.</summary>
+    /// <summary>A window closed as Passenger quit (by <see cref="Quit"/> or the system's) asked what to do with changes it
+    /// could not save, and the person answered: the quit carries on, every window still open closing and keeping its
+    /// solution, or, kept open, it is given up.</summary>
+    internal static void Answered(bool carryOn)
+    {
+        UiThread.Check();
+        Action? givenUp = quitGivenUp;
+        quitGivenUp = null;
+        if (carryOn)
+        {
+            Quit(givenUp);
+        }
+        else
+        {
+            givenUp?.Invoke();
+        }
+    }
+
+    /// <summary>Files or folders the system hands Passenger (the Finder's Open, a drop on the Dock's icon), opened as File,
+    /// Open opens them from the window in front: a solution, project or folder asked where, unless Settings says.</summary>
     public static void OpenFromSystem(IReadOnlyList<string> paths)
     {
         UiThread.Check();
@@ -210,9 +251,6 @@ public static class PassengerApp
 
     /// <summary>The window watching for updates, which hands it on as it closes.</summary>
     internal static void WatchUpdatesIn(MainWindow window) => updates = window;
-
-    /// <summary>Whether a window is the one watching for updates.</summary>
-    internal static bool WatchesUpdates(MainWindow window) => updates == window;
 
     /// <summary>Once every window has closed: waits, for at most each one's limit, for what they started to end
     /// (<see cref="MainWindow.Ended"/>), then installs an update made ready, last of all. It needs no UI thread.</summary>

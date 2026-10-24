@@ -8,18 +8,34 @@ namespace Passenger.Languages.TextMate;
 /// tag's name with its start or end tag's.</summary>
 public sealed partial class TextMateHighlighter
 {
-    /// <summary>How far a search for a pair goes, in lines, before it gives up.</summary>
+    /// <summary>How far Move Caret to Matching Brace's search for a pair goes, in lines from where it began, before it gives up.</summary>
     private const int FarthestLines = 50_000;
+
+    /// <summary>How far the pair of the bracket the caret touches, or of the tag it is in, is looked for, in lines from where
+    /// the search began, as every caret move asks for it: about a millisecond's reading, where a whole file's would be a lag
+    /// at each key.</summary>
+    private const int NearLines = 2_000;
 
     private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
     {
         "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
     };
 
+    /// <summary>The void elements by a name read in place, with no string made for it.</summary>
+    private static readonly HashSet<string>.AlternateLookup<ReadOnlySpan<char>> VoidNames = VoidElements.GetAlternateLookup<ReadOnlySpan<char>>();
+
     /// <summary>A line's characters, copied here to be read without a string each.</summary>
     private char[] lineChars = new char[256];
 
-    public BracePair? PairAt(TextSnapshot text, int offset)
+    /// <summary>Which line of which text <see cref="lineChars"/> holds, so the tag search reading one line for its bracket,
+    /// its name and its end copies it once.</summary>
+    private (TextSnapshot? Text, int Line, int Start, int Length) copied;
+
+    /// <summary>How many lines the searches for a bracket's or a tag's pair have read: what a caret move costs, for a test to
+    /// count rather than time.</summary>
+    public long LinesPaired { get; private set; }
+
+    public BracePair? PairAt(TextSnapshot text, int offset, bool far = false)
     {
         if (!Settled(text) || offset < 0 || offset >= text.Length)
         {
@@ -36,7 +52,8 @@ public sealed partial class TextMateHighlighter
         int step = opener ? 1 : -1;
         int depth = 0;
         int line = text.GetLineFromOffset(offset);
-        for (int at = line; at >= 0 && at < table!.Count && Math.Abs(at - line) < FarthestLines; at += step)
+        int reach = far ? FarthestLines : NearLines;
+        for (int at = line; at >= 0 && at < table!.Count && Math.Abs(at - line) < reach; at += step)
         {
             ReadOnlySpan<char> chars = LineChars(text, at, out int lineStart);
             SyntaxSpan[] spans = table[at].Spans;
@@ -56,7 +73,7 @@ public sealed partial class TextMateHighlighter
         return null;
     }
 
-    public BracePair? TagPairAt(TextSnapshot text, int caret)
+    public BracePair? TagPairAt(TextSnapshot text, int caret, bool far = false)
     {
         if (grammar.Tags == Tags.None || !Settled(text) || caret < 0 || caret > text.Length)
         {
@@ -99,59 +116,62 @@ public sealed partial class TextMateHighlighter
             return null;
         }
         TextRange touched = new(lineStart + start, end - start);
-        TextRange? matching = closing ? StartTagOf(text, bracket, name) : EndTagOf(text, lineStart + end, name);
+        int reach = far ? FarthestLines : NearLines;
+        TextRange? matching = closing ? StartTagOf(text, bracket, line, name, reach) : EndTagOf(text, lineStart + end, line, name, reach);
         return matching is { } found ? new BracePair(touched, found) : null;
     }
 
-    /// <summary>The name of the end tag that closes the start tag whose name ends at <paramref name="afterName"/>.</summary>
-    private TextRange? EndTagOf(TextSnapshot text, int afterName, string name)
+    /// <summary>The name of the end tag that closes the start tag on <paramref name="line"/> whose name ends at
+    /// <paramref name="afterName"/>, looked for no more than <paramref name="reach"/> lines below that line.</summary>
+    private TextRange? EndTagOf(TextSnapshot text, int afterName, int line, string name, int reach)
     {
-        if (TagEnd(text, afterName) is not { } own || own.SelfClosing || Void(name))
+        int farthest = line + reach;
+        if (TagEnd(text, afterName, line, farthest) is not { } own || own.SelfClosing || Void(name))
         {
             return null;
         }
         int depth = 1;
-        int from = own.At + 1;
-        while (Find(text, from, forward: true, '<') is { } at)
+        (int from, int fromLine) = (own.At + 1, own.Line);
+        while (Find(text, from, fromLine, forward: true, '<', farthest) is { } at)
         {
-            (string Name, bool Closing)? tag = TagAt(text, at);
-            if (tag is null)
+            if (TagAt(text, at.At, at.Line) is not { } tag)
             {
-                from = at + 1;
+                (from, fromLine) = (at.At + 1, at.Line);
                 continue;
             }
-            int nameStart = at + (tag.Value.Closing ? 2 : 1);
-            if (tag.Value.Closing)
+            if (tag.Closing)
             {
                 if (--depth == 0)
                 {
-                    return SameName(tag.Value.Name, name) ? new TextRange(nameStart, tag.Value.Name.Length) : null;
+                    return SameName(NameOf(text, tag), name) ? new TextRange(tag.Start, tag.Length) : null;
                 }
-                from = nameStart;
+                (from, fromLine) = (tag.Start, tag.Line);
                 continue;
             }
-            if (TagEnd(text, nameStart + tag.Value.Name.Length) is not { } end)
+            if (TagEnd(text, tag.Start + tag.Length, tag.Line, farthest) is not { } end)
             {
                 return null;
             }
-            if (!end.SelfClosing && !Void(tag.Value.Name))
+            if (!end.SelfClosing && !Void(text, tag))
             {
                 depth++;
             }
-            from = end.At + 1;
+            (from, fromLine) = (end.At + 1, end.Line);
         }
         return null;
     }
 
-    /// <summary>The name of the start tag the end tag at <paramref name="bracket"/> closes.</summary>
-    private TextRange? StartTagOf(TextSnapshot text, int bracket, string name)
+    /// <summary>The name of the start tag the end tag at <paramref name="bracket"/>, on <paramref name="line"/>, closes,
+    /// looked for no more than <paramref name="reach"/> lines above that line.</summary>
+    private TextRange? StartTagOf(TextSnapshot text, int bracket, int line, string name, int reach)
     {
+        int farthest = line - reach;
         int depth = 1;
-        int from = bracket - 1;
-        while (from >= 0 && Find(text, from, forward: false, '<') is { } at)
+        (int from, int fromLine) = (bracket - 1, line);
+        while (from >= 0 && Find(text, from, fromLine, forward: false, '<', farthest) is { } at)
         {
-            from = at - 1;
-            if (TagAt(text, at) is not { } tag)
+            (from, fromLine) = (at.At - 1, at.Line);
+            if (TagAt(text, at.At, at.Line) is not { } tag)
             {
                 continue;
             }
@@ -160,24 +180,23 @@ public sealed partial class TextMateHighlighter
                 depth++;
                 continue;
             }
-            int nameStart = at + 1;
-            if (TagEnd(text, nameStart + tag.Name.Length) is not { } end || end.SelfClosing || Void(tag.Name))
+            // A start tag before the end tag ends before it too.
+            if (TagEnd(text, tag.Start + tag.Length, tag.Line, line) is not { } end || end.SelfClosing || Void(text, tag))
             {
                 continue;
             }
             if (--depth == 0)
             {
-                return SameName(tag.Name, name) ? new TextRange(nameStart, tag.Name.Length) : null;
+                return SameName(NameOf(text, tag), name) ? new TextRange(tag.Start, tag.Length) : null;
             }
         }
         return null;
     }
 
-    /// <summary>The start or end tag whose bracket is at <paramref name="at"/>, by its name; null for what else begins with
-    /// one (a comment, a declaration, a processing instruction).</summary>
-    private (string Name, bool Closing)? TagAt(TextSnapshot text, int at)
+    /// <summary>The start or end tag whose bracket is at <paramref name="at"/>, on <paramref name="line"/>: where its name
+    /// starts and how long it is; null for what else begins with one (a comment, a declaration, a processing instruction).</summary>
+    private (int Start, int Length, int Line, bool Closing)? TagAt(TextSnapshot text, int at, int line)
     {
-        int line = text.GetLineFromOffset(at);
         ReadOnlySpan<char> chars = LineChars(text, line, out int lineStart);
         int column = at - lineStart + 1;
         bool closing = column < chars.Length && chars[column] == '/';
@@ -187,22 +206,41 @@ public sealed partial class TextMateHighlighter
         {
             end++;
         }
-        return end > start && IsNameStart(chars[start]) ? (chars[start..end].ToString(), closing) : null;
+        return end > start && IsNameStart(chars[start]) ? (lineStart + start, end - start, line, closing) : null;
     }
 
-    /// <summary>The bracket that ends the tag whose name ends at <paramref name="from"/>, past its attributes' values.</summary>
-    private (int At, bool SelfClosing)? TagEnd(TextSnapshot text, int from) =>
-        Find(text, from, forward: true, '>') is { } at ? (at, at > 0 && text[at - 1] == '/') : null;
-
-    /// <summary>The nearest <paramref name="target"/> of the tag's colour from <paramref name="from"/> on (or back).</summary>
-    private int? Find(TextSnapshot text, int from, bool forward, char target)
+    /// <summary>A tag's name, read where it stands.</summary>
+    private ReadOnlySpan<char> NameOf(TextSnapshot text, (int Start, int Length, int Line, bool Closing) tag)
     {
-        int line = text.GetLineFromOffset(from);
+        ReadOnlySpan<char> chars = LineChars(text, tag.Line, out int lineStart);
+        return chars.Slice(tag.Start - lineStart, tag.Length);
+    }
+
+    /// <summary>The bracket that ends the tag whose name ends at <paramref name="from"/>, on <paramref name="line"/>, past
+    /// its attributes' values, up to line <paramref name="farthest"/>.</summary>
+    private (int At, int Line, bool SelfClosing)? TagEnd(TextSnapshot text, int from, int line, int farthest)
+    {
+        if (Find(text, from, line, forward: true, '>', farthest) is not { } found)
+        {
+            return null;
+        }
+        ReadOnlySpan<char> chars = LineChars(text, found.Line, out int lineStart);
+        return (found.At, found.Line, found.At > lineStart && chars[found.At - lineStart - 1] == '/');
+    }
+
+    /// <summary>The nearest <paramref name="target"/> of the tag's colour from <paramref name="from"/> on (or back), and
+    /// its line, up to line <paramref name="farthest"/>: every search for one tag's pair is held to the lines near where it
+    /// began. <paramref name="line"/> is the line <paramref name="from"/> is on, or the one it is just past the end (or
+    /// before the start) of, so no offset is turned into its line again.</summary>
+    private (int At, int Line)? Find(TextSnapshot text, int from, int line, bool forward, char target, int farthest)
+    {
+        LineTable lines = table!;
         int step = forward ? 1 : -1;
-        for (int at = line; at >= 0 && at < table!.Count && Math.Abs(at - line) < FarthestLines; at += step)
+        int last = forward ? Math.Min(farthest, lines.Count - 1) : Math.Max(farthest, 0);
+        for (int at = line; forward ? at <= last : at >= last; at += step)
         {
             ReadOnlySpan<char> chars = LineChars(text, at, out int lineStart);
-            SyntaxSpan[] spans = table[at].Spans;
+            SyntaxSpan[] spans = lines[at].Spans;
             int column = at == line ? Math.Min(from - lineStart, chars.Length - (forward ? 0 : 1)) : forward ? 0 : chars.Length - 1;
             while (column >= 0 && column < chars.Length)
             {
@@ -214,7 +252,7 @@ public sealed partial class TextMateHighlighter
                 column = forward ? column + found : found;
                 if (KindIn(spans, column) == TokenKind.Tag)
                 {
-                    return lineStart + column;
+                    return (lineStart + column, at);
                 }
                 column += step;
             }
@@ -222,9 +260,11 @@ public sealed partial class TextMateHighlighter
         return null;
     }
 
-    private bool Void(string name) => grammar.Tags == Tags.Html && VoidElements.Contains(name);
+    private bool Void(ReadOnlySpan<char> name) => grammar.Tags == Tags.Html && VoidNames.Contains(name);
 
-    private bool SameName(string a, string b) => string.Equals(a, b, grammar.Tags == Tags.Html ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    private bool Void(TextSnapshot text, (int Start, int Length, int Line, bool Closing) tag) => grammar.Tags == Tags.Html && VoidNames.Contains(NameOf(text, tag));
+
+    private bool SameName(ReadOnlySpan<char> a, string b) => a.Equals(b, grammar.Tags == Tags.Html ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary>Whether the colours are those of <paramref name="text"/>, every line's read from the line above's.</summary>
     private bool Settled(TextSnapshot text) => table is { Complete: true } && since.Count == 0 && ReferenceEquals(tableText, text);
@@ -261,14 +301,19 @@ public sealed partial class TextMateHighlighter
 
     private ReadOnlySpan<char> LineChars(TextSnapshot text, int line, out int lineStart)
     {
-        LineSpan span = text.GetLine(line);
-        lineStart = span.Start;
-        if (lineChars.Length < span.Length)
+        if (!ReferenceEquals(copied.Text, text) || copied.Line != line)
         {
-            lineChars = new char[Math.Max(span.Length, lineChars.Length * 2)];
+            LinesPaired++;
+            LineSpan span = text.GetLine(line);
+            if (lineChars.Length < span.Length)
+            {
+                lineChars = new char[Math.Max(span.Length, lineChars.Length * 2)];
+            }
+            text.CopyTo(span.Start, lineChars.AsSpan(0, span.Length));
+            copied = (text, line, span.Start, span.Length);
         }
-        text.CopyTo(span.Start, lineChars.AsSpan(0, span.Length));
-        return lineChars.AsSpan(0, span.Length);
+        lineStart = copied.Start;
+        return lineChars.AsSpan(0, copied.Length);
     }
 
     private static bool IsNameStart(char c) => char.IsLetter(c) || c is '_' or ':';

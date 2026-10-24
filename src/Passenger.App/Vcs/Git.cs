@@ -84,6 +84,9 @@ public sealed record GitStatus(string? Branch, string? Head, IReadOnlyList<FileC
 public sealed record GitConflict(string Path, bool HasBase, bool HasOurs, bool HasTheirs)
 {
     public string Name => System.IO.Path.GetFileName(Path);
+
+    /// <summary>Whether both sides have the file, so there is something to merge; else it is kept or deleted whole.</summary>
+    public bool CanMerge => HasOurs && HasTheirs;
 }
 
 /// <summary>A stash: its place in the list (stash@{Index}), what it says, and when it was made.</summary>
@@ -148,7 +151,7 @@ public sealed class Git
         Process process;
         try
         {
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (System.ComponentModel.Win32Exception missing)
         {
@@ -372,7 +375,7 @@ public sealed class Git
         start.RedirectStandardError = true;
         try
         {
-            using Process process = ChildProcesses.Start(start);
+            using Process process = await ChildProcesses.StartAsync(start);
             using MemoryStream output = new();
             Task copied = process.StandardOutput.BaseStream.CopyToAsync(output);
             Task<string> error = process.StandardError.ReadToEndAsync();
@@ -1166,7 +1169,7 @@ public sealed class Git
         start.RedirectStandardError = true;
         try
         {
-            using Process process = ChildProcesses.Start(start);
+            using Process process = await ChildProcesses.StartAsync(start);
             using MemoryStream output = new();
             Task copied = process.StandardOutput.BaseStream.CopyToAsync(output);
             Task<string> error = process.StandardError.ReadToEndAsync();

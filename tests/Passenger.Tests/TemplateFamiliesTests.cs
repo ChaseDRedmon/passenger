@@ -76,12 +76,12 @@ public sealed class TemplateFamiliesTests : IDisposable
         Assert.Equal(["App", "MVVM App", "Cross Platform Application"], Family(dialog, "Avalonia").Types.Select(t => t.TypeName));
 
         // The search finds a family by a Type's name, opened on that Type; each family found opens on the one it names.
-        Click(dialog, dialog.SearchBox);
+        Ui.Click(dialog.SearchBox);
         Type(dialog, "nunit");
         Assert.Equal(["Unit Test", "Aspire"], dialog.Listed.Select(f => f.Name));
         Assert.True(dialog.Family?.Name == "Unit Test" && dialog.Chosen?.ShortName == "nunit", $"The search for nunit opened {dialog.Family?.Name} on {dialog.Chosen?.Name}");
         Assert.Equal("NUnit", dialog.TypeChooser.SelectedItem is ProjectTemplate { TypeName: var shown } ? shown : null);
-        Click(dialog, dialog.FamilyRow("Aspire")!);
+        Ui.Click(dialog.FamilyRow("Aspire")!);
         Assert.Equal("aspire-nunit", dialog.Chosen?.ShortName);
 
         // A Type's words find its family on it, a family's name on its last Type; Down chooses the next family found.
@@ -92,7 +92,7 @@ public sealed class TemplateFamiliesTests : IDisposable
         Search(dialog, "test");
         Assert.Equal(["Unit Test", "Aspire"], dialog.Listed.Select(f => f.Name));
         Assert.True(dialog.Family?.Name == "Unit Test" && dialog.Chosen?.ShortName == "nunit", $"Unit Test, found by its name, did not open on the Type chosen in it last: {dialog.Chosen?.Name}");
-        Click(dialog, dialog.SearchBox);
+        Ui.Click(dialog.SearchBox);
         Press(dialog, Key.Down);
         Assert.True(dialog.Family?.Name == "Aspire" && dialog.Chosen?.ShortName == "aspire-nunit", $"Down from the search chose {dialog.Family?.Name}, {dialog.Chosen?.Name}");
 
@@ -118,11 +118,11 @@ public sealed class TemplateFamiliesTests : IDisposable
         // Restores take the run's own feed alone, so a project made never reaches nuget.org for its packages.
         AvaloniaApp.UseFeed(place);
         MainWindow window = Started();
-        Click(window, window.Welcome.NewSolutionButton);
+        Ui.Click(window.Welcome.NewSolutionButton);
         NewProjectDialog dialog = Opened(window);
         dialog.Folder = place;
 
-        Click(dialog, dialog.FamilyRow("Unit Test")!);
+        Ui.Click(dialog.FamilyRow("Unit Test")!);
         Assert.Equal("xunit", dialog.Chosen?.ShortName);
         Assert.Equal(["xUnit", "NUnit", "MSTest"], dialog.TypeNames.Take(3));
         Assert.Equal(["xUnit.net version", TestRunner], dialog.OptionLabels);
@@ -166,7 +166,7 @@ public sealed class TemplateFamiliesTests : IDisposable
             Ui.Run(window, AppActions.NewProject);
             NewProjectDialog adding = Opened(window);
             adding.ProjectName = name;
-            Click(adding, adding.FamilyRow("Unit Test")!);
+            Ui.Click(adding.FamilyRow("Unit Test")!);
             Choose(adding, type);
             Assert.Equal(name, adding.ProjectName);
             Created(adding, $"the {type} project");
@@ -185,7 +185,7 @@ public sealed class TemplateFamiliesTests : IDisposable
         Assert.True(window.Perform(AppActions.NewSolution));
         NewProjectDialog dialog = Opened(window);
         Type(dialog, "Probing");
-        Click(dialog, dialog.FamilyRow("Unit Test")!);
+        Ui.Click(dialog.FamilyRow("Unit Test")!);
         Choose(dialog, "NUnit");
         Pick(dialog, TestRunner, Platform);
         bool installed = false;
@@ -236,7 +236,7 @@ public sealed class TemplateFamiliesTests : IDisposable
               "tags": { "language": "C#", "type": "project" }
             }
             """);
-        File.WriteAllText(Path.Combine(folder, "ProbeTest.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(folder, "ProbeTest.csproj"), TestProjects.Library());
         return PathNames.Canonical(folder);
     }
 
@@ -294,7 +294,7 @@ public sealed class TemplateFamiliesTests : IDisposable
     /// <summary>Create, as its button does, failing with why when it made nothing.</summary>
     private static void Created(NewProjectDialog dialog, string what)
     {
-        Click(dialog, dialog.CreateButton);
+        Ui.Click(dialog.CreateButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem is not null, $"dotnet new to make {what}", TimeSpan.FromMinutes(5));
         Assert.True(dialog.Problem is null, $"{what} was not made: {dialog.Problem}");
     }
@@ -311,10 +311,11 @@ public sealed class TemplateFamiliesTests : IDisposable
         return dialog;
     }
 
-    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen.</summary>
+    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen; with no C# language server,
+    /// which the templates ask nothing of and which would restore each test project made from nuget.org.</summary>
     private MainWindow Started()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
@@ -336,15 +337,6 @@ public sealed class TemplateFamiliesTests : IDisposable
         {
             window.KeyRelease(key, RawInputModifiers.None, PhysicalKey.None, null);
         }
-        Ui.Settle();
-    }
-
-    private static void Click(TopLevel window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(Math.Min(12, control.Bounds.Width / 2), control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
         Ui.Settle();
     }
 

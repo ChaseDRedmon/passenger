@@ -98,10 +98,7 @@ public sealed class ActionPopup : UserControl
                 Choose();
                 e.Handled = true;
                 break;
-            case Key.Down or Key.Up when Rows.Count > 0:
-                int step = e.Key == Key.Down ? 1 : -1;
-                results.SelectedIndex = Math.Clamp(results.SelectedIndex + step, 0, Rows.Count - 1);
-                results.ScrollIntoView(results.SelectedIndex);
+            case Key.Up or Key.Down or Key.PageUp or Key.PageDown when ListKeys.Move(results, e):
                 e.Handled = true;
                 break;
         }

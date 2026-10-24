@@ -111,10 +111,10 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
     public IHighlighter Syntax => syntax;
 
     /// <summary>The syntax's pair: brackets are the parser's to tell, never the server's.</summary>
-    public BracePair? PairAt(TextSnapshot snapshot, int offset) => (syntax as IBraceMatcher)?.PairAt(snapshot, offset);
+    public BracePair? PairAt(TextSnapshot snapshot, int offset, bool far = false) => (syntax as IBraceMatcher)?.PairAt(snapshot, offset, far);
 
     /// <summary>The syntax's tag pair, a Razor file's markup's.</summary>
-    public BracePair? TagPairAt(TextSnapshot snapshot, int caret) => (syntax as IBraceMatcher)?.TagPairAt(snapshot, caret);
+    public BracePair? TagPairAt(TextSnapshot snapshot, int caret, bool far = false) => (syntax as IBraceMatcher)?.TagPairAt(snapshot, caret, far);
 
     public void Dispose()
     {
@@ -126,9 +126,18 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
 
     private void OnSyntaxChanged(object? sender, EventArgs e) => Changed?.Invoke(this, EventArgs.Empty);
 
+    /// <summary>How many changes the colours shown are carried through to the text as it stands, each range drawn going
+    /// through each: a run of typing in one place is one, however long the server takes to answer.</summary>
+    public int Carrying => history.Count;
+
     private void OnTextChanged(object? sender, DocumentChangedEventArgs e)
     {
-        history.Add((e.Version, e.Edits));
+        // The change before is joined only when no tokens shown, nor the request out, are of the text it made.
+        if (history.Count == 0 || whole?.Version == history[^1].Version || screen?.Version == history[^1].Version || askedFor == history[^1].Version
+            || !CarriedSpans.Join(history, e.Version, e.Edits))
+        {
+            history.Add((e.Version, e.Edits));
+        }
         Request(Settle);
         Forget();
     }

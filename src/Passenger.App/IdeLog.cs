@@ -4,13 +4,12 @@ using Passenger.Lsp;
 
 namespace Passenger.App;
 
-/// <summary>The IDE's logs folder, Rider's log directory, which Help, Show Log opens: <c>passenger.log</c> (Rider's
-/// idea.log), each C# language server's own log under <c>roslyn/</c>, <c>dap.log</c> for the debugger, <c>vstest.log</c>
-/// for the test runner, and with <see cref="Traces"/> on <c>lsp.log</c>. A line is queued from any thread and written by
-/// the log's own thread, so no caller waits on the disk; each file is rotated by size, a dozen kept. The process's, as
-/// Rider's idea.log is: every window writes the same files, a line naming the folder where that matters (Opened, a
-/// language server's start), and each language server writes a log of its own, named for its process.</summary>
-public static class IdeLog
+/// <summary>The IDE's logs folder, which Help, Show Log opens: <c>passenger.log</c> (Rider's idea.log), each C# language
+/// server's own under <c>roslyn/</c>, <c>dap.log</c> for the debugger, <c>vstest.log</c> for the test runner, and with
+/// <see cref="Traces"/> on <c>lsp.log</c> and agents' <c>mcp.log</c>. A line is queued from any thread and written by the
+/// log's own thread; each file is rotated by size, a dozen kept. The process's, as Rider's idea.log is: every window writes
+/// the same files, a line naming the folder where that matters, each language server a log of its own.</summary>
+public static partial class IdeLog
 {
     /// <summary>The IDE's own log: errors, what the servers and programs it runs said went wrong, startup times.</summary>
     public const string Ide = "passenger";
@@ -25,6 +24,11 @@ public static class IdeLog
     /// <summary>The C# language servers' messages, written only with <see cref="Traces"/> on.</summary>
     public const string LspTrace = "lsp";
 
+    /// <summary>Agents' MCP calls, written only with <see cref="Traces"/> on: each call's start, what it waited on (being let
+    /// in, the person's leave, a window to join or start) with how long, and how it ended. Names and times, never what a
+    /// call was given.</summary>
+    public const string Mcp = "mcp";
+
     /// <summary>The rotated logs kept beside the current one, <c>passenger.1.log</c> the newest (Rider's idea.log.count).</summary>
     public const int Rotations = 12;
 
@@ -34,18 +38,24 @@ public static class IdeLog
     private static Thread? writer;
     private static volatile bool traces;
 
+    /// <summary>The logs that could not be moved aside to rotate (Windows, a reader not sharing deletion), each with the
+    /// length it had then: written on, and tried again only once it has grown by a tenth of the limit, not at every write.
+    /// Taken under <see cref="Writing"/>.</summary>
+    private static readonly Dictionary<string, long> Unmoved = new(StringComparer.Ordinal);
+
     /// <summary>How long the log's thread rests after a write, so the lines of a burst share one opening of the file.</summary>
     private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(250);
 
     /// <summary>The state store's <c>logs</c>, in force now: a test's settings folder changes under a running process.</summary>
     public static string Folder => Path.Combine(State.StateStore.DefaultRoot, "logs");
 
-    /// <summary>The size past which a log is rotated, Rider's idea.log.limit: no log file grows beyond it.</summary>
+    /// <summary>The size past which a log is rotated, Rider's idea.log.limit: no log file grows beyond it, but one another
+    /// program holds where it is.</summary>
     public static long Limit { get; set; } = 10_000_000;
 
     /// <summary>Settings' Trace protocol messages: every message to and from the C# language servers (lsp.log), the debug
     /// adapter (dap.log), VSTest and the Testing Platform's test hosts (vstest.log) is written as it goes, as a client's
-    /// verbose trace is.</summary>
+    /// verbose trace is, and each agent's MCP call (mcp.log).</summary>
     public static bool Traces
     {
         get => traces;
@@ -63,6 +73,67 @@ public static class IdeLog
     public static bool Programs { get; set; }
 
     public static string PathOf(string log) => Path.Combine(Folder, $"{log}.log");
+
+    /// <summary>The process's console, its standard output and error, written to passenger.log instead: an agent's MCP
+    /// server has standard output for its protocol, and an agent may never read standard error (OpenCode's does not),
+    /// whose pipe, once full, would stop whatever thread wrote to it. On macOS and Linux what native code writes to the
+    /// standard error itself (fontconfig's warnings, the runtime's own) is read into passenger.log too.</summary>
+    public static void TakeConsole()
+    {
+        TextWriter lines = TextWriter.Synchronized(new ConsoleLines());
+        Console.SetOut(lines);
+        Console.SetError(lines);
+        if (!OperatingSystem.IsWindows())
+        {
+            TakeStandardError();
+        }
+    }
+
+    /// <summary>The process's standard error made a pipe of its own, which a thread of the log's reads into passenger.log
+    /// for as long as the process runs, so a write there never waits on whoever started it.</summary>
+    private static unsafe void TakeStandardError()
+    {
+        const int StandardError = 2;
+        int* ends = stackalloc int[2];
+        if (Pipe(ends) != 0)
+        {
+            return;
+        }
+        if (Duplicate(ends[1], StandardError) < 0)
+        {
+            CloseEnd(ends[0]);
+            CloseEnd(ends[1]);
+            return;
+        }
+        CloseEnd(ends[1]);
+        FileStream read = new(new Microsoft.Win32.SafeHandles.SafeFileHandle(ends[0], ownsHandle: true), FileAccess.Read, 1);
+        Thread reader = new(() =>
+        {
+            try
+            {
+                using StreamReader lines = new(read, Encoding.UTF8);
+                while (lines.ReadLine() is { } line)
+                {
+                    Write(Ide, $"Standard error: {line}");
+                }
+            }
+            catch (Exception error) when (error is IOException or ObjectDisposedException)
+            {
+                // The process is ending.
+            }
+        })
+        { IsBackground = true, Name = "Passenger standard error" };
+        reader.Start();
+    }
+
+    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "pipe", SetLastError = true)]
+    private static unsafe partial int Pipe(int* ends);
+
+    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "dup2", SetLastError = true)]
+    private static partial int Duplicate(int from, int to);
+
+    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static partial int CloseEnd(int end);
 
     /// <summary>A line in one of the logs, from any thread.</summary>
     public static void Write(string log, string line)
@@ -128,15 +199,21 @@ public static class IdeLog
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             file = Open(path);
             long length = file.Length;
-            bool rotates = true;
             foreach (LogLine line in lines)
             {
                 byte[] bytes = Encoding.UTF8.GetBytes(line.Text);
-                if (rotates && length > 0 && length + bytes.Length > Limit)
+                if (length > 0 && length + bytes.Length > Limit && !WaitsToRotate(path, length))
                 {
                     file.Dispose();
-                    // One that cannot be moved (Windows, a reader not sharing deletion) is written on rather than lost.
-                    rotates = Rotate(path);
+                    // One that cannot be moved is written on rather than lost.
+                    if (Rotate(path))
+                    {
+                        Unmoved.Remove(path);
+                    }
+                    else
+                    {
+                        Unmoved[path] = length;
+                    }
                     file = Open(path);
                     length = file.Length;
                 }
@@ -153,11 +230,25 @@ public static class IdeLog
         }
     }
 
+    /// <summary>Whether a log that could not be moved aside to rotate has grown by less than a tenth of the limit since.</summary>
+    private static bool WaitsToRotate(string path, long length) => Unmoved.TryGetValue(path, out long held) && length < held + Limit / 10;
+
     private static FileStream Open(string path) => new(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
 
-    /// <summary>Rider's RollingFileHandler: the oldest goes, each moves up one, and the log becomes <c>passenger.1.log</c>.</summary>
+    /// <summary>Rider's RollingFileHandler: the oldest goes, each moves up one, and the log becomes <c>passenger.1.log</c>.
+    /// The log is moved aside first, so one that cannot be (Windows, a reader not sharing deletion) leaves the rotated ones
+    /// as they were; false then.</summary>
     private static bool Rotate(string path)
     {
+        string aside = Rotated(path, "rotating");
+        try
+        {
+            File.Move(path, aside, overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
         try
         {
             File.Delete(Rotated(path, Rotations));
@@ -168,18 +259,56 @@ public static class IdeLog
                     File.Move(Rotated(path, n), Rotated(path, n + 1));
                 }
             }
-            File.Move(path, Rotated(path, 1));
-            return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            return false;
+            // A rotated log held where it is: the log still takes the first place.
         }
+        try
+        {
+            File.Move(aside, Rotated(path, 1), overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Held there too: the log stays aside until the next rotation's takes its place.
+        }
+        return true;
     }
 
     /// <summary>A rotated log's path: <c>passenger.3.log</c> beside <c>passenger.log</c>.</summary>
-    private static string Rotated(string path, int number) =>
-        Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}.{number}{Path.GetExtension(path)}");
+    private static string Rotated(string path, int number) => Rotated(path, $"{number}");
+
+    private static string Rotated(string path, string part) =>
+        Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}.{part}{Path.GetExtension(path)}");
 
     private sealed record LogLine(string Path, string Text);
+
+    /// <summary>What the console is given, a line at a time, as passenger.log's lines.</summary>
+    private sealed class ConsoleLines : TextWriter
+    {
+        private readonly StringBuilder line = new();
+
+        public override Encoding Encoding => Encoding.UTF8;
+
+        public override void Write(char value)
+        {
+            if (value == '\n')
+            {
+                Flush();
+            }
+            else if (value != '\r')
+            {
+                line.Append(value);
+            }
+        }
+
+        public override void Flush()
+        {
+            if (line.Length > 0)
+            {
+                IdeLog.Write(Ide, $"Console: {line}");
+                line.Clear();
+            }
+        }
+    }
 }

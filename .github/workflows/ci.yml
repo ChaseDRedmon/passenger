@@ -34,7 +34,8 @@ jobs:
 
   # #36: each processor's disk image, made with no Developer ID here (the app signed ad hoc, nothing notarized), which
   # tools/package-mac.sh mounts read-only and checks before it is done: the app's signature, its version and the volume's,
-  # Roslyn's server and the debugger's adapter in it, and every Mach-O file built for the image's processor. The x64
+  # Roslyn's server and the debugger's adapter in it, every Mach-O file built for the image's processor, and a copy of the
+  # app still sealed after it has run on a C# project (#450). The x64
   # image is cross-published on the arm64 runner. A release (release.yml) makes the same images, with the Developer ID
   # when the repository's secrets hold one.
   package:

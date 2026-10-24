@@ -86,7 +86,7 @@ public sealed partial class CodeAssist
             IReadOnlyList<ResourcePlace> places = await BackgroundWork.Run(() => XamlRefactorings.Places(file, styles: false, texts));
             dialog = new ExtractResourceDialog(value, places, key => XamlRefactorings.KeyProblem(file, key), (key, place, everywhere) =>
             {
-                string? refused = ApplyXamlChanges(name, XamlRefactorings.ExtractResource(file, value, key, place, everywhere));
+                string? refused = ApplyFileChanges(name, XamlRefactorings.ExtractResource(file, value, key, place, everywhere));
                 if (refused is null)
                 {
                     int replaced = everywhere ? value.Uses.Count : 1;
@@ -127,10 +127,10 @@ public sealed partial class CodeAssist
             IReadOnlyList<ResourcePlace> places = await BackgroundWork.Run(() => XamlRefactorings.Places(file, styles: source.ByClass, texts));
             dialog = new ExtractStyleDialog(source, places, styleName => XamlRefactorings.StyleNameProblem(file, source, styleName), (styleName, chosen, place) =>
             {
-                string? refused = ApplyXamlChanges(name, XamlRefactorings.ExtractStyle(file, source, styleName, chosen, place));
+                string? refused = ApplyFileChanges(name, XamlRefactorings.ExtractStyle(file, source, styleName, chosen, place));
                 if (refused is null)
                 {
-                    Message?.Invoke(this, $"Extracted {chosen.Count} {(chosen.Count == 1 ? "property" : "properties")} of {source.ElementName} to style '{styleName}' in {place.Title}");
+                    Message?.Invoke(this, $"Extracted {Core.Plural.Of(chosen.Count, "property", "properties")} of {source.ElementName} to style '{styleName}' in {place.Title}");
                 }
                 return Task.FromResult(refused);
             });
@@ -170,9 +170,9 @@ public sealed partial class CodeAssist
         return path => open.TryGetValue(path, out string? text) ? text : File.Exists(path) ? ReadText(path) : null;
     }
 
-    /// <summary>A XAML refactoring's or fix's changes made as one command (Undo takes back every file, a file made
-    /// included): each file's edits made from its text as it is now, open or on disk. Null once made; else why not.</summary>
-    internal string? ApplyXamlChanges(string name, IReadOnlyList<XamlFileChange> changes)
+    /// <summary>A refactoring's or fix's changes to files made as one command (XAML's, an Aspire parameter's value set; Undo takes back
+    /// every file, a file made included): each file's edits made from its text as it is now, open or on disk. Null once made; else why not.</summary>
+    internal string? ApplyFileChanges(string name, IReadOnlyList<XamlFileChange> changes)
     {
         List<object> documentChanges = [];
         foreach (XamlFileChange change in changes)
@@ -194,12 +194,7 @@ public sealed partial class CodeAssist
             {
                 return $"{Path.GetFileName(change.Path)} is no longer as {name} found it";
             }
-            TextSnapshot snapshot = TextSnapshot.From(text);
-            documentChanges.Add(new
-            {
-                textDocument = new { uri },
-                edits = edits.OrderBy(e => e.Start).Select(e => new LspTextEdit(new LspRange(Position(snapshot, e.Start), Position(snapshot, e.End)), e.Text)),
-            });
+            documentChanges.Add(new { textDocument = new { uri }, edits = ServerPlaces.EditsOf(TextSnapshot.From(text), edits) });
         }
         JsonElement edit = JsonSerializer.SerializeToElement(new { documentChanges }, Json.Options);
         List<string> dropped = [];
@@ -216,12 +211,6 @@ public sealed partial class CodeAssist
             FilesChanged?.Invoke(this, EventArgs.Empty);
         }
         return dropped.Count > 0 ? $"{name} was not applied to {string.Join(", ", dropped)}: it was edited meanwhile" : null;
-
-        static LspPosition Position(TextSnapshot snapshot, int offset)
-        {
-            TextPosition at = snapshot.GetPosition(Math.Min(offset, snapshot.Length));
-            return new LspPosition(at.Line, at.Column);
-        }
     }
 
     /// <summary>The refactorings Rider offers at the caret of a XAML file (Refactor This, and after the fixes in Show
@@ -231,11 +220,11 @@ public sealed partial class CodeAssist
         List<Choice> offered = [];
         if (XamlRefactorings.ValueAt(file, caret).Value is { } value)
         {
-            offered.Add(new Choice("Extract Resource...", value.Property, XamlRefactoring.Resource));
+            offered.Add(new Choice("Extract Resource…", value.Property, XamlRefactoring.Resource));
         }
         if (XamlRefactorings.StyleAt(file, caret).Source is { } source)
         {
-            offered.Add(new Choice("Extract Style...", source.ElementName, XamlRefactoring.Style));
+            offered.Add(new Choice("Extract Style…", source.ElementName, XamlRefactoring.Style));
         }
         return offered;
     }

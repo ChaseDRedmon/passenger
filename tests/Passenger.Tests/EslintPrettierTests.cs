@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -37,7 +38,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
             OpenDocument document = window.EditorArea.Active!;
-            PlaceAfter(editor, "console.log(items);");
+            Ui.PlaceAfter(editor, "console.log(items);");
             Ui.Press(window, "ENTER");
             window.KeyTextInput("let total = items.length;");
             Ui.Press(window, "ENTER");
@@ -53,11 +54,11 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
             Ui.Settle();
             Problem listed = Assert.Single(window.BottomPanel.Problems.FileProblems, p => p.Message == PreferConst);
             Assert.Equal(ProblemSeverity.Error, listed.Severity);
-            Button rule = window.BottomPanel.Problems.GetVisualDescendants().OfType<Button>().First(b => b.Classes.Contains("link") && (string?)b.Content == "prefer-const");
-            Click(window, rule);
+            Button rule = window.ProblemsWindow.GetVisualDescendants().OfType<Button>().First(b => b.Classes.Contains("link") && (string?)b.Content == "prefer-const");
+            Ui.Click(rule);
             Assert.Equal(["https://eslint.org/docs/latest/rules/prefer-const"], window.Browsed.Select(u => u.AbsoluteUri));
 
-            PlaceAfter(editor, "let tot");
+            Ui.PlaceAfter(editor, "let tot");
             Ui.Run(window, AppActions.QuickFix);
             Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes for the line");
             Assert.Equal("ESLint: Fix 'prefer-const'", window.Assist.Offered[0]);
@@ -109,10 +110,10 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
             OpenDocument document = window.EditorArea.Active!;
-            PlaceAfter(editor, "console.log(items);");
+            Ui.PlaceAfter(editor, "console.log(items);");
             editor.ApplyEdits([new TextEdit(editor.Selections.Primary.Caret, 0, "\nlet first = 1;\nlet second = 2;\nconsole.log(first + second);")]);
             Ui.WaitFor(() => document.Markers.Count(m => m.Message.EndsWith("(prefer-const)", StringComparison.Ordinal)) == 2, "a problem under each let");
-            ChooseFromEditorMenu(window, "Fix ESLint Problems");
+            Ui.ChooseFromEditorMenu(window, "Fix ESLint Problems");
             Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("const first = 1;\nconst second = 2;", StringComparison.Ordinal), "both lets fixed at once");
             Ui.WaitFor(() => !document.Markers.Any(m => m.Message.StartsWith("ESLint:", StringComparison.Ordinal)), "no ESLint problem left");
 
@@ -144,7 +145,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         try
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
-            PlaceAfter(editor, "pri");
+            Ui.PlaceAfter(editor, "pri");
             Ui.Run(window, AppActions.Reformat);
             Ui.WaitFor(() => editor.Document.Snapshot.ToString() == "const label = { name: 'tea', price: 3 }\nconsole.log(label)\n",
                 "the file laid out by the project's Prettier, its .prettierrc's single quotes and no semicolons");
@@ -174,13 +175,198 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
             Ui.Run(window, AppActions.Reformat);
             Ui.WaitFor(() => editor.Document.Snapshot.ToString() == "const kept = \"as written\";\nconsole.log(kept);\n",
                 "the file .prettierignore names laid out by its language server, its double quotes and semicolons kept");
-            ChooseFromEditorMenu(window, "Reformat with Prettier");
+            Ui.ChooseFromEditorMenu(window, "Reformat with Prettier");
             Assert.Equal("Prettier: file legacy.js was ignored with .prettierignore", window.Status);
             Assert.Equal("const kept = \"as written\";\nconsole.log(kept);\n", editor.Document.Snapshot.ToString());
             Assert.Contains($"Prettier {Project.VersionOf("prettier")} formatted", Ui.IdeLog(), StringComparison.Ordinal);
         }
         finally
         {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Each_file_Prettier_formats_gets_its_own_text_back_though_its_configuration_prints_to_standard_output()
+    {
+        Project.SkipWithoutNode();
+        project.AddFolder("src/noisy",
+            (".prettierrc.cjs", "console.log(\"the noisy configuration loads\");\nmodule.exports = { semi: false, singleQuote: true };\n"),
+            ("first.js", "const  first = {name:\"tea\"};\nlet  more = 1;\n"),
+            ("second.js", "const  second = [1,2,3];\nconsole.log( second );\n"));
+        MainWindow window = project.Open("src/noisy/first.js");
+        try
+        {
+            ReformatWithPrettier(window);
+            Assert.Equal("Prettier: formatted 2 lines", window.Status);
+            Assert.Equal("const first = { name: 'tea' }\nlet more = 1\n", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+
+            window.OpenFile(project.PathOf("src/noisy/second.js"));
+            Ui.Settle();
+            ReformatWithPrettier(window);
+            string second = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
+            Assert.True(second == "const second = [1, 2, 3]\nconsole.log(second)\n", $"second.js was not given its own text by Prettier:\n{second}");
+            Assert.Contains("the noisy configuration loads", Ui.IdeLog(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Prettier_2_formats_as_Prettier_3_does_and_leaves_what_prettierignore_names()
+    {
+        Project.SkipWithoutNode();
+        MainWindow window = project.Open("src/format.js");
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "console.log(label, \"the price of a pot of tea\", \"with milk and sugar on the side\");\n")]);
+            // Each puts its own default trailing commas in the call it wraps: Prettier 3 all, Prettier 2 none after arguments.
+            const string formatted = "const label = { name: 'tea', price: 3 }\nconsole.log(label)\nconsole.log(\n  label,\n  'the price of a pot of tea',\n  'with milk and sugar on the side'";
+            ReformatWithPrettier(window);
+            Assert.Equal(formatted + ",\n)\n", editor.Document.Snapshot.ToString());
+            Ui.Run(window, EditorActions.Undo);
+
+            window.ApplySettings(window.Settings with { Prettier = ToolConfiguration.Manual, PrettierPackage = project.PathOf("node_modules/prettier2") });
+            ReformatWithPrettier(window);
+            Assert.True(editor.Document.Snapshot.ToString() == formatted + "\n)\n", $"Prettier 2 did not format the file under the .prettierignore ({window.Status}):\n{editor.Document.Snapshot}");
+            window.OpenFile(project.PathOf("src/legacy.js"));
+            Ui.Settle();
+            ReformatWithPrettier(window);
+            Assert.Equal("Prettier: file legacy.js was ignored with .prettierignore", window.Status);
+            Assert.Equal(Project.Legacy, window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Save_saves_the_file_it_was_pressed_on_though_another_tab_is_chosen_while_Prettier_formats_it()
+    {
+        Project.SkipWithoutNode();
+        string held = project.AddFolder("src/held", (".prettierrc.cjs", Project.Holding), ("first.js", "const  first = {name:\"tea\"};\n"));
+        MainWindow window = project.Open("src/format.js");
+        try
+        {
+            window.ApplySettings(window.Settings with { PrettierOnSave = true });
+            OpenDocument other = window.EditorArea.Active!;
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// Not saved.\n")]);
+            window.OpenFile(project.PathOf("src/held/first.js"));
+            Ui.Settle();
+            OpenDocument first = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "let  more = 1;\n")]);
+
+            Assert.True(window.Perform(AppActions.Save), "Save did not run");
+            Processes.WrittenId(Path.Combine(held, "started"), "Prettier to start formatting first.js");
+            window.OpenFile(project.PathOf("src/format.js"));
+            Assert.Same(other, window.EditorArea.Active);
+            File.WriteAllText(Path.Combine(held, "go"), string.Empty);
+            Ui.WaitFor(() => !first.IsModified, "first.js, which Save was pressed on, saved once Prettier formatted it");
+            Assert.Equal("const first = { name: 'tea' }\nlet more = 1\n", File.ReadAllText(project.PathOf("src/held/first.js")));
+            Assert.True(other.IsModified, "format.js was saved, the tab chosen while Prettier formatted the file Save was pressed on");
+            Assert.Equal(Project.Format, File.ReadAllText(project.PathOf("src/format.js")));
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Save_saves_the_file_though_Prettiers_runner_ends_or_the_folder_closes_while_it_formats()
+    {
+        Project.SkipWithoutNode();
+        string held = project.AddFolder("src/held", (".prettierrc.cjs", Project.Holding), ("first.js", "const first = 1;\n"));
+        string path = project.PathOf("src/held/first.js");
+        MainWindow window = project.Open("src/held/first.js");
+        try
+        {
+            window.ApplySettings(window.Settings with { PrettierOnSave = true });
+            OpenDocument first = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "let  more = 2;\n")]);
+            Assert.True(window.Perform(AppActions.Save), "Save did not run");
+            using (Process runner = Process.GetProcessById(Processes.WrittenId(Path.Combine(held, "started"), "Prettier to start formatting first.js")))
+            {
+                runner.Kill();
+            }
+            Ui.WaitFor(() => !first.IsModified, "first.js saved, though Prettier's runner ended as it formatted it");
+            Assert.Equal("const first = 1;\nlet  more = 2;\n", File.ReadAllText(path));
+            Assert.StartsWith("Prettier: Prettier's runner ended", window.Status, StringComparison.Ordinal);
+
+            File.Delete(Path.Combine(held, "started"));
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "let  last = 3;\n")]);
+            Assert.True(window.Perform(AppActions.Save), "Save did not run");
+            Processes.WrittenId(Path.Combine(held, "started"), "Prettier to start formatting first.js again, in a runner of its own");
+            Assert.Null(window.CloseSolution());
+            // The close saved the file; the format in flight ends with its runner, and Save after it throws nothing.
+            Ui.Settle();
+            Assert.Equal("const first = 1;\nlet  more = 2;\nlet  last = 3;\n", File.ReadAllText(path));
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ESLints_settings_changed_as_it_starts_leave_one_server_for_the_folder_which_ends_with_it()
+    {
+        Project.SkipWithoutNode();
+        List<int> servers = [];
+        void Heard(object? sender, ChildStart start)
+        {
+            if (start.Command.Contains("eslintServer.js", StringComparison.Ordinal))
+            {
+                lock (servers)
+                {
+                    servers.Add(start.ProcessId);
+                }
+            }
+        }
+        int[] Started()
+        {
+            lock (servers)
+            {
+                return [.. servers];
+            }
+        }
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        ChildProcesses.Started += Heard;
+        try
+        {
+            window.OpenFolder(project.Folder);
+            Ui.Settle();
+            window.OpenFile(project.PathOf("src/app.js"));
+            // ESLint's files changed while its server starts, and another file opened before the start in its place is done.
+            window.ApplySettings(window.Settings with { EslintFiles = "**/*.js" });
+            Ui.PumpUntil(() => Started().Length > 0, "an ESLint server to start");
+            window.OpenFile(project.PathOf("src/format.js"));
+            Ui.Settle();
+            // A start given up ends its server at once, which the system may take a moment to tell.
+            int[] running = [];
+            Ui.WaitFor(() => (running = [.. Started().Where(Processes.IsRunning)]).Length == 1, "one ESLint server, and no other, to run for the folder");
+            Assert.Null(window.CloseSolution());
+            Ui.WaitFor(() => !Processes.IsRunning(running[0]), "the folder's ESLint server to end with it");
+        }
+        finally
+        {
+            ChildProcesses.Started -= Heard;
             window.ApplySettings(new AppSettings());
             window.Close();
             project.Reset();
@@ -218,7 +404,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
                 window.EditorArea.ActiveGroup.BannerText);
             Assert.Equal("Run 'npm install'", window.EditorArea.ActiveGroup.BannerLink);
 
-            Click(window, window.EditorArea.ActiveGroup.BannerLinkControl);
+            Ui.Click(window.EditorArea.ActiveGroup.BannerLinkControl);
             Ui.WaitFor(() => window.Status?.StartsWith("npm install failed in ", StringComparison.Ordinal) == true,
                 "npm install to end, which the run's npm, offline with an empty cache, cannot finish");
             ChildStart npm;
@@ -274,7 +460,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
             Assert.False(Editor<CheckBox>(dialog, "Run on save").IsChecked);
             TextBox package = Editor<TextBox>(dialog, "Prettier package");
             Assert.False(package.IsEnabled, "Automatic configuration lets a package be named, which only Manual takes");
-            Click(dialog, Radio(dialog, "Manual Prettier configuration"));
+            Ui.Click(Radio(dialog, "Manual Prettier configuration"));
             Assert.True(package.IsEnabled, "Manual configuration did not let the package be named");
             dialog.Close();
         }
@@ -291,33 +477,11 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
         ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
 
-    /// <summary>Opens the editor's menu at the caret and chooses an item, as clicks on them would.</summary>
-    private static void ChooseFromEditorMenu(MainWindow window, string item)
+    /// <summary>Reformat with Prettier on the file shown, done.</summary>
+    private static void ReformatWithPrettier(MainWindow window)
     {
-        window.EditorArea.CodeEditor.RequestContextMenu();
+        Assert.True(window.Perform(AppActions.ReformatWithPrettier), "Reformat with Prettier did not run");
         Ui.Settle();
-        ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("The editor's menu did not open");
-        MenuItem chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"The editor's menu has no {item}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        Assert.True(chosen.IsEnabled, $"The editor's menu has {item} disabled");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
     /// <summary>A JavaScript project with its own ESLint and Prettier installed (the tests' packages copied into its
@@ -343,6 +507,16 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         public const string Format = "const  label = {name:\"tea\",price:3};\nconsole.log(label);\n";
 
         public const string Legacy = "const  kept   =   \"as written\";\nconsole.log(kept);\n";
+
+        /// <summary>A Prettier configuration that holds its runner as it loads, until the test writes <c>go</c> beside it,
+        /// having written the runner's process id to <c>started</c>: so a test acts while Prettier formats.</summary>
+        public const string Holding = "const fs = require(\"fs\");\nconst path = require(\"path\");\n"
+            + "fs.writeFileSync(path.join(__dirname, \"started\"), String(process.pid));\n"
+            + "const pause = new Int32Array(new SharedArrayBuffer(4));\nconst until = Date.now() + 60000;\n"
+            + "while (!fs.existsSync(path.join(__dirname, \"go\")) && Date.now() < until) {\n  Atomics.wait(pause, 0, 0, 20);\n}\n"
+            + "module.exports = { semi: false, singleQuote: true };\n";
+
+        private readonly List<string> added = [];
 
         private static readonly (string Path, string Text)[] Files =
         [
@@ -372,9 +546,30 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         /// <summary>A file's path as the IDE names it: canonical, its '/' Windows' '\' there, so it compares with an open file's.</summary>
         public string PathOf(string relative) => Path.GetFullPath(Path.Combine(PathNames.Canonical(Folder), relative));
 
-        /// <summary>Every file as written, whatever a test saved.</summary>
+        /// <summary>A folder of a test's own in the project, with its files, gone again at <see cref="Reset"/>; its path.</summary>
+        public string AddFolder(string relative, params (string Name, string Text)[] files)
+        {
+            string folder = Path.Combine(Folder, relative);
+            Directory.CreateDirectory(folder);
+            added.Add(folder);
+            foreach ((string name, string text) in files)
+            {
+                File.WriteAllText(Path.Combine(folder, name), text);
+            }
+            return folder;
+        }
+
+        /// <summary>Every file as written, whatever a test saved, and the folders a test added gone.</summary>
         public void Reset()
         {
+            foreach (string folder in added)
+            {
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+            }
+            added.Clear();
             foreach ((string path, string text) in Files)
             {
                 string full = Path.Combine(Folder, path);

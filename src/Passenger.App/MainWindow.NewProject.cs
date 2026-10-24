@@ -8,19 +8,19 @@ namespace Passenger.App;
 /// <summary>Rider's New Solution (File, the Welcome screen, the project widget) and New Project (Add on the solution and a
 /// solution folder in the Solution view, and its keys), both in <see cref="NewProjectDialog"/> from the templates dotnet
 /// new has installed and those of the known packages it can install (<see cref="TemplatePacks"/>). A new solution opens as
-/// the workspace through <see cref="Open"/>, kept in Recent Solutions, and builds; a new project goes into the open
-/// solution, in the solution folder chosen, by <see cref="SolutionEdits"/>.</summary>
+/// the workspace through <see cref="Open"/>, kept in Recent Solutions, and builds in the window it opens in; a new project
+/// goes into the open solution, in the solution folder chosen, by <see cref="SolutionEdits"/>.</summary>
 public partial class MainWindow
 {
     private void AddNewProjectActions()
     {
-        actions!.Add(new IdeAction(AppActions.NewSolution, "New Solution...", "IDE", _ => ShowNewSolution())
+        actions!.Add(new IdeAction(AppActions.NewSolution, "New Solution…", "IDE", _ => ShowNewSolution())
         {
             Menus = [new MenuPlace("File", 0, -1)],
         });
-        actions.Add(new IdeAction(AppActions.NewProject, "New Project...", "IDE", _ => ShowNewProject(ChosenSolutionFolder()))
+        actions.Add(new IdeAction(AppActions.NewProject, "New Project…", "IDE", _ => ShowNewProject(ChosenSolutionFolder()))
         {
-            WhyNot = _ => Solution is null ? "No solution is open to add a project to" : null,
+            WhyNot = _ => Solution is null ? Refusals.NoSolution : null,
         });
     }
 
@@ -56,7 +56,7 @@ public partial class MainWindow
     {
         if (Solution is not { } solution)
         {
-            status.Text = "No solution is open to add a project to";
+            status.Text = Refusals.NoSolution;
             return null;
         }
         ProjectTarget target = new(solution.Path, into, [.. solution.Projects.Select(p => Path.GetFileNameWithoutExtension(p.Path))]);
@@ -73,21 +73,22 @@ public partial class MainWindow
         return dialog;
     }
 
-    /// <summary>The new solution with its project in it, opened as the workspace and built, as Rider leaves one ready to run.</summary>
+    /// <summary>The new solution with its project in it, opened as the workspace and built, as Rider leaves one ready to run:
+    /// by the window it opens in once its session there has begun, since Open may first ask where, open it in another
+    /// window, or leave this one's solution first.</summary>
     private void OpenNewSolution(string solution, IReadOnlyList<string> projects)
     {
         List<string> refused = [.. projects.Select(project => Change(() => SolutionEdits.AddProject(solution, null, project), Path.GetFileNameWithoutExtension(solution)))
             .OfType<string>().Where(problem => !problem.EndsWith("is already in the solution", StringComparison.Ordinal))];
-        if (Open(solution) is not null)
+        Open(solution, opened =>
         {
-            return;
-        }
-        if (refused.Count > 0)
-        {
-            status.Text = string.Join("; ", refused);
-            return;
-        }
-        BuildSolution();
+            if (refused.Count > 0)
+            {
+                opened.status.Text = string.Join("; ", refused);
+                return;
+            }
+            opened.BuildSolution();
+        });
     }
 
     /// <summary>Where a new project goes by default: the folder on disk a solution folder is named after (src for /src/),

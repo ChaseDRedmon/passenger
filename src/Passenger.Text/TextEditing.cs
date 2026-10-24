@@ -2,7 +2,16 @@ namespace Passenger.Text;
 
 /// <summary>An edit worked out but not yet applied: the edits (in the snapshot it was planned on),
 /// where every caret ends up after them, and the kind of edit for undo.</summary>
-public sealed record EditPlan(IReadOnlyList<TextEdit> Edits, SelectionSet Selections, EditKind Kind);
+public sealed record EditPlan(IReadOnlyList<TextEdit> Edits, SelectionSet Selections, EditKind Kind)
+{
+    /// <summary>Text the edits take out and put back elsewhere as it was (the line a moved line steps over), for what keeps
+    /// offsets in it (a fold) to go with it rather than collapse where it was taken out.</summary>
+    public IReadOnlyList<TextMove> Moved { get; init; } = [];
+}
+
+/// <summary>Text moved whole: <paramref name="Length"/> characters at <paramref name="From"/> in the text before stand at
+/// <paramref name="To"/> in the text after.</summary>
+public readonly record struct TextMove(int From, int Length, int To);
 
 /// <summary>Every editing command, as a function from text and carets to an <see cref="EditPlan"/>.
 /// Each acts on every caret at once; a command with nothing to do returns null.</summary>
@@ -294,8 +303,9 @@ public static class TextEditing
     }
 
     /// <summary>Duplicates each caret's line below it, the caret following onto the copy; a
-    /// selection is duplicated after itself instead, and the copy selected.</summary>
-    public static EditPlan Duplicate(TextSnapshot text, SelectionSet selections, string eol)
+    /// selection is duplicated after itself instead, and the copy selected. A line takes the lines
+    /// <paramref name="folded"/> hides behind it along, as every line command does.</summary>
+    public static EditPlan Duplicate(TextSnapshot text, SelectionSet selections, string eol, IReadOnlyList<(int First, int Last)>? folded = null)
     {
         List<Replacement> replacements = [];
         HashSet<int> lines = [];
@@ -309,23 +319,28 @@ public static class TextEditing
                 replacements.Add(new Replacement(s.End, s.End, selected, forward ? 0 : selected.Length, forward ? selected.Length : 0, i));
                 continue;
             }
-            LineSpan line = text.GetLine(text.GetLineFromOffset(s.Caret));
-            if (!lines.Add(line.Line))
+            (int first, int last) = ShownLine(text.GetLineFromOffset(s.Caret), folded);
+            if (!lines.Add(first))
             {
                 continue;
             }
-            string inserted = eol + text.GetText(line.Start, line.Length);
-            int column = s.Caret - line.Start;
-            replacements.Add(new Replacement(line.End, line.End, inserted, eol.Length + column, eol.Length + column, i));
+            LineSpan top = text.GetLine(first);
+            LineSpan bottom = text.GetLine(last);
+            string copy = text.GetText(top.Start, bottom.End - top.Start);
+            int column = s.Caret - top.Start;
+            // After the line's break, so a fold ending with the line stays out of the copy; the last line has none.
+            replacements.Add(bottom.BreakLength > 0
+                ? new Replacement(bottom.EndIncludingBreak, bottom.EndIncludingBreak, copy + eol, column, column, i)
+                : new Replacement(bottom.End, bottom.End, eol + copy, eol.Length + column, eol.Length + column, i));
         }
         return Build(replacements, selections, EditKind.Other);
     }
 
-    /// <summary>Deletes every line a caret or selection touches; carets stay at their column on the
-    /// line that moves up into the gap.</summary>
-    public static EditPlan DeleteLines(TextSnapshot text, SelectionSet selections)
+    /// <summary>Deletes every line a caret or selection touches, with the lines <paramref name="folded"/> hides behind
+    /// them; carets stay at their column on the line that moves up into the gap.</summary>
+    public static EditPlan DeleteLines(TextSnapshot text, SelectionSet selections, IReadOnlyList<(int First, int Last)>? folded = null)
     {
-        List<(int First, int Last)> blocks = Blocks(text, selections);
+        List<(int First, int Last)> blocks = Blocks(text, selections, folded);
         List<TextEdit> edits = blocks.Select(b => LineBlockRemoval(text, b.First, b.Last)).ToList();
         TextSnapshot after = text.Apply(edits);
         return new EditPlan(edits, selections.With(s =>
@@ -345,45 +360,65 @@ public static class TextEditing
         }), EditKind.Other);
     }
 
-    /// <summary>Moves every touched line up or down past its neighbour, carets and selections
-    /// travelling with them. Nothing moves if any block is already at the edge.</summary>
-    public static EditPlan? MoveLines(TextSnapshot text, SelectionSet selections, string eol, bool up)
+    /// <summary>Moves every touched line up or down past its neighbour, carets and selections travelling with them; a line
+    /// takes the lines <paramref name="folded"/> hides behind it along, and a neighbour shown with folded lines is stepped
+    /// over whole. The lines stay and their neighbour goes round them, so what is in them (a fold, a breakpoint) goes with
+    /// them. Nothing moves if any block is already at the edge.</summary>
+    public static EditPlan? MoveLines(TextSnapshot text, SelectionSet selections, string eol, bool up, IReadOnlyList<(int First, int Last)>? folded = null)
     {
-        List<(int First, int Last)> blocks = Blocks(text, selections);
+        List<(int First, int Last)> blocks = Blocks(text, selections, folded);
         if (up ? blocks[0].First == 0 : blocks[^1].Last == text.LineCount - 1)
         {
             return null;
         }
         List<TextEdit> edits = [];
-        foreach ((int first, int last) in blocks)
+        List<TextMove> moved = [];
+        int[] deltas = new int[blocks.Count];
+        int shift = 0;
+        void Add(TextEdit edit)
         {
+            edits.Add(edit);
+            shift += edit.Text.Length - edit.Length;
+        }
+        for (int b = 0; b < blocks.Count; b++)
+        {
+            (int first, int last) = blocks[b];
             LineSpan top = text.GetLine(first);
             LineSpan bottom = text.GetLine(last);
-            string block = text.GetText(top.Start, bottom.End - top.Start);
+            (int nearFirst, int nearLast) = ShownLine(up ? first - 1 : last + 1, folded);
+            LineSpan nearTop = text.GetLine(nearFirst);
+            LineSpan nearBottom = text.GetLine(nearLast);
+            string neighbour = text.GetText(nearTop.Start, nearBottom.End - nearTop.Start);
+            deltas[b] = (up ? -1 : 1) * (nearLast - nearFirst + 1);
             if (up)
             {
-                LineSpan neighbour = text.GetLine(first - 1);
-                string moved = block + eol + text.GetText(neighbour.Start, neighbour.Length);
-                edits.Add(new TextEdit(neighbour.Start, bottom.End - neighbour.Start, moved));
+                Add(new TextEdit(nearTop.Start, top.Start - nearTop.Start, string.Empty));
+                // After the block's break, so a fold ending with the block stays out of the neighbour; the last line has none.
+                bool broken = bottom.BreakLength > 0;
+                int at = broken ? bottom.EndIncludingBreak : bottom.End;
+                moved.Add(new TextMove(nearTop.Start, neighbour.Length, at + shift + (broken ? 0 : eol.Length)));
+                Add(new TextEdit(at, 0, broken ? neighbour + eol : eol + neighbour));
             }
             else
             {
-                LineSpan neighbour = text.GetLine(last + 1);
-                string moved = text.GetText(neighbour.Start, neighbour.Length) + eol + block;
-                edits.Add(new TextEdit(top.Start, neighbour.End - top.Start, moved));
+                moved.Add(new TextMove(nearTop.Start, neighbour.Length, top.Start + shift));
+                Add(new TextEdit(top.Start, 0, neighbour + eol));
+                int from = nearBottom.BreakLength > 0 ? bottom.EndIncludingBreak : bottom.End;
+                Add(new TextEdit(from, (nearBottom.BreakLength > 0 ? nearBottom.EndIncludingBreak : nearBottom.End) - from, string.Empty));
             }
         }
         TextSnapshot after = text.Apply(edits);
-        int delta = up ? -1 : 1;
         return new EditPlan(edits, selections.With(s =>
         {
+            int line = CoveredLines(text, s).First;
+            int delta = deltas[blocks.FindIndex(b => b.First <= line && line <= b.Last)];
             TextPosition anchor = text.GetPosition(s.Anchor);
             TextPosition caret = text.GetPosition(s.Caret);
             return new Selection(
                 after.GetOffset(anchor with { Line = anchor.Line + delta }),
                 after.GetOffset(caret with { Line = caret.Line + delta }),
                 s.PreferredX);
-        }), EditKind.Other);
+        }), EditKind.Other) { Moved = moved };
     }
 
     /// <summary>Comments every touched line with <paramref name="prefix"/> at their shallowest
@@ -541,25 +576,27 @@ public static class TextEditing
     }
 
     /// <summary>What Copy puts on the clipboard: the selections' text, or with nothing selected the
-    /// whole lines under the carets (marked, so Paste puts them back as lines).</summary>
-    public static (string Text, bool WholeLines) Copy(TextSnapshot text, SelectionSet selections, string eol)
+    /// whole lines under the carets, each with the lines <paramref name="folded"/> hides behind it
+    /// (marked, so Paste puts them back as lines).</summary>
+    public static (string Text, bool WholeLines) Copy(TextSnapshot text, SelectionSet selections, string eol, IReadOnlyList<(int First, int Last)>? folded = null)
     {
         if (selections.Items.All(s => s.IsEmpty))
         {
             IEnumerable<string> lines = selections.Items
-                .Select(s => text.GetLineFromOffset(s.Caret))
+                .Select(s => ShownLine(text.GetLineFromOffset(s.Caret), folded))
                 .Distinct()
-                .Select(l => text.GetLineText(l) + eol);
+                .Select(l => text.GetText(text.GetLineStart(l.First), text.GetLine(l.Last).End - text.GetLineStart(l.First)) + eol);
             return (string.Concat(lines), true);
         }
         return (string.Join(eol, selections.Items.Where(s => !s.IsEmpty).Select(s => text.GetText(s.Start, s.Length))), false);
     }
 
-    public static EditPlan Cut(TextSnapshot text, SelectionSet selections)
+    /// <summary>Cut: the selections' text, or with nothing selected the carets' whole lines, as <see cref="Copy"/> takes them.</summary>
+    public static EditPlan Cut(TextSnapshot text, SelectionSet selections, IReadOnlyList<(int First, int Last)>? folded = null)
     {
         if (selections.Items.All(s => s.IsEmpty))
         {
-            return DeleteLines(text, selections);
+            return DeleteLines(text, selections, folded);
         }
         List<Replacement> replacements = [];
         for (int i = 0; i < selections.Count; i++)
@@ -784,9 +821,56 @@ public static class TextEditing
         return last > first && s.End == text.GetLineStart(last) ? (first, last - 1) : (first, last);
     }
 
-    /// <summary>The touched lines as runs of consecutive lines.</summary>
-    private static List<(int First, int Last)> Blocks(TextSnapshot text, SelectionSet selections) =>
-        Runs(TouchedLines(text, selections));
+    /// <summary>The touched lines as runs of consecutive lines, each widened to whole lines as shown: with the lines
+    /// <paramref name="folded"/> hides behind its first and last.</summary>
+    private static List<(int First, int Last)> Blocks(TextSnapshot text, SelectionSet selections, IReadOnlyList<(int First, int Last)>? folded = null)
+    {
+        List<(int First, int Last)> runs = Runs(TouchedLines(text, selections));
+        if (folded is null || folded.Count == 0)
+        {
+            return runs;
+        }
+        List<(int First, int Last)> shown = [];
+        foreach ((int first, int last) in runs)
+        {
+            (int from, int to) = (ShownLine(first, folded).First, ShownLine(last, folded).Last);
+            if (shown.Count > 0 && from <= shown[^1].Last + 1)
+            {
+                shown[^1] = (shown[^1].First, Math.Max(shown[^1].Last, to));
+            }
+            else
+            {
+                shown.Add((from, to));
+            }
+        }
+        return shown;
+    }
+
+    /// <summary>A line as it shows: from the line a fold hides it behind (or itself) through the lines folded behind that.
+    /// <paramref name="folded"/> is the hidden lines' ranges in order, never touching, each shown on the line before it.</summary>
+    private static (int First, int Last) ShownLine(int line, IReadOnlyList<(int First, int Last)>? folded)
+    {
+        if (folded is null)
+        {
+            return (line, line);
+        }
+        // The last range starting at most a line below: the one this line shows, or hides in, if any.
+        int low = 0;
+        int high = folded.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (folded[middle].First <= line + 1)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        return low > 0 && line <= folded[low - 1].Last ? (Math.Min(line, folded[low - 1].First - 1), folded[low - 1].Last) : (line, line);
+    }
 
     /// <summary>Sorted line numbers as runs of consecutive lines.</summary>
     private static List<(int First, int Last)> Runs(IEnumerable<int> lines)

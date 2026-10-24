@@ -463,10 +463,11 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>Tells a focused editor's input method what moved, as a text box does: the caret's line, the selection in
-    /// it, where the caret is drawn. Not mid-edit, while the carets are still the text's before it.</summary>
+    /// it, where the caret is drawn. Not while the carets are still the text's before a change (mid-edit, or while those
+    /// who heard of someone else's edit first move what they show through it), which they may lie past the end of.</summary>
     private void FollowInputMethod()
     {
-        if (inputMethod is not null && IsFocused && !editing)
+        if (inputMethod is not null && IsFocused && ReferenceEquals(caretsText, document.Snapshot))
         {
             inputMethod.Follow();
         }

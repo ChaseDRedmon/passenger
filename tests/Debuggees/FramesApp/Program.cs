@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -12,7 +14,8 @@ public static class Program
     public static int Frames { get; private set; }
 
     /// <summary>Headless, so a test's run puts nothing on the screen. Its window's SlowPanel spins in its measure; "slow N"
-    /// typed into its console measures it again N times, a frame each, and "quit" ends it.</summary>
+    /// typed into its console measures it again N times, a frame each, "stall MS" measures it once for MS milliseconds,
+    /// "listened" says whether anything listens to Avalonia's layout activities and meters, and "quit" ends it.</summary>
     public static int Main(string[] args)
     {
         if (args is ["--frames", string count])
@@ -57,6 +60,25 @@ public static class Program
             if (words is ["slow", string count] && int.TryParse(count, CultureInfo.InvariantCulture, out int times))
             {
                 Dispatcher.UIThread.Post(() => Slow(times, thenQuit: false));
+            }
+            else if (words is ["stall", string spin] && int.TryParse(spin, CultureInfo.InvariantCulture, out int ms))
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime { MainWindow: MainWindow window })
+                    {
+                        SlowPanel.StallMs = ms;
+                        window.Slow.InvalidateMeasure();
+                    }
+                });
+            }
+            else if (words is ["listened"])
+            {
+                // Listeners take a source or meter by its name, so one of the name Avalonia's has is listened to as Avalonia's is.
+                using ActivitySource activities = new("Avalonia.Diagnostic.Source");
+                using Meter meter = new("Avalonia.Diagnostic.Meter");
+                Histogram<double> measured = meter.CreateHistogram<double>("framesapp.listened");
+                Console.WriteLine($"layout listened: activities {activities.HasListeners()}, meters {measured.Enabled}");
             }
             else if (words is ["quit"])
             {

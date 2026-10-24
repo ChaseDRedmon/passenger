@@ -247,7 +247,9 @@ public sealed class EditingBehaviourTests
 
     /// <summary>A key draws the editor once: the parse it makes lands with the colours the key carried its words to, and a
     /// parse that changes nothing on screen draws nothing, where every parse that landed drew the whole editor again (a
-    /// key now makes one). A parse that does change a colour on screen draws it: a word typed becomes a keyword.</summary>
+    /// key now makes one). A parse that does change a colour on screen draws it: a word typed becomes a keyword. The caret's
+    /// blink draws the editor too, whenever a key's wait for its work outlasts 530 ms (a loaded machine's): its frames are
+    /// not the key's.</summary>
     [AvaloniaFact]
     public void A_key_draws_the_editor_once_and_a_parse_that_changes_a_colour_on_screen_draws_it()
     {
@@ -263,10 +265,8 @@ public sealed class EditingBehaviourTests
         Ui.Settle();
         for (int i = 0; i < 10; i++)
         {
-            long frames = editor.Frames;
-            window.KeyTextInput("2");
-            Ui.Settle();
-            Assert.True(editor.Frames - frames == 1, $"Key {i + 1}, a digit in a number, drew the editor {editor.Frames - frames} times");
+            long drawn = Drawn(editor, () => window.KeyTextInput("2"));
+            Assert.True(drawn == 1, $"Key {i + 1}, a digit in a number, drew the editor {drawn} times, the caret's blinks aside");
             Assert.Equal(Passenger.Editor.TokenKind.Number, KindAt(editor, literal + i));
         }
 
@@ -276,11 +276,9 @@ public sealed class EditingBehaviourTests
         window.KeyTextInput(" retur");
         Ui.Settle();
         Assert.NotEqual(Passenger.Editor.TokenKind.ControlKeyword, KindAt(editor, end + 1));
-        long before = editor.Frames;
-        window.KeyTextInput("n");
-        Ui.Settle();
+        long keyword = Drawn(editor, () => window.KeyTextInput("n"));
         Assert.Equal(Passenger.Editor.TokenKind.ControlKeyword, KindAt(editor, end + 1));
-        Assert.True(editor.Frames - before == 2, $"The key that made a keyword drew the editor {editor.Frames - before} times, not once for the key and once for the keyword's colour");
+        Assert.True(keyword == 2, $"The key that made a keyword drew the editor {keyword} times, the caret's blinks aside, not once for the key and once for the keyword's colour");
         window.Close();
     }
 
@@ -431,6 +429,17 @@ public sealed class EditingBehaviourTests
             .FirstOrDefault()?.Kind;
 
     /// <summary>A C# file opened in the window, with no project: its colours are the window's own, read from its syntax.</summary>
+    /// <summary>The frames the editor drew for a key and the work it set off, once that has landed, less those its caret's
+    /// blink asked for meanwhile.</summary>
+    private static long Drawn(Passenger.Editor.CodeEditor editor, Action key)
+    {
+        long frames = editor.Frames;
+        long blinks = editor.Blinks;
+        key();
+        Ui.Settle();
+        return editor.Frames - frames - (editor.Blinks - blinks);
+    }
+
     private static (Passenger.App.MainWindow Window, Passenger.Editor.CodeEditor Editor) OpenCSharp(string source)
     {
         string folder = TestFolders.Create("colours-");

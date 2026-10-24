@@ -1,0 +1,115 @@
+using Passenger.Dap;
+
+namespace Passenger.DebugAdapter;
+
+/// <summary>The adapter's process: the Debug Adapter Protocol on standard input and output, until the client disconnects
+/// or goes away. Takes netcoredbg's flags, so a client written for it runs this. The IDE's own adapter (debugger/) and
+/// the container tools' <c>dap</c> mode (src/Passenger.ContainerTools) both run it, the one engine.</summary>
+public static class AdapterProgram
+{
+    /// <summary>Runs the adapter on the flags given; a flag it does not know is fatal (exit code 2), so a typo never runs
+    /// something other than what was asked. <paramref name="usage"/> is how the help names the command.</summary>
+    public static async Task<int> RunAsync(string[] args, string usage)
+    {
+        // Every value the engine writes (a double's 3.14, a decimal's, a date's) reads as C# reads it, so a value shown is
+        // one Set Value takes back, whatever the machine's culture: the runtime's threads calling into the engine included.
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        string? logPath = null;
+        string? symbolCache = null;
+        bool remote = false;
+        foreach (string arg in args)
+        {
+            if (arg is "--help" or "-h")
+            {
+                Console.WriteLine($"{usage} --interpreter=vscode [--engineLogging=FILE] [--symbolCache=FOLDER] [--remote]");
+                Console.WriteLine("  The Debug Adapter Protocol on standard input and output; --engineLogging writes the engine's log to FILE.");
+                Console.WriteLine("  --symbolCache keeps the symbols decompiled for assemblies that ship none in FOLDER, pruned as the adapter");
+                Console.WriteLine("  starts; without it their frames have no source.");
+                Console.WriteLine("  --remote: the client is on another machine (this adapter in a container), so the processes it tells of");
+                Console.WriteLine("  are not local to the client (isLocalProcess false).");
+                return 0;
+            }
+            else if (arg == "--remote")
+            {
+                remote = true;
+            }
+            else if (arg.StartsWith("--symbolCache=", StringComparison.Ordinal))
+            {
+                if (arg.Length == "--symbolCache=".Length)
+                {
+                    Console.Error.WriteLine("--symbolCache needs a folder");
+                    return 2;
+                }
+                symbolCache = arg["--symbolCache=".Length..];
+            }
+            else if (arg.StartsWith("--interpreter=", StringComparison.Ordinal))
+            {
+                if (arg != "--interpreter=vscode")
+                {
+                    Console.Error.WriteLine($"Only --interpreter=vscode (the Debug Adapter Protocol) is supported, not '{arg}'");
+                    return 2;
+                }
+            }
+            else if (arg.StartsWith("--engineLogging=", StringComparison.Ordinal) && arg.Length > "--engineLogging=".Length)
+            {
+                logPath = arg["--engineLogging=".Length..];
+            }
+            else
+            {
+                Console.Error.WriteLine($"Unknown flag '{arg}'; --help lists them");
+                return 2;
+            }
+        }
+
+        // How long an evaluation may run before it is stopped, shortened for the tests' run; a malformed value is fatal, as a
+        // flag's is (the IDE refuses to start with one, so its own adapters never meet it).
+        try
+        {
+            Passenger.Debugger.Extensions.EvaluationTimeout = AdapterEnvironment.EvaluationTimeout;
+        }
+        catch (FormatException error)
+        {
+            Console.Error.WriteLine(error.Message);
+            return 2;
+        }
+
+        StreamWriter? logWriter = null;
+        if (logPath is not null)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(logPath))!);
+            logWriter = new StreamWriter(logPath, append: true) { AutoFlush = true };
+        }
+        Lock logGate = new();
+        void Log(string message)
+        {
+            if (logWriter is not null)
+            {
+                lock (logGate)
+                {
+                    logWriter.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}");
+                }
+            }
+        }
+
+        Log("Starting");
+        // No program the adapter launches may hold the protocol: on macOS and Linux it is given descriptors 0, 1 and 2 as its own.
+        (Stream input, Stream output) = Passenger.Debugger.SuspendedLaunch.DetachProtocol();
+        DapConnection connection = new(input, output, Log);
+        DebugAdapter adapter = new(connection, Log, symbolCache is null ? null : new Passenger.Debugger.Decompilation.SymbolCache(symbolCache, Log)) { Remote = remote };
+        TaskCompletionSource disconnected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        adapter.ShutdownRequested += () => disconnected.TrySetResult();
+        connection.Start();
+        // The client's end of standard input closing ends the connection (its read sees the end), which a client that went
+        // without disconnecting (a killed IDE, docker exec's CLI ended) leaves: the debuggee is let go below.
+        await Task.WhenAny(disconnected.Task, connection.Completion);
+        // A client that closed its end without disconnecting leaves the debuggee to be let go here.
+        await adapter.AbortAsync();
+        Log("Exiting");
+        logWriter?.Dispose();
+        // A read of standard input cannot be cancelled, and the client may hold its end open: exit rather
+        // than wait on either.
+        Environment.Exit(0);
+        return 0;
+    }
+}
