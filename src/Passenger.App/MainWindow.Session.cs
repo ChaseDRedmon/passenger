@@ -363,6 +363,8 @@ public partial class MainWindow
                 ShowChosenConfiguration(next.Configurations);
                 // An AppHost evaluated or found since: its open files' resources are read, the others' kept.
                 ReadOpenAspireMarks(again: false);
+                // A file shown before its AppHost was evaluated pulled its diagnostics as no service's.
+                next.CSharp?.AspireRolesChanged();
             }
         };
         if (next.Watcher is { } watcher)

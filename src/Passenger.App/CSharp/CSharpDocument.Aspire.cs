@@ -15,11 +15,25 @@ public sealed partial class CSharpDocument
     /// <summary>What the file is to Aspire now: only an AppHost's and a service's ask Passenger's extension for its help.</summary>
     internal Aspire.AspireRole AspireRole => service.AspireRoleOf?.Invoke(document.Path) ?? Aspire.AspireRole.None;
 
+    /// <summary>What the file was to Aspire as its last pull asked for Aspire's findings; null before one has.</summary>
+    private Aspire.AspireRole? pulledAs;
+
     /// <summary>The AppHost it is a service of changed: its Aspire warnings go at once and the file's diagnostics are pulled again.</summary>
     internal void AspireChanged()
     {
         ClearAspireDiagnostics();
         Pull(Settle);
+    }
+
+    /// <summary>The folder's projects as MSBuild evaluated them changed what the file is to Aspire since its last pull asked
+    /// (its AppHost evaluated after the file was shown, a reference to its project added or taken out): pulled again as
+    /// that role's, as an AppHost's edit pulls its services' files.</summary>
+    internal void AspireRoleChanged()
+    {
+        if (pulledAs is { } asked && asked != AspireRole)
+        {
+            AspireChanged();
+        }
     }
 
     /// <summary>The references the file's Aspire warnings say its AppHost lacks, on a server's line of the text as it stands

@@ -1053,6 +1053,10 @@ public sealed class CSharpService : IAsyncDisposable
         }
     });
 
+    /// <summary>The folder's AppHosts or the projects they reference were evaluated or found again: each open file that is
+    /// another thing to Aspire than its last pull asked as pulls again, no other file.</summary>
+    internal void AspireRolesChanged() => Each(document => document.AspireRoleChanged());
+
     /// <summary>The configuration of the project a C# file is of (the session's <see cref="ProjectSession.ConfigurationOf(string)"/>),
     /// against which its reads of keys nothing gives are warned of; none without a session, which warns of none.</summary>
     public Func<string, Workspace.ConfigurationProject?>? ConfigurationOf { get; init; }

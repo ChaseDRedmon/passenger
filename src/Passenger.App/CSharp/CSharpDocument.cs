@@ -244,6 +244,8 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
             return false;
         }
         int version = document.Text.Version;
+        // Read as the findings are asked (AspireFindingsAsync reads it before it awaits): a later change pulls again.
+        pulledAs = AspireRole;
         IReadOnlyList<Diagnostic> aspire = await AspireFindingsAsync(lsp, cancel);
         IReadOnlyList<Diagnostic> compose = await ComposeFindingsAsync(cancel);
         IReadOnlyList<Diagnostic> configuration = await ConfigurationFindingsAsync([.. aspire, .. compose], cancel);
