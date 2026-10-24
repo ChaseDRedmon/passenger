@@ -10,6 +10,10 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-24
 
+- `WpfXamlTests`' fixture, CI Linux, release run 40127831310 (07a817ff): "The file '…/feed/packages/microsoft.windowsdesktop.app.ref…nupkg'
+  already exists", every test of the class failing in its fixture. Its gallery and XamlEditingTests' (new with #476's XAML
+  localization) made their WPF apps at once, each finding the pack missing from the run's feed before copying it. Neither
+  race in the IDE: **the test**'s check-then-copy, now under a lock (9fdcdcca).
 - `StuckEvaluationTests`' `An_evaluation_spinning_in_a_finally_block_runs_to_its_end_once_let_out`, the Mac with 24 busy
   processes on 12 cores, once in 17 runs: "Expected: 0, Actual: null" (#472). The platform layer inside the debugger's own
   libraries reaps a launched program with waitpid as it sees it end, so the adapter's own waitpid, run late, found no child
