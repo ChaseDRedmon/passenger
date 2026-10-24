@@ -55,7 +55,8 @@ public sealed partial class CodeAssist
         {
             return $"'{read.Key}' ({resource.Type}): no .resx gives {resource.Name}";
         }
-        List<string> lines = [$"'{read.Key}' ({resource.Type}, {set.Name}):"];
+        // The files' name where it is not the type's (a resource under another name, a Designer class's .resx).
+        List<string> lines = [$"'{read.Key}' ({(set.Name == resource.Type ? resource.Type : $"{resource.Type}, {set.Name}")}):"];
         if (set.Neutral is { } neutral)
         {
             lines.Add(neutral.Entry(read.Key) is { } given ? $"neutral: {given.Value}" : $"neutral: none ({neutral.Name})");

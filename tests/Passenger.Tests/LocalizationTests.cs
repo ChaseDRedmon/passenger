@@ -15,7 +15,8 @@ namespace Passenger.Tests;
 /// one whose translations are XLIFF files in xlf/ as Arcade's XliffTasks keeps them. A key a language lacks is warned of with
 /// a fix that asks the value and adds it as the file writes its entries, one undo step; a key's card says each language's
 /// value, Go to Declaration goes to each file's entry, completion in a localizer's string offers the keys, and an agent's
-/// diagnostics, code_actions, apply_code_action and definition give the same.</summary>
+/// diagnostics, code_actions, apply_code_action and definition give the same. A component whose files are named for its file
+/// rather than its type, which its localizer never reads, is warned of.</summary>
 public sealed class LocalizationTests : IClassFixture<LocalizationTests.Project>
 {
     private readonly Project project;
@@ -84,7 +85,8 @@ public sealed class LocalizationTests : IClassFixture<LocalizationTests.Project>
     /// <summary>In a Razor component, the key read through its <c>@inject</c>ed localizer: its card says each language's value and
     /// that Spanish has none of Goodbye, which is warned of; Go to Declaration lists each language's entry of Welcome, and
     /// completion after <c>@L["</c> offers the component's keys. An agent's diagnostics lists the warning, its code_actions
-    /// the fix first, and apply_code_action adds the value it names; its definition goes to both entries.</summary>
+    /// the fix first, and apply_code_action adds the value it names; its definition goes to both entries. A component whose
+    /// .resx files are named for its file (Sign-In) rather than its type (Sign_In) is told its localizer reads none of them.</summary>
     [AvaloniaFact]
     public void A_razor_component_s_keys_have_their_languages_on_the_card_go_to_their_entries_and_an_agent_adds_one()
     {
@@ -137,6 +139,13 @@ public sealed class LocalizationTests : IClassFixture<LocalizationTests.Project>
                 "an agent's definition of Welcome");
             Assert.Equal(2, places.Count);
             Assert.All(places, p => Assert.Contains("<data name=\"Welcome\"", p.Text, StringComparison.Ordinal));
+
+            // A component whose files are named for its file (Sign-In) rather than its type (Sign_In): its localizer reads none.
+            window.OpenFile(project.PathOf("Shop/Pages/Sign-In.razor"));
+            Ui.WaitFor(() => window.EditorArea.Active!.Markers.Any(m => m.Message.StartsWith("No .resx gives", StringComparison.Ordinal)),
+                "the files its localizer never reads to be warned of");
+            Assert.Equal("No .resx gives Sign_In's strings, so each shows as written: Sign-In.fr.resx is named for Sign-In, not Sign_In",
+                Assert.Single(window.EditorArea.Active!.Markers, m => m.Kind == MarkerKind.Warning).Message);
         }
         finally
         {
@@ -374,6 +383,8 @@ public sealed class LocalizationTests : IClassFixture<LocalizationTests.Project>
             // Villagely's way: one line an entry, no neutral file.
             TestFolders.Write(Folder, "Shop/Pages/Home.fr.resx", Resx(oneLine: true, ("Welcome", "Bienvenue"), ("Goodbye", "Au revoir")));
             TestFolders.Write(Folder, "Shop/Pages/Home.es.resx", Resx(oneLine: true, ("Welcome", "Bienvenido")));
+            TestFolders.Write(Folder, "Shop/Pages/Sign-In.razor", "@using Microsoft.Extensions.Localization\n@inject IStringLocalizer<Sign_In> L\n\n<h1>@L[\"Sign in\"]</h1>\n");
+            TestFolders.Write(Folder, "Shop/Pages/Sign-In.fr.resx", Resx(oneLine: true, ("Sign in", "Se connecter")));
             // Visual Studio's way: three lines an entry.
             TestFolders.Write(Folder, "Shop/Services/Greeter.fr.resx", Resx(oneLine: false, ("Hello", "Bonjour"), ("Bye", "Au revoir")));
             TestFolders.Write(Folder, "Shop/Services/Greeter.es.resx", Resx(oneLine: false, ("Hello", "Hola")));

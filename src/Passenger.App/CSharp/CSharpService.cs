@@ -1101,8 +1101,11 @@ public sealed class CSharpService : IAsyncDisposable
             return new Localized([], [], []);
         }
         Func<string, TextSnapshot?> open = Snapshots?.Invoke() ?? (_ => null);
-        IReadOnlyList<ResourceSet?> sets = await BackgroundWork.Run(() => (IReadOnlyList<ResourceSet?>)[.. found.Resources.Select(r => Localized.SetOf(r, open))], cancel);
-        return new Localized(found.Keys, found.Resources, sets);
+        return await BackgroundWork.Run(() =>
+        {
+            IReadOnlyList<ResourceSet?> sets = [.. found.Resources.Select(r => Localized.SetOf(r, open))];
+            return new Localized(found.Keys, found.Resources, sets) { Unnamed = Localized.UnnamedOf(path, found.Resources, sets, open) };
+        }, cancel);
     }
 
     /// <summary>The connection strings the open compose files' .NET services read that their environments do not set (the
