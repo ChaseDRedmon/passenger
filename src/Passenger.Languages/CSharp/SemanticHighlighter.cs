@@ -44,6 +44,7 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
 
     private CancellationTokenSource? pending;
     private int asked;
+    private int answered;
     private int? askedFor;
     private bool disposed;
 
@@ -129,6 +130,9 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
     /// <summary>How many changes the colours shown are carried through to the text as it stands, each range drawn going
     /// through each: a run of typing in one place is one, however long the server takes to answer.</summary>
     public int Carrying => history.Count;
+
+    /// <summary>Whether the latest ask for colours, the pause before it included, has yet to be answered or refused.</summary>
+    public bool Asking => answered != asked;
 
     private void OnTextChanged(object? sender, DocumentChangedEventArgs e)
     {
@@ -233,6 +237,7 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
             if (request == asked)
             {
                 askedFor = null;
+                answered = request;
                 Forget();
             }
             if (held)

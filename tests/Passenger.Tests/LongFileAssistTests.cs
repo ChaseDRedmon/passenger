@@ -182,7 +182,8 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
     /// <summary>Keys typed in one place while the server answers no colours (as while its projects load) keep the colours it
     /// gave last on their words, below the keys and at the file's end, carried through one change for the run of them: a
     /// change kept for each key, every line drawn carried through all of them, made each key cost more than the one before
-    /// (7 ms a key in #233's measure while a solution loaded).</summary>
+    /// (7 ms a key in #233's measure while a solution loaded). Each key waits for its colours' refusal, not for the file's
+    /// diagnostics (seconds a key in 20,000 lines), which a key's colours never wait on.</summary>
     [AvaloniaFact]
     public void Keys_typed_while_the_server_gives_no_colours_carry_its_last_through_one_change_for_the_run()
     {
@@ -208,7 +209,8 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
             for (int i = 0; i < Keys; i++)
             {
                 window.KeyTextInput((i % 10).ToString(System.Globalization.CultureInfo.InvariantCulture));
-                Ui.Settle();
+                Assert.True(colours.Asking, $"Key {i + 1} asked the server for no colours");
+                Ui.PumpUntil(() => !colours.Asking, $"the server's refusal of the colours after key {i + 1}");
                 Assert.True(KindAt(near + i + 1) == TokenKind.Local, $"After {i + 1} keys the local's use below them lost its colour: {KindAt(near + i + 1)}");
             }
             Assert.True(colours.Carrying <= 1, $"The server's last colours were carried through {colours.Carrying} changes, one for each of the {Keys} keys typed in one place");
