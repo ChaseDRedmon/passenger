@@ -237,6 +237,9 @@ Projects in `src/`:
   someone looks), Migrations (`MigrationsController`, `EfGaps`, `EfProviders`, `EfRun`; connection strings by environment
   only), configuration (`ConfigurationFiles`, `ConfigurationKey`), Endpoints (`HttpFile`, `EndpointClient`: nothing goes
   over the network but on Test or Send, and a send taking the person's environment asks first).
+- **Localization.** The extension's `LocalizedReads` (`Localization.cs`) reads a C# or Razor file's localizer keys and
+  generated-resource properties (Razor through its generated C#'s `#line`), `Passenger.Xaml`'s `XamlLocalization` XAML's
+  `{x:Static}`; `ResourceFiles` is the one reader of `.resx` and `xlf/*.xlf`, and the card, warning and fix are shared.
 - **Debugging.** `DebugController` (a `DebugTab` per session, several at once; `Session` is the chosen tab's),
   `DebugSession`, `BreakpointStore`, `VariablesTree`/`VariablesList` (Variables and the hover card are one list), Hot
   Reload (`Debugging/HotReload.cs`), Attach to Process (`MainWindow.Attach.cs`).
