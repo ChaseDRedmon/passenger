@@ -87,9 +87,10 @@ public sealed class McpLanguagesTests(McpLanguagesTests.Restored restored) : Mcp
         Assert.Contains("{Binding #Start.Content}", File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml")), StringComparison.Ordinal);
         await client.DisposeAsync();
 
-        // A second session, as after a restart: the same version's file, not decompiled again.
+        // A second session, as after a restart: the same version's file, not decompiled again. XAML's library sources are
+        // Passenger's own decompiler's, which asks nothing of C#'s server.
         window = File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml"));
-        await using (McpClient again = await Start(["--mcp", gallery]))
+        await using (McpClient again = await Start(["--mcp", gallery], languageServer: false))
         {
             string second = Assert.Single((await Call(again, "definition", At(window, "MainWindow.axaml", "<StackPan"))).EnumerateArray()).GetProperty("path").GetString()!;
             Assert.True(decompiled == second, $"The second session decompiled the type again into another folder: {second}, the first's {decompiled}");
