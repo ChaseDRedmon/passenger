@@ -4,10 +4,13 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Navigation;
 using Passenger.App.Settings;
+using Passenger.App.Telemetry;
+using Passenger.App.ToolWindows;
 using Passenger.Editor;
 
 namespace Passenger.Tests;
@@ -384,6 +387,74 @@ public sealed class KeymapChoiceTests : IDisposable
             window.ApplySettings(new AppSettings());
             window.Close();
         }
+    }
+
+    /// <summary>The Run window's Rerun, Stop and Apply Hot Reload Changes and the Aspire window's Telemetry page buttons
+    /// name their actions' keys as every other tool button does, and the keys a person sets once they are set, whether the
+    /// window was shown or hidden then (#475); the Build window's Rerun, which is Rebuild, names none. They named no keys.</summary>
+    [AvaloniaFact]
+    public void The_Run_windows_and_Telemetrys_buttons_name_their_actions_keys_and_those_set_over_them()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Run);
+            Ui.Settle();
+            string rerun = Shortcut.Parse(OperatingSystem.IsMacOS() ? "alt shift F5" : "control shift F5").Display();
+            Assert.Equal([$"Rerun ({rerun})", $"Stop ({Shortcut.Parse("shift F5").Display()})", $"Apply Hot Reload Changes ({Shortcut.Parse("alt F10").Display()})"],
+                RunTips(window.BottomPanel.Run));
+            window.ShowToolWindow(ToolWindowIds.Build);
+            Ui.Settle();
+            Assert.Equal("Rerun", RunTips(window.BottomPanel.Build)[0]);
+
+            // Neither keymap gives Telemetry's two actions keys.
+            window.ShowToolWindow(ToolWindowIds.Aspire);
+            window.AspireWindow.ShowTelemetry(TelemetryPage.Logs);
+            Ui.Settle();
+            TelemetryView telemetry = window.AspireWindow.Telemetry;
+            Button trace = telemetry.LogsPage.GetLogicalDescendants().OfType<Button>().Single(b => b.Name == AppActions.AspireShowTrace);
+            Button logs = telemetry.TracesPage.GetLogicalDescendants().OfType<Button>().Single(b => b.Name == AppActions.AspireShowRelatedLogs);
+            const string traceWords = "Show the structured log's trace and span";
+            const string logsWords = "Show a retained log of this trace and span";
+            Assert.Equal(traceWords, ToolTip.GetTip(trace) as string);
+            Assert.Equal(logsWords, ToolTip.GetTip(logs) as string);
+
+            // Keys set over Visual Studio's keymap while the Telemetry tab shows its logs, the Run window hidden.
+            Dictionary<string, string[]> own = new()
+            {
+                [AppActions.Rerun] = [$"{Cmd} alt shift J"],
+                [AppActions.Stop] = [$"{Cmd} alt shift K"],
+                [AppActions.ApplyHotReloadChanges] = [$"{Cmd} alt shift Y"],
+                [AppActions.AspireShowTrace] = [$"{Cmd} alt shift U"],
+                [AppActions.AspireShowRelatedLogs] = [$"{Cmd} alt shift O"],
+            };
+            string Keys(string action) => Shortcut.Parse(own[action][0]).Display();
+            window.ApplySettings(window.Settings with { Shortcuts = own });
+            Ui.Settle();
+            Assert.Equal($"{traceWords} ({Keys(AppActions.AspireShowTrace)})", ToolTip.GetTip(trace) as string);
+            window.AspireWindow.ShowTelemetry(TelemetryPage.Traces);
+            Ui.Settle();
+            Assert.Equal($"{logsWords} ({Keys(AppActions.AspireShowRelatedLogs)})", ToolTip.GetTip(logs) as string);
+            window.ShowToolWindow(ToolWindowIds.Run);
+            Ui.Settle();
+            Assert.Equal([$"Rerun ({Keys(AppActions.Rerun)})", $"Stop ({Keys(AppActions.Stop)})", $"Apply Hot Reload Changes ({Keys(AppActions.ApplyHotReloadChanges)})"],
+                RunTips(window.BottomPanel.Run));
+            window.ShowToolWindow(ToolWindowIds.Build);
+            Ui.Settle();
+            Assert.Equal("Rerun", RunTips(window.BottomPanel.Build)[0]);
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
+    }
+
+    /// <summary>The tips of a console's Rerun, Stop and Apply Hot Reload Changes, in that order.</summary>
+    private static string[] RunTips(OutputView console)
+    {
+        string[] tips = [.. console.GetLogicalDescendants().OfType<Button>().Select(b => ToolTip.GetTip(b) as string).OfType<string>()];
+        return [.. ((string[])["Rerun", "Stop", "Apply Hot Reload Changes"]).Select(words => tips.Single(tip => tip == words || tip.StartsWith($"{words} (", StringComparison.Ordinal)))];
     }
 
     /// <summary>Representative keys of Rider's VS Code keymap pressed in the window: the editor's (Select Next Occurrence,

@@ -589,7 +589,8 @@ public sealed class TelemetryView : IDisposable
 
     private static TextBlock Said() => new() { Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis };
 
-    /// <summary>A page's toolbar button: the host's action of that id when it gives one (shown with its work), else the view's own.</summary>
+    /// <summary>A page's toolbar button: the host's action of that id when it gives one (shown with its work, its tip naming
+    /// the action's keys), else the view's own.</summary>
     private static Button PageTool(string icon, string tip, string? action, string name, Action own, Func<string, bool>? request)
     {
         Button button = ToolButtons.Of(icon, tip, () =>
@@ -602,6 +603,7 @@ public sealed class TelemetryView : IDisposable
         button.Name = action ?? name;
         if (action is not null)
         {
+            ActionTips.Set(button, action, tip);
             ActionButtons.Mark(button, action);
         }
         return button;

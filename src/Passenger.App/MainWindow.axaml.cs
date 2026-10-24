@@ -245,6 +245,7 @@ public partial class MainWindow : Window
         Bottom.Run.RerunClicked += (_, _) => _ = RerunAsync();
         Bottom.Run.StopClicked += (_, _) => session.Runner.Stop();
         Bottom.Run.HotReloadClicked += (_, _) => Request(AppActions.ApplyHotReloadChanges);
+        Bottom.Run.NameKeys(AppActions.Rerun, AppActions.Stop, AppActions.ApplyHotReloadChanges);
         AddUnitTests();
         AddLinks();
         AddLocalHistory();

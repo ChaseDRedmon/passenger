@@ -926,7 +926,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             int first = Runs(runs)[0];
 
             // Rider's Rerun is there while the program runs: it stops it and runs it again, the way to restart after an edit.
-            Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Rerun");
+            Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Rerun", StringComparison.Ordinal));
             Assert.True(rerun.IsEffectivelyEnabled, "The Run window's Rerun is greyed while its program runs");
             Ui.Click(rerun, settle: false);
             Ui.WaitFor(() => Runs(runs).Length == 2, "the program to run again", TimeSpan.FromMinutes(2));

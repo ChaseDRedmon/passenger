@@ -135,6 +135,15 @@ public sealed class OutputView : DockPanel
     /// <summary>Apply Hot Reload Changes pressed: shown while the program runs under dotnet watch.</summary>
     public event EventHandler? HotReloadClicked;
 
+    /// <summary>Has the toolbar's tips name the keys of the window's actions its buttons do, as every tool button's do
+    /// (<see cref="ActionTips"/>): the Run window's. The Build window's Rerun is Rebuild, no action's keys, so it has none.</summary>
+    public void NameKeys(string rerunAction, string stopAction, string hotReloadAction)
+    {
+        ActionTips.Set(rerun, rerunAction, "Rerun");
+        ActionTips.Set(stop, stopAction, "Stop");
+        ActionTips.Set(hotReload, hotReloadAction, "Apply Hot Reload Changes");
+    }
+
     /// <summary>Shows Apply Hot Reload Changes while the program runs with Hot Reload.</summary>
     public void ShowHotReload(bool on) => hotReload.IsVisible = on;
 
