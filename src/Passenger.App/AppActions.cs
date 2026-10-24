@@ -351,6 +351,11 @@ public static class AppActions
     // of its keymaps.
     public const string XamlPreview = "app.editor.xamlPreview";
 
+    // A Markdown file's preview beside its editor, under View and on the editor's tab strip: the Visual Studio keymaps and
+    // their parents give IntelliJ's Editor and Preview layout (TextEditorWithPreview.Layout.EditorAndPreview) no keys; its
+    // VSCode keymaps give it Ctrl+K, V (Cmd+K, V on macOS).
+    public const string MarkdownPreview = "app.editor.markdownPreview";
+
     // Rider's Close Solution (CloseProject) and Restore Default Layout (RiderRestoreDefaultLayout, in Window > Layout
     // Settings): no keys there either; both Visual Studio keymaps take IntelliJ's Shift+F12 off its layout action.
     public const string CloseSolution = "app.closeSolution";
@@ -810,6 +815,7 @@ public static class AppActions
                 .Bind(SplitRight, "meta BACK_SLASH")
                 .Bind(MoveToOppositeGroup, "meta control RIGHT")
                 .Bind(OpenInNewWindow, "meta K , O")
+                .Bind(MarkdownPreview, "meta K , V")
                 .Bind(ReopenClosedTab, "meta shift T")
                 .Bind(PinTab, "meta K , shift ENTER")
                 .Bind(CloseOtherTabs, "meta alt T", "meta K , U")
@@ -917,6 +923,7 @@ public static class AppActions
             .Bind(SplitRight, "control BACK_SLASH")
             .Bind(MoveToOppositeGroup, "control alt RIGHT")
             .Bind(OpenInNewWindow, "control K , O")
+            .Bind(MarkdownPreview, "control K , V")
             .Bind(ReopenClosedTab, "control shift T")
             .Bind(PinTab, "control K , shift ENTER")
             .Bind(CloseOtherTabs, "control K , U")

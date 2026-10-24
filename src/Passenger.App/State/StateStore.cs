@@ -41,6 +41,7 @@ public sealed class StateStore
         Updates = new(Path.Combine(root, "updates.json"));
         Find = new(Path.Combine(root, "find.json"));
         Refactorings = new(Path.Combine(root, "refactorings.json"));
+        Previews = new(Path.Combine(root, "previews.json"));
         // Before this process writes any: a change is written a moment after it is made, and only through this store.
         UsedBefore = new[] { Path.Combine(root, SettingsFile), Layout.Path, Recent.Path, Updates.Path }.Any(File.Exists)
             || Directory.Exists(Path.Combine(root, "workspaces"));
@@ -111,6 +112,9 @@ public sealed class StateStore
     /// application's.</summary>
     public StateDocument<RenameSettings> Refactorings { get; }
 
+    /// <summary>Which kinds of file show their preview beside their editor, as the person left them.</summary>
+    public StateDocument<PreviewsState> Previews { get; }
+
     /// <summary>A folder's own documents.</summary>
     public ProjectState Project(string folder)
     {
@@ -131,6 +135,7 @@ public sealed class StateStore
         Updates.Flush();
         Find.Flush();
         Refactorings.Flush();
+        Previews.Flush();
         foreach (ProjectState project in projects.Values)
         {
             project.Flush();

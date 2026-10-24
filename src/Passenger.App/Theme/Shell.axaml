@@ -1303,4 +1303,81 @@
         <Setter Property="Margin" Value="0,8" />
         <Setter Property="Background" Value="{DynamicResource Passenger.Separator}" />
     </Style>
+    <Style Selector="SelectableTextBlock.mdHeading4">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,6,0,0" />
+    </Style>
+    <Style Selector="SelectableTextBlock.mdHeading5">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,4,0,0" />
+    </Style>
+    <Style Selector="SelectableTextBlock.mdHeading6">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,4,0,0" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
+    </Style>
+    <!-- GitHub's table: a frame round it, rules between its cells, its header on the hover's tint. -->
+    <Style Selector="Border.mdTable">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Separator}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+    <Style Selector="Border.mdCell">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Separator}" />
+        <Setter Property="Padding" Value="10,5" />
+    </Style>
+    <Style Selector="Border.mdCell.head">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+    </Style>
+    <Style Selector="SelectableTextBlock.mdCellText">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="LineHeight" Value="21" />
+        <Setter Property="MaxWidth" Value="360" />
+    </Style>
+    <Style Selector="SelectableTextBlock.mdCellHead">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="LineHeight" Value="21" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="MaxWidth" Value="360" />
+    </Style>
+    <!-- A task list item's check, as wide as a bullet's place, at its first line. -->
+    <Style Selector="Border.mdTask">
+        <Setter Property="Width" Value="17" />
+        <Setter Property="Height" Value="17" />
+        <Setter Property="Margin" Value="2,2,9,0" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.CheckBorder}" />
+    </Style>
+    <Style Selector="Border.mdTask.done">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Accent}" />
+    </Style>
+    <Style Selector="PathIcon.mdTick">
+        <Setter Property="Width" Value="12" />
+        <Setter Property="Height" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
+    <Style Selector="Panel.mdPicture">
+        <Setter Property="Margin" Value="0,0,8,8" />
+    </Style>
+
+    <!-- A Markdown file's preview beside its editor, on the editor's ground: the notes' blocks, a narrower page's margins. -->
+    <Style Selector="ScrollViewer.markdownPreview">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Editor.Background}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+    <Style Selector="StackPanel.mdPage">
+        <Setter Property="MaxWidth" Value="880" />
+        <Setter Property="Margin" Value="24,20" />
+        <Setter Property="Spacing" Value="12" />
+    </Style>
+    <!-- The tab strip's own tools at its end, at the tabs' height. -->
+    <Style Selector="ToggleButton.tabStripTool">
+        <Setter Property="Margin" Value="0,0,6,0" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
 </Styles>

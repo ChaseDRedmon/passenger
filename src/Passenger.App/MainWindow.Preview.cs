@@ -86,12 +86,20 @@ public partial class MainWindow
         FollowPreviews();
     }
 
-    /// <summary>Each editor group shows the preview of its XAML file while previews are on, and none otherwise.</summary>
+    /// <summary>Each editor group shows the preview of its XAML file while previews are on, and none otherwise; a Markdown
+    /// file's preview beside its editor is its group's own.</summary>
     private void FollowPreviews()
     {
         foreach (EditorGroup group in Editors.Groups)
         {
-            group.Side = previewing && group.Active is { } shown && session.Xaml.For(shown) is { } document ? PaneFor(shown, document) : null;
+            if (previewing && group.Active is { } shown && session.Xaml.For(shown) is { } document)
+            {
+                group.Side = PaneFor(shown, document);
+            }
+            else if (group.Side is XamlPreviewPane)
+            {
+                group.Side = null;
+            }
         }
     }
 

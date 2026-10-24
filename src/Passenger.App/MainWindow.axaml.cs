@@ -109,6 +109,7 @@ public partial class MainWindow : Window
         AddShutdown();
         AddOwnWindows();
         AddPreview();
+        AddMarkdownPreview();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
         // A Structure window not built yet asks for the file shown as it is.
@@ -606,6 +607,7 @@ public partial class MainWindow : Window
         }
         Dock.LayoutChanged += (_, _) => KeepDock();
         findSettings = store.Find.Value;
+        Editors.ShowsMarkdownPreview = store.Previews.Value.Markdown;
         assist.RenameSettings = store.Refactorings.Value;
         assist.RenameSettingsChanged += (_, _) => state?.Refactorings.Set(assist.RenameSettings);
         keepsWorkspace = true;

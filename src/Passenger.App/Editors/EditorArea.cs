@@ -80,6 +80,36 @@ public sealed partial class EditorArea : UserControl
 
     internal void Browse(Uri address) => BrowseRequested?.Invoke(this, address);
 
+    /// <summary>A link to a file clicked in a Markdown file's preview, for the window to open it in the editor.</summary>
+    public event EventHandler<string>? FileLinkClicked;
+
+    internal void OpenLinked(string path) => FileLinkClicked?.Invoke(this, path);
+
+    /// <summary>The open folder, whose files alone a Markdown preview draws the images of; null for none.</summary>
+    public Func<string?> Root { get; set; } = () => null;
+
+    private bool showsMarkdownPreview = true;
+
+    /// <summary>Whether a Markdown file shows its preview beside its editor, in every group showing one.</summary>
+    public bool ShowsMarkdownPreview
+    {
+        get => showsMarkdownPreview;
+        set
+        {
+            showsMarkdownPreview = value;
+            foreach (EditorGroup group in AllGroups)
+            {
+                group.FollowMarkdown();
+            }
+        }
+    }
+
+    /// <summary>A group's Markdown preview toggle pressed, for the window to run its action: nothing outside the group holds
+    /// the toggle, so a closed split goes with it.</summary>
+    public event EventHandler<EditorGroup>? MarkdownToggleClicked;
+
+    internal void MarkdownToggled(EditorGroup group) => MarkdownToggleClicked?.Invoke(this, group);
+
     /// <summary>The commands that changed several files at once or moved one (a rename), which Undo takes back whole.</summary>
     public CommandHistory Commands { get; }
 

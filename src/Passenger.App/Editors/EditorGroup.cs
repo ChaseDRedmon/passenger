@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
@@ -80,11 +81,29 @@ public sealed class EditorGroup : DockPanel
             ItemsPanel = new FuncTemplate<Panel?>(() => new StackPanel { Orientation = Orientation.Horizontal }),
             ItemTemplate = new FuncDataTemplate<EditorTab>((tab, _) => Tab(tab), supportsRecycling: false),
         };
+        // A Markdown file's preview shown or hidden at the strip's end, over the editor's top-right corner.
+        MarkdownToggle = ToolButtons.Toggle("Icon.Preview", "Markdown Preview");
+        MarkdownToggle.Classes.Add("tabStripTool");
+        MarkdownToggle.IsVisible = false;
+        MarkdownToggle[DockProperty] = Dock.Right;
+        MarkdownToggle.Click += (_, _) =>
+        {
+            area.MarkdownToggled(this);
+            // It says what is in force once its action ran, or was refused.
+            FollowMarkdown();
+        };
         tabBar = new Border
         {
             Classes = { "tabStrip" },
             [DockProperty] = Dock.Top,
-            Child = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = strip },
+            Child = new DockPanel
+            {
+                Children =
+                {
+                    MarkdownToggle,
+                    new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = strip },
+                },
+            },
         };
         // Rider's editor notification: what a file is when it is not the project's own.
         bannerText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -197,6 +216,40 @@ public sealed class EditorGroup : DockPanel
         }
     }
     public FindBar Find { get; }
+
+    /// <summary>The tab strip's toggle of a Markdown file's preview, shown while the group shows one.</summary>
+    public ToggleButton MarkdownToggle { get; }
+
+    /// <summary>The group's own preview of its Markdown file, made as it first shows one.</summary>
+    private MarkdownPreview? markdown;
+
+    /// <summary>The preview beside the editor while it shows one of a Markdown file, else null.</summary>
+    public MarkdownPreview? Markdown => Side as MarkdownPreview;
+
+    /// <summary>A Markdown file shown in the editor has its preview beside it while the area shows previews, and its toggle
+    /// on the strip either way; any other file neither.</summary>
+    internal void FollowMarkdown()
+    {
+        OpenDocument? document = active?.Document;
+        bool shows = document is not null && InEditor(document) && document.Language.Name == "Markdown";
+        MarkdownToggle.IsVisible = shows;
+        MarkdownToggle.IsChecked = area.ShowsMarkdownPreview;
+        if (shows && area.ShowsMarkdownPreview)
+        {
+            markdown ??= new MarkdownPreview(Editor, area);
+            Side = markdown;
+            markdown.Show(document);
+        }
+        else
+        {
+            if (Side is MarkdownPreview)
+            {
+                Side = null;
+            }
+            markdown?.Show(null);
+        }
+    }
+
     public IReadOnlyList<EditorTab> Tabs => tabs;
     public OpenDocument? Active => active?.Document;
     public bool Has(OpenDocument document) => tabs.Any(t => t.Document == document);
@@ -303,6 +356,7 @@ public sealed class EditorGroup : DockPanel
             body.Children.Add(preview);
             ShowBanner(document);
             tabBar.IsVisible = true;
+            FollowMarkdown();
             return;
         }
         (SelectionSet selections, Vector scroll) = views.TryGetValue(document, out var view) ? view : (document.Selections, document.Scroll);
@@ -332,6 +386,7 @@ public sealed class EditorGroup : DockPanel
         tabBar.IsVisible = true;
         ShowTable(document);
         Find.Attach(Editor, Table);
+        FollowMarkdown();
     }
 
     /// <summary>The table of the file shown, while it is a CSV or a workbook, null otherwise.</summary>
@@ -423,6 +478,7 @@ public sealed class EditorGroup : DockPanel
                 tabBar.IsVisible = false;
                 banner.IsVisible = false;
                 tables?.Hide();
+                FollowMarkdown();
             }
         }
     }
@@ -557,6 +613,7 @@ public sealed class EditorGroup : DockPanel
                 Editor.BlockComment = document.Language.BlockComment;
                 Editor.Markup = document.Language.Markup;
                 Editor.ReindentsPaste = document.Language.ReindentsPaste;
+                FollowMarkdown();
                 break;
             case nameof(OpenDocument.Indentation):
                 Editor.Indent = document.Indentation.Options;

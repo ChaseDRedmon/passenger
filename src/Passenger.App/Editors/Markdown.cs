@@ -12,9 +12,10 @@ using Avalonia.Media.TextFormatting;
 namespace Passenger.App.Editors;
 
 /// <summary>Markdown read into blocks and their words, as CommonMark's common part reads them (ATX headings, paragraphs,
-/// bullet and numbered lists to any depth, block quotes, fenced code, rules; code spans, strong, emphasis, links and
-/// autolinks), and drawn as Passenger's own controls, styled in Shell.axaml. HTML comments and images are left out, since
-/// nothing is fetched, and a link is one only when it is http or https; its click goes to the window's browser.</summary>
+/// bullet and numbered lists to any depth, block quotes, fenced code, rules; code spans, strong, emphasis, links, images
+/// and autolinks) with GitHub's tables and task lists, and drawn as Passenger's own controls, styled in Shell.axaml, fenced
+/// code coloured as the editor colours its language. HTML comments are left out; what a link may open and whether an
+/// image is drawn are the page's (<see cref="MarkdownPage"/>): the notes' a web link alone and no image. Nothing is fetched.</summary>
 internal static partial class Markdown
 {
     internal abstract record Block;
@@ -23,9 +24,14 @@ internal static partial class Markdown
 
     internal sealed record Paragraph(string Text) : Block;
 
-    internal sealed record Listing(bool Ordered, int Start, IReadOnlyList<IReadOnlyList<Block>> Items) : Block;
+    /// <summary>A list; a task list's items have their check (GitHub's <c>- [x]</c>), null for an item with none.</summary>
+    internal sealed record Listing(bool Ordered, int Start, IReadOnlyList<IReadOnlyList<Block>> Items, IReadOnlyList<bool?>? Checks = null) : Block;
 
-    internal sealed record Code(string Text) : Block;
+    /// <summary>Fenced code with its info string's first word (<c>csharp</c>), empty for none.</summary>
+    internal sealed record Code(string Text, string Info = "") : Block;
+
+    /// <summary>GitHub's table: each column's alignment (null for none), the header's cells and each row's, as written.</summary>
+    internal sealed record Table(IReadOnlyList<TextAlignment?> Aligns, IReadOnlyList<string> Header, IReadOnlyList<IReadOnlyList<string>> Rows) : Block;
 
     internal sealed record Quote(IReadOnlyList<Block> Blocks) : Block;
 
@@ -41,119 +47,373 @@ internal static partial class Markdown
 
     internal sealed record Emphasis(IReadOnlyList<Inline> Parts) : Inline;
 
-    internal sealed record Link(IReadOnlyList<Inline> Parts, Uri Target) : Inline;
+    /// <summary>A link's words and where it goes, as written: what it may open is the page's.</summary>
+    internal sealed record Link(IReadOnlyList<Inline> Parts, string Target) : Inline;
+
+    /// <summary>An image's words, which stand for it where it is not drawn, and where its file is, as written.</summary>
+    internal sealed record Image(string Alt, string Target) : Inline;
+
+    /// <summary>A block of a text's top level with the lines it was read from (from zero, <see cref="End"/> past its last)
+    /// and those lines as written, by which a page tells a block that changed from one that did not.</summary>
+    internal sealed record Placed(Block Block, int Line, int End, string Source);
 
     /// <summary>The blocks of a Markdown text.</summary>
     public static IReadOnlyList<Block> Parse(string text) =>
         Blocks([.. text.ReplaceLineEndings("\n").Split('\n').Select(Untabbed)]);
 
-    /// <summary>Draws blocks into a panel, a control each; a link's click is handed to <paramref name="browse"/>.</summary>
-    public static void Render(IReadOnlyList<Block> blocks, Panel into, Action<Uri> browse, int depth = 0)
+    /// <summary>The blocks of a text's top level, each with its lines, which are the editor's: a "\r\n", a '\r' or a '\n'
+    /// ends one.</summary>
+    public static IReadOnlyList<Placed> ParsePlaced(string text)
+    {
+        string[] written = EditorLines().Split(text);
+        List<(int Start, int End)> spans = [];
+        List<Block> blocks = Blocks([.. written.Select(Untabbed)], spans);
+        List<Placed> placed = new(blocks.Count);
+        for (int b = 0; b < blocks.Count; b++)
+        {
+            (int start, int end) = spans[b];
+            placed.Add(new Placed(blocks[b], start, end, string.Join('\n', written, start, end - start)));
+        }
+        return placed;
+    }
+
+    /// <summary>Draws blocks into a panel, a control each; a link's click is handed to <paramref name="browse"/>, which
+    /// takes a web link alone, and no image is drawn.</summary>
+    public static void Render(IReadOnlyList<Block> blocks, Panel into, Action<Uri> browse) => Render(blocks, into, new MarkdownPage(browse), 0);
+
+    /// <summary>Draws blocks into a panel, a control each, as the page draws its links and images.</summary>
+    public static void Render(IReadOnlyList<Block> blocks, Panel into, MarkdownPage page, int depth = 0)
     {
         foreach (Block block in blocks)
         {
-            into.Children.Add(Control(block, browse, depth));
+            into.Children.Add(Control(block, page, depth));
         }
     }
 
-    private static Control Control(Block block, Action<Uri> browse, int depth) => block switch
+    /// <summary>A block's control, as the page draws it.</summary>
+    public static Control Control(Block block, MarkdownPage page, int depth = 0) => block switch
     {
-        Heading heading => MarkdownText.Of(Inlines(heading.Text), browse, $"mdHeading{Math.Min(heading.Level, 3)}"),
-        Paragraph paragraph => MarkdownText.Of(Inlines(paragraph.Text), browse, "mdText"),
-        Listing listing => List(listing, browse, depth),
-        Code code => CodeBlock.Of(code.Text),
-        Quote quote => QuoteOf(quote, browse, depth),
+        // What's New drew a fourth level and below as the third; its notes have none, and a page of a file shows each.
+        Heading heading => MarkdownText.Of(Inlines(heading.Text), page, $"mdHeading{Math.Clamp(heading.Level, 1, 6)}"),
+        Paragraph paragraph => ParagraphOf(Inlines(paragraph.Text), page),
+        Listing listing => List(listing, page, depth),
+        Code code => MarkdownCode.Of(code),
+        Quote quote => QuoteOf(quote, page, depth),
+        Table table => TableOf(table, page),
         _ => new Border { Classes = { "mdRule" } },
     };
 
-    /// <summary>A list's items, each its bullet (or number) beside its blocks; a list inside one is bulleted as the next depth.</summary>
-    private static StackPanel List(Listing listing, Action<Uri> browse, int depth)
+    /// <summary>A paragraph's words; where the page draws an image of it (a file inside the open folder), the image stands in
+    /// a row of its own between the words before and after it, no wider than the page.</summary>
+    private static Control ParagraphOf(IReadOnlyList<Inline> parts, MarkdownPage page)
+    {
+        if (page.ImageFile is not { } fileOf || !parts.Any(p => p is Image image && fileOf(image.Target) is not null))
+        {
+            return MarkdownText.Of(parts, page, "mdText");
+        }
+        StackPanel rows = new() { Classes = { "mdItem" } };
+        List<Inline> words = [];
+        WrapPanel? pictures = null;
+        foreach (Inline part in parts)
+        {
+            if (part is Image image && fileOf(image.Target) is { } file)
+            {
+                Flush();
+                if (pictures is null)
+                {
+                    pictures = new WrapPanel { Classes = { "mdImages" } };
+                    rows.Children.Add(pictures);
+                }
+                pictures.Children.Add(page.Picture(file, image.Alt));
+            }
+            else if (pictures is null || part is not Words { Text: var space } || !string.IsNullOrWhiteSpace(space))
+            {
+                // The spaces between images in a row are the row's gaps.
+                pictures = null;
+                words.Add(part);
+            }
+        }
+        Flush();
+        return rows;
+
+        void Flush()
+        {
+            if (words.Any(w => w is not Words { Text: var text } || !string.IsNullOrWhiteSpace(text)))
+            {
+                rows.Children.Add(MarkdownText.Of([.. words], page, "mdText"));
+            }
+            words.Clear();
+        }
+    }
+
+    /// <summary>A list's items, each its bullet (or number, or a task's check) beside its blocks; a list inside one is
+    /// bulleted as the next depth.</summary>
+    private static StackPanel List(Listing listing, MarkdownPage page, int depth)
     {
         StackPanel list = new() { Classes = { "mdList" } };
         int number = listing.Start;
-        foreach (IReadOnlyList<Block> item in listing.Items)
+        for (int index = 0; index < listing.Items.Count; index++)
         {
-            TextBlock mark = new()
+            Control mark;
+            if (listing.Checks?[index] is { } done)
             {
-                Classes = { "mdMark" },
-                Text = listing.Ordered ? $"{number++}." : depth % 2 == 0 ? "•" : "◦",
-                TextAlignment = listing.Ordered ? TextAlignment.Right : TextAlignment.Center,
-            };
+                // Drawn as the check it is, never one to click: the file's text is what says it is done.
+                PathIcon tick = new() { Classes = { "mdTick" }, IsVisible = done };
+                tick.Bind(PathIcon.DataProperty, tick.GetResourceObservable("Icon.Check"));
+                mark = new Border { Classes = { "box", "mdTask" }, Child = tick };
+                mark.Classes.Set("done", done);
+                Avalonia.Automation.AutomationProperties.SetName(mark, done ? "Done" : "Not done");
+                number++;
+            }
+            else
+            {
+                mark = new TextBlock
+                {
+                    Classes = { "mdMark" },
+                    Text = listing.Ordered ? $"{number++}." : depth % 2 == 0 ? "•" : "◦",
+                    TextAlignment = listing.Ordered ? TextAlignment.Right : TextAlignment.Center,
+                };
+            }
             StackPanel content = new() { Classes = { "mdItem" }, [Grid.ColumnProperty] = 1 };
-            Render(item, content, browse, depth + 1);
+            Render(listing.Items[index], content, page, depth + 1);
             list.Children.Add(new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Children = { mark, content } });
         }
         return list;
     }
 
-    private static Border QuoteOf(Quote quote, Action<Uri> browse, int depth)
+    private static Border QuoteOf(Quote quote, MarkdownPage page, int depth)
     {
         StackPanel content = new() { Classes = { "mdItem" } };
-        Render(quote.Blocks, content, browse, depth);
+        Render(quote.Blocks, content, page, depth);
         return new Border { Classes = { "mdQuote" }, Child = content };
     }
 
+    /// <summary>A table's cells in a grid, each column as wide as its widest cell up to the most a cell is drawn, its words
+    /// wrapping past that, the table scrolled across where the page is narrower than it.</summary>
+    private static Control TableOf(Table table, MarkdownPage page)
+    {
+        int columns = table.Aligns.Count;
+        Grid grid = new() { ColumnDefinitions = new ColumnDefinitions(string.Join(',', Enumerable.Repeat("Auto", columns))) };
+        IReadOnlyList<IReadOnlyList<string>> rows = [table.Header, .. table.Rows];
+        for (int row = 0; row < rows.Count; row++)
+        {
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            for (int column = 0; column < columns; column++)
+            {
+                MarkdownText words = MarkdownText.Of(Inlines(column < rows[row].Count ? rows[row][column] : ""), page, row == 0 ? "mdCellHead" : "mdCellText");
+                words.TextAlignment = table.Aligns[column] ?? TextAlignment.Left;
+                // The rules between cells only: the table's frame draws its edges.
+                Border cell = new()
+                {
+                    Classes = { "mdCell" },
+                    BorderThickness = new Thickness(0, 0, column < columns - 1 ? 1 : 0, row < rows.Count - 1 ? 1 : 0),
+                    Child = words,
+                    [Grid.RowProperty] = row,
+                    [Grid.ColumnProperty] = column,
+                };
+                cell.Classes.Set("head", row == 0);
+                grid.Children.Add(cell);
+            }
+        }
+        return new ScrollViewer
+        {
+            Classes = { "mdTableScroll" },
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Content = new Border { Classes = { "box", "mdTable" }, HorizontalAlignment = HorizontalAlignment.Left, Child = grid },
+        };
+    }
+
     /// <summary>Lines into blocks: each block begins where the last ended, a blank line or a line that starts another
-    /// kind ending a paragraph.</summary>
-    private static List<Block> Blocks(IReadOnlyList<string> lines)
+    /// kind ending a paragraph. Each block's lines go into <paramref name="spans"/> when given.</summary>
+    private static List<Block> Blocks(IReadOnlyList<string> lines, List<(int Start, int End)>? spans = null)
     {
         List<Block> blocks = [];
         int i = 0;
         while (i < lines.Count)
         {
-            string line = lines[i];
-            if (string.IsNullOrWhiteSpace(line))
+            int start = i;
+            if (BlockAt(lines, ref i) is { } block)
             {
-                i++;
-                continue;
+                blocks.Add(block);
+                spans?.Add((start, i));
             }
-            if (line.TrimStart().StartsWith("<!--", StringComparison.Ordinal))
-            {
-                i = AfterComment(lines, i);
-                continue;
-            }
-            if (Fence().Match(line) is { Success: true } fence)
-            {
-                blocks.Add(Fenced(lines, ref i, fence.Groups[1].Length, fence.Groups[2].Value));
-                continue;
-            }
-            if (HeadingLine().Match(line) is { Success: true } heading)
-            {
-                blocks.Add(new Heading(heading.Groups[1].Length, heading.Groups[2].Value.Trim()));
-                i++;
-                continue;
-            }
-            if (RuleLine().IsMatch(line))
-            {
-                blocks.Add(new Rule());
-                i++;
-                continue;
-            }
-            if (QuoteLine().IsMatch(line))
-            {
-                List<string> quoted = [];
-                while (i < lines.Count && QuoteLine().Match(lines[i]) is { Success: true } inside)
-                {
-                    quoted.Add(inside.Groups[1].Value);
-                    i++;
-                }
-                blocks.Add(new Quote(Blocks(quoted)));
-                continue;
-            }
-            if (Marker().Match(line) is { Success: true })
-            {
-                blocks.Add(ListFrom(lines, ref i));
-                continue;
-            }
-            List<string> said = [];
-            while (i < lines.Count && !string.IsNullOrWhiteSpace(lines[i]) && (said.Count == 0 || !Interrupts(lines[i])))
-            {
-                said.Add(lines[i].Trim());
-                i++;
-            }
-            blocks.Add(new Paragraph(string.Join(' ', said)));
         }
         return blocks;
+    }
+
+    /// <summary>The block that begins at a line, or null for a line that begins none (a blank one, a comment's), with the
+    /// line after it in <paramref name="i"/>.</summary>
+    private static Block? BlockAt(IReadOnlyList<string> lines, ref int i)
+    {
+        string line = lines[i];
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            i++;
+            return null;
+        }
+        if (line.TrimStart().StartsWith("<!--", StringComparison.Ordinal))
+        {
+            i = AfterComment(lines, i);
+            return null;
+        }
+        if (Fence().Match(line) is { Success: true } fence)
+        {
+            return Fenced(lines, ref i, fence.Groups[1].Length, fence.Groups[2].Value, fence.Groups[3].Value);
+        }
+        if (HeadingLine().Match(line) is { Success: true } heading)
+        {
+            i++;
+            return new Heading(heading.Groups[1].Length, heading.Groups[2].Value.Trim());
+        }
+        if (RuleLine().IsMatch(line))
+        {
+            i++;
+            return new Rule();
+        }
+        if (QuoteLine().IsMatch(line))
+        {
+            List<string> quoted = [];
+            while (i < lines.Count && QuoteLine().Match(lines[i]) is { Success: true } inside)
+            {
+                quoted.Add(inside.Groups[1].Value);
+                i++;
+            }
+            return new Quote(Blocks(quoted));
+        }
+        if (Marker().Match(line) is { Success: true })
+        {
+            return ListFrom(lines, ref i);
+        }
+        if (TableAt(lines, i) is { } aligns)
+        {
+            return TableFrom(lines, ref i, aligns);
+        }
+        List<string> said = [];
+        while (i < lines.Count && !string.IsNullOrWhiteSpace(lines[i]) && (said.Count == 0 || (!Interrupts(lines[i]) && TableAt(lines, i) is null)))
+        {
+            said.Add(lines[i].Trim());
+            i++;
+        }
+        return new Paragraph(string.Join(' ', said));
+    }
+
+    /// <summary>The columns' alignments of a table whose header row is at a line (its next line the delimiter row, of as
+    /// many cells, both with a pipe), or null when no table begins there.</summary>
+    private static IReadOnlyList<TextAlignment?>? TableAt(IReadOnlyList<string> lines, int i)
+    {
+        if (i + 1 >= lines.Count || !lines[i].Contains('|', StringComparison.Ordinal) || !lines[i + 1].Contains('|', StringComparison.Ordinal)
+            || !DelimiterRow().IsMatch(lines[i + 1]))
+        {
+            return null;
+        }
+        List<string> delimiters = Cells(lines[i + 1]);
+        if (Cells(lines[i]).Count != delimiters.Count)
+        {
+            return null;
+        }
+        return [.. delimiters.Select(d => d.StartsWith(':') && d.EndsWith(':') ? TextAlignment.Center
+            : d.EndsWith(':') ? TextAlignment.Right
+            : d.StartsWith(':') ? TextAlignment.Left
+            : (TextAlignment?)null)];
+    }
+
+    private static Table TableFrom(IReadOnlyList<string> lines, ref int i, IReadOnlyList<TextAlignment?> aligns)
+    {
+        List<string> header = Cells(lines[i]);
+        i += 2;
+        List<IReadOnlyList<string>> rows = [];
+        while (i < lines.Count && !string.IsNullOrWhiteSpace(lines[i]) && !Interrupts(lines[i]))
+        {
+            List<string> cells = Cells(lines[i]);
+            // A row of more cells than the header drops the rest, as GitHub's does; one of fewer is filled out empty.
+            rows.Add([.. cells.Take(aligns.Count), .. Enumerable.Repeat("", Math.Max(0, aligns.Count - cells.Count))]);
+            i++;
+        }
+        return new Table(aligns, header, rows);
+    }
+
+    /// <summary>A table row's cells: split at each pipe neither escaped nor in a code span, the row's outer pipes taken off,
+    /// each cell trimmed.</summary>
+    private static List<string> Cells(string row)
+    {
+        string text = row.Trim();
+        if (text.StartsWith('|'))
+        {
+            text = text[1..];
+        }
+        if (text.EndsWith('|') && !text.EndsWith("\\|", StringComparison.Ordinal))
+        {
+            text = text[..^1];
+        }
+        List<string> cells = [];
+        StringBuilder cell = new();
+        int code = 0;
+        for (int at = 0; at < text.Length; at++)
+        {
+            char c = text[at];
+            if (c == '\\' && at + 1 < text.Length)
+            {
+                cell.Append(c).Append(text[++at]);
+                continue;
+            }
+            if (c == '`')
+            {
+                int run = Run(text, at, '`');
+                code = code == 0 ? run : code == run ? 0 : code;
+                cell.Append('`', run);
+                at += run - 1;
+                continue;
+            }
+            if (c == '|' && code == 0)
+            {
+                cells.Add(cell.ToString().Trim());
+                cell.Clear();
+                continue;
+            }
+            cell.Append(c);
+        }
+        cells.Add(cell.ToString().Trim());
+        return cells;
+    }
+
+    /// <summary>A heading's words as a person reads them, of which its anchor is made.</summary>
+    internal static string Plain(IReadOnlyList<Inline> parts)
+    {
+        StringBuilder text = new();
+        foreach (Inline part in parts)
+        {
+            text.Append(part switch
+            {
+                Words words => words.Text,
+                CodeSpan code => code.Text,
+                Strong strong => Plain(strong.Parts),
+                Emphasis emphasis => Plain(emphasis.Parts),
+                Link link => Plain(link.Parts),
+                Image image => image.Alt,
+                _ => "",
+            });
+        }
+        return text.ToString();
+    }
+
+    /// <summary>A heading's anchor as GitHub makes it, which a <c>#heading</c> link names: its words in lower case, spaces
+    /// as hyphens, and every mark but a hyphen or an underscore left out.</summary>
+    internal static string Slug(string words)
+    {
+        StringBuilder slug = new(words.Length);
+        foreach (char c in words.Trim().ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(c) || c is '-' or '_')
+            {
+                slug.Append(c);
+            }
+            else if (c == ' ')
+            {
+                slug.Append('-');
+            }
+        }
+        return slug.ToString();
     }
 
     /// <summary>Whether a line begins another block, which ends the paragraph before it.</summary>
@@ -175,7 +435,7 @@ internal static partial class Markdown
         return lines.Count;
     }
 
-    private static Code Fenced(IReadOnlyList<string> lines, ref int i, int indent, string fence)
+    private static Code Fenced(IReadOnlyList<string> lines, ref int i, int indent, string fence, string info)
     {
         List<string> code = [];
         i++;
@@ -190,7 +450,7 @@ internal static partial class Markdown
             int strip = Math.Min(indent, line.Length - trimmed.Length);
             code.Add(line[strip..]);
         }
-        return new Code(string.Join('\n', code));
+        return new Code(string.Join('\n', code), info.Trim().Split(' ', 2)[0]);
     }
 
     /// <summary>A list from its first marker: each item's lines are those indented to its content, and the lines of its
@@ -202,6 +462,7 @@ internal static partial class Markdown
         bool ordered = first.Groups[3].Success;
         int start = ordered && int.TryParse(first.Groups[3].Value, out int number) ? number : 1;
         List<IReadOnlyList<Block>> items = [];
+        List<bool?> checks = [];
         while (i < lines.Count)
         {
             if (string.IsNullOrWhiteSpace(lines[i]))
@@ -226,7 +487,11 @@ internal static partial class Markdown
                 break;
             }
             int content = indent + marker.Groups[2].Length + Math.Max(1, Math.Min(marker.Groups[4].Length, 4));
-            List<string> item = [marker.Groups[5].Value];
+            string opening = marker.Groups[5].Value;
+            // GitHub's task list item: its check before its words.
+            Match task = TaskMark().Match(opening);
+            checks.Add(task.Success ? task.Groups[1].Value != " " : null);
+            List<string> item = [task.Success ? task.Groups[2].Value : opening];
             i++;
             while (i < lines.Count)
             {
@@ -263,7 +528,7 @@ internal static partial class Markdown
             }
             items.Add(Blocks(item));
         }
-        return new Listing(ordered, start, items);
+        return new Listing(ordered, start, items, checks.Any(c => c is not null) ? checks : null);
     }
 
     private static int Indent(string line) => line.Length - line.TrimStart(' ').Length;
@@ -329,7 +594,7 @@ internal static partial class Markdown
             if (c == '<' && Autolink().Match(text, i) is { Success: true } auto && auto.Index == i && Web(auto.Groups[1].Value) is { } address)
             {
                 Flush();
-                parts.Add(new Link([new Words(auto.Groups[1].Value)], address));
+                parts.Add(new Link([new Words(auto.Groups[1].Value)], address.OriginalString));
                 i += auto.Length;
                 continue;
             }
@@ -339,18 +604,7 @@ internal static partial class Markdown
                 if (LinkAt(text, image ? i + 1 : i) is { } link)
                 {
                     Flush();
-                    if (!image)
-                    {
-                        IReadOnlyList<Inline> label = Inlines(link.Label);
-                        if (Web(link.Target) is { } target)
-                        {
-                            parts.Add(new Link(label, target));
-                        }
-                        else
-                        {
-                            parts.AddRange(label);
-                        }
-                    }
+                    parts.Add(image ? new Image(WebUtility.HtmlDecode(link.Label), link.Target) : new Link(Inlines(link.Label), link.Target));
                     i = link.End;
                     continue;
                 }
@@ -391,7 +645,7 @@ internal static partial class Markdown
     private static bool Escapable(char c) => c < 128 && (char.IsPunctuation(c) || char.IsSymbol(c));
 
     /// <summary>A web address a link may open: http or https alone.</summary>
-    private static Uri? Web(string target) =>
+    internal static Uri? Web(string target) =>
         Uri.TryCreate(target.Trim().Trim('<', '>'), UriKind.Absolute, out Uri? address) && (address.Scheme == Uri.UriSchemeHttps || address.Scheme == Uri.UriSchemeHttp)
             ? address
             : null;
@@ -507,8 +761,17 @@ internal static partial class Markdown
     [GeneratedRegex(@"^ {0,3}(?:(?:-[ ]*){3,}|(?:\*[ ]*){3,}|(?:_[ ]*){3,})$")]
     private static partial Regex RuleLine();
 
-    [GeneratedRegex(@"^( {0,3})(`{3,}|~{3,})")]
+    [GeneratedRegex(@"^( {0,3})(`{3,}|~{3,})(.*)$")]
     private static partial Regex Fence();
+
+    [GeneratedRegex(@"^\[([ xX])\](?:[ ]+(.*))?$")]
+    private static partial Regex TaskMark();
+
+    [GeneratedRegex(@"^ {0,3}\|?[ ]*:?-+:?[ ]*(?:\|[ ]*:?-+:?[ ]*)*\|?[ ]*$")]
+    private static partial Regex DelimiterRow();
+
+    [GeneratedRegex(@"\r\n|\r|\n")]
+    private static partial Regex EditorLines();
 
     [GeneratedRegex(@"^ {0,3}> ?(.*)$")]
     private static partial Regex QuoteLine();
@@ -532,13 +795,13 @@ public sealed class MarkdownText : SelectableTextBlock
 
     private readonly List<(int Start, int End, Uri Target)> links = [];
     private readonly StringBuilder shown = new();
-    private readonly Action<Uri> browse;
+    private readonly MarkdownPage page;
 
     protected override Type StyleKeyOverride => typeof(SelectableTextBlock);
 
-    private MarkdownText(Action<Uri> browse)
+    private MarkdownText(MarkdownPage page)
     {
-        this.browse = browse;
+        this.page = page;
         TextWrapping = TextWrapping.Wrap;
         Inlines ??= [];
     }
@@ -549,9 +812,9 @@ public sealed class MarkdownText : SelectableTextBlock
     /// <summary>Each link's words and address.</summary>
     public IEnumerable<(string Words, Uri Target)> Links => links.Select(l => (Shown[l.Start..l.End], l.Target));
 
-    internal static MarkdownText Of(IReadOnlyList<Markdown.Inline> parts, Action<Uri> browse, string kind)
+    internal static MarkdownText Of(IReadOnlyList<Markdown.Inline> parts, MarkdownPage page, string kind)
     {
-        MarkdownText block = new(browse) { Classes = { kind } };
+        MarkdownText block = new(page) { Classes = { kind } };
         block.Add(parts, bold: false, italic: false, link: null);
         return block;
     }
@@ -574,16 +837,24 @@ public sealed class MarkdownText : SelectableTextBlock
                 case Markdown.Emphasis emphasis:
                     Add(emphasis.Parts, bold, italic: true, link);
                     break;
-                case Markdown.Link linked:
+                case Markdown.Link linked when page.LinkOf(linked.Target) is { } target:
                     int start = shown.Length;
-                    Add(linked.Parts, bold, italic, linked.Target);
-                    links.Add((start, shown.Length, linked.Target));
+                    Add(linked.Parts, bold, italic, target);
+                    links.Add((start, shown.Length, target));
+                    break;
+                case Markdown.Link unlinked:
+                    // A link the page opens nothing of (the notes' to a file) is its words.
+                    Add(unlinked.Parts, bold, italic, link);
+                    break;
+                case Markdown.Image image when page.ImageFile is not null:
+                    // An image not drawn (a web one, one outside the folder) is the words it was given to stand for it.
+                    Put(image.Alt, bold, italic: true, link, code: false, muted: link is null);
                     break;
             }
         }
     }
 
-    private void Put(string text, bool bold, bool italic, Uri? link, bool code)
+    private void Put(string text, bool bold, bool italic, Uri? link, bool code, bool muted = false)
     {
         // Set only where it differs, so the block's own weight (a heading's) holds for the rest.
         Avalonia.Controls.Documents.Run run = new(text);
@@ -603,6 +874,10 @@ public sealed class MarkdownText : SelectableTextBlock
         if (link is not null)
         {
             run.Bind(TextElement.ForegroundProperty, this.GetResourceObservable("Passenger.Link"));
+        }
+        else if (muted)
+        {
+            run.Bind(TextElement.ForegroundProperty, this.GetResourceObservable("Passenger.TextMuted"));
         }
         Inlines!.Add(run);
         shown.Append(text);
@@ -644,7 +919,7 @@ public sealed class MarkdownText : SelectableTextBlock
         if (e.InitialPressMouseButton == MouseButton.Left && SelectionStart == SelectionEnd && LinkAt(e.GetPosition(this)) is { } target)
         {
             e.Handled = true;
-            browse(target);
+            page.Follow(target);
         }
     }
 }

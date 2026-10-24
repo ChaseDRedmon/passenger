@@ -131,6 +131,8 @@ ICONS = [
     ("Attach", "Plug Connected", "20_regular"),
     # The Migrations window's stripe button: a database, whose migrations it lists and applies.
     ("Database", "Database", "20_regular"),
+    # A Markdown file's preview beside its editor, shown or hidden from the editor's tab strip.
+    ("Preview", "Eye", "20_regular"),
 ]
 
 

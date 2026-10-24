@@ -198,7 +198,7 @@ Projects in `src/`:
 - **Editors.** `EditorArea` (splits of `EditorGroup`s; editor windows are `EditorFrame`s of the same area, so a file in
   two windows is one `OpenDocument`; wire every editor through `ForEachEditor`; `CloseTab` is the one close), and
   `OpenDocument` (encoding, BOM and line separator kept; images, fonts, workbooks and release notes are previews that hold
-  no text, `HoldsText` false).
+  no text, `HoldsText` false). A Markdown file's preview is its group's `MarkdownPreview`, drawn by What's New's `Markdown`.
 - **Docking.** `DockHost` and `ToolWindowIds` (a kept layout records windows by them, so a value never changes; add a
   window with one `Dock.Add`). A window builds its view when first shown; what the IDE writes while it's hidden lives in a
   model (`ProblemsModel`, `DebugModel`, `AspireModel`, `RequestLog`, `MigrationsController`), and code reaches a view
