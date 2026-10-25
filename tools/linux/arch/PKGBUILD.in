@@ -1,0 +1,36 @@
+pkgname=passenger-ide-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='An IDE for C# and .NET'
+arch=('x86_64' 'aarch64')
+url='https://passenger-ide.net'
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'zlib' 'icu' 'openssl' 'krb5'
+         'fontconfig' 'ttf-font' 'libx11' 'libice' 'libsm' 'libxcb' 'libxext'
+         'libxrender' 'libxi' 'libxcursor' 'libxrandr')
+optdepends=('dotnet-sdk: build and run .NET projects (a user-installed SDK also works)'
+            'nodejs: web language servers')
+options=('!strip' '!debug')
+source_x86_64=("Passenger-${pkgver}-linux-x64.tar.gz::https://github.com/Zaneris/passenger/releases/download/v${pkgver}/Passenger-linux-x64.tar.gz")
+source_aarch64=("Passenger-${pkgver}-linux-arm64.tar.gz::https://github.com/Zaneris/passenger/releases/download/v${pkgver}/Passenger-linux-arm64.tar.gz")
+sha256sums_x86_64=('@SHA256_X64@')
+sha256sums_aarch64=('@SHA256_ARM64@')
+
+package() {
+    local shipped="$srcdir/passenger"
+    local app=io.github.zaneris.passenger
+    install -d "$pkgdir/opt/passenger-ide" "$pkgdir/usr/bin"
+    cp -a "$shipped/app" "$pkgdir/opt/passenger-ide/"
+    install -Dm755 "$shipped/passenger" "$pkgdir/opt/passenger-ide/passenger"
+    ln -s /opt/passenger-ide/passenger "$pkgdir/usr/bin/passenger-ide"
+    install -Dm644 "$shipped/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
+    sed -i -e 's/^Exec=passenger /Exec=passenger-ide /' \
+           -e 's/^TryExec=passenger$/TryExec=passenger-ide/' \
+           "$pkgdir/usr/share/applications/$app.desktop"
+    install -Dm644 "$shipped/$app.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/$app.png"
+    install -Dm644 "$shipped/$app.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$app.svg"
+    install -Dm644 "$shipped/$app.xml" "$pkgdir/usr/share/mime/packages/$app.xml"
+    install -Dm644 "$shipped/app/LICENSE.txt" "$pkgdir/usr/share/licenses/$pkgname/LICENSE.txt"
+    install -Dm644 "$shipped/app/THIRD-PARTY-NOTICES.txt" \
+        "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES.txt"
+}
