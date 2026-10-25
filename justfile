@@ -19,6 +19,10 @@ build:
 test filter="" processes="" *args:
     python3 -I tools/test-run.py {{ quote(filter) }} {{ if processes == "" { "" } else { "--processes " + processes } }} {{args}}
 
+# every comment held to the house limits (tools/check-comments.py): a file's or type's 10 lines, a member's 5, a body's 1
+comments *paths:
+    python3 -I tools/check-comments.py {{paths}}
+
 # Each test class's seconds on CI's runners, by which CI deals each system's tests to its shards (TestTimes.json),
 # rewritten from CI runs' results, which gh downloads, for committing: just test-times RUN [RUN...]
 test-times +runs:

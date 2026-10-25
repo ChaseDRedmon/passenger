@@ -394,8 +394,9 @@ size. Each checks a tool's answer, leaving the window's steps to the window's te
 
 - C#: four spaces, file-scoped namespaces, braces on every block, explicit types over `var` (only a suggestion to the
   build, so write the type), accessibility always written; the build fails on the first three (IDE0161, IDE0011, IDE0040).
-- Comments say why, or what else depends on this, never what the next lines do. A `///` summary is at most five lines,
-  an in-body comment one line.
+- A comment speaks only of what it sits on, never how something else works, and says why, never what the next lines do.
+  A file's or type's comment is at most 10 lines, a member's 5, and one inside a body 1 line, there only for a reason the
+  code can't show (`just comments` holds the lengths).
 - XAML: four spaces; one style per selector in `Theme/Shell.axaml`, restyling Fluent's states on its
   `PART_ContentPresenter`. Shell.axaml's base styles give every Button, TextBox, ComboBox, NumericUpDown, CheckBox and
   MenuItem its look (`Passenger.ControlHeight` 28; radii `ControlRadius` 4, `ToolRadius` 6, `PopupRadius` 8); a class style
